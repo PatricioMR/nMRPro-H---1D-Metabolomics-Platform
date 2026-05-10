@@ -1,0 +1,707 @@
+# gui/stages/quantification_stage.py
+"""
+Quantification Stage — Step 4.
+
+Left  : IS config, normalisation, MCR toggle, run, export
+Right : PanedWindow (vertical)
+  Top    : Treeview — analytes × quality columns (CV per group)
+  Middle : Overlay plot (per-sample spectra, coloured by group)
+           + bar chart (mean ± SD per group)
+  Right  : Quality card
+
+Integration: trapezoidal, per sample.
+MCR option : simplified NMF-ALS per peak region.
+CV         : calculated within each group independently.
+
+Split into focused modules:
+  _quant_helpers.py      — standalone helper functions + _STD_PRESETS
+  _quant_visualization.py — _QuantVisMixin  (detail plots / tooltips)
+  _quant_computation.py  — _QuantCompMixin  (_run, VIP, update, export)
+"""
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+import numpy as np
+
+import matplotlib
+matplotlib.use('TkAgg')
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+from .base_stage import BaseStage
+from ._quant_helpers import _STD_PRESETS
+from ._quant_visualization import _QuantVisMixin
+from ._quant_computation import _QuantCompMixin
+
+
+class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
+
+    def __init__(self, parent, app, peak_stage, annotation_stage):
+        super().__init__(parent, app)
+        self.peak_stage       = peak_stage
+        self.annotation_stage = annotation_stage
+        self._quant_results   = []
+        self._pqn_factor      = 1.0
+        self._right_widget    = None
+        self._detail_fig      = None
+        self._detail_canvas   = None
+        self._sort_col        = 'conc_mm'
+        self._sort_rev        = True
+        self._search_var      = None  # set in _build_right_panel
+        self._placeholder     = None  # set in _build_right_panel
+        self._tree            = None  # set in _build_right_panel
+        self.create_widgets()
+
+    # ── Status helpers ────────────────────────────────────────────────────────
+
+    def _status(self, msg, color='blue'):
+        try:
+            self.app.status_label.config(text=msg, foreground=color)
+            self.app.root.update_idletasks()
+        except Exception:
+            pass
+
+    def _status_ok(self,  m): self._status(m, 'green')
+    def _status_err(self, m): self._status(m, 'red')
+
+    def _find_peak(self, ppm_target, tol=0.01):
+        best, best_d = None, tol
+        for p in (self.peak_stage.peaks or []):
+            d = abs(p['ppm'] - ppm_target)
+            if d < best_d:
+                best, best_d = p, d
+        return best
+
+    # ── Left panel ────────────────────────────────────────────────────────────
+
+    def create_widgets(self):
+        self.frame = ttk.Frame(self.parent)
+        ttk.Label(self.frame, text='Quantification',
+                  font=('Arial', 12, 'bold')).pack(pady=8)
+        ttk.Separator(self.frame, orient='horizontal').pack(
+            fill=tk.X, padx=5, pady=4)
+
+        cv_canvas = tk.Canvas(self.frame, borderwidth=0, highlightthickness=0)
+        sb = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=cv_canvas.yview)
+        sf = ttk.Frame(cv_canvas)
+        _sf_win = cv_canvas.create_window((0, 0), window=sf, anchor='nw')
+
+        def _on_sf_configure(e):
+            cv_canvas.configure(scrollregion=cv_canvas.bbox('all'))
+        def _on_canvas_resize(e):
+            cv_canvas.itemconfig(_sf_win, width=e.width)
+
+        sf.bind('<Configure>', _on_sf_configure)
+        cv_canvas.bind('<Configure>', _on_canvas_resize)
+        cv_canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        cv_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        def _on_mousewheel(event):
+            cv_canvas.yview_scroll(int(-1 * (event.delta / 120)), 'units')
+        def _bind_mousewheel(widget):
+            widget.bind('<MouseWheel>', _on_mousewheel)
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+        sf.bind('<Map>', lambda e: _bind_mousewheel(sf))
+
+        # 1. Reference Signal
+        s1 = ttk.LabelFrame(sf, text='1 · Reference Signal (IS)', padding=6)
+        s1.pack(fill=tk.X, padx=6, pady=4)
+
+        r0 = ttk.Frame(s1); r0.pack(fill=tk.X, pady=1)
+        ttk.Label(r0, text='Standard:', width=14).pack(side=tk.LEFT)
+        self.ref_std_var = tk.StringVar(value='TSP')
+        cb = ttk.Combobox(r0, textvariable=self.ref_std_var,
+                          values=list(_STD_PRESETS.keys()),
+                          state='readonly', width=12)
+        cb.pack(side=tk.LEFT, padx=2)
+        cb.bind('<<ComboboxSelected>>', self._on_std_select)
+
+        r2 = ttk.Frame(s1); r2.pack(fill=tk.X, pady=1)
+        ttk.Label(r2, text='Peak Ref (ppm):', width=20).pack(side=tk.LEFT)
+        self.ref_ppm_var = tk.StringVar(value='0.0')
+        ttk.Entry(r2, textvariable=self.ref_ppm_var, width=7).pack(
+            side=tk.LEFT, padx=2)
+        ttk.Label(r2, text='±0.05 ppm', font=('Arial', 7),
+                  foreground='gray').pack(side=tk.LEFT)
+
+        r1 = ttk.Frame(s1); r1.pack(fill=tk.X, pady=1)
+        ttk.Label(r1, text='— or Peak #:', width=20).pack(side=tk.LEFT)
+        self.ref_rank_var = tk.StringVar(value='')
+        ttk.Entry(r1, textvariable=self.ref_rank_var, width=6).pack(
+            side=tk.LEFT, padx=2)
+
+        r3 = ttk.Frame(s1); r3.pack(fill=tk.X, pady=1)
+        ttk.Label(r3, text='Concentration (mM):', width=20).pack(side=tk.LEFT)
+        self.ref_conc_var = tk.StringVar(value='1.0')
+        ttk.Entry(r3, textvariable=self.ref_conc_var, width=7).pack(
+            side=tk.LEFT, padx=2)
+
+        r4 = ttk.Frame(s1); r4.pack(fill=tk.X, pady=1)
+        ttk.Label(r4, text='nH of IS:', width=20).pack(side=tk.LEFT)
+        self.ref_nh_var = tk.StringVar(value='9')
+        ttk.Entry(r4, textvariable=self.ref_nh_var, width=7).pack(
+            side=tk.LEFT, padx=2)
+
+        ttk.Label(s1,
+                  text='TSP/DSS/TMSP: 0.00 ppm | nH=9\n'
+                       'Maleic acid: 6.00 ppm | nH=2\n'
+                       'Formate: 8.46 ppm | nH=1',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        ttk.Separator(s1, orient='horizontal').pack(fill=tk.X, pady=4)
+        ext_row = ttk.Frame(s1); ext_row.pack(fill=tk.X, pady=1)
+        self.ext_is_var = tk.BooleanVar(value=False)
+        self._ext_is_cb = ttk.Checkbutton(ext_row, text='External IS',
+                                           variable=self.ext_is_var)
+        self._ext_is_cb.pack(side=tk.LEFT)
+        ttk.Button(ext_row, text='Select samples…',
+                   command=self._open_ext_is_dialog).pack(side=tk.LEFT, padx=6)
+        self._ext_is_label = ttk.Label(ext_row, text='(none selected)',
+                                        font=('Arial', 7), foreground='gray')
+        self._ext_is_label.pack(side=tk.LEFT)
+        ttk.Label(s1,
+                  text='External IS: uses IS area from selected samples\n'
+                       '(e.g. BLK) as fixed reference for all analytical samples.',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        # 2. Integration
+        s2 = ttk.LabelFrame(sf, text='2 · Integration', padding=6)
+        s2.pack(fill=tk.X, padx=6, pady=4)
+
+        mf = ttk.Frame(s2); mf.pack(fill=tk.X, pady=1)
+        ttk.Label(mf, text='Signal:').pack(side=tk.LEFT)
+        self.integ_var = tk.StringVar(value='Area')
+        for v, lbl in [('Area', 'Area (trapz)'), ('Lorentz', 'Lorentz Fit'),
+                       ('Multiplet', 'Multiplet (whole)')]:
+            ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
+                            value=v, command=self._on_integ_change).pack(side=tk.LEFT, padx=4)
+
+        pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
+        self.proton_corr_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(pf, text='Proton correction (÷ nH)',
+                        variable=self.proton_corr_var).pack(side=tk.LEFT)
+
+        blf = ttk.Frame(s2); blf.pack(fill=tk.X, pady=1)
+        self.local_baseline_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(blf, text='Local baseline correction (linear, per integration window)',
+                        variable=self.local_baseline_var).pack(side=tk.LEFT)
+
+        mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
+        self._ext_is_indices = []
+        self.mcr_var = tk.BooleanVar(value=False)   # kept for internal MCR-MCR path
+        self.j_resolve_var = tk.BooleanVar(value=False)
+        self._j_resolve_cb = ttk.Checkbutton(
+            mf2, text='J-Resolve correction (overlap)',
+            variable=self.j_resolve_var,
+            command=self._on_j_resolve_change)
+        self._j_resolve_cb.pack(side=tk.LEFT)
+        self._j_resolve_status_lbl = ttk.Label(
+            mf2, text='(not applied)', font=('Arial', 7), foreground='gray')
+        self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
+        ttk.Label(s2,
+                  text='Lorentz Fit: fits Lorentzian per sample (BATMAN-style).\n'
+                       'Multiplet (whole): integrates full DB multiplet span; uses total nH.\n'
+                       'Local baseline: subtracts linear baseline at window edges before integration.\n'
+                       'J-Resolve: applies fractional areas from Overlap Resolving Method.\n'
+                       'Run J-Resolve (step 4) and click "✓ Apply" before enabling.',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
+        ic_row0 = ttk.Frame(s2); ic_row0.pack(fill=tk.X, pady=1)
+        self.icoshift_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(ic_row0, text='Pre-align with icoshift before quantification',
+                        variable=self.icoshift_var).pack(side=tk.LEFT)
+        ic_row1 = ttk.Frame(s2); ic_row1.pack(fill=tk.X, pady=1)
+        ttk.Label(ic_row1, text='  Max shift (ppm):', font=('Arial', 8),
+                  width=20).pack(side=tk.LEFT)
+        self.icoshift_max_shift_var = tk.DoubleVar(value=0.02)
+        ttk.Spinbox(ic_row1, from_=0.003, to=0.10, increment=0.003, width=7,
+                    textvariable=self.icoshift_max_shift_var,
+                    format='%.3f').pack(side=tk.LEFT, padx=2)
+        ttk.Label(s2,
+                  text='Aligns each sample to mean spectrum (icoshift)\n'
+                       'before integration. Quantification only — raw data unchanged.',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        # 3. Normalisation
+        s4 = ttk.LabelFrame(sf, text='3 · Normalisation', padding=6)
+        s4.pack(fill=tk.X, padx=6, pady=4)
+
+        self.norm_var = tk.StringVar(value='IS')
+        for lbl, val in [('Internal std (IS)',    'IS'),
+                         ('IS + PQN',             'IS+PQN'),
+                         ('PQN',                  'PQN'),
+                         ('Total area %',         'Total'),
+                         ('None',                 'None')]:
+            ttk.Radiobutton(s4, text=lbl, variable=self.norm_var,
+                            value=val).pack(anchor=tk.W)
+        ttk.Separator(s4, orient='horizontal').pack(fill=tk.X, pady=4)
+        self.blk_sub_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(s4, text='Subtract BLK mean (blank correction)',
+                        variable=self.blk_sub_var).pack(anchor=tk.W)
+        ttk.Label(s4, text='Removes mean BLK area from each\nsample before quantification.',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
+
+        # Run
+        ttk.Separator(sf, orient='horizontal').pack(
+            fill=tk.X, padx=5, pady=6)
+        self.btn_run = ttk.Button(
+            sf, text='⚗ Run Quantification',
+            command=self._run, state='disabled')
+        self.btn_run.pack(fill=tk.X, padx=6, pady=2)
+        self.run_status = ttk.Label(
+            sf, text='Run Annotation first',
+            foreground='gray', font=('Arial', 8))
+        self.run_status.pack(pady=2)
+
+        ttk.Separator(sf, orient='horizontal').pack(
+            fill=tk.X, padx=5, pady=4)
+
+        # Export
+        ttk.Label(sf, text='Export',
+                  font=('Arial', 10, 'bold')).pack(anchor=tk.W, padx=6)
+        self.btn_csv = ttk.Button(
+            sf, text='📋 Export CSV',
+            command=lambda: self._export('csv'), state='disabled')
+        self.btn_csv.pack(fill=tk.X, padx=6, pady=2)
+        self.btn_metaboanalyst = ttk.Button(
+            sf, text='📊 Export MetaboAnalyst',
+            command=lambda: self._export('metaboanalyst'), state='disabled')
+        self.btn_metaboanalyst.pack(fill=tk.X, padx=6, pady=2)
+        ttk.Label(sf,
+                  text='CSV: Sample × Group × Metabolite (mM)\n'
+                       'MetaboAnalyst: samples × metabolites',
+                  font=('Arial', 7), foreground='gray').pack(
+                      anchor=tk.W, padx=6)
+
+    # ── Lifecycle ─────────────────────────────────────────────────────────────
+
+    def on_activate(self):
+        self.frame.pack(fill=tk.BOTH, expand=True)
+        has_ann = (hasattr(self.annotation_stage, '_last_results_args')
+                   and bool(self.annotation_stage._last_results_args))
+        _fs_stage   = (getattr(self.app, 'stages', {}) or {}).get('fullspectrum_mcr')
+        has_fs      = bool(getattr(_fs_stage, '_mcr_regions', None))
+        ready       = has_ann or has_fs
+        self.btn_run.config(state='normal' if ready else 'disabled')
+        self.run_status.config(
+            text='Ready — configure and run' if ready
+                 else 'Run Full Spectrum MCR or Annotation first',
+            foreground='blue' if ready else 'gray')
+        self._hide_canvas()
+        self._show_right_panel()
+        self._refresh_j_resolve_label()
+
+    def on_deactivate(self):
+        if self.frame:
+            self.frame.pack_forget()
+        self._restore_canvas()
+
+    def _hide_canvas(self):
+        try:
+            self.app.canvas.get_tk_widget().pack_forget()
+        except Exception:
+            pass
+        try:
+            self.app.toolbar.pack_forget()
+        except Exception:
+            pass
+
+    def _restore_canvas(self):
+        if self._right_widget:
+            try: self._right_widget.pack_forget()
+            except Exception: pass
+        try:
+            self.app.toolbar.pack_forget()
+        except Exception:
+            pass
+        try:
+            self.app.canvas.get_tk_widget().pack_forget()
+        except Exception:
+            pass
+        try:
+            self.app.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        except Exception:
+            pass
+        try:
+            self.app.canvas.get_tk_widget().pack(
+                side=tk.TOP, fill=tk.BOTH, expand=True)
+        except Exception:
+            pass
+
+    # ── Right panel ───────────────────────────────────────────────────────────
+
+    def _show_right_panel(self):
+        if self._right_widget is None:
+            self._build_right_panel()
+        self._right_widget.pack(fill=tk.BOTH, expand=True)
+        if self._quant_results:
+            self._populate_tree()
+        else:
+            self._show_placeholder()
+
+    def _build_right_panel(self):
+        self._right_widget = ttk.Frame(self.app.right_panel)
+
+        paned = tk.PanedWindow(self._right_widget, orient=tk.VERTICAL,
+                               sashwidth=6, sashrelief=tk.RAISED)
+        paned.pack(fill=tk.BOTH, expand=True)
+
+        # Top: Treeview
+        top = ttk.Frame(paned)
+        paned.add(top, minsize=240)
+
+        sf2 = ttk.Frame(top)
+        sf2.pack(fill=tk.X, padx=2, pady=(2, 0))
+        ttk.Label(sf2, text='🔍', font=('Arial', 9)).pack(side=tk.LEFT)
+        self._search_var = tk.StringVar()
+        self._search_var.trace_add('write', lambda *_: self._populate_tree())
+        ttk.Entry(sf2, textvariable=self._search_var,
+                  width=20).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sf2, text='✕', width=2,
+                   command=lambda: self._search_var.set('')
+                   ).pack(side=tk.LEFT)
+
+        cols = ('peak_num', 'metabolite', 'ppm', 'conc_mm',
+                'raw_area', 'snr', 'vip_score', 'status')
+        self._tree = ttk.Treeview(top, columns=cols, show='headings',
+                                   selectmode='browse')
+        for cid, hd, w in [
+            ('peak_num',    '#',               35),
+            ('metabolite',  'Metabolite',     210),
+            ('ppm',         'PPM',             70),
+            ('conc_mm',     'Mean Conc (mM)', 110),
+            ('raw_area',    'Mean Area',        90),
+            ('snr',         'Mean SNR',         60),
+            ('vip_score',   'VIP',              55),
+            ('status',      'Quality',          70),
+        ]:
+            self._tree.heading(cid, text=hd,
+                               command=lambda c=cid: self._sort_tree(c))
+            self._tree.column(cid, width=w, minwidth=40)
+
+        self._tree.tag_configure('good', background='#c8f7c5')
+        self._tree.tag_configure('warn', background='#fef9c3')
+        self._tree.tag_configure('poor', background='#ffd6d6')
+        self._tree.tag_configure('conf3', background='#c8f7c5', foreground='#155724')
+        self._tree.tag_configure('conf2', background='#fef9c3', foreground='#856404')
+        self._tree.tag_configure('conf1', background='#ffd6d6', foreground='#721c24')
+
+        vsb = ttk.Scrollbar(top, orient=tk.VERTICAL,
+                             command=self._tree.yview)
+        self._tree.configure(yscrollcommand=vsb.set)
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        self._tree.bind('<<TreeviewSelect>>', self._on_tree_select)
+        self._tree.bind('<Motion>',  self._on_tree_motion)
+        self._tree.bind('<Leave>',   self._hide_tooltip)
+        self._tree.bind('<Button-3>', self._on_tree_right_click)
+        self._tooltip_win  = None
+        self._tooltip_iid  = None
+
+        self._placeholder = ttk.Label(
+            top, text='Run Quantification to see results.',
+            font=('Arial', 11), foreground='gray')
+
+        # Bottom: horizontal split — left (spec+bar) | right (card)
+        bot = tk.PanedWindow(paned, orient=tk.HORIZONTAL,
+                             sashwidth=5, sashrelief=tk.RAISED,
+                             bg='#d9d9d9')
+        paned.add(bot, minsize=400)
+
+        left_paned = tk.PanedWindow(bot, orient=tk.VERTICAL,
+                                    sashwidth=5, sashrelief=tk.RAISED,
+                                    bg='#d9d9d9')
+        bot.add(left_paned, stretch='always')
+        self._bot_paned = bot
+
+        # Spectrum frame
+        f_spec = ttk.Frame(left_paned)
+        left_paned.add(f_spec, minsize=180, stretch='always')
+        self._fig_spec = plt.Figure(facecolor='#f8f8f8', tight_layout=True)
+        self._ax_spec  = self._fig_spec.add_subplot(111)
+        self._cv_spec  = FigureCanvasTkAgg(self._fig_spec, master=f_spec)
+
+        from matplotlib.backends.backend_tkagg import NavigationToolbar2Tk
+        self._tb_spec = NavigationToolbar2Tk(self._cv_spec, f_spec, pack_toolbar=False)
+        self._tb_spec.update()
+        self._tb_spec.pack(side=tk.BOTTOM, fill=tk.X)
+        self._cv_spec.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # Bar chart frame
+        f_bar = ttk.Frame(left_paned)
+        left_paned.add(f_bar, minsize=150, stretch='always')
+        self._fig_bar = plt.Figure(facecolor='#f8f8f8', tight_layout=True)
+        self._ax_bar  = self._fig_bar.add_subplot(111)
+        self._cv_bar  = FigureCanvasTkAgg(self._fig_bar, master=f_bar)
+        self._cv_bar.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # Quality card — right panel
+        f_card = ttk.Frame(bot)
+        bot.add(f_card, minsize=180, stretch='never')
+        def _set_sash(*_):
+            total = self._bot_paned.winfo_width()
+            if total > 10:
+                self._bot_paned.sash_place(0, int(total * 0.70), 0)
+        bot.bind('<Configure>', _set_sash, add='+')
+        self._fig_card = plt.Figure(facecolor='#f8f8f8')
+        self._fig_card.set_constrained_layout(True)
+        gs_card = self._fig_card.add_gridspec(2, 1, height_ratios=[1.4, 1], hspace=0.15)
+        self._ax_card     = self._fig_card.add_subplot(gs_card[0])
+        self._ax_card_bot = self._fig_card.add_subplot(gs_card[1])
+        self._cv_card  = FigureCanvasTkAgg(self._fig_card, master=f_card)
+        self._cv_card.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._card_row_tips    = {}
+        self._card_tooltip_win = None
+        self._fig_card.canvas.mpl_connect('motion_notify_event', self._on_card_motion)
+        self._fig_card.canvas.mpl_connect('axes_leave_event',    self._hide_card_tooltip)
+        for _ax in (self._ax_card, self._ax_card_bot):
+            _ax.axis('off')
+        self._ax_card.text(0.5, 0.5, 'Select a metabolite\nto see quality info',
+                           ha='center', va='center', fontsize=8, color='gray',
+                           transform=self._ax_card.transAxes)
+
+        self._detail_fig    = self._fig_spec
+        self._detail_canvas = self._cv_spec
+
+    def _show_placeholder(self):
+        if self._tree: self._tree.pack_forget()
+        if self._placeholder: self._placeholder.pack(expand=True)
+
+    def _populate_tree(self):
+        if self._tree is None or self._placeholder is None:
+            return
+        self._placeholder.pack_forget()
+        self._tree.delete(*self._tree.get_children())
+        self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        _nm = getattr(self, 'norm_var', None)
+        _norm = _nm.get() if _nm else 'IS'
+        _conc_hdr = ('Mean Conc (mM)' if _norm in ('IS', 'IS+PQN')
+                     else 'Mean Area %'  if _norm == 'Total'
+                     else 'Mean Area (a.u.)')
+        labels = {'peak_num': '#', 'metabolite': 'Metabolite', 'ppm': 'PPM',
+                  'conc_mm': _conc_hdr, 'raw_area': 'Mean Area',
+                  'snr': 'Mean SNR', 'vip_score': 'VIP', 'status': 'Conf'}
+        for cid, lbl in labels.items():
+            arrow = (' ▲' if not self._sort_rev else ' ▼') \
+                    if cid == self._sort_col else ''
+            self._tree.heading(cid, text=lbl + arrow)
+
+        q = getattr(self, '_search_var', None)
+        q = q.get().strip().lower() if q else ''
+
+        def _sort_key(r):
+            v = r.get(self._sort_col, 0) or 0
+            if self._sort_col == 'metabolite':
+                return str(v).lower()
+            try: return float(v)
+            except Exception: return str(v).lower()
+
+        filtered = [r for r in self._quant_results
+                    if not q or q in r.get('metabolite', '').lower()
+                    or q in f"{r.get('ppm', 0):.4f}"]
+        results = sorted(filtered, key=_sort_key, reverse=self._sort_rev)
+
+        _is_mm = (_norm in ('IS', 'IS+PQN'))
+        _used_iids = set()
+        for r in results:
+            conc = r.get('conc_mm', float('nan'))
+            if not np.isfinite(conc):
+                conc_s = 'N/A'
+            elif _is_mm:
+                conc_s = f'{conc:.4f}'
+            else:
+                conc_s = f'{conc:.3e}'
+            area = r.get('raw_area', 0)
+            snr  = r.get('snr', 0)
+            stat   = r.get('status', '●○○')
+            _conf  = r.get('_confidence', 1)
+            conf_tag = f'conf{_conf}'
+            peak_rank = r.get('_peak', {})
+            peak_rank = peak_rank.get('rank', '–') if peak_rank else '–'
+            vip = r.get('vip_score', float('nan'))
+            vip_s = f'{vip:.2f}' if np.isfinite(vip) else '—'
+            # Ensure IID is a unique non-empty string
+            raw_iid = r.get('hmdb_id') or r.get('metabolite', 'unknown')
+            iid = str(raw_iid)
+            if iid in _used_iids:
+                iid = f'{iid}_{id(r)}'
+            _used_iids.add(iid)
+            try:
+                self._tree.insert(
+                    '', tk.END,
+                    iid=iid,
+                    tags=(conf_tag,),
+                    values=(peak_rank,
+                            r['metabolite'],
+                            f"{r.get('ppm', 0):.4f}",
+                            conc_s,
+                            f'{area:.4e}',
+                            f'{snr:.1f}',
+                            vip_s,
+                            stat))
+            except Exception as _ins_err:
+                print(f'[Quant tree] insert failed for {iid!r}: {_ins_err}')
+
+    def _on_tree_right_click(self, event):
+        """Show context menu on right-click in quantification tree."""
+        tree = self._tree
+        iid = tree.identify_row(event.y)
+        if not iid:
+            return
+        tree.selection_set(iid)
+        r = next((x for x in self._quant_results
+                  if str(x.get('hmdb_id', x['metabolite'])) == iid
+                  or f"{x.get('hmdb_id', x['metabolite'])}_{id(x)}" == iid), None)
+        if r is None:
+            return
+        menu = tk.Menu(tree, tearoff=0)
+        peak_rank = r.get('_peak_rank')
+        menu.add_command(
+            label='Quant Peaks',
+            command=lambda: self._open_quant_peaks_window(r))
+        menu.add_separator()
+        if peak_rank is not None:
+            menu.add_command(
+                label='Open peak in Peak List',
+                command=lambda: self._open_peak_in_list(peak_rank))
+        else:
+            menu.add_command(label='No peak available', state='disabled')
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _open_quant_peaks_window(self, result):
+        """Open or reuse the Quant Peaks window for an analyte."""
+        from gui.widgets.quant_peaks_window import QuantPeaksWindow
+        try:
+            existing = getattr(self, '_quant_peaks_win', None)
+            if existing is not None:
+                try:
+                    if not existing.win.winfo_exists():
+                        raise RuntimeError('window destroyed')
+                    existing.load_result(result)
+                    existing.win.lift()
+                    return
+                except Exception:
+                    self._quant_peaks_win = None
+            win = QuantPeaksWindow(self.frame, self, result)
+            self._quant_peaks_win = win
+            close_cb = lambda: self._on_quant_peaks_close(win)
+            win._close_cb = close_cb
+            win.win.protocol('WM_DELETE_WINDOW', win._do_close)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _on_quant_peaks_close(self, win):
+        win.win.destroy()
+        if getattr(self, '_quant_peaks_win', None) is win:
+            self._quant_peaks_win = None
+
+    def _open_peak_in_list(self, peak_rank):
+        """Open the Peak List window and focus the given peak rank."""
+        try:
+            self.app.open_peak_list()
+            pl_win = getattr(self.app, '_peak_list_win', None)
+            if pl_win and hasattr(pl_win, 'focus_peak_rank'):
+                pl_win.focus_peak_rank(peak_rank)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _sort_tree(self, col):
+        if self._sort_col == col:
+            self._sort_rev = not self._sort_rev
+        else:
+            self._sort_col = col
+            self._sort_rev = col not in ('metabolite',)
+        if self._quant_results:
+            self._populate_tree()
+
+    # ── Integration mode change ───────────────────────────────────────────────
+
+    def _on_integ_change(self, *_):
+        pass   # MCR-ALS checkbox removed; nothing to disable
+
+    def _on_j_resolve_change(self, *_):
+        self._refresh_j_resolve_label()
+
+    def _refresh_j_resolve_label(self):
+        """Update the J-Resolve status label to reflect current state."""
+        if not hasattr(self, '_j_resolve_status_lbl'):
+            return
+        ann = (getattr(self, 'app', None) and
+               getattr(self.app, 'stages', {}).get('annotation'))
+        contributions = getattr(ann, '_j_resolve_contributions', None) if ann else None
+        if contributions:
+            n = len(contributions)
+            self._j_resolve_status_lbl.config(
+                text=f'({n} peaks resolved)', foreground='#2e7d32')
+        else:
+            self._j_resolve_status_lbl.config(
+                text='(not applied — run J-Resolve step 4)', foreground='#b71c1c')
+
+    # ── Standard preset ───────────────────────────────────────────────────────
+
+    def _on_std_select(self, event=None):
+        p = _STD_PRESETS.get(self.ref_std_var.get(), {})
+        if p.get('ppm'): self.ref_ppm_var.set(p['ppm'])
+        if p.get('nh'):  self.ref_nh_var.set(p['nh'])
+
+    def _open_ext_is_dialog(self):
+        """Open dialog to select External IS samples."""
+        si = self.app.samples_info or []
+        if not si:
+            messagebox.showinfo('External IS', 'Load samples first.')
+            return
+
+        dlg = tk.Toplevel(self.frame)
+        dlg.title('Select External IS Samples')
+        dlg.geometry('320x400')
+        dlg.transient(self.frame)
+        dlg.grab_set()
+
+        ttk.Label(dlg, text='Select samples to use as External IS reference:',
+                  font=('Arial', 9), wraplength=280).pack(pady=(10, 4), padx=10)
+
+        frame_list = ttk.Frame(dlg)
+        frame_list.pack(fill=tk.BOTH, expand=True, padx=10, pady=4)
+        vsb = ttk.Scrollbar(frame_list)
+        vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        lb = tk.Listbox(frame_list, selectmode=tk.MULTIPLE,
+                        yscrollcommand=vsb.set, font=('Arial', 9))
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        vsb.config(command=lb.yview)
+
+        for i, s in enumerate(si):
+            lbl  = s.get('label', f'Sample {i+1}')
+            typ  = s.get('type', '')
+            disp = f"{i+1}. {lbl}" + (f"  [{typ}]" if typ else '')
+            lb.insert(tk.END, disp)
+            if i in self._ext_is_indices:
+                lb.selection_set(tk.END)
+
+        if not self._ext_is_indices:
+            for i, s in enumerate(si):
+                if str(s.get('type', s.get('label', ''))).upper() == 'BLK':
+                    lb.selection_set(i)
+
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill=tk.X, padx=10, pady=8)
+
+        def _ok():
+            self._ext_is_indices = list(lb.curselection())
+            n = len(self._ext_is_indices)
+            names = ', '.join(str(si[i].get('label', i)) for i in self._ext_is_indices[:3])
+            suffix = '…' if n > 3 else ''
+            self._ext_is_label.config(
+                text=f'{n} sample(s): {names}{suffix}' if n else '(none selected)',
+                foreground='#1a7a1a' if n else 'gray')
+            dlg.destroy()
+
+        ttk.Button(btn_row, text='OK',     command=_ok).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_row, text='Cancel', command=dlg.destroy).pack(side=tk.RIGHT)

@@ -1,0 +1,86 @@
+J-Resolve run  2026-04-25 19:54:29
+Metabolites   : 7
+Peaks         : 205
+Anchor tol    : 0.020 ppm
+Phase 3 iter  : True
+ΔJ filter     : True (tol=1.5 Hz)
+Singlet anchor: True
+Solver        : cascade
+
+=== Overlap map (2 overlapping peaks) ===
+  Peak #  52  4.5155 ppm  →  Arabinose, Ascorbate
+  Peak #  70  3.2346 ppm  →  Glucose, Caffeine
+
+J-validated metabolites : 3 (ΔJ ≤ 1.5 Hz on ≥1 multiplet)
+ΔJ filter removals      : 0
+Singlet-anchor removals : 2
+  Detail:
+  SKIP_SNG Glucose                                  rank=  63  ppm=5.2412  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Glucose                                  rank=  77  ppm=3.8337  (not J-validated; J-validated candidate exists)
+
+--- Phase 1: user-marked Good peaks → conc_est (clean peaks only) ---
+  → no anchor for Glucose  (good_peaks=0)
+  Arabinose                           rank=  84  ppm=3.4976  area=1240  mult=t  nH=1  eff_nH=0.500  probe=2479
+  Arabinose                           rank=  88  ppm=3.6563  area=721.8  mult=d  nH=1  eff_nH=0.500  probe=1444
+  Arabinose                           rank= 116  ppm=3.9306  area=310  mult=s  nH=1  eff_nH=1.000  probe=310
+  → ANCHORED Arabinose  conc_est=1444  (from 3 clean probe(s))
+  → no anchor for Itaconic acid  (good_peaks=0)
+  → no anchor for Caffeine  (good_peaks=0)
+  Mannitol                            rank=  33  ppm=3.7573  area=2567  mult=q  nH=1  eff_nH=0.375  probe=6846
+  Mannitol                            rank=  39  ppm=3.7864  area=3182  mult=d  nH=1  eff_nH=0.500  probe=6365
+  → ANCHORED Mannitol  conc_est=6605  (from 2 clean probe(s))
+  → no anchor for Cysteine  (good_peaks=0)
+  → no anchor for Ascorbate  (good_peaks=0)
+
+--- Phase 1b: auto-anchor (clean peaks, tol=0.020 ppm) ---
+  SKIP Glucose                             rank=  63  ppm=5.2412  — competitor within 0.020 ppm
+  SKIP Glucose                             rank=  31  ppm=3.8859  — competitor within 0.020 ppm
+  SKIP_OVL Glucose                             rank=  70  ppm=3.2346  — shared peak with: Caffeine
+  SKIP Glucose                             rank= 123  ppm=3.4020  — competitor within 0.020 ppm
+  SKIP Glucose                             rank=  65  ppm=3.5170  — competitor within 0.020 ppm
+  SKIP Glucose                             rank=  58  ppm=3.7230  — competitor within 0.020 ppm
+  SKIP Glucose                             rank=  77  ppm=3.8337  — competitor within 0.020 ppm
+  SKIP Caffeine                            rank=  30  ppm=3.8810  — competitor within 0.020 ppm
+  SKIP_OVL Caffeine                            rank=  70  ppm=3.2346  — shared peak with: Glucose
+  SKIP Caffeine                            rank= 112  ppm=3.3961  — competitor within 0.020 ppm
+  SKIP Cysteine                            rank=   7  ppm=3.9453  — competitor within 0.020 ppm
+  SKIP Ascorbate                           rank=  52  ppm=4.5155  — competitor within 0.013 ppm
+  CLEAN Glucose                             rank=   4  ppm=4.6295  area=2.967e+05  nH=1  eff_nH=1.000
+  CLEAN Itaconic acid                       rank=  16  ppm=5.8606  area=5898  nH=1  eff_nH=1.000
+  CLEAN Glucose                             rank=  29  ppm=3.4519  area=5608  nH=1  eff_nH=1.000
+  CLEAN Itaconic acid                       rank=  35  ppm=5.3866  area=4823  nH=1  eff_nH=1.000
+  CLEAN Caffeine                            rank=  82  ppm=7.8937  area=1364  nH=1  eff_nH=1.000
+  CLEAN Cysteine                            rank=  91  ppm=3.0484  area=430  nH=1  eff_nH=1.000
+  CLEAN Itaconic acid                       rank= 142  ppm=3.1430  area=165.8  nH=1  eff_nH=1.000
+  → AUTO-ANCHOR Glucose  conc_est=1.511e+05  (from 2 peak(s))
+  → AUTO-ANCHOR Itaconic acid  conc_est=4823  (from 3 peak(s))
+  → AUTO-ANCHOR Caffeine  conc_est=1364  (from 1 peak(s))
+  → AUTO-ANCHOR Cysteine  conc_est=430  (from 1 peak(s))
+  → all peaks of Ascorbate have competitors or were claimed
+
+--- Phase 2: contribution subtraction ---
+  Peak #  70  3.2346 ppm  obs=1350  known=[Glucose: 11197.4%, Caffeine: 101.1%]  residual=0.0%  unknowns=[]
+  Peak #  52  4.5155 ppm  obs=1.224e+04  known=[Arabinose: 5.9%]  residual=94.1%  unknowns=['Ascorbate']
+
+--- Phase 3: iterative cascade ---
+  Cascade iteration 1
+    Peak #  52  4.5155 ppm  obs=1.224e+04  known=721.8  residual_area=1.152e+04  eff_nH=0.500  → NEW conc_est(Ascorbate)=2.304e+04  (first estimate)
+--- Phase 2 (cascade iter 1) ---
+  Peak #  70  3.2346 ppm  obs=1350  known=[Glucose: 11197.4%, Caffeine: 101.1%]  residual=0.0%  unknowns=[]
+  Peak #  52  4.5155 ppm  obs=1.224e+04  known=[Arabinose: 5.9%, Ascorbate: 94.1%]  residual=0.0%  unknowns=[]
+
+  Cascade iteration 2
+
+
+=== Final status ===
+  quantifiable    Arabinose                            rel.conc=1443.6  anchors=[84, 88, 116]
+  resolved        Ascorbate                            rel.conc=23041  anchors=[52]
+  auto_anchored   Caffeine                             rel.conc=1364  anchors=[82]
+  auto_anchored   Cysteine                             rel.conc=429.97  anchors=[91]
+  auto_anchored   Glucose                              rel.conc=1.5114e+05  anchors=[4, 29]
+  auto_anchored   Itaconic acid                        rel.conc=4822.7  anchors=[16, 35, 142]
+  quantifiable    Mannitol                             rel.conc=6605.4  anchors=[33, 39]
+
+=== Contributions per peak ===
+  Peak #  52  4.5155 ppm  obs=1.224e+04  [bmse000213: 5.9%, bmse000182: 94.1%]  residual=0.0%
+  Peak #  70  3.2346 ppm  obs=1350  [bmse000855: 11197.4%, bmse000206: 101.1%]  residual=0.0%

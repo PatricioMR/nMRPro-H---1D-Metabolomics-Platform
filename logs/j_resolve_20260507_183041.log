@@ -1,0 +1,94 @@
+J-Resolve run  2026-05-07 18:30:41
+Metabolites   : 7
+Peaks         : 197
+Anchor tol    : 0.020 ppm
+Phase 3 iter  : True
+ΔJ filter     : True (tol=1.5 Hz)
+Singlet anchor: True
+Solver        : cascade
+
+=== Overlap map (5 overlapping peaks) ===
+  Peak #   9  3.9588 ppm  →  L-Arabinose, L-Cysteine
+  Peak #  22  3.8231 ppm  →  D-Glucose, L-Glutamic acid
+  Peak #  60  3.7242 ppm  →  D-Glucose, L-Glutamic acid
+  Peak #  93  3.4021 ppm  →  Itaconic acid, Caffeine
+  Peak # 168  2.4040 ppm  →  L-Glutamic acid, L-Glutamic acid, L-Glutamic acid
+
+J-validated metabolites : 5 (ΔJ ≤ 1.5 Hz on ≥1 multiplet)
+ΔJ filter removals      : 4
+Singlet-anchor removals : 0
+  Detail:
+  SKIP_ΔJ  L-Arabinose                              rank=  47  ppm=3.5071  ΔJ=2.04 Hz > 1.5 Hz
+  SKIP_ΔJ  L-Arabinose                              rank=  22  ppm=3.8231  ΔJ=4.98 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Glucose                                rank=  53  ppm=3.5218  ΔJ=2.16 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Glucose                                rank=   6  ppm=4.6310  ΔJ=1.69 Hz > 1.5 Hz
+
+--- Phase 1: user-marked Good peaks → conc_est (clean peaks only) ---
+  → no anchor for L-Arabinose  (good_peaks=0)
+  D-Glucose                           rank=  62  ppm=5.2455  area=2040  mult=d  nH=1  eff_nH=0.500  probe=4080
+  D-Glucose                           rank=  83  ppm=3.4593  area=693.5  mult=m  nH=1  eff_nH=1.000  probe=693.5
+  D-Glucose                           rank=  60  ppm=3.7242  J-ANCHOR-SINGLET  anchor_I=2962  eff_nH=1.000  probe=2962  (overlaps: L-Glutamic acid)
+  → ANCHORED D-Glucose  conc_est=2962  (from 3 clean probe(s))
+  → no anchor for Taurine  (good_peaks=0)
+  L-Glutamic acid                     rank=  17  ppm=3.7535  area=4962  mult=t  nH=1  eff_nH=0.316  probe=1.572e+04
+  L-Glutamic acid                     rank=  30  ppm=3.7611  area=2920  mult=t  nH=1  eff_nH=0.316  probe=9250
+  L-Glutamic acid                     rank=  24  ppm=3.6925  area=4225  mult=t  nH=1  eff_nH=0.500  probe=8451
+  L-Glutamic acid                     rank=  40  ppm=3.7408  area=3200  mult=t  nH=1  eff_nH=0.316  probe=1.014e+04
+  L-Glutamic acid                     rank=  60  ppm=3.7242  J-ANCHOR-SINGLET  anchor_I=1.199e+04  eff_nH=0.316  probe=3.797e+04  (overlaps: D-Glucose)
+  L-Glutamic acid                     rank=  20  ppm=3.7744  area=5574  mult=t  nH=1  eff_nH=0.316  probe=1.765e+04
+  → ANCHORED L-Glutamic acid  conc_est=1.293e+04  (from 6 clean probe(s))
+  → no anchor for Itaconic acid  (good_peaks=0)
+  → no anchor for L-Cysteine  (good_peaks=0)
+  → no anchor for Caffeine  (good_peaks=0)
+
+--- Phase 1b: auto-anchor (clean peaks, tol=0.020 ppm) ---
+  SKIP L-Arabinose                         rank=  65  ppm=5.2521  — competitor within 0.010 ppm
+  SKIP L-Arabinose                         rank=  49  ppm=4.0180  — competitor within 0.020 ppm
+  SKIP L-Arabinose                         rank=   9  ppm=3.9588  — competitor within 0.020 ppm
+  SKIP L-Arabinose                         rank=  47  ppm=3.5071  — competitor within 0.020 ppm
+  SKIP L-Arabinose                         rank=  34  ppm=3.6821  — competitor within 0.020 ppm
+  SKIP L-Arabinose                         rank=  22  ppm=3.8231  — competitor within 0.020 ppm
+  SKIP_OVL Itaconic acid                       rank=  93  ppm=3.4021  — shared peak with: Caffeine
+  SKIP L-Cysteine                          rank=   9  ppm=3.9588  — competitor within 0.018 ppm
+  SKIP_OVL Caffeine                            rank=  93  ppm=3.4021  — shared peak with: Itaconic acid
+  SKIP Caffeine                            rank= 102  ppm=3.5615  — competitor within 0.020 ppm
+  SKIP Caffeine                            rank=  87  ppm=3.9981  — competitor within 0.020 ppm
+  CLEAN L-Arabinose                         rank=  26  ppm=4.5203  area=1.542e+04  nH=1  eff_nH=0.500
+  CLEAN Itaconic acid                       rank=  18  ppm=5.8623  area=5757  nH=1  eff_nH=1.000
+  CLEAN Taurine                             rank=  14  ppm=3.4262  area=5218  nH=1  eff_nH=0.474
+  CLEAN L-Arabinose                         rank=  45  ppm=3.8992  area=3750  nH=1  eff_nH=1.000
+  CLEAN Taurine                             rank=  75  ppm=3.2446  area=1093  nH=1  eff_nH=0.497
+  CLEAN L-Cysteine                          rank=  90  ppm=3.0686  area=654.3  nH=1  eff_nH=1.000
+  → AUTO-ANCHOR L-Arabinose  conc_est=1.729e+04  (from 2 peak(s))
+  → AUTO-ANCHOR Itaconic acid  conc_est=5757  (from 1 peak(s))
+  → AUTO-ANCHOR Taurine  conc_est=6605  (from 2 peak(s))
+  → AUTO-ANCHOR L-Cysteine  conc_est=654.3  (from 1 peak(s))
+  → all peaks of Caffeine have competitors or were claimed
+
+--- Phase 2: contribution subtraction ---
+  Peak #   9  3.9588 ppm  obs=1.377e+04  known=[L-Arabinose: 125.6%, L-Cysteine: 2.4%]  residual=0.0%  unknowns=[]
+  Peak #  60  3.7242 ppm  obs=2567  known=[D-Glucose: 115.4%, L-Glutamic acid: 159.0%]  residual=0.0%  unknowns=[]
+  Peak #  22  3.8231 ppm  obs=4986  known=[D-Glucose: 59.4%, L-Glutamic acid: 172.8%]  residual=0.0%  unknowns=[]
+  Peak # 168  2.4040 ppm  obs=116.1  known=[L-Glutamic acid: 5568.6%]  residual=0.0%  unknowns=[]
+  Peak #  93  3.4021 ppm  obs=535.8  known=[Itaconic acid: 1074.5%]  residual=0.0%  unknowns=['Caffeine']
+
+--- Phase 3: iterative cascade ---
+  Cascade iteration 1
+  No cascade possible (no single-unknown peaks with residual ≥5%)
+
+
+=== Final status ===
+  unresolvable    Caffeine                             rel.conc=—  anchors=[]
+  quantifiable    D-Glucose                            rel.conc=2962.4  anchors=[62, 83, 60]
+  auto_anchored   Itaconic acid                        rel.conc=5757.3  anchors=[18]
+  auto_anchored   L-Arabinose                          rel.conc=17290  anchors=[26, 45]
+  auto_anchored   L-Cysteine                           rel.conc=654.26  anchors=[90]
+  quantifiable    L-Glutamic acid                      rel.conc=12927  anchors=[17, 30, 24, 40, 60, 20]
+  auto_anchored   Taurine                              rel.conc=6604.5  anchors=[14, 75]
+
+=== Contributions per peak ===
+  Peak #   9  3.9588 ppm  obs=1.377e+04  [HMDB0000646: 125.6%, HMDB0000574: 2.4%]  residual=0.0%
+  Peak #  22  3.8231 ppm  obs=4986  [HMDB0000122: 59.4%, HMDB0000148: 172.8%]  residual=0.0%
+  Peak #  60  3.7242 ppm  obs=2567  [HMDB0000122: 115.4%, HMDB0000148: 159.0%]  residual=0.0%
+  Peak #  93  3.4021 ppm  obs=535.8  [HMDB0002092: 1074.5%]  residual=0.0%
+  Peak # 168  2.4040 ppm  obs=116.1  [HMDB0000148: 5568.6%]  residual=0.0%

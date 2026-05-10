@@ -1,0 +1,666 @@
+# gui/project_manager.py
+"""
+NMRAnalysis Project Manager.
+
+Saves and restores the full application state to a .nmrproj file (pickle).
+Auto-saves every 5 minutes when a project is open.
+
+Saved state:
+  - Raw data (ppm, all_intensities, samples_info, group_colors, source file path)
+  - Peak detection (noise_std, peaks list, overlapping regions)
+  - Deconvolution (queued peaks, results)
+  - Annotation stage (db_path, results)
+  - UI state (active stage, axes settings, plot settings)
+"""
+import os
+import pickle
+import threading
+import time
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+
+PROJECT_EXT   = '.nmrproj'
+AUTOSAVE_SECS = 300  # 5 minutes
+
+
+def _safe_var(obj, attr):
+    """Return the value of a tkinter Variable attribute, or None if missing."""
+    try:
+        return getattr(obj, attr).get()
+    except Exception:
+        return None
+
+
+def _set_var(obj, attr, value):
+    """Set a tkinter Variable attribute if it exists and value is not None."""
+    if value is None:
+        return
+    try:
+        getattr(obj, attr).set(value)
+    except Exception:
+        pass
+
+
+class ProjectManager:
+    def __init__(self, app):
+        self.app          = app
+        self._project_path = None   # current open project file
+        self._dirty        = False  # unsaved changes
+        self._autosave_job = None
+
+    # ── Path helpers ──────────────────────────────────────────────────────────
+
+    @property
+    def project_path(self):
+        return self._project_path
+
+    @project_path.setter
+    def project_path(self, value):
+        self._project_path = value
+        title = 'nMRPipe v0.1 Pre-Alpha'
+        if value:
+            title = f'nMRPipe v0.1 Pre-Alpha — {os.path.basename(value)}'
+        try:
+            self.app.root.title(title)
+        except Exception:
+            pass
+
+    def mark_dirty(self):
+        self._dirty = True
+
+    # ── Serialisation ─────────────────────────────────────────────────────────
+
+    def _collect_state(self):
+        """Gather everything needed to restore the session."""
+        app = self.app
+        state = {
+            'version':         5,
+            # Raw data
+            'ppm':             app.ppm,
+            'ppm_calibration': getattr(app, '_ppm_calibration', None),
+            'all_intensities': app.all_intensities,
+            'samples_info':    app.samples_info,
+            'group_colors':    app.group_colors,
+            'source_file':     app.current_file,
+            'group_dilution_factors': dict(getattr(app, 'group_dilution_factors', {})),
+            # UI
+            'active_stage':    getattr(app, 'active_stage', 'visualization'),
+            'axes_settings':   getattr(app, 'axes_settings', {}),
+            'plot_settings':   getattr(app, 'plot_settings', {}),
+            'show_legend':     getattr(app, 'show_legend', tk.BooleanVar()).get(),
+            # Cross-stage state
+            'peak_list_filters': dict(getattr(app, '_peak_list_filters', {})),
+            'eligible_overrides': dict(getattr(app, 'eligible_overrides', {})),
+        }
+
+        # ── Peak detection ────────────────────────────────────────────────────
+        pd = app.stages.get('peak_detection')
+        if pd:
+            state['pd'] = {
+                'noise_std':       pd.noise_std,
+                'noise_source':    getattr(pd, 'noise_source', None),
+                'peaks':           list(pd.peaks),
+                '_overlaps':       list(getattr(pd, '_overlaps', [])),
+                'step1_completed': getattr(pd, 'step1_completed', False),
+                'noise_start_var': _safe_var(pd, 'noise_start_var'),
+                'noise_end_var':   _safe_var(pd, 'noise_end_var'),
+                'min_snr_var':     _safe_var(pd, 'min_snr_var'),
+                'min_width_var':   _safe_var(pd, 'min_width_var'),
+                'prominence_var':  _safe_var(pd, 'prominence_var'),
+            }
+            ctrl = getattr(pd, '_deconv_controller', None)
+            if ctrl:
+                state['pd']['deconv'] = {
+                    'peaks':            list(ctrl.peaks),
+                    'results':          dict(ctrl.results),
+                    'excluded_samples': {k: list(v)
+                                         for k, v in ctrl.excluded_samples.items()},
+                }
+
+        # ── Annotation ────────────────────────────────────────────────────────
+        ann = app.stages.get('annotation')
+        if ann:
+            # Capture live metabolites from the open results window (most up-to-date)
+            _live_win = getattr(app, '_annot_win', None)
+            _mets = None
+            if _live_win is not None:
+                try:
+                    if _live_win.win.winfo_exists():
+                        _mets = getattr(_live_win, 'metabolites', None)
+                except Exception:
+                    pass
+            if _mets is None:
+                _mets = getattr(ann, '_metabolites', None)
+
+            state['ann'] = {
+                'db_path':               getattr(ann, '_db_path', None),
+                'last_results_args':     getattr(ann, '_last_results_args', None),
+                'annotations':           dict(getattr(ann, 'annotations', {})),
+                'tolerance':             _safe_var(ann, 'tolerance_var'),
+                'align':                 _safe_var(ann, 'align_var'),
+                'quality_marks':         dict(getattr(ann, '_quality_marks', {})),
+                'child_quality_marks':   dict(getattr(ann, '_child_quality_marks', {})),
+                'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
+                'subline_quality_marks': dict(getattr(ann, '_subline_quality_marks', {})),
+                'metabolites':           _mets,
+            }
+
+        # ── J-Resolve ─────────────────────────────────────────────────────────
+        jr = app.stages.get('j_resolve')
+        if jr:
+            state['jr'] = {
+                'conc_est':          dict(getattr(jr, '_conc_est', {})),
+                'anchor_peaks':      dict(getattr(jr, '_anchor_peaks', {})),
+                'nnls_rejected':     list(getattr(jr, '_nnls_rejected', set())),
+                'j_validated':       list(getattr(jr, '_j_validated', set())),
+                'peak_overlap':      dict(getattr(jr, '_peak_overlap', {})),
+                'anchor_tol':        _safe_var(jr, '_anchor_tol'),
+                'dj_filter':         _safe_var(jr, '_dj_filter_var'),
+                'dj_tol':            _safe_var(jr, '_dj_tol'),
+                'singlet_anchor':    _safe_var(jr, '_singlet_anchor_var'),
+            }
+
+        # ── Quantification ────────────────────────────────────────────────────
+        qnt = app.stages.get('quantification')
+        if qnt:
+            _dil = getattr(qnt, '_last_sample_dil', None)
+            state['qnt'] = {
+                'quant_results':    list(getattr(qnt, '_quant_results', [])),
+                'integ':            _safe_var(qnt, 'integ_var'),
+                'norm':             _safe_var(qnt, 'norm_var'),
+                'proton_corr':      _safe_var(qnt, 'proton_corr_var'),
+                'mcr':              _safe_var(qnt, 'mcr_var'),
+                'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
+                'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
+                'j_resolve':        _safe_var(qnt, 'j_resolve_var'),
+                'ext_is':           _safe_var(qnt, 'ext_is_var'),
+                'ext_is_indices':   [int(x) for x in getattr(qnt, '_ext_is_indices', [])],
+                'ref_ppm':          _safe_var(qnt, 'ref_ppm_var'),
+                'ref_nh':           _safe_var(qnt, 'ref_nh_var'),
+                'ref_conc':         _safe_var(qnt, 'ref_conc_var'),
+                'ref_std':          _safe_var(qnt, 'ref_std_var'),
+                'ref_rank':         _safe_var(qnt, 'ref_rank_var'),
+                'last_norm_mode':   getattr(qnt, '_last_norm_mode',   None),
+                'last_ref_areas':   getattr(qnt, '_last_ref_areas',   None),
+                'last_ref_conc':    getattr(qnt, '_last_ref_conc',    None),
+                'last_sample_dil':  _dil.tolist() if _dil is not None else None,
+                'last_groups':      getattr(qnt, '_last_groups',      None),
+                'last_blk_indices': getattr(qnt, '_last_blk_indices', None),
+                'last_non_blk':     getattr(qnt, '_last_non_blk_indices', None),
+            }
+
+        # ── Notation stage ────────────────────────────────────────────────────
+        ns = app.stages.get('notation')
+        if ns:
+            state['ns'] = {
+                'peaks': list(getattr(ns, 'peaks', [])),
+            }
+
+        # ── Full-spectrum MCR ─────────────────────────────────────────────────
+        fs = app.stages.get('fullspectrum_mcr')
+        if fs:
+            state['fs'] = {
+                'mcr_regions':    list(getattr(fs, '_mcr_regions', [])),
+                'db_path':        getattr(fs, '_db_path', None),
+                'norm_factors':   getattr(fs, '_norm_factors', None),
+                'blank_enabled':  _safe_var(fs, '_blank_enabled'),
+                'norm_enabled':   _safe_var(fs, '_norm_enabled'),
+                'norm_method':    _safe_var(fs, '_norm_method'),
+            }
+
+        # ── Statistics ────────────────────────────────────────────────────────
+        st = app.stages.get('statistics')
+        if st:
+            state['st'] = {
+                'method':              _safe_var(st, '_method_var'),
+                'scale':               _safe_var(st, '_scale_var'),
+                'excluded_samples':    list(getattr(st, '_excluded_samples', set())),
+                'excluded_metabolites': list(getattr(st, '_excluded_metabolites', set())),
+                'pie_style':           dict(getattr(st, '_pie_style', {})),
+                'box_style':           dict(getattr(st, '_box_style', {})),
+            }
+
+        return state
+
+    def _restore_state(self, state):
+        """Restore application state from a saved dict."""
+        import numpy as _np
+        app = self.app
+
+        # ── Close stale annotation results window from a previous project ─────
+        _old_annot_win = getattr(app, '_annot_win', None)
+        if _old_annot_win is not None:
+            try:
+                _old_annot_win.win.destroy()
+            except Exception:
+                pass
+            app._annot_win = None
+
+        # ── Raw data ──────────────────────────────────────────────────────────
+        app.ppm              = state.get('ppm')
+        app.all_intensities  = state.get('all_intensities')
+        app._ppm_calibration = state.get('ppm_calibration')
+        app.samples_info     = state.get('samples_info', [])
+        app.group_colors     = state.get('group_colors', app.group_colors)
+        app.current_file     = state.get('source_file')
+        app.group_dilution_factors = state.get('group_dilution_factors',
+                                               getattr(app, 'group_dilution_factors', {}))
+        app._peak_list_filters = state.get('peak_list_filters',
+                                           getattr(app, '_peak_list_filters', {}))
+        app.eligible_overrides = state.get('eligible_overrides',
+                                           getattr(app, 'eligible_overrides', {}))
+
+        # ── UI ────────────────────────────────────────────────────────────────
+        if state.get('axes_settings'):
+            app.axes_settings.update(state['axes_settings'])
+        if state.get('plot_settings'):
+            app.plot_settings.update(state['plot_settings'])
+        try:
+            app.show_legend.set(state.get('show_legend', True))
+        except Exception:
+            pass
+        try:
+            fname = os.path.basename(app.current_file) if app.current_file else 'No file loaded'
+            app.file_label.config(text=fname)
+        except Exception:
+            pass
+        try:
+            app.stages['visualization'].refresh_sample_list()
+            app.btn_select_all.config(state='normal')
+            app.btn_clear_all.config(state='normal')
+            app.btn_update.config(state='normal')
+        except Exception:
+            pass
+
+        # ── Peak detection ────────────────────────────────────────────────────
+        pd_state = state.get('pd')
+        pd       = app.stages.get('peak_detection')
+        if pd_state and pd:
+            pd.noise_std       = pd_state.get('noise_std')
+            pd.noise_source    = pd_state.get('noise_source')
+            pd.peaks           = pd_state.get('peaks', [])
+            pd._overlaps       = pd_state.get('_overlaps', [])
+            pd.step1_completed = pd_state.get('step1_completed', False)
+            _set_var(pd, 'noise_start_var', pd_state.get('noise_start_var'))
+            _set_var(pd, 'noise_end_var',   pd_state.get('noise_end_var'))
+            _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
+            _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
+            _set_var(pd, 'prominence_var',  pd_state.get('prominence_var'))
+
+            if pd.processor and app.ppm is not None:
+                try:
+                    if pd.noise_std:
+                        pd.processor.set_noise(pd.noise_std)
+                    pd.processor.ppm             = app.ppm
+                    pd.processor.peaks           = list(pd.peaks)
+                    pd.processor.all_intensities = app.all_intensities
+                    from gui.stages.peak_detection_stage import _no_blk_group_mean
+                    pd.processor.mean_intensity  = _no_blk_group_mean(
+                        app.all_intensities, app.samples_info)
+                except Exception as _e:
+                    print(f'  processor restore: {_e}')
+
+            try:
+                if pd.noise_std is not None:
+                    pd.step1_completed = True
+                    pd.noise_value_label.config(text=f'Noise Std Dev: {pd.noise_std:.4f}')
+                    pd.step1_status.config(text='✅ Completed', foreground='green')
+                    pd.btn_detect.config(state='normal')
+                if pd.peaks:
+                    pd.peaks_count_label.config(text=f'Found {len(pd.peaks)} peaks')
+                    pd.step2_status.config(
+                        text=f'✅ {len(pd.peaks)} peaks detected', foreground='green')
+                    pd.btn_search_overlaps.config(state='normal')
+                    try: app.btn_peak_list.config(state='normal')
+                    except Exception: pass
+                if pd._overlaps:
+                    pd.btn_open_deconv.config(state='normal')
+                    pd.deconv_status.config(
+                        text=f'{len(pd._overlaps)} peak(s) queued for deconvolution',
+                        foreground='orange')
+                    try: app.btn_deconv_shortcut.config(state='normal')
+                    except Exception: pass
+            except Exception as _e:
+                print(f'  pd UI restore: {_e}')
+
+            deconv_state = pd_state.get('deconv')
+            if deconv_state and pd._overlaps:
+                try:
+                    from gui.notation.deconvolution import DeconvController
+                    ctrl = DeconvController(pd.processor)
+                    ctrl.peaks            = deconv_state.get('peaks', [])
+                    ctrl.results          = deconv_state.get('results', {})
+                    ctrl.excluded_samples = {k: set(v) for k, v in
+                                             deconv_state.get('excluded_samples', {}).items()}
+                    pd._deconv_controller = ctrl
+                except Exception as _e:
+                    print(f'  deconv controller restore: {_e}')
+
+        # ── Annotation ────────────────────────────────────────────────────────
+        ann_state = state.get('ann')
+        ann       = app.stages.get('annotation')
+        if ann_state and ann:
+            try:
+                ann._db_path = ann_state.get('db_path') or getattr(ann, '_db_path', None)
+
+                if ann_state.get('last_results_args'):
+                    ann._last_results_args = ann_state['last_results_args']
+                    try: app.btn_annot_shortcut.config(state='normal')
+                    except Exception: pass
+
+                if ann_state.get('annotations'):
+                    ann.annotations = ann_state['annotations']
+
+                _set_var(ann, 'tolerance_var', ann_state.get('tolerance'))
+                _set_var(ann, 'align_var',     ann_state.get('align'))
+
+                ann._quality_marks         = ann_state.get('quality_marks', {})
+                ann._child_quality_marks   = ann_state.get('child_quality_marks', {})
+                ann._anchor_lines          = ann_state.get('anchor_lines', {})
+                ann._subline_quality_marks = ann_state.get('subline_quality_marks', {})
+
+                if ann_state.get('metabolites'):
+                    ann._metabolites = ann_state['metabolites']
+                    # Re-apply quality marks into the saved metabolites' matched_peaks
+                    # so the results window shows correct colours without re-scoring.
+                    for met in ann._metabolites:
+                        mid = met.get('id', met.get('name', ''))
+                        for mp in met.get('matched_peaks', []):
+                            key = (mid, mp.get('peak_rank'))
+                            if key in ann._quality_marks:
+                                mp['annotation_quality'] = ann._quality_marks[key]
+                else:
+                    # No saved metabolites — re-apply quality marks into flat results
+                    # so they are picked up when the window is rebuilt from scratch.
+                    _results = (ann._last_results_args or {}).get('results', [])
+                    for r in _results:
+                        mid = (r.get('hmdb_id') or r.get('bmrb_id')
+                               or r.get('id', r.get('name', '')))
+                        key = (mid, r.get('peak_rank'))
+                        if key in ann._quality_marks:
+                            r['annotation_quality'] = ann._quality_marks[key]
+
+            except Exception as _e:
+                print(f'  annotation restore: {_e}')
+
+        # ── J-Resolve ─────────────────────────────────────────────────────────
+        jr_state = state.get('jr')
+        jr       = app.stages.get('j_resolve')
+        if jr_state and jr:
+            try:
+                jr._conc_est     = jr_state.get('conc_est', {})
+                jr._anchor_peaks = jr_state.get('anchor_peaks', {})
+                jr._nnls_rejected = set(jr_state.get('nnls_rejected', []))
+                jr._j_validated  = set(jr_state.get('j_validated', []))
+                jr._peak_overlap = jr_state.get('peak_overlap', {})
+                _set_var(jr, '_anchor_tol',        jr_state.get('anchor_tol'))
+                _set_var(jr, '_dj_filter_var',     jr_state.get('dj_filter'))
+                _set_var(jr, '_dj_tol',            jr_state.get('dj_tol'))
+                _set_var(jr, '_singlet_anchor_var', jr_state.get('singlet_anchor'))
+                # Share the same metabolites list as annotation
+                if ann is not None and getattr(ann, '_metabolites', None):
+                    jr._metabolites = ann._metabolites
+                if pd is not None:
+                    jr._peaks = list(pd.peaks)
+                # Enable the Run button if we have conc_est results
+                if jr._conc_est:
+                    try: jr._btn_apply.config(state='normal')
+                    except Exception: pass
+            except Exception as _e:
+                print(f'  j_resolve restore: {_e}')
+
+        # ── Quantification ────────────────────────────────────────────────────
+        qnt_state = state.get('qnt')
+        qnt       = app.stages.get('quantification')
+        if qnt_state and qnt:
+            try:
+                results = qnt_state.get('quant_results', [])
+                if results:
+                    qnt._quant_results = results
+                    try:
+                        qnt.btn_csv.config(state='normal')
+                        qnt.btn_metaboanalyst.config(state='normal')
+                    except Exception:
+                        pass
+                _set_var(qnt, 'integ_var',      qnt_state.get('integ'))
+                _set_var(qnt, 'norm_var',        qnt_state.get('norm'))
+                _set_var(qnt, 'proton_corr_var', qnt_state.get('proton_corr'))
+                _set_var(qnt, 'mcr_var',         qnt_state.get('mcr'))
+                _set_var(qnt, 'blk_sub_var',     qnt_state.get('blk_sub'))
+                _set_var(qnt, 'ext_is_var',        qnt_state.get('ext_is'))
+                _set_var(qnt, 'local_baseline_var', qnt_state.get('local_baseline'))
+                _set_var(qnt, 'j_resolve_var',    qnt_state.get('j_resolve'))
+                _set_var(qnt, 'ref_ppm_var',     qnt_state.get('ref_ppm'))
+                _set_var(qnt, 'ref_nh_var',      qnt_state.get('ref_nh'))
+                _set_var(qnt, 'ref_conc_var',    qnt_state.get('ref_conc'))
+                _set_var(qnt, 'ref_std_var',     qnt_state.get('ref_std'))
+                _set_var(qnt, 'ref_rank_var',    qnt_state.get('ref_rank'))
+                ei = qnt_state.get('ext_is_indices')
+                if ei is not None:
+                    qnt._ext_is_indices = [int(x) for x in ei]
+                    # Recompute label from indices + current samples_info
+                    # (more robust than relying on saved label string)
+                    _si  = getattr(app, 'samples_info', None) or []
+                    _n   = len(qnt._ext_is_indices)
+                    if _n and _si:
+                        _names = ', '.join(
+                            str(_si[_i].get('label', _i))
+                            for _i in qnt._ext_is_indices[:3] if _i < len(_si))
+                        _sfx = '…' if _n > 3 else ''
+                        _lbl_txt = f'{_n} sample(s): {_names}{_sfx}'
+                        _fg = '#1a7a1a'
+                    elif _n:
+                        _lbl_txt = f'{_n} sample(s) selected'
+                        _fg = '#1a7a1a'
+                    else:
+                        _lbl_txt = '(none selected)'
+                        _fg = 'gray'
+                    try:
+                        qnt._ext_is_label.config(text=_lbl_txt, foreground=_fg)
+                    except Exception:
+                        pass
+                if qnt_state.get('last_norm_mode') is not None:
+                    qnt._last_norm_mode = qnt_state['last_norm_mode']
+                if qnt_state.get('last_ref_areas') is not None:
+                    qnt._last_ref_areas = qnt_state['last_ref_areas']
+                if qnt_state.get('last_ref_conc') is not None:
+                    qnt._last_ref_conc = qnt_state['last_ref_conc']
+                if qnt_state.get('last_sample_dil') is not None:
+                    qnt._last_sample_dil = _np.array(qnt_state['last_sample_dil'])
+                if qnt_state.get('last_groups') is not None:
+                    qnt._last_groups = qnt_state['last_groups']
+                if qnt_state.get('last_blk_indices') is not None:
+                    qnt._last_blk_indices = qnt_state['last_blk_indices']
+                if qnt_state.get('last_non_blk') is not None:
+                    qnt._last_non_blk_indices = qnt_state['last_non_blk']
+                # Repopulate the results table so it's visible immediately
+                if results:
+                    try: qnt._populate_tree()
+                    except Exception: pass
+            except Exception as _e:
+                print(f'  quantification restore: {_e}')
+
+        # ── Notation ─────────────────────────────────────────────────────────
+        ns_state = state.get('ns')
+        ns       = app.stages.get('notation')
+        if ns_state and ns:
+            try:
+                ns.peaks = ns_state.get('peaks', [])
+            except Exception as _e:
+                print(f'  notation restore: {_e}')
+
+        # ── Full-spectrum MCR ─────────────────────────────────────────────────
+        fs_state = state.get('fs')
+        fs       = app.stages.get('fullspectrum_mcr')
+        if fs_state and fs:
+            try:
+                fs._mcr_regions  = fs_state.get('mcr_regions', [])
+                fs._db_path      = fs_state.get('db_path')
+                fs._norm_factors = fs_state.get('norm_factors')
+                _set_var(fs, '_blank_enabled', fs_state.get('blank_enabled'))
+                _set_var(fs, '_norm_enabled',  fs_state.get('norm_enabled'))
+                _set_var(fs, '_norm_method',   fs_state.get('norm_method'))
+                if fs._db_path:
+                    try:
+                        fs._db_label.config(
+                            text=os.path.basename(fs._db_path), foreground='black')
+                        fs.btn_run.config(state='normal')
+                    except Exception:
+                        pass
+                if fs._mcr_regions:
+                    n_k1 = sum(1 for r in fs._mcr_regions
+                               if r.get('mcr_annotation', {}).get('K', 0) == 1)
+                    n_k2 = sum(1 for r in fs._mcr_regions
+                               if r.get('mcr_annotation', {}).get('K', 0) >= 2)
+                    try:
+                        fs._result_label.config(
+                            text=(f'{len(fs._mcr_regions)} region(s) — {n_k1} single, '
+                                  f'{n_k2} overlapping.'),
+                            foreground='black')
+                    except Exception:
+                        pass
+                    try:
+                        if n_k2 > 0:
+                            app.btn_deconv_shortcut.config(state='normal')
+                    except Exception:
+                        pass
+            except Exception as _e:
+                print(f'  fullspectrum_mcr restore: {_e}')
+
+        # ── Statistics ────────────────────────────────────────────────────────
+        st_state = state.get('st')
+        st       = app.stages.get('statistics')
+        if st_state and st:
+            try:
+                _set_var(st, '_method_var', st_state.get('method'))
+                _set_var(st, '_scale_var',  st_state.get('scale'))
+                st._excluded_samples    = set(st_state.get('excluded_samples', []))
+                st._excluded_metabolites = set(st_state.get('excluded_metabolites', []))
+                if st_state.get('pie_style'):
+                    st._pie_style.update(st_state['pie_style'])
+                if st_state.get('box_style'):
+                    st._box_style.update(st_state['box_style'])
+            except Exception as _e:
+                print(f'  statistics restore: {_e}')
+
+        # ── Redraw & switch stage ─────────────────────────────────────────────
+        try:
+            app.update_plot()
+            if pd and pd.peaks:
+                pd.color_peaks()
+        except Exception as _e:
+            print(f'  redraw after restore: {_e}')
+
+        try:
+            saved_stage = state.get('active_stage', 'visualization')
+            if saved_stage in app.stages:
+                app.switch_stage(saved_stage)
+        except Exception:
+            pass
+
+    # ── File operations ───────────────────────────────────────────────────────
+
+    def save_project(self, path=None):
+        """Save to path. If None, opens Save-As dialog."""
+        if path is None:
+            path = filedialog.asksaveasfilename(
+                title='Save Project',
+                defaultextension=PROJECT_EXT,
+                filetypes=[('NMR Project', f'*{PROJECT_EXT}'),
+                           ('All files', '*.*')])
+            if not path:
+                return False
+
+        try:
+            state = self._collect_state()
+            with open(path, 'wb') as f:
+                pickle.dump(state, f, protocol=5)
+            self.project_path = path
+            self._dirty       = False
+            self.app.root.after(
+                0, lambda: self.app.status_label.config(
+                    text=f'Project saved: {os.path.basename(path)}',
+                    foreground='green'))
+            return True
+        except Exception as e:
+            messagebox.showerror('Save Error',
+                                 f'Could not save project:\n{e}')
+            return False
+
+    def open_project(self, path=None):
+        """Open a project file, restoring full state."""
+        if self._dirty:
+            if not messagebox.askyesno(
+                    'Unsaved Changes',
+                    'Current session has unsaved changes.\n'
+                    'Open a new project anyway?'):
+                return False
+
+        if path is None:
+            path = filedialog.askopenfilename(
+                title='Open Project',
+                filetypes=[('NMR Project', f'*{PROJECT_EXT}'),
+                           ('All files', '*.*')])
+            if not path:
+                return False
+
+        try:
+            self.app.status_label.config(
+                text='Loading project…', foreground='blue')
+            self.app.root.update_idletasks()
+
+            with open(path, 'rb') as f:
+                state = pickle.load(f)
+
+            self._restore_state(state)
+            self.project_path = path
+            self._dirty       = False
+            self.app.status_label.config(
+                text=f'Project opened: {os.path.basename(path)}',
+                foreground='green')
+            self._start_autosave()
+            return True
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            messagebox.showerror('Open Error',
+                                 f'Could not open project:\n{e}')
+            return False
+
+    def save_or_saveas(self):
+        """Save to current path, or Save-As if no project open."""
+        if self._project_path:
+            return self.save_project(self._project_path)
+        return self.save_project()
+
+    # ── Auto-save ─────────────────────────────────────────────────────────────
+
+    def _start_autosave(self):
+        self._stop_autosave()
+        self._schedule_autosave()
+
+    def _stop_autosave(self):
+        if self._autosave_job is not None:
+            try:
+                self.app.root.after_cancel(self._autosave_job)
+            except Exception:
+                pass
+            self._autosave_job = None
+
+    def _schedule_autosave(self):
+        self._autosave_job = self.app.root.after(
+            AUTOSAVE_SECS * 1000, self._autosave_tick)
+
+    def _autosave_tick(self):
+        if self._project_path:
+            # Save to a .autosave companion file
+            autosave_path = self._project_path + '.autosave'
+            try:
+                state = self._collect_state()
+                with open(autosave_path, 'wb') as f:
+                    pickle.dump(state, f, protocol=5)
+                self.app.status_label.config(
+                    text=f'Auto-saved  {time.strftime("%H:%M")}',
+                    foreground='gray')
+            except Exception as e:
+                print(f'  autosave failed: {e}')
+        self._schedule_autosave()  # reschedule

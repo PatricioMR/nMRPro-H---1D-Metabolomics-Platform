@@ -1,0 +1,2034 @@
+J-Resolve run  2026-04-24 23:19:37
+Metabolites   : 322
+Peaks         : 211
+Anchor tol    : 0.020 ppm
+Phase 3 iter  : True
+ΔJ filter     : True (tol=1.5 Hz)
+Singlet anchor: True
+Solver        : cascade
+
+=== Overlap map (85 overlapping peaks) ===
+  Peak #   4  4.6310 ppm  →  D-Glucose, Glucose 6-phosphate, Adenosine triphosphate
+  Peak #   6  3.3654 ppm  →  Tryptamine, Metoprolol, Hypotaurine
+  Peak #   8  3.5463 ppm  →  Sucrose, Taurodeoxycholic acid, Propyl alcohol
+  Peak #  11  3.1596 ppm  →  1-Methylhistidine, beta-Alanine, Tryptamine, Methylmalonic acid
+  Peak #  13  3.8053 ppm  →  Ribothymidine, Glycylleucine
+  Peak #  14  3.2639 ppm  →  Taurine, 1-Methylhistamine, 3-Methoxytyramine, myo-Inositol
+  Peak #  15  3.4261 ppm  →  cis-Aconitic acid, 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid
+  Peak #  17  3.2752 ppm  →  Histamine, Ureidopropionic acid
+  Peak #  18  5.8599 ppm  →  FADH, FAD, Ribothymidine, Xanthosine, Progesterone, Guanosine, Corticosterone, Cytidine triphosphate, Cytidine, Cytarabine, Deoxycytidine, Deoxyuridine, Epitestosterone, NADH, Cytidine monophosphate, Guanosine diphosphate, Guanosine monophosphate, Cytosine, Uracil, 2-Octenoic acid, 2-Octenedioic acid, Traumatic acid
+  Peak #  19  3.8195 ppm  →  Gluconolactone, Guanosine, 3-Methoxybenzenepropanoic acid, Diphenhydramine, Sorbitol
+  Peak #  20  3.7497 ppm  →  Saccharopine, Sucrose, Propionylglycine, Phenylacetylglycine, L-Arabitol
+  Peak #  21  3.8611 ppm  →  gamma-Glutamylcysteine, 3-Mercaptopyruvic acid, Ranitidine
+  Peak #  23  3.7608 ppm  →  Acetylglycine, L-Arginine, Deoxyuridine
+  Peak #  27  3.8654 ppm  →  N-Acetylgalactosamine, 1,5-Anhydrosorbitol, Guanosine, Sucrose, Thiamine, Imipramine, 1-Methyladenosine
+  Peak #  29  3.4505 ppm  →  Maltitol, Ranitidine, Dihydrouracil
+  Peak #  31  5.3864 ppm  →  Phosphoenolpyruvic acid, D-Maltose, Glucosamine 6-phosphate, Sucrose, Thiamine, CE(16:0), Geraniol
+  Peak #  32  3.8805 ppm  →  3-Methoxytyramine, 3-Phosphoglyceric acid
+  Peak #  33  3.8855 ppm  →  Hydroxocobalamin, Melatonin, Glucosamine 6-phosphate, Sucrose, 5-Methoxytryptamine, L-Aspartic acid
+  Peak #  38  3.7379 ppm  →  Hydroxocobalamin, Maltitol, N6-Acetyl-L-lysine, Homo-L-arginine, Suberylglycine
+  Peak #  41  2.3597 ppm  →  Isocaproic acid, 5-Thymidylic acid, Ureidopropionic acid, Linoleic acid, Palmitic acid, Nonadecanoic acid, Myristic acid, Pentadecanoic acid
+  Peak #  42  7.9067 ppm  →  FADH, FAD, Xanthosine, N-Acetyl-L-phenylalanine, Guanosine, Histamine, L-Histidine, 3-Nitrotyrosine, N-Acetyl-L-aspartic acid, N-alpha-Acetyl-L-lysine, Deoxycholic acid glycine conjugate, Cytidine triphosphate, Cytidine, Cytarabine, Deoxycytidine, Uridine diphosphate glucose, Deoxyuridine, Quinaldic acid, Quinaldic acid
+  Peak #  45  3.8386 ppm  →  Deoxyuridine, 2-Hydroxy-3-methylbutyric acid, Ribonolactone
+  Peak #  46  2.3505 ppm  →  Dodecanoic acid, Behenic acid
+  Peak #  51  3.6887 ppm  →  Hydroxocobalamin, Allose, 1-Methylhistamine, Monomethyl glutaric acid
+  Peak #  53  3.4191 ppm  →  D-Xylose, Taurine
+  Peak #  54  2.3453 ppm  →  Elaidic acid, Arachidic acid, Heneicosanoic acid
+  Peak #  55  4.5160 ppm  →  L-Arabinose, Alpha-Lactose, FADH, FADH, FAD, FAD, Thymidine, Guanosine monophosphate, 1-Methyladenosine, Lactulose, NADP, NADP+
+  Peak #  58  3.6688 ppm  →  Sucrose, Phenylacetylglycine
+  Peak #  63  5.2471 ppm  →  L-Arabinose, D-Galactose, D-Glucuronic acid
+  Peak #  65  3.5165 ppm  →  D-Xylose, Galacturonic acid
+  Peak #  66  5.2400 ppm  →  D-Mannose, Phosphoenolpyruvic acid, D-Xylose, D-Glucose, Cellobiose, Glucose 6-phosphate, D-Maltose, Alpha-Lactose, N-Acetylgalactosamine, L-Fucose, Maltitol
+  Peak #  68  3.9167 ppm  →  D-Xylose, N-Acetylgalactosamine, Vinylacetylglycine, 1-Methyladenosine, 4-Aminohippuric acid
+  Peak #  69  4.0276 ppm  →  Gluconic acid, 2-Methylhippuric acid
+  Peak #  70  2.0738 ppm  →  Saccharopine, Epiandrosterone
+  Peak #  73  2.0473 ppm  →  Acetylglycine, Isovaleric acid
+  Peak #  74  3.2320 ppm  →  Carnosine, Symmetric dimethylarginine, O-Phosphoethanolamine
+  Peak #  75  2.1308 ppm  →  Progesterone, Succinylacetone
+  Peak #  80  2.3774 ppm  →  Corticosterone, Benzenebutanoic acid, 2-Methylhippuric acid
+  Peak #  83  4.0408 ppm  →  Sucrose, Phenylpropionylglycine
+  Peak #  84  3.4675 ppm  →  Melatonin, Sucrose, Uridine diphosphate glucose
+  Peak #  86  3.9760 ppm  →  D-Galactose, 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid
+  Peak #  92  2.1471 ppm  →  trans-2-Octenoic acid, Undecanoic acid
+  Peak #  93  3.0702 ppm  →  1-Methylhistidine, 3-Nitrotyrosine, Brompheniramine, 3-Methylhistamine
+  Peak #  94  3.7979 ppm  →  Tiglylglycine, Symmetric dimethylarginine
+  Peak # 100  3.6546 ppm  →  Gluconolactone, MANNOHEPTULOSE, L-Isoleucine
+  Peak # 107  2.7809 ppm  →  5-Aminolevulinic acid, Biocytin, Linoleic acid
+  Peak # 109  4.1227 ppm  →  Gluconic acid, 6-Phosphogluconic acid, Gluconolactone, Allose, Deoxyadenosine, L-Dihydroorotic acid, 4,5-Dihydroorotic acid, Deoxyadenosine monophosphate
+  Peak # 110  2.1095 ppm  →  N-Acetyl-L-methionine, 5'-Methylthioadenosine, Dimethylsulfide
+  Peak # 115  2.3211 ppm  →  FADH, FAD, Taurodeoxycholic acid, CE(16:0), 3-Methylindole, Isovalerylglutamic acid, 2-Piperidinone, TG(10:0/10:0/10:0)
+  Peak # 116  2.1598 ppm  →  Caprylic acid, Caproic acid, Heptanoic acid, Pelargonic acid
+  Peak # 119  3.9302 ppm  →  N-Acetylgalactosamine, 1-Methyladenosine
+  Peak # 121  2.1686 ppm  →  Levulinic acid, Monomethyl glutaric acid, Suberylglycine, 12-Hydroxydodecanoic acid, 3-Hydroxydodecanedioic acid, 2-Hydroxydecanedioic acid, Valeric acid, Aminocaproic acid, 3-Hydroxysuberic acid
+  Peak # 123  3.1279 ppm  →  5-Methoxytryptamine, Ethanolamine
+  Peak # 125  4.1014 ppm  →  Hexanoylglycine, Isobutyrylglycine, 2-Methylbutyrylglycine
+  Peak # 129  3.3888 ppm  →  3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid, 2-Pyrrolidinone
+  Peak # 130  3.6355 ppm  →  Allose, Octadecanol
+  Peak # 131  3.1955 ppm  →  3-Nitrotyrosine, Homo-L-arginine, N-Acetylputrescine
+  Peak # 136  0.0970 ppm  →  Epi-coprostanol, Epi-coprostanol
+  Peak # 138  2.2691 ppm  →  Hydroxocobalamin, Hexanoylglycine, 2-Aminoadipic acid, CE(16:0)
+  Peak # 147  3.1894 ppm  →  Biocytin, Carnosine, Metoprolol, N6-Acetyl-L-lysine
+  Peak # 152  2.3848 ppm  →  FADH, FAD, Levulinic acid, Saccharopine
+  Peak # 154  2.5693 ppm  →  Hydroxocobalamin, 3-Methoxybenzenepropanoic acid, Indole-3-propionic acid, Octanoylcarnitine
+  Peak # 156  2.8032 ppm  →  Metoprolol, L-Aspartic acid
+  Peak # 158  3.0307 ppm  →  Carnosine, Indole-3-propionic acid
+  Peak # 162  4.0610 ppm  →  D-Galactose, myo-Inositol, Galacturonic acid, Deoxycholic acid
+  Peak # 165  2.9959 ppm  →  Aspartyllysine, N-alpha-Acetyl-L-lysine, N-Acetylputrescine, Aminocaproic acid, 5-Aminopentanoic acid
+  Peak # 169  2.5383 ppm  →  gamma-Glutamylcysteine, 3-Hexanone, beta-Alanine, Stearic acid, Hydrocinnamic acid, 5-Aminolevulinic acid, Progesterone, 3-Hydroxyglutaric acid
+  Peak # 170  3.3105 ppm  →  D-Xylose, 5-Methoxytryptamine, 3-Methylhistamine, Serotonin
+  Peak # 172  4.8987 ppm  →  11a-Hydroxyprogesterone, Glucosamine 6-phosphate, Phenylpropanolamine
+  Peak # 178  4.0905 ppm  →  D-Glucuronic acid, Phosphoserine, 5-Aminolevulinic acid, Geraniol
+  Peak # 182  2.9273 ppm  →  1-Methylhistamine, Tyramine
+  Peak # 183  2.0170 ppm  →  N-alpha-Acetyl-L-lysine, Benzenebutanoic acid, N6-Acetyl-L-lysine, N-Acetylputrescine
+  Peak # 184  3.0215 ppm  →  Lisinopril, Ethylmalonic acid
+  Peak # 188  4.3450 ppm  →  Cytidine triphosphate, Galacturonic acid, Shikimic acid
+  Peak # 189  4.3393 ppm  →  Ribothymidine, Cytidine triphosphate, Ranitidine, Lisinopril
+  Peak # 190  2.4035 ppm  →  3-Hydroxyglutaric acid, Succinylacetone, Citramalic acid, 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid, Epitestosterone, (S)-3-Hydroxybutyric acid, Ibuprofen, gamma-Butyrolactone
+  Peak # 193  4.3029 ppm  →  Corticosterone, Cytidine, Cytarabine, Deoxyadenosine triphosphate, D-Ribose 5-phosphate
+  Peak # 197  2.7232 ppm  →  2-Isopropylmalic acid, Succinylacetone, Carnosine, Benzenebutanoic acid, L-Aspartic acid, Hypotaurine, Dihydrouracil, 2-Ketohexanoic acid
+  Peak # 198  4.2707 ppm  →  Hydroxocobalamin, L-Fucose, Ribothymidine, Xanthosine, Guanosine, Cytidine, Cytarabine, NADH, NADH, Cytidine monophosphate, Glutathione, Lactulose, Glycylleucine, Chlorogenic acid
+  Peak # 200  1.3249 ppm  →  Hydroxocobalamin, L-Fucose, L-Fucose, 2-Methylbutyrylglycine, Progesterone, 11a-Hydroxyprogesterone, Epitestosterone, Phenylpropanolamine, 3-Hydroxybutyric acid, (S)-3-Hydroxybutyric acid, L-Threonine, Octadecanol, Dihydrothymine, 5,6-dihydrothymine, Isovalerylalanine, Methylmalonic acid
+  Peak # 203  1.3372 ppm  →  Hydroxocobalamin, Aspartyllysine, 11a-Hydroxyprogesterone, Citramalic acid, Corticosterone, N-alpha-Acetyl-L-lysine, 3-Phenylbutyric acid, D-Lactic acid, L-Alanine, trans-2-Octenoic acid
+  Peak # 205  1.9207 ppm  →  N-Acetyl-L-tyrosine, Thymidine 5'-triphosphate, Deoxycorticosterone
+  Peak # 207  1.9141 ppm  →  Hydroxocobalamin, Thymidine, Ribothymidine, 5-Thymidylic acid, Tiglylglycine, Senecioic acid, Senecioic acid, N-Acetylserotonin, N-Acetyl-L-phenylalanine, Melatonin, 11a-Hydroxyprogesterone, Monomethyl glutaric acid, Lathosterol, Glutaric acid
+  Peak # 208  2.8394 ppm  →  N-Acetylserotonin, 3-Mercaptopyruvic acid, Oxoadipic acid
+  Peak # 210  7.6893 ppm  →  FADH, FADH, FAD, FAD, Thymidine, 1-Methylhistidine, Ribothymidine, 5-Thymidylic acid, N-Acetyl-L-tyrosine, 2-Furoylglycine, Thymidine 5'-triphosphate, Thymidine 5'-triphosphate, Quercetin, Iodotyrosine, Phenylglyoxylic acid, Benzoic acid, Coumarin, Coumarin, Tryptamine, Tryptamine, Pyridine, Indole-3-propionic acid, 3-Methylindole, Chlorogenic acid, Indole, Indole, Indoxyl sulfate, L-Tryptophan, Indolelactic acid
+
+J-validated metabolites : 229 (ΔJ ≤ 1.5 Hz on ≥1 multiplet)
+ΔJ filter removals      : 83
+Singlet-anchor removals : 79
+  Detail:
+  SKIP_ΔJ  D-Mannose                                rank= 102  ppm=3.5657  ΔJ=1.93 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Xylose                                 rank=  28  ppm=4.5538  ΔJ=1.80 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Galactose                              rank=  68  ppm=3.9167  ΔJ=1.75 Hz > 1.5 Hz
+  SKIP_ΔJ  Cellobiose                               rank=   5  ppm=4.6669  ΔJ=3.44 Hz > 1.5 Hz
+  SKIP_ΔJ  Glucose 6-phosphate                      rank=  30  ppm=3.7111  ΔJ=1.52 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Glucuronic acid                        rank=   2  ppm=4.6638  ΔJ=3.38 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Glucuronic acid                        rank=  17  ppm=3.2752  ΔJ=1.95 Hz > 1.5 Hz
+  SKIP_ΔJ  D-Maltose                                rank=  79  ppm=3.4131  ΔJ=1.66 Hz > 1.5 Hz
+  SKIP_ΔJ  Alpha-Lactose                            rank=  17  ppm=3.2752  ΔJ=1.97 Hz > 1.5 Hz
+  SKIP_ΔJ  Alpha-Lactose                            rank=  67  ppm=3.7310  ΔJ=1.58 Hz > 1.5 Hz
+  SKIP_ΔJ  L-Fucose                                 rank=  28  ppm=4.5538  ΔJ=1.81 Hz > 1.5 Hz
+  SKIP_SNG 5-Hydroxymethyluracil                    rank= 210  ppm=7.6893  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 5-Hydroxymethyluracil                    rank= 188  ppm=4.3450  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Pyridoxal 5'-phosphate                   rank= 210  ppm=7.6893  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Pyridoxal 5'-phosphate                   rank=  66  ppm=5.2400  ΔJ=2.56 Hz > 1.5 Hz
+  SKIP_ΔJ  Pyridoxal 5'-phosphate                   rank= 172  ppm=4.8987  ΔJ=2.67 Hz > 1.5 Hz
+  SKIP_SNG Pyridoxal 5'-phosphate                   rank= 169  ppm=2.5383  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Deacetyldiltiazem                        rank= 205  ppm=1.9207  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Deacetyldiltiazem                        rank=  27  ppm=3.8654  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Epinephrine                              rank=  14  ppm=3.2639  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Epinephrine                              rank= 149  ppm=2.7608  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  3-Hexanone                               rank= 171  ppm=2.5655  ΔJ=1.50 Hz > 1.5 Hz
+  SKIP_ΔJ  Folic acid                               rank=  66  ppm=5.2400  ΔJ=3.07 Hz > 1.5 Hz
+  SKIP_ΔJ  Hydrocinnamic acid                       rank= 185  ppm=2.8935  ΔJ=2.42 Hz > 1.5 Hz
+  SKIP_ΔJ  Gluconolactone                           rank=  69  ppm=4.0276  ΔJ=1.77 Hz > 1.5 Hz
+  SKIP_ΔJ  Vinylacetylglycine                       rank= 207  ppm=1.9141  ΔJ=2.62 Hz > 1.5 Hz
+  SKIP_SNG p-Hydroxyphenylacetic acid               rank=  12  ppm=3.4354  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Homovanillic acid                        rank=  12  ppm=3.4354  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Homovanillic acid                        rank=  21  ppm=3.8611  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  3-Methylcrotonylglycine                  rank= 109  ppm=4.1227  ΔJ=2.05 Hz > 1.5 Hz
+  SKIP_SNG 3-Methylcrotonylglycine                  rank= 207  ppm=1.9141  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Methylcrotonylglycine                  rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Aspartyllysine                           rank= 109  ppm=4.1227  ΔJ=3.03 Hz > 1.5 Hz
+  SKIP_ΔJ  Biocytin                                 rank= 138  ppm=2.2691  ΔJ=1.62 Hz > 1.5 Hz
+  SKIP_ΔJ  Biocytin                                 rank=  61  ppm=3.7227  ΔJ=1.61 Hz > 1.5 Hz
+  SKIP_ΔJ  3-Methoxytyramine                        rank= 176  ppm=2.9408  ΔJ=1.60 Hz > 1.5 Hz
+  SKIP_ΔJ  1,5-Anhydrosorbitol                      rank=  14  ppm=3.2639  ΔJ=4.10 Hz > 1.5 Hz
+  SKIP_ΔJ  Chlorpheniramine                         rank= 198  ppm=4.2707  ΔJ=1.83 Hz > 1.5 Hz
+  SKIP_SNG Urocanic acid                            rank=  42  ppm=7.9067  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Methylhistidine                        rank=  42  ppm=7.9067  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Methylhistidine                        rank=  43  ppm=3.7024  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Furoic acid                            rank=  42  ppm=7.9067  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Deoxyguanosine                           rank=  42  ppm=7.9067  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  3-Methoxybenzenepropanoic acid           rank= 185  ppm=2.8935  ΔJ=2.53 Hz > 1.5 Hz
+  SKIP_ΔJ  L-Arginine                               rank=  74  ppm=3.2320  ΔJ=2.65 Hz > 1.5 Hz
+  SKIP_ΔJ  Glyceraldehyde                           rank= 172  ppm=4.8987  ΔJ=1.67 Hz > 1.5 Hz
+  SKIP_ΔJ  Sucrose                                  rank= 198  ppm=4.2707  ΔJ=2.89 Hz > 1.5 Hz
+  SKIP_ΔJ  3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank=  65  ppm=3.5165  ΔJ=1.52 Hz > 1.5 Hz
+  SKIP_ΔJ  Propionylglycine                         rank= 133  ppm=2.2987  ΔJ=1.66 Hz > 1.5 Hz
+  SKIP_SNG Levoglucosan                             rank=  31  ppm=5.3864  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Thiamine                                 rank= 144  ppm=3.1842  ΔJ=1.57 Hz > 1.5 Hz
+  SKIP_SNG Galactaric acid                          rank=   9  ppm=3.9448  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Galactaric acid                          rank= 198  ppm=4.2707  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Riboflavin                               rank=  54  ppm=2.3453  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Riboflavin                               rank= 138  ppm=2.2691  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Tyramine                                 rank=  74  ppm=3.2320  ΔJ=2.30 Hz > 1.5 Hz
+  SKIP_SNG Cholestenone                             rank=  18  ppm=5.8599  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Cholestenone                             rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 16-Dehydroprogesterone                   rank=  18  ppm=5.8599  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 16-Dehydroprogesterone                   rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 16-Dehydroprogesterone                   rank= 138  ppm=2.2691  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Androstenedione                          rank=  18  ppm=5.8599  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Androstenedione                          rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Nutriacholic acid                        rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_SNG alpha-Tocopherol                         rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  alpha-Tocopherol                         rank= 154  ppm=2.5693  ΔJ=2.35 Hz > 1.5 Hz
+  SKIP_SNG alpha-Tocopherol                         rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 2,2-Dimethylsuccinic acid                rank= 200  ppm=1.3249  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Methoxytyrosine                        rank=  21  ppm=3.8611  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Hydroxymandelic acid                   rank= 172  ppm=4.8987  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Mandelic acid                            rank= 172  ppm=4.8987  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  3,4-Dihydroxyphenylglycol                rank=  51  ppm=3.6887  ΔJ=2.05 Hz > 1.5 Hz
+  SKIP_ΔJ  Phenylpropionylglycine                   rank= 154  ppm=2.5693  ΔJ=3.38 Hz > 1.5 Hz
+  SKIP_ΔJ  Phenylpropionylglycine                   rank= 168  ppm=2.9787  ΔJ=1.99 Hz > 1.5 Hz
+  SKIP_ΔJ  Androstanedione                          rank= 203  ppm=1.3372  ΔJ=3.38 Hz > 1.5 Hz
+  SKIP_ΔJ  Androstanedione                          rank= 134  ppm=2.2821  ΔJ=4.44 Hz > 1.5 Hz
+  SKIP_ΔJ  L-Methionine                             rank= 154  ppm=2.5693  ΔJ=3.19 Hz > 1.5 Hz
+  SKIP_SNG 4-Methoxyphenylacetic acid               rank=  13  ppm=3.8053  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 4-Methoxyphenylacetic acid               rank= 146  ppm=3.6194  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Ferulic acid                             rank=  33  ppm=3.8855  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Normetanephrine                          rank=  33  ppm=3.8855  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Isoferulic acid                          rank=  33  ppm=3.8855  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 5-Methoxytryptophan                      rank=  33  ppm=3.8855  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 3-Methoxy-4-Hydroxyphenylglycol sulfate  rank=  33  ppm=3.8855  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Famotidine                               rank= 154  ppm=2.5693  ΔJ=2.60 Hz > 1.5 Hz
+  SKIP_SNG Adenylsuccinic acid                      rank=   6  ppm=3.3654  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Adenylsuccinic acid                      rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  L-Threonine                              rank= 102  ppm=3.5657  ΔJ=2.45 Hz > 1.5 Hz
+  SKIP_ΔJ  N-Acryloylglycine                        rank=  32  ppm=3.8805  ΔJ=2.97 Hz > 1.5 Hz
+  SKIP_ΔJ  Isobutyryl-L-carnitine                   rank= 154  ppm=2.5693  ΔJ=1.69 Hz > 1.5 Hz
+  SKIP_ΔJ  Isobutyryl-L-carnitine                   rank= 146  ppm=3.6194  ΔJ=2.92 Hz > 1.5 Hz
+  SKIP_ΔJ  Dopamine                                 rank= 185  ppm=2.8935  ΔJ=2.70 Hz > 1.5 Hz
+  SKIP_ΔJ  Valerylglycine                           rank=  21  ppm=3.8611  ΔJ=3.26 Hz > 1.5 Hz
+  SKIP_SNG Loperamide                               rank= 176  ppm=2.9408  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Loperamide                               rank= 134  ppm=2.2821  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Fructose 6-phosphate                     rank= 198  ppm=4.2707  ΔJ=1.89 Hz > 1.5 Hz
+  SKIP_ΔJ  Brompheniramine                          rank= 198  ppm=4.2707  ΔJ=1.87 Hz > 1.5 Hz
+  SKIP_ΔJ  Lactulose                                rank=  28  ppm=4.5538  ΔJ=1.67 Hz > 1.5 Hz
+  SKIP_ΔJ  Tetrahydrofolic acid                     rank=  65  ppm=3.5165  ΔJ=1.71 Hz > 1.5 Hz
+  SKIP_ΔJ  5,6,7,8-Tetrahydrofolic acid             rank=  65  ppm=3.5165  ΔJ=1.71 Hz > 1.5 Hz
+  SKIP_SNG Benzyl alcohol                           rank=   7  ppm=4.7137  (not J-validated; J-validated candidate exists)
+  SKIP_SNG alpha-Hydroxyisobutyric acid             rank= 203  ppm=1.3372  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Mevalonic acid                           rank= 203  ppm=1.3372  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Dimethylmalonic acid                     rank= 203  ppm=1.3372  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 2-Hydroxy-2-methylbutyric acid           rank= 203  ppm=1.3372  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Monomethyl glutaric acid                 rank= 190  ppm=2.4035  ΔJ=1.90 Hz > 1.5 Hz
+  SKIP_SNG Acetaminophen                            rank= 183  ppm=2.0170  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Doxylamine                               rank= 183  ppm=2.0170  (not J-validated; J-validated candidate exists)
+  SKIP_SNG N-Acetyl-L-methionine                    rank= 141  ppm=2.0265  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Suberylglycine                           rank= 134  ppm=2.2821  ΔJ=2.56 Hz > 1.5 Hz
+  SKIP_SNG 17-Hydroxyprogesterone                   rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 17-Hydroxyprogesterone                   rank= 197  ppm=2.7232  (not J-validated; J-validated candidate exists)
+  SKIP_SNG D-Ribose                                 rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_SNG 4-Methylcatechol                         rank= 121  ppm=2.1686  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Acetone                                  rank= 138  ppm=2.2691  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  5-Aminopentanoic acid                    rank= 138  ppm=2.2691  ΔJ=2.01 Hz > 1.5 Hz
+  SKIP_ΔJ  N-Butyrylglycine                         rank= 134  ppm=2.2821  ΔJ=2.37 Hz > 1.5 Hz
+  SKIP_SNG Methyl propenyl ketone                   rank= 134  ppm=2.2821  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  2-Pyrrolidinone                          rank= 134  ppm=2.2821  ΔJ=3.12 Hz > 1.5 Hz
+  SKIP_SNG Succinic acid                            rank= 152  ppm=2.3848  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  (R)-Lipoic acid                          rank= 152  ppm=2.3848  ΔJ=1.80 Hz > 1.5 Hz
+  SKIP_ΔJ  Decanoylcarnitine                        rank= 190  ppm=2.4035  ΔJ=1.92 Hz > 1.5 Hz
+  SKIP_ΔJ  Decanoylcarnitine                        rank= 146  ppm=3.6194  ΔJ=3.37 Hz > 1.5 Hz
+  SKIP_ΔJ  3-Hydroxymethylglutaric acid             rank= 190  ppm=2.4035  ΔJ=1.80 Hz > 1.5 Hz
+  SKIP_ΔJ  gamma-Butyrolactone                      rank= 189  ppm=4.3393  ΔJ=3.30 Hz > 1.5 Hz
+  SKIP_SNG Dimethylamine                            rank= 169  ppm=2.5383  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Pseudoephedrine                          rank=  28  ppm=4.5538  ΔJ=2.64 Hz > 1.5 Hz
+  SKIP_SNG 17a-Ethynylestradiol                     rank= 154  ppm=2.5693  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Octanoylcarnitine                        rank= 146  ppm=3.6194  ΔJ=3.28 Hz > 1.5 Hz
+  SKIP_ΔJ  Ketoleucine                              rank= 197  ppm=2.7232  ΔJ=3.22 Hz > 1.5 Hz
+  SKIP_ΔJ  Palmitoylcarnitine                       rank= 197  ppm=2.7232  ΔJ=3.81 Hz > 1.5 Hz
+  SKIP_ΔJ  Palmitoylcarnitine                       rank=  43  ppm=3.7024  ΔJ=1.62 Hz > 1.5 Hz
+  SKIP_ΔJ  Lisinopril                               rank=  22  ppm=3.7705  ΔJ=1.60 Hz > 1.5 Hz
+  SKIP_SNG 1,1-Dimethylbiguanide                    rank= 158  ppm=3.0307  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Ethanolamine                             rank=  13  ppm=3.8053  ΔJ=3.22 Hz > 1.5 Hz
+  SKIP_SNG 2-Methylbutyroylcarnitine                rank= 113  ppm=3.2190  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  2-Methylbutyroylcarnitine                rank= 130  ppm=3.6355  ΔJ=2.90 Hz > 1.5 Hz
+  SKIP_ΔJ  Pipecolic acid                           rank= 124  ppm=3.4011  ΔJ=1.93 Hz > 1.5 Hz
+  SKIP_SNG Homoveratric acid                        rank=  85  ppm=3.4980  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Galacturonic acid                        rank=  28  ppm=4.5538  ΔJ=1.82 Hz > 1.5 Hz
+  SKIP_SNG 5-Hydroxyindoleacetic acid               rank= 102  ppm=3.5657  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Hydroxyphenylacetylglycine               rank= 102  ppm=3.5657  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Hydroxyphenylacetylglycine               rank=  76  ppm=3.8330  ΔJ=2.45 Hz > 1.5 Hz
+  SKIP_SNG 5alpha-Cholestanol                       rank= 146  ppm=3.6194  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Dihydroandrosterone                      rank= 130  ppm=3.6355  ΔJ=1.56 Hz > 1.5 Hz
+  SKIP_SNG 5-Methoxysalicylic acid                  rank=  61  ppm=3.7227  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Sorbitol                                 rank=  61  ppm=3.7227  ΔJ=2.09 Hz > 1.5 Hz
+  SKIP_SNG Aspartame                                rank=  67  ppm=3.7310  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  L-Glutamine                              rank=  22  ppm=3.7705  ΔJ=1.57 Hz > 1.5 Hz
+  SKIP_ΔJ  Erythritol                               rank=  22  ppm=3.7705  ΔJ=2.04 Hz > 1.5 Hz
+  SKIP_ΔJ  Ribonolactone                            rank=  55  ppm=4.5160  ΔJ=2.33 Hz > 1.5 Hz
+  SKIP_SNG Syringic acid                            rank=  45  ppm=3.8386  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Vanillic acid                            rank=  44  ppm=3.8956  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Hippuric acid                            rank=  91  ppm=3.9699  ΔJ=2.15 Hz > 1.5 Hz
+  SKIP_ΔJ  Salicyluric acid                         rank=  91  ppm=3.9699  ΔJ=1.75 Hz > 1.5 Hz
+  SKIP_ΔJ  4-Hydroxyproline                         rank= 189  ppm=4.3393  ΔJ=4.56 Hz > 1.5 Hz
+  SKIP_ΔJ  4-Hydroxyproline                         rank= 188  ppm=4.3450  ΔJ=4.56 Hz > 1.5 Hz
+  SKIP_SNG Tartaric acid                            rank= 189  ppm=4.3393  (not J-validated; J-validated candidate exists)
+  SKIP_ΔJ  Cyclic AMP                               rank= 189  ppm=4.3393  ΔJ=2.35 Hz > 1.5 Hz
+  SKIP_SNG 1-Methylnicotinamide                     rank=  55  ppm=4.5160  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Aminopterin                              rank=  28  ppm=4.5538  (not J-validated; J-validated candidate exists)
+  SKIP_SNG Sumiki's acid                            rank=  28  ppm=4.5538  (not J-validated; J-validated candidate exists)
+
+--- Phase 1: user-marked Good peaks → conc_est (clean peaks only) ---
+  → no anchor for Isocaproic acid  (good_peaks=0)
+  → no anchor for Dodecanoic acid  (good_peaks=0)
+  → no anchor for Behenic acid  (good_peaks=0)
+  SKIP_OVL Hydroxocobalamin                    rank= 207  ppm=1.9141  overlaps with: Thymidine, Ribothymidine, 5-Thymidylic acid +10 more
+  SKIP_OVL Hydroxocobalamin                    rank= 200  ppm=1.3249  overlaps with: L-Fucose, L-Fucose, 2-Methylbutyrylglycine +12 more
+  SKIP_OVL Hydroxocobalamin                    rank= 203  ppm=1.3372  overlaps with: Aspartyllysine, 11a-Hydroxyprogesterone, Citramalic acid +6 more
+  SKIP_OVL Hydroxocobalamin                    rank= 138  ppm=2.2691  overlaps with: Hexanoylglycine, 2-Aminoadipic acid, CE(16:0)
+  SKIP_OVL Hydroxocobalamin                    rank= 154  ppm=2.5693  overlaps with: 3-Methoxybenzenepropanoic acid, Indole-3-propionic acid, Octanoylcarnitine
+  → no anchor for Hydroxocobalamin  (all 5 Good peak(s) are overlapped)
+  → no anchor for D-Mannose  (good_peaks=0)
+  → no anchor for Phosphoenolpyruvic acid  (good_peaks=0)
+  D-Xylose                            rank= 170  ppm=3.3105  J-ANCHOR-SINGLET  anchor_I=1.881e+04  eff_nH=0.250  probe=7.523e+04  (overlaps: 5-Methoxytryptamine, 3-Methylhistamine)
+  D-Xylose                            rank=  68  ppm=3.9167  J-ANCHOR-SINGLET  anchor_I=1.881e+04  eff_nH=0.250  probe=7.523e+04  (overlaps: N-Acetylgalactosamine, Vinylacetylglycine)
+  D-Xylose                            rank= 127  ppm=3.2086  area=350  mult=dd  nH=1  eff_nH=0.250  probe=1400
+  D-Xylose                            rank=  28  ppm=4.5538  J-ANCHOR-SINGLET  anchor_I=1.881e+04  eff_nH=0.500  probe=3.762e+04  (overlaps: D-threo-Isocitric acid)
+  → ANCHORED D-Xylose  conc_est=5.642e+04  (from 4 clean probe(s))
+  SKIP_OVL Elaidic acid                        rank=  54  ppm=2.3453  overlaps with: Arachidic acid, Heneicosanoic acid
+  → no anchor for Elaidic acid  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL Arachidic acid                      rank=  54  ppm=2.3453  overlaps with: Elaidic acid, Heneicosanoic acid
+  → no anchor for Arachidic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for L-Arabinose  (good_peaks=0)
+  → no anchor for D-Galactose  (good_peaks=0)
+  → no anchor for D-Glucose  (good_peaks=0)
+  → no anchor for Cellobiose  (good_peaks=0)
+  → no anchor for Glucose 6-phosphate  (good_peaks=0)
+  SKIP_OVL D-Glucuronic acid                   rank=  63  ppm=5.2471  overlaps with: L-Arabinose, D-Galactose
+  D-Glucuronic acid                   rank=  17  ppm=3.2752  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: Histamine, Ureidopropionic acid)
+  → ANCHORED D-Glucuronic acid  conc_est=6767  (from 1 clean probe(s))
+  → no anchor for D-Maltose  (good_peaks=0)
+  Alpha-Lactose                       rank=  17  ppm=3.2752  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: Histamine, Ureidopropionic acid)
+  Alpha-Lactose                       rank=  67  ppm=3.7310  area=998.9  mult=t  nH=1  eff_nH=0.500  probe=1998
+  Alpha-Lactose                       rank=  55  ppm=4.5160  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: L-Arabinose, FADH)
+  → ANCHORED Alpha-Lactose  conc_est=6767  (from 3 clean probe(s))
+  N-Acetylgalactosamine               rank=  52  ppm=4.0032  area=2920  mult=d  nH=1  eff_nH=0.500  probe=5840
+  N-Acetylgalactosamine               rank=  27  ppm=3.8654  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: 1,5-Anhydrosorbitol, Guanosine)
+  N-Acetylgalactosamine               rank=  68  ppm=3.9167  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: D-Xylose, Vinylacetylglycine)
+  N-Acetylgalactosamine               rank= 119  ppm=3.9302  J-ANCHOR-SINGLET  anchor_I=3383  eff_nH=0.500  probe=6767  (overlaps: 1-Methyladenosine)
+  → ANCHORED N-Acetylgalactosamine  conc_est=6767  (from 4 clean probe(s))
+  → no anchor for L-Fucose  (good_peaks=0)
+  SKIP_OVL Maltitol                            rank=  66  ppm=5.2400  overlaps with: D-Mannose, Phosphoenolpyruvic acid, D-Xylose +7 more
+  SKIP_OVL Maltitol                            rank=  38  ppm=3.7379  overlaps with: Hydroxocobalamin, N6-Acetyl-L-lysine, Homo-L-arginine +1 more
+  → no anchor for Maltitol  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL FADH                                rank= 210  ppm=7.6893  overlaps with: FAD, FAD, Thymidine +24 more
+  SKIP_OVL FADH                                rank= 210  ppm=7.6893  overlaps with: FAD, FAD, Thymidine +24 more
+  SKIP_OVL FADH                                rank=  42  ppm=7.9067  overlaps with: FAD, Xanthosine, N-Acetyl-L-phenylalanine +15 more
+  FADH                                rank=  18  ppm=5.8599  J-ANCHOR-SINGLET  anchor_I=7317  eff_nH=0.500  probe=1.463e+04  (overlaps: FAD, Ribothymidine)
+  SKIP_OVL FADH                                rank= 115  ppm=2.3211  overlaps with: FAD, Taurodeoxycholic acid, CE(16:0) +4 more
+  SKIP_OVL FADH                                rank= 152  ppm=2.3848  overlaps with: FAD, Levulinic acid, Saccharopine
+  FADH                                rank=  55  ppm=4.5160  J-ANCHOR-SINGLET  anchor_I=7317  eff_nH=0.500  probe=1.463e+04  (overlaps: L-Arabinose, Alpha-Lactose)
+  → ANCHORED FADH  conc_est=1.463e+04  (from 2 clean probe(s))
+  SKIP_OVL FAD                                 rank= 210  ppm=7.6893  overlaps with: FADH, FADH, Thymidine +24 more
+  SKIP_OVL FAD                                 rank= 210  ppm=7.6893  overlaps with: FADH, FADH, Thymidine +24 more
+  SKIP_OVL FAD                                 rank=  42  ppm=7.9067  overlaps with: FADH, Xanthosine, N-Acetyl-L-phenylalanine +15 more
+  FAD                                 rank=  18  ppm=5.8599  J-ANCHOR-SINGLET  anchor_I=7317  eff_nH=0.500  probe=1.463e+04  (overlaps: FADH, Ribothymidine)
+  SKIP_OVL FAD                                 rank= 115  ppm=2.3211  overlaps with: FADH, Taurodeoxycholic acid, CE(16:0) +4 more
+  SKIP_OVL FAD                                 rank= 152  ppm=2.3848  overlaps with: FADH, Levulinic acid, Saccharopine
+  FAD                                 rank=  55  ppm=4.5160  J-ANCHOR-SINGLET  anchor_I=7317  eff_nH=0.500  probe=1.463e+04  (overlaps: L-Arabinose, Alpha-Lactose)
+  → ANCHORED FAD  conc_est=1.463e+04  (from 2 clean probe(s))
+  → no anchor for 5-Hydroxymethyluracil  (good_peaks=0)
+  SKIP_OVL Thymidine                           rank= 210  ppm=7.6893  overlaps with: FADH, FADH, FAD +25 more
+  SKIP_OVL Thymidine                           rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Ribothymidine, 5-Thymidylic acid +10 more
+  → no anchor for Thymidine  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL 1-Methylhistidine                   rank= 210  ppm=7.6893  overlaps with: FADH, FADH, FAD +25 more
+  1-Methylhistidine                   rank=  34  ppm=3.6842  area=2636  mult=s  nH=1  eff_nH=1.000  probe=2636
+  → ANCHORED 1-Methylhistidine  conc_est=2636  (from 1 clean probe(s))
+  SKIP_OVL Ribothymidine                       rank= 210  ppm=7.6893  overlaps with: FADH, FADH, FAD +25 more
+  SKIP_OVL Ribothymidine                       rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, 5-Thymidylic acid +10 more
+  → no anchor for Ribothymidine  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL 5-Thymidylic acid                   rank= 210  ppm=7.6893  overlaps with: FADH, FADH, FAD +25 more
+  SKIP_OVL 5-Thymidylic acid                   rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, Ribothymidine +10 more
+  → no anchor for 5-Thymidylic acid  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL Pyridoxal 5'-phosphate              rank= 210  ppm=7.6893  overlaps with: FADH, FADH, FAD +26 more
+  SKIP_OVL Pyridoxal 5'-phosphate              rank= 169  ppm=2.5383  overlaps with: gamma-Glutamylcysteine, 3-Hexanone, beta-Alanine +5 more
+  → no anchor for Pyridoxal 5'-phosphate  (all 2 Good peak(s) are overlapped)
+  → no anchor for Deacetyldiltiazem  (good_peaks=0)
+  SKIP_OVL N-Acetyl-L-tyrosine                 rank= 205  ppm=1.9207  overlaps with: Thymidine 5'-triphosphate, Deoxycorticosterone
+  → no anchor for N-Acetyl-L-tyrosine  (all 1 Good peak(s) are overlapped)
+  → no anchor for 2-Furoylglycine  (good_peaks=0)
+  → no anchor for Thymidine 5'-triphosphate  (good_peaks=0)
+  Phosphoserine                       rank= 112  ppm=4.1172  area=382.9  mult=t  nH=1  eff_nH=0.500  probe=765.7
+  SKIP_OVL Phosphoserine                       rank= 178  ppm=4.0905  overlaps with: D-Glucuronic acid, 5-Aminolevulinic acid, Geraniol
+  → ANCHORED Phosphoserine  conc_est=765.7  (from 1 clean probe(s))
+  → no anchor for Epinephrine  (good_peaks=0)
+  SKIP_OVL gamma-Glutamylcysteine              rank=  21  ppm=3.8611  overlaps with: 3-Mercaptopyruvic acid, Ranitidine
+  → no anchor for gamma-Glutamylcysteine  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL 3-Hexanone                          rank= 169  ppm=2.5383  overlaps with: gamma-Glutamylcysteine, beta-Alanine, Stearic acid +4 more
+  3-Hexanone                          rank= 171  ppm=2.5655  area=48.34  mult=q  nH=1  eff_nH=0.375  probe=128.9
+  → ANCHORED 3-Hexanone  conc_est=128.9  (from 1 clean probe(s))
+  → no anchor for Folic acid  (good_peaks=0)
+  → no anchor for beta-Alanine  (good_peaks=0)
+  → no anchor for Stearic acid  (good_peaks=0)
+  → no anchor for Quercetin  (good_peaks=0)
+  → no anchor for Iodotyrosine  (good_peaks=0)
+  Hydrocinnamic acid                  rank= 185  ppm=2.8935  J-ANCHOR-SINGLET  anchor_I=604.2  eff_nH=0.500  probe=1208  (overlaps: D-threo-Isocitric acid)
+  → ANCHORED Hydrocinnamic acid  conc_est=1208  (from 1 clean probe(s))
+  → no anchor for Hexanoylglycine  (good_peaks=0)
+  → no anchor for Isobutyrylglycine  (good_peaks=0)
+  → no anchor for 2-Methylbutyrylglycine  (good_peaks=0)
+  → no anchor for Tiglylglycine  (good_peaks=0)
+  5-Aminolevulinic acid               rank= 169  ppm=2.5383  J-ANCHOR-SINGLET  anchor_I=928.1  eff_nH=0.500  probe=1856  (overlaps: gamma-Glutamylcysteine, 3-Hexanone)
+  SKIP_OVL 5-Aminolevulinic acid               rank= 178  ppm=4.0905  overlaps with: D-Glucuronic acid, Phosphoserine, Geraniol
+  → ANCHORED 5-Aminolevulinic acid  conc_est=1856  (from 1 clean probe(s))
+  → no anchor for Senecioic acid  (good_peaks=0)
+  SKIP_OVL Gluconic acid                       rank= 109  ppm=4.1227  overlaps with: 6-Phosphogluconic acid, Gluconolactone, Allose +4 more
+  → no anchor for Gluconic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for 6-Phosphogluconic acid  (good_peaks=0)
+  SKIP_OVL Gluconolactone                      rank= 100  ppm=3.6546  overlaps with: MANNOHEPTULOSE, L-Isoleucine
+  → no anchor for Gluconolactone  (all 1 Good peak(s) are overlapped)
+  Allose                              rank= 130  ppm=3.6355  J-ANCHOR-SINGLET  anchor_I=1112  eff_nH=0.250  probe=4449  (overlaps: Octadecanol)
+  → ANCHORED Allose  conc_est=4449  (from 1 clean probe(s))
+  → no anchor for Vinylacetylglycine  (good_peaks=0)
+  → no anchor for p-Hydroxyphenylacetic acid  (good_peaks=0)
+  → no anchor for Homovanillic acid  (good_peaks=0)
+  SKIP_OVL 3-Methylcrotonylglycine             rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, Ribothymidine +11 more
+  SKIP_OVL 3-Methylcrotonylglycine             rank= 121  ppm=2.1686  overlaps with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine +6 more
+  → no anchor for 3-Methylcrotonylglycine  (all 2 Good peak(s) are overlapped)
+  → no anchor for Deoxyadenosine  (good_peaks=0)
+  → no anchor for Aspartyllysine  (good_peaks=0)
+  → no anchor for L-Dihydroorotic acid  (good_peaks=0)
+  → no anchor for 4,5-Dihydroorotic acid  (good_peaks=0)
+  → no anchor for Phenylglyoxylic acid  (good_peaks=0)
+  → no anchor for Benzoic acid  (good_peaks=0)
+  → no anchor for Coumarin  (good_peaks=0)
+  SKIP_OVL Xanthosine                          rank=  42  ppm=7.9067  overlaps with: FADH, FAD, N-Acetyl-L-phenylalanine +15 more
+  → no anchor for Xanthosine  (all 1 Good peak(s) are overlapped)
+  Progesterone                        rank=  75  ppm=2.1308  J-ANCHOR-SINGLET  anchor_I=635.7  eff_nH=1.000  probe=635.7  (overlaps: Succinylacetone)
+  SKIP_OVL Progesterone                        rank=  18  ppm=5.8599  overlaps with: FADH, FAD, Ribothymidine +18 more
+  SKIP_OVL Progesterone                        rank= 200  ppm=1.3249  overlaps with: Hydroxocobalamin, L-Fucose, L-Fucose +12 more
+  → ANCHORED Progesterone  conc_est=635.7  (from 1 clean probe(s))
+  SKIP_OVL N-Acetylserotonin                   rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, Ribothymidine +10 more
+  → no anchor for N-Acetylserotonin  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL N-Acetyl-L-phenylalanine            rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, Ribothymidine +10 more
+  → no anchor for N-Acetyl-L-phenylalanine  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL Melatonin                           rank= 207  ppm=1.9141  overlaps with: Hydroxocobalamin, Thymidine, Ribothymidine +10 more
+  Melatonin                           rank=  33  ppm=3.8855  J-ANCHOR-SINGLET  anchor_I=5151  eff_nH=1.000  probe=5151  (overlaps: Hydroxocobalamin, Glucosamine 6-phosphate)
+  → ANCHORED Melatonin  conc_est=5151  (from 1 clean probe(s))
+  → no anchor for Deoxyadenosine monophosphate  (good_peaks=0)
+  → no anchor for 3-Mercaptopyruvic acid  (good_peaks=0)
+  SKIP_OVL Biocytin                            rank= 107  ppm=2.7809  overlaps with: 5-Aminolevulinic acid, Linoleic acid
+  Biocytin                            rank= 138  ppm=2.2691  J-ANCHOR-SINGLET  anchor_I=928.1  eff_nH=0.500  probe=1856  (overlaps: Hydroxocobalamin, Hexanoylglycine)
+  → ANCHORED Biocytin  conc_est=1856  (from 1 clean probe(s))
+  → no anchor for 2-Isopropylmalic acid  (good_peaks=0)
+  → no anchor for 3-Hydroxyglutaric acid  (good_peaks=0)
+  Taurine                             rank=  14  ppm=3.2639  J-ANCHOR-SINGLET  anchor_I=1.455e+04  eff_nH=0.500  probe=2.91e+04  (overlaps: 1-Methylhistamine, 3-Methoxytyramine)
+  SKIP_OVL Taurine                             rank=  53  ppm=3.4191  overlaps with: D-Xylose
+  → ANCHORED Taurine  conc_est=2.91e+04  (from 1 clean probe(s))
+  → no anchor for 2-Ketobutyric acid  (good_peaks=0)
+  SKIP_OVL 1-Methylhistamine                   rank=  51  ppm=3.6887  overlaps with: Hydroxocobalamin, Allose, Monomethyl glutaric acid
+  → no anchor for 1-Methylhistamine  (all 1 Good peak(s) are overlapped)
+  → no anchor for Propylene glycol  (good_peaks=0)
+  SKIP_OVL 3-Methoxytyramine                   rank=  32  ppm=3.8805  overlaps with: 3-Phosphoglyceric acid
+  → no anchor for 3-Methoxytyramine  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL 1,5-Anhydrosorbitol                 rank=  27  ppm=3.8654  overlaps with: N-Acetylgalactosamine, Guanosine, Sucrose +3 more
+  1,5-Anhydrosorbitol                 rank=  14  ppm=3.2639  J-ANCHOR-SINGLET  anchor_I=1.128e+04  eff_nH=0.500  probe=2.255e+04  (overlaps: Taurine, 1-Methylhistamine)
+  → ANCHORED 1,5-Anhydrosorbitol  conc_est=2.255e+04  (from 1 clean probe(s))
+  → no anchor for cis-Aconitic acid  (good_peaks=0)
+  → no anchor for 2-Phenylbutyric acid  (good_peaks=0)
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 172  ppm=4.8987  overlaps with: Glucosamine 6-phosphate, Phenylpropanolamine
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 203  ppm=1.3372  overlaps with: Hydroxocobalamin, Aspartyllysine, Citramalic acid +6 more
+  → no anchor for 11a-Hydroxyprogesterone  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL Succinylacetone                     rank=  75  ppm=2.1308  overlaps with: Progesterone
+  Succinylacetone                     rank=  43  ppm=3.7024  area=1957  mult=s  nH=1  eff_nH=1.000  probe=1957
+  Succinylacetone                     rank= 190  ppm=2.4035  J-ANCHOR-SINGLET  anchor_I=277.8  eff_nH=0.500  probe=555.7  (overlaps: 3-Hydroxyglutaric acid, Citramalic acid)
+  → ANCHORED Succinylacetone  conc_est=1256  (from 2 clean probe(s))
+  → no anchor for Chlorpheniramine  (good_peaks=0)
+  SKIP_OVL Levulinic acid                      rank= 121  ppm=2.1686  overlaps with: Monomethyl glutaric acid, Suberylglycine, 12-Hydroxydodecanoic acid +5 more
+  → no anchor for Levulinic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Urocanic acid  (good_peaks=0)
+  → no anchor for 3-Methylhistidine  (good_peaks=0)
+  → no anchor for 3-Furoic acid  (good_peaks=0)
+  → no anchor for Deoxyguanosine  (good_peaks=0)
+  SKIP_OVL Guanosine                           rank=  42  ppm=7.9067  overlaps with: FADH, FAD, Xanthosine +15 more
+  → no anchor for Guanosine  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL Histamine                           rank=  42  ppm=7.9067  overlaps with: FADH, FAD, Xanthosine +15 more
+  → no anchor for Histamine  (all 1 Good peak(s) are overlapped)
+  → no anchor for L-Histidine  (good_peaks=0)
+  → no anchor for 3-Nitrotyrosine  (good_peaks=0)
+  SKIP_OVL Acetylglycine                       rank=  23  ppm=3.7608  overlaps with: L-Arginine, Deoxyuridine
+  SKIP_OVL Acetylglycine                       rank=  73  ppm=2.0473  overlaps with: Isovaleric acid
+  → no anchor for Acetylglycine  (all 2 Good peak(s) are overlapped)
+  → no anchor for Dimethylglycine  (good_peaks=0)
+  SKIP_OVL 3-Methoxybenzenepropanoic acid      rank=  19  ppm=3.8195  overlaps with: Gluconolactone, Guanosine, Diphenhydramine +1 more
+  → no anchor for 3-Methoxybenzenepropanoic acid  (all 1 Good peak(s) are overlapped)
+  Citramalic acid                     rank= 187  ppm=2.7526  area=54.47  mult=d  nH=1  eff_nH=0.500  probe=108.9
+  SKIP_OVL Citramalic acid                     rank= 203  ppm=1.3372  overlaps with: Hydroxocobalamin, Aspartyllysine, 11a-Hydroxyprogesterone +6 more
+  SKIP_OVL Citramalic acid                     rank= 190  ppm=2.4035  overlaps with: 3-Hydroxyglutaric acid, Succinylacetone, 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid +4 more
+  → ANCHORED Citramalic acid  conc_est=108.9  (from 1 clean probe(s))
+  SKIP_OVL Corticosterone                      rank=  18  ppm=5.8599  overlaps with: FADH, FAD, Ribothymidine +18 more
+  SKIP_OVL Corticosterone                      rank= 203  ppm=1.3372  overlaps with: Hydroxocobalamin, Aspartyllysine, 11a-Hydroxyprogesterone +6 more
+  → no anchor for Corticosterone  (all 2 Good peak(s) are overlapped)
+  → no anchor for Heneicosanoic acid  (good_peaks=0)
+  L-Arginine                          rank=  74  ppm=3.2320  J-ANCHOR-SINGLET  anchor_I=1.967e+04  eff_nH=0.500  probe=3.934e+04  (overlaps: Carnosine, Symmetric dimethylarginine)
+  → ANCHORED L-Arginine  conc_est=3.934e+04  (from 1 clean probe(s))
+  Carnosine                           rank= 158  ppm=3.0307  J-ANCHOR-SINGLET  anchor_I=1379  eff_nH=0.250  probe=5517  (overlaps: Indole-3-propionic acid)
+  Carnosine                           rank= 147  ppm=3.1894  J-ANCHOR-SINGLET  anchor_I=1379  eff_nH=0.250  probe=5517  (overlaps: Biocytin, Metoprolol)
+  → ANCHORED Carnosine  conc_est=5517  (from 2 clean probe(s))
+  N-Acetyl-L-aspartic acid            rank= 141  ppm=2.0265  area=172.3  mult=s  nH=1  eff_nH=1.000  probe=172.3
+  → ANCHORED N-Acetyl-L-aspartic acid  conc_est=172.3  (from 1 clean probe(s))
+  SKIP_OVL N-alpha-Acetyl-L-lysine             rank= 183  ppm=2.0170  overlaps with: Benzenebutanoic acid, N6-Acetyl-L-lysine, N-Acetylputrescine
+  → no anchor for N-alpha-Acetyl-L-lysine  (all 1 Good peak(s) are overlapped)
+  → no anchor for Glyceraldehyde  (good_peaks=0)
+  → no anchor for Deoxycholic acid glycine conjugate  (good_peaks=0)
+  SKIP_OVL Saccharopine                        rank=  20  ppm=3.7497  overlaps with: Sucrose, Propionylglycine, Phenylacetylglycine +1 more
+  → no anchor for Saccharopine  (all 1 Good peak(s) are overlapped)
+  → no anchor for Cytidine triphosphate  (good_peaks=0)
+  Cytidine                            rank= 193  ppm=4.3029  J-ANCHOR-SINGLET  anchor_I=225  eff_nH=0.500  probe=450  (overlaps: Corticosterone, Cytarabine)
+  → ANCHORED Cytidine  conc_est=450  (from 1 clean probe(s))
+  Cytarabine                          rank= 193  ppm=4.3029  J-ANCHOR-SINGLET  anchor_I=225  eff_nH=0.500  probe=450  (overlaps: Corticosterone, Cytidine)
+  → ANCHORED Cytarabine  conc_est=450  (from 1 clean probe(s))
+  SKIP_OVL Glucosamine 6-phosphate             rank= 172  ppm=4.8987  overlaps with: 11a-Hydroxyprogesterone, Phenylpropanolamine
+  → no anchor for Glucosamine 6-phosphate  (all 1 Good peak(s) are overlapped)
+  Sucrose                             rank=   8  ppm=3.5463  J-ANCHOR-SINGLET  anchor_I=2.433e+04  eff_nH=0.250  probe=9.733e+04  (overlaps: Taurodeoxycholic acid, Propyl alcohol)
+  Sucrose                             rank=  33  ppm=3.8855  J-ANCHOR-SINGLET  anchor_I=2.433e+04  eff_nH=0.250  probe=9.733e+04  (overlaps: Hydroxocobalamin, Melatonin)
+  Sucrose                             rank=  27  ppm=3.8654  J-ANCHOR-SINGLET  anchor_I=2.433e+04  eff_nH=0.250  probe=9.733e+04  (overlaps: N-Acetylgalactosamine, 1,5-Anhydrosorbitol)
+  SKIP_OVL Sucrose                             rank=  84  ppm=3.4675  overlaps with: Melatonin, Uridine diphosphate glucose
+  SKIP_OVL Sucrose                             rank=  58  ppm=3.6688  overlaps with: Phenylacetylglycine
+  → ANCHORED Sucrose  conc_est=9.733e+04  (from 3 clean probe(s))
+  → no anchor for Deoxycytidine  (good_peaks=0)
+  Uridine diphosphate glucose         rank=  42  ppm=7.9067  J-ANCHOR-SINGLET  anchor_I=5118  eff_nH=0.500  probe=1.024e+04  (overlaps: FADH, FAD)
+  → ANCHORED Uridine diphosphate glucose  conc_est=1.024e+04  (from 1 clean probe(s))
+  → no anchor for Deoxyuridine  (good_peaks=0)
+  → no anchor for Quinaldic acid  (good_peaks=0)
+  → no anchor for Citrulline  (good_peaks=0)
+  SKIP_OVL 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank=  86  ppm=3.9760  overlaps with: D-Galactose
+  → no anchor for 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Deoxycorticosterone  (good_peaks=0)
+  → no anchor for Propionylglycine  (good_peaks=0)
+  → no anchor for Levoglucosan  (good_peaks=0)
+  Thiamine                            rank=  31  ppm=5.3864  J-ANCHOR-SINGLET  anchor_I=1.002e+04  eff_nH=1.000  probe=1.002e+04  (overlaps: Phosphoenolpyruvic acid, D-Maltose)
+  → ANCHORED Thiamine  conc_est=1.002e+04  (from 1 clean probe(s))
+  SKIP_OVL Phenylacetylglycine                 rank=  58  ppm=3.6688  overlaps with: Sucrose
+  → no anchor for Phenylacetylglycine  (all 1 Good peak(s) are overlapped)
+  → no anchor for Epi-coprostanol  (good_peaks=0)
+  Taurodeoxycholic acid               rank= 117  ppm=3.0541  area=298  mult=t  nH=1  eff_nH=0.500  probe=596.1
+  → ANCHORED Taurodeoxycholic acid  conc_est=596.1  (from 1 clean probe(s))
+  → no anchor for Galactaric acid  (good_peaks=0)
+  Ureidopropionic acid                rank=  41  ppm=2.3597  J-ANCHOR-SINGLET  anchor_I=1.214e+04  eff_nH=0.500  probe=2.427e+04  (overlaps: Isocaproic acid, 5-Thymidylic acid)
+  → ANCHORED Ureidopropionic acid  conc_est=2.427e+04  (from 1 clean probe(s))
+  → no anchor for Riboflavin  (good_peaks=0)
+  → no anchor for Linoleic acid  (good_peaks=0)
+  SKIP_OVL Palmitic acid                       rank=  41  ppm=2.3597  overlaps with: Isocaproic acid, 5-Thymidylic acid, Ureidopropionic acid +4 more
+  → no anchor for Palmitic acid  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL Nonadecanoic acid                   rank=  41  ppm=2.3597  overlaps with: Isocaproic acid, 5-Thymidylic acid, Ureidopropionic acid +4 more
+  → no anchor for Nonadecanoic acid  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL Myristic acid                       rank=  41  ppm=2.3597  overlaps with: Isocaproic acid, 5-Thymidylic acid, Ureidopropionic acid +4 more
+  → no anchor for Myristic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Pentadecanoic acid  (good_peaks=0)
+  → no anchor for 3-Phosphoglyceric acid  (good_peaks=0)
+  Symmetric dimethylarginine          rank=  94  ppm=3.7979  J-ANCHOR-SINGLET  anchor_I=1.48e+04  eff_nH=0.500  probe=2.96e+04  (overlaps: Tiglylglycine)
+  → ANCHORED Symmetric dimethylarginine  conc_est=2.96e+04  (from 1 clean probe(s))
+  → no anchor for Tyramine  (good_peaks=0)
+  → no anchor for Cholestenone  (good_peaks=0)
+  SKIP_OVL Epitestosterone                     rank=  18  ppm=5.8599  overlaps with: FADH, FAD, Ribothymidine +18 more
+  SKIP_OVL Epitestosterone                     rank= 200  ppm=1.3249  overlaps with: Hydroxocobalamin, L-Fucose, L-Fucose +12 more
+  → no anchor for Epitestosterone  (all 2 Good peak(s) are overlapped)
+  → no anchor for 16-Dehydroprogesterone  (good_peaks=0)
+  → no anchor for Androstenedione  (good_peaks=0)
+  → no anchor for NADH  (good_peaks=0)
+  → no anchor for Cytidine monophosphate  (good_peaks=0)
+  → no anchor for Guanosine diphosphate  (good_peaks=0)
+  → no anchor for Guanosine monophosphate  (good_peaks=0)
+  → no anchor for Glutathione  (good_peaks=0)
+  → no anchor for Cytosine  (good_peaks=0)
+  → no anchor for Nutriacholic acid  (good_peaks=0)
+  SKIP_OVL alpha-Tocopherol                    rank= 200  ppm=1.3249  overlaps with: Hydroxocobalamin, L-Fucose, L-Fucose +13 more
+  SKIP_OVL alpha-Tocopherol                    rank= 121  ppm=2.1686  overlaps with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine +6 more
+  → no anchor for alpha-Tocopherol  (all 2 Good peak(s) are overlapped)
+  → no anchor for 2,2-Dimethylsuccinic acid  (good_peaks=0)
+  → no anchor for Uracil  (good_peaks=0)
+  → no anchor for Phenylpropanolamine  (good_peaks=0)
+  Benzenebutanoic acid                rank= 183  ppm=2.0170  J-ANCHOR-SINGLET  anchor_I=2019  eff_nH=1.000  probe=2019  (overlaps: N-alpha-Acetyl-L-lysine, N6-Acetyl-L-lysine)
+  SKIP_OVL Benzenebutanoic acid                rank=  80  ppm=2.3774  overlaps with: Corticosterone, 2-Methylhippuric acid
+  → ANCHORED Benzenebutanoic acid  conc_est=2019  (from 1 clean probe(s))
+  Ranitidine                          rank=  21  ppm=3.8611  J-ANCHOR-SINGLET  anchor_I=6125  eff_nH=1.000  probe=6125  (overlaps: gamma-Glutamylcysteine, 3-Mercaptopyruvic acid)
+  SKIP_OVL Ranitidine                          rank= 189  ppm=4.3393  overlaps with: Ribothymidine, Cytidine triphosphate, Lisinopril
+  → ANCHORED Ranitidine  conc_est=6125  (from 1 clean probe(s))
+  → no anchor for 3-Methoxytyrosine  (good_peaks=0)
+  → no anchor for Imipramine  (good_peaks=0)
+  → no anchor for 3-Hydroxymandelic acid  (good_peaks=0)
+  → no anchor for Mandelic acid  (good_peaks=0)
+  Tryptamine                          rank=  11  ppm=3.1596  J-ANCHOR-SINGLET  anchor_I=1.292e+04  eff_nH=0.500  probe=2.585e+04  (overlaps: 1-Methylhistidine, beta-Alanine)
+  SKIP_OVL Tryptamine                          rank=   6  ppm=3.3654  overlaps with: Metoprolol, Hypotaurine
+  → ANCHORED Tryptamine  conc_est=2.585e+04  (from 1 clean probe(s))
+  → no anchor for Phenylephrine  (good_peaks=0)
+  → no anchor for 3,4-Dihydroxyphenylglycol  (good_peaks=0)
+  → no anchor for 3-Phenylbutyric acid  (good_peaks=0)
+  → no anchor for D-Lactic acid  (good_peaks=0)
+  → no anchor for Phenylpropionylglycine  (good_peaks=0)
+  SKIP_OVL L-Alanine                           rank= 203  ppm=1.3372  overlaps with: Hydroxocobalamin, Aspartyllysine, 11a-Hydroxyprogesterone +6 more
+  L-Alanine                           rank=  22  ppm=3.7705  area=5149  mult=q  nH=1  eff_nH=0.375  probe=1.373e+04
+  → ANCHORED L-Alanine  conc_est=1.373e+04  (from 1 clean probe(s))
+  → no anchor for 2-Octenoic acid  (good_peaks=0)
+  → no anchor for 2-Octenedioic acid  (good_peaks=0)
+  → no anchor for Traumatic acid  (good_peaks=0)
+  → no anchor for Androstanedione  (good_peaks=0)
+  → no anchor for L-Arabitol  (good_peaks=0)
+  → no anchor for L-Methionine  (good_peaks=0)
+  → no anchor for Propyl alcohol  (good_peaks=0)
+  → no anchor for 4-Methoxyphenylacetic acid  (good_peaks=0)
+  → no anchor for Ferulic acid  (good_peaks=0)
+  → no anchor for Normetanephrine  (good_peaks=0)
+  → no anchor for Isoferulic acid  (good_peaks=0)
+  → no anchor for 5-Methoxytryptophan  (good_peaks=0)
+  → no anchor for 3-Methoxy-4-Hydroxyphenylglycol sulfate  (good_peaks=0)
+  SKIP_OVL 5-Methoxytryptamine                 rank=  33  ppm=3.8855  overlaps with: Hydroxocobalamin, Melatonin, Glucosamine 6-phosphate +2 more
+  → no anchor for 5-Methoxytryptamine  (all 1 Good peak(s) are overlapped)
+  Famotidine                          rank=  25  ppm=3.7760  area=3584  mult=s  nH=1  eff_nH=1.000  probe=3584
+  → ANCHORED Famotidine  conc_est=3584  (from 1 clean probe(s))
+  → no anchor for Adenylsuccinic acid  (good_peaks=0)
+  SKIP_OVL Metoprolol                          rank=   6  ppm=3.3654  overlaps with: Tryptamine, Hypotaurine
+  SKIP_OVL Metoprolol                          rank= 156  ppm=2.8032  overlaps with: L-Aspartic acid
+  Metoprolol                          rank= 147  ppm=3.1894  J-ANCHOR-SINGLET  anchor_I=739.6  eff_nH=0.500  probe=1479  (overlaps: Biocytin, Carnosine)
+  → ANCHORED Metoprolol  conc_est=1479  (from 1 clean probe(s))
+  → no anchor for 3-Hydroxybutyric acid  (good_peaks=0)
+  → no anchor for (S)-3-Hydroxybutyric acid  (good_peaks=0)
+  → no anchor for L-Threonine  (good_peaks=0)
+  → no anchor for Octadecanol  (good_peaks=0)
+  → no anchor for L-Aspartic acid  (good_peaks=0)
+  → no anchor for N-Acryloylglycine  (good_peaks=0)
+  → no anchor for Dihydrothymine  (good_peaks=0)
+  → no anchor for 5,6-dihydrothymine  (good_peaks=0)
+  → no anchor for Isovalerylalanine  (good_peaks=0)
+  SKIP_OVL Methylmalonic acid                  rank= 200  ppm=1.3249  overlaps with: Hydroxocobalamin, L-Fucose, L-Fucose +12 more
+  → no anchor for Methylmalonic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Isobutyryl-L-carnitine  (good_peaks=0)
+  1-Methyladenosine                   rank= 119  ppm=3.9302  J-ANCHOR-SINGLET  anchor_I=7447  eff_nH=0.500  probe=1.489e+04  (overlaps: N-Acetylgalactosamine)
+  1-Methyladenosine                   rank=  27  ppm=3.8654  J-ANCHOR-SINGLET  anchor_I=7447  eff_nH=0.500  probe=1.489e+04  (overlaps: N-Acetylgalactosamine, 1,5-Anhydrosorbitol)
+  1-Methyladenosine                   rank=  68  ppm=3.9167  J-ANCHOR-SINGLET  anchor_I=7447  eff_nH=0.500  probe=1.489e+04  (overlaps: D-Xylose, N-Acetylgalactosamine)
+  → ANCHORED 1-Methyladenosine  conc_est=1.489e+04  (from 3 clean probe(s))
+  → no anchor for Pyridine  (good_peaks=0)
+  → no anchor for Dopamine  (good_peaks=0)
+  → no anchor for Valerylglycine  (good_peaks=0)
+  SKIP_OVL N6-Acetyl-L-lysine                  rank= 183  ppm=2.0170  overlaps with: N-alpha-Acetyl-L-lysine, Benzenebutanoic acid, N-Acetylputrescine
+  SKIP_OVL N6-Acetyl-L-lysine                  rank= 147  ppm=3.1894  overlaps with: Biocytin, Carnosine, Metoprolol
+  → no anchor for N6-Acetyl-L-lysine  (all 2 Good peak(s) are overlapped)
+  SKIP_OVL Homo-L-arginine                     rank= 131  ppm=3.1955  overlaps with: 3-Nitrotyrosine, N-Acetylputrescine
+  → no anchor for Homo-L-arginine  (all 1 Good peak(s) are overlapped)
+  → no anchor for Loperamide  (good_peaks=0)
+  → no anchor for Fructose 6-phosphate  (good_peaks=0)
+  → no anchor for Brompheniramine  (good_peaks=0)
+  → no anchor for trans-2-Octenoic acid  (good_peaks=0)
+  → no anchor for Lactulose  (good_peaks=0)
+  → no anchor for Indole-3-propionic acid  (good_peaks=0)
+  SKIP_OVL 2-Methylhippuric acid               rank=  80  ppm=2.3774  overlaps with: Corticosterone, Benzenebutanoic acid
+  → no anchor for 2-Methylhippuric acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Tetrahydrofolic acid  (good_peaks=0)
+  → no anchor for 5,6,7,8-Tetrahydrofolic acid  (good_peaks=0)
+  → no anchor for Undecanoic acid  (good_peaks=0)
+  → no anchor for Benzyl alcohol  (good_peaks=0)
+  → no anchor for Epiandrosterone  (good_peaks=0)
+  SKIP_OVL Hypotaurine                         rank= 197  ppm=2.7232  overlaps with: 2-Isopropylmalic acid, Succinylacetone, Carnosine +4 more
+  → no anchor for Hypotaurine  (all 1 Good peak(s) are overlapped)
+  → no anchor for D-threo-Isocitric acid  (good_peaks=0)
+  → no anchor for alpha-Hydroxyisobutyric acid  (good_peaks=0)
+  → no anchor for Mevalonic acid  (good_peaks=0)
+  → no anchor for Dimethylmalonic acid  (good_peaks=0)
+  → no anchor for 2-Hydroxy-2-methylbutyric acid  (good_peaks=0)
+  Monomethyl glutaric acid            rank= 190  ppm=2.4035  J-ANCHOR-SINGLET  anchor_I=2359  eff_nH=0.500  probe=4718  (overlaps: 3-Hydroxyglutaric acid, Succinylacetone)
+  Monomethyl glutaric acid            rank=  51  ppm=3.6887  J-ANCHOR-SINGLET  anchor_I=2359  eff_nH=1.000  probe=2359  (overlaps: Hydroxocobalamin, Allose)
+  → ANCHORED Monomethyl glutaric acid  conc_est=3539  (from 2 clean probe(s))
+  → no anchor for Lathosterol  (good_peaks=0)
+  → no anchor for Glutaric acid  (good_peaks=0)
+  → no anchor for Acetaminophen  (good_peaks=0)
+  SKIP_OVL N-Acetylputrescine                  rank= 183  ppm=2.0170  overlaps with: N-alpha-Acetyl-L-lysine, Benzenebutanoic acid, N6-Acetyl-L-lysine
+  N-Acetylputrescine                  rank= 165  ppm=2.9959  J-ANCHOR-SINGLET  anchor_I=1197  eff_nH=0.500  probe=2395  (overlaps: Aspartyllysine, N-alpha-Acetyl-L-lysine)
+  → ANCHORED N-Acetylputrescine  conc_est=2395  (from 1 clean probe(s))
+  → no anchor for Doxylamine  (good_peaks=0)
+  → no anchor for N-Acetyl-L-methionine  (good_peaks=0)
+  → no anchor for Isovaleric acid  (good_peaks=0)
+  → no anchor for 5'-Methylthioadenosine  (good_peaks=0)
+  → no anchor for Dimethylsulfide  (good_peaks=0)
+  Butyric acid                        rank=  82  ppm=2.1433  area=712.1  mult=t  nH=1  eff_nH=0.500  probe=1424
+  → ANCHORED Butyric acid  conc_est=1424  (from 1 clean probe(s))
+  → no anchor for Caprylic acid  (good_peaks=0)
+  → no anchor for Caproic acid  (good_peaks=0)
+  → no anchor for Heptanoic acid  (good_peaks=0)
+  → no anchor for Pelargonic acid  (good_peaks=0)
+  Suberylglycine                      rank= 134  ppm=2.2821  area=323.6  mult=t  nH=1  eff_nH=0.500  probe=647.1
+  → ANCHORED Suberylglycine  conc_est=647.1  (from 1 clean probe(s))
+  → no anchor for 12-Hydroxydodecanoic acid  (good_peaks=0)
+  → no anchor for 3-Hydroxydodecanedioic acid  (good_peaks=0)
+  → no anchor for 2-Hydroxydecanedioic acid  (good_peaks=0)
+  → no anchor for Valeric acid  (good_peaks=0)
+  SKIP_OVL Aminocaproic acid                   rank= 165  ppm=2.9959  overlaps with: Aspartyllysine, N-alpha-Acetyl-L-lysine, N-Acetylputrescine +1 more
+  → no anchor for Aminocaproic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for 3-Hydroxysuberic acid  (good_peaks=0)
+  → no anchor for 17-Hydroxyprogesterone  (good_peaks=0)
+  → no anchor for D-Ribose  (good_peaks=0)
+  → no anchor for 4-Methylcatechol  (good_peaks=0)
+  → no anchor for Acetone  (good_peaks=0)
+  → no anchor for 5-Aminopentanoic acid  (good_peaks=0)
+  → no anchor for 2-Aminoadipic acid  (good_peaks=0)
+  → no anchor for CE(16:0)  (good_peaks=0)
+  → no anchor for N-Butyrylglycine  (good_peaks=0)
+  → no anchor for Methyl propenyl ketone  (good_peaks=0)
+  SKIP_OVL 2-Pyrrolidinone                     rank= 129  ppm=3.3888  overlaps with: 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid
+  → no anchor for 2-Pyrrolidinone  (all 1 Good peak(s) are overlapped)
+  → no anchor for 3-Methylindole  (good_peaks=0)
+  → no anchor for Isovalerylglutamic acid  (good_peaks=0)
+  → no anchor for 2-Piperidinone  (good_peaks=0)
+  → no anchor for TG(10:0/10:0/10:0)  (good_peaks=0)
+  → no anchor for Succinic acid  (good_peaks=0)
+  → no anchor for (R)-Lipoic acid  (good_peaks=0)
+  → no anchor for Decanoylcarnitine  (good_peaks=0)
+  → no anchor for 3-Hydroxymethylglutaric acid  (good_peaks=0)
+  Ibuprofen                           rank=  61  ppm=3.7227  area=2421  mult=q  nH=1  eff_nH=0.375  probe=6457
+  → ANCHORED Ibuprofen  conc_est=6457  (from 1 clean probe(s))
+  → no anchor for gamma-Butyrolactone  (good_peaks=0)
+  → no anchor for Dimethylamine  (good_peaks=0)
+  Pseudoephedrine                     rank= 174  ppm=2.5581  area=56.33  mult=s  nH=1  eff_nH=1.000  probe=56.33
+  → ANCHORED Pseudoephedrine  conc_est=56.33  (from 1 clean probe(s))
+  → no anchor for 17a-Ethynylestradiol  (good_peaks=0)
+  → no anchor for Octanoylcarnitine  (good_peaks=0)
+  → no anchor for Ketoleucine  (good_peaks=0)
+  SKIP_OVL Dihydrouracil                       rank=  29  ppm=3.4505  overlaps with: Maltitol, Ranitidine
+  → no anchor for Dihydrouracil  (all 1 Good peak(s) are overlapped)
+  → no anchor for Palmitoylcarnitine  (good_peaks=0)
+  → no anchor for 2-Ketohexanoic acid  (good_peaks=0)
+  → no anchor for Oxoadipic acid  (good_peaks=0)
+  → no anchor for Lisinopril  (good_peaks=0)
+  SKIP_OVL Ethylmalonic acid                   rank= 184  ppm=3.0215  overlaps with: Lisinopril
+  → no anchor for Ethylmalonic acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for 1,1-Dimethylbiguanide  (good_peaks=0)
+  3-Methylhistamine                   rank=  30  ppm=3.7111  area=2629  mult=s  nH=1  eff_nH=1.000  probe=2629
+  → ANCHORED 3-Methylhistamine  conc_est=2629  (from 1 clean probe(s))
+  Serotonin                           rank=  97  ppm=3.1052  area=496.9  mult=t  nH=1  eff_nH=0.500  probe=993.7
+  Serotonin                           rank= 170  ppm=3.3105  J-ANCHOR-SINGLET  anchor_I=1283  eff_nH=0.500  probe=2566  (overlaps: D-Xylose, 5-Methoxytryptamine)
+  → ANCHORED Serotonin  conc_est=1780  (from 2 clean probe(s))
+  SKIP_OVL Ethanolamine                        rank= 123  ppm=3.1279  overlaps with: 5-Methoxytryptamine
+  → no anchor for Ethanolamine  (all 1 Good peak(s) are overlapped)
+  SKIP_OVL 2-Methylbutyroylcarnitine           rank= 113  ppm=3.2190  overlaps with: Dopamine
+  → no anchor for 2-Methylbutyroylcarnitine  (all 1 Good peak(s) are overlapped)
+  → no anchor for O-Phosphoethanolamine  (good_peaks=0)
+  → no anchor for myo-Inositol  (good_peaks=0)
+  → no anchor for 3,4-Dihydroxybenzeneacetic acid  (good_peaks=0)
+  → no anchor for Pipecolic acid  (good_peaks=0)
+  Diphenhydramine                     rank= 124  ppm=3.4011  area=205.7  mult=t  nH=1  eff_nH=0.500  probe=411.5
+  Diphenhydramine                     rank=  19  ppm=3.8195  J-ANCHOR-SINGLET  anchor_I=5334  eff_nH=0.500  probe=1.067e+04  (overlaps: Gluconolactone, Guanosine)
+  → ANCHORED Diphenhydramine  conc_est=5540  (from 2 clean probe(s))
+  → no anchor for 3-Hydroxyphenylacetic acid  (good_peaks=0)
+  → no anchor for Homoveratric acid  (good_peaks=0)
+  → no anchor for Galacturonic acid  (good_peaks=0)
+  → no anchor for 5-Hydroxyindoleacetic acid  (good_peaks=0)
+  SKIP_OVL Hydroxyphenylacetylglycine          rank= 102  ppm=3.5657  overlaps with: Saccharopine
+  → no anchor for Hydroxyphenylacetylglycine  (all 1 Good peak(s) are overlapped)
+  → no anchor for 5alpha-Cholestanol  (good_peaks=0)
+  → no anchor for L-Valine  (good_peaks=0)
+  → no anchor for Dihydroandrosterone  (good_peaks=0)
+  Ethanol                             rank= 104  ppm=3.6489  area=637.2  mult=q  nH=1  eff_nH=0.375  probe=1699
+  → ANCHORED Ethanol  conc_est=1699  (from 1 clean probe(s))
+  → no anchor for MANNOHEPTULOSE  (good_peaks=0)
+  → no anchor for L-Isoleucine  (good_peaks=0)
+  → no anchor for 5-Methoxysalicylic acid  (good_peaks=0)
+  → no anchor for Sorbitol  (good_peaks=0)
+  → no anchor for Aspartame  (good_peaks=0)
+  → no anchor for L-Glutamine  (good_peaks=0)
+  → no anchor for Erythritol  (good_peaks=0)
+  → no anchor for Glycylleucine  (good_peaks=0)
+  SKIP_OVL 2-Hydroxy-3-methylbutyric acid      rank=  45  ppm=3.8386  overlaps with: Deoxyuridine, Ribonolactone
+  → no anchor for 2-Hydroxy-3-methylbutyric acid  (all 1 Good peak(s) are overlapped)
+  → no anchor for Ribonolactone  (good_peaks=0)
+  → no anchor for Syringic acid  (good_peaks=0)
+  → no anchor for Vanillic acid  (good_peaks=0)
+  → no anchor for 4-Aminohippuric acid  (good_peaks=0)
+  → no anchor for Hippuric acid  (good_peaks=0)
+  → no anchor for Salicyluric acid  (good_peaks=0)
+  → no anchor for L-Homocysteic acid  (good_peaks=0)
+  → no anchor for Deoxycholic acid  (good_peaks=0)
+  → no anchor for Geraniol  (good_peaks=0)
+  → no anchor for Chlorogenic acid  (good_peaks=0)
+  → no anchor for Deoxyadenosine triphosphate  (good_peaks=0)
+  → no anchor for D-Ribose 5-phosphate  (good_peaks=0)
+  → no anchor for 4-Hydroxyproline  (good_peaks=0)
+  → no anchor for Tartaric acid  (good_peaks=0)
+  → no anchor for Cyclic AMP  (good_peaks=0)
+  → no anchor for Shikimic acid  (good_peaks=0)
+  → no anchor for 1-Methylnicotinamide  (good_peaks=0)
+  → no anchor for NADP  (good_peaks=0)
+  → no anchor for NADP+  (good_peaks=0)
+  → no anchor for Aminopterin  (good_peaks=0)
+  → no anchor for Sumiki's acid  (good_peaks=0)
+  → no anchor for Adenosine triphosphate  (good_peaks=0)
+  → no anchor for Indole  (good_peaks=0)
+  → no anchor for Indoxyl sulfate  (good_peaks=0)
+  → no anchor for L-Tryptophan  (good_peaks=0)
+  → no anchor for Indolelactic acid  (good_peaks=0)
+
+--- Phase 1b: auto-anchor (clean peaks, tol=0.020 ppm) ---
+  SKIP_OVL Isocaproic acid                     rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Palmitic acid, Nonadecanoic acid
+  SKIP Dodecanoic acid                     rank=  46  ppm=2.3505  — competitor within 0.020 ppm
+  SKIP Behenic acid                        rank=  46  ppm=2.3505  — competitor within 0.019 ppm
+  SKIP Hydroxocobalamin                    rank= 122  ppm=4.1120  — competitor within 0.019 ppm
+  SKIP_OVL Hydroxocobalamin                    rank= 207  ppm=1.9141  — shared peak with: Thymidine, Ribothymidine, 5-Thymidylic acid
+  SKIP_OVL Hydroxocobalamin                    rank=  51  ppm=3.6887  — shared peak with: 1-Methylhistamine, Monomethyl glutaric acid
+  SKIP_OVL Hydroxocobalamin                    rank= 200  ppm=1.3249  — shared peak with: Progesterone, Epitestosterone, Dihydrothymine
+  SKIP_OVL Hydroxocobalamin                    rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL Hydroxocobalamin                    rank= 203  ppm=1.3372  — shared peak with: 11a-Hydroxyprogesterone, Citramalic acid, Corticosterone
+  SKIP Hydroxocobalamin                    rank= 138  ppm=2.2691  — competitor within 0.020 ppm
+  SKIP Hydroxocobalamin                    rank= 154  ppm=2.5693  — competitor within 0.020 ppm
+  SKIP_OVL Hydroxocobalamin                    rank=  38  ppm=3.7379  — shared peak with: Maltitol, N6-Acetyl-L-lysine, Homo-L-arginine
+  SKIP_OVL Hydroxocobalamin                    rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL D-Mannose                           rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP D-Mannose                           rank= 102  ppm=3.5657  — competitor within 0.020 ppm
+  SKIP_OVL Phosphoenolpyruvic acid             rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL Phosphoenolpyruvic acid             rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP_OVL Elaidic acid                        rank=  54  ppm=2.3453  — shared peak with: Arachidic acid
+  SKIP_OVL Arachidic acid                      rank=  54  ppm=2.3453  — shared peak with: Elaidic acid
+  SKIP_OVL L-Arabinose                         rank=  63  ppm=5.2471  — shared peak with: D-Glucuronic acid
+  SKIP_OVL L-Arabinose                         rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL D-Galactose                         rank=  63  ppm=5.2471  — shared peak with: D-Glucuronic acid
+  SKIP_OVL D-Galactose                         rank=  68  ppm=3.9167  — shared peak with: D-Xylose
+  SKIP_OVL D-Galactose                         rank=  86  ppm=3.9760  — shared peak with: 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid
+  SKIP D-Galactose                         rank= 162  ppm=4.0610  — competitor within 0.017 ppm
+  SKIP_OVL D-Glucose                           rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP D-Glucose                           rank=   4  ppm=4.6310  — competitor within 0.014 ppm
+  SKIP_OVL Cellobiose                          rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP Cellobiose                          rank=   5  ppm=4.6669  — competitor within 0.014 ppm
+  SKIP_OVL Glucose 6-phosphate                 rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL Glucose 6-phosphate                 rank=  30  ppm=3.7111  — shared peak with: 3-Methylhistamine
+  SKIP Glucose 6-phosphate                 rank=   4  ppm=4.6310  — competitor within 0.014 ppm
+  SKIP_OVL D-Maltose                           rank=  66  ppm=5.2400  — shared peak with: Alpha-Lactose, N-Acetylgalactosamine, L-Fucose
+  SKIP D-Maltose                           rank=  79  ppm=3.4131  — competitor within 0.020 ppm
+  SKIP_OVL D-Maltose                           rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP_OVL L-Fucose                            rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL L-Fucose                            rank= 198  ppm=4.2707  — shared peak with: Guanosine, Cytidine, Cytarabine
+  SKIP_OVL L-Fucose                            rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL L-Fucose                            rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP L-Fucose                            rank=  28  ppm=4.5538  — competitor within 0.014 ppm
+  SKIP_OVL Maltitol                            rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL Maltitol                            rank=  38  ppm=3.7379  — shared peak with: N6-Acetyl-L-lysine, Homo-L-arginine
+  SKIP_OVL Maltitol                            rank=  29  ppm=3.4505  — shared peak with: Ranitidine, Dihydrouracil
+  SKIP_OVL 5-Hydroxymethyluracil               rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP 5-Hydroxymethyluracil               rank= 188  ppm=4.3450  — competitor within 0.020 ppm
+  SKIP_OVL Thymidine                           rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Thymidine                           rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Ribothymidine, 5-Thymidylic acid
+  SKIP Thymidine                           rank=  64  ppm=4.0099  — competitor within 0.020 ppm
+  SKIP_OVL Thymidine                           rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL Ribothymidine                       rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Ribothymidine                       rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, 5-Thymidylic acid
+  SKIP_OVL Ribothymidine                       rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Ribothymidine                       rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP Ribothymidine                       rank=  13  ppm=3.8053  — competitor within 0.020 ppm
+  SKIP Ribothymidine                       rank=  44  ppm=3.8956  — competitor within 0.020 ppm
+  SKIP_OVL Ribothymidine                       rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP_OVL 5-Thymidylic acid                   rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL 5-Thymidylic acid                   rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL 5-Thymidylic acid                   rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Palmitic acid, Nonadecanoic acid
+  SKIP_OVL Pyridoxal 5'-phosphate              rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Pyridoxal 5'-phosphate              rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL Pyridoxal 5'-phosphate              rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone, Glucosamine 6-phosphate
+  SKIP_OVL Pyridoxal 5'-phosphate              rank= 169  ppm=2.5383  — shared peak with: gamma-Glutamylcysteine, 3-Hexanone, Stearic acid
+  SKIP_OVL Deacetyldiltiazem                   rank= 205  ppm=1.9207  — shared peak with: N-Acetyl-L-tyrosine
+  SKIP_OVL Deacetyldiltiazem                   rank=  27  ppm=3.8654  — shared peak with: 1,5-Anhydrosorbitol, Thiamine, Imipramine
+  SKIP N-Acetyl-L-tyrosine                 rank= 205  ppm=1.9207  — competitor within 0.020 ppm
+  SKIP_OVL N-Acetyl-L-tyrosine                 rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL 2-Furoylglycine                     rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP 2-Furoylglycine                     rank=   9  ppm=3.9448  — competitor within 0.012 ppm
+  SKIP_OVL Thymidine 5'-triphosphate           rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Thymidine 5'-triphosphate           rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Thymidine 5'-triphosphate           rank= 205  ppm=1.9207  — shared peak with: N-Acetyl-L-tyrosine
+  SKIP_OVL Epinephrine                         rank=  14  ppm=3.2639  — shared peak with: Taurine
+  SKIP Epinephrine                         rank= 149  ppm=2.7608  — competitor within 0.020 ppm
+  SKIP_OVL gamma-Glutamylcysteine              rank= 169  ppm=2.5383  — shared peak with: 3-Hexanone, Stearic acid, Hydrocinnamic acid
+  SKIP_OVL gamma-Glutamylcysteine              rank=  21  ppm=3.8611  — shared peak with: 3-Mercaptopyruvic acid, Ranitidine
+  SKIP_OVL Folic acid                          rank=  66  ppm=5.2400  — shared peak with: D-Maltose, Alpha-Lactose, N-Acetylgalactosamine
+  SKIP_OVL beta-Alanine                        rank= 169  ppm=2.5383  — shared peak with: gamma-Glutamylcysteine, 3-Hexanone, Stearic acid
+  SKIP_OVL beta-Alanine                        rank=  11  ppm=3.1596  — shared peak with: Tryptamine, Methylmalonic acid
+  SKIP_OVL Stearic acid                        rank= 169  ppm=2.5383  — shared peak with: gamma-Glutamylcysteine, 3-Hexanone, Hydrocinnamic acid
+  SKIP_OVL Quercetin                           rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Iodotyrosine                        rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP Hexanoylglycine                     rank= 125  ppm=4.1014  — competitor within 0.011 ppm
+  SKIP_OVL Hexanoylglycine                     rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP Isobutyrylglycine                   rank= 125  ppm=4.1014  — competitor within 0.011 ppm
+  SKIP 2-Methylbutyrylglycine              rank= 125  ppm=4.1014  — competitor within 0.011 ppm
+  SKIP_OVL 2-Methylbutyrylglycine              rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Tiglylglycine                       rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP Tiglylglycine                       rank=  94  ppm=3.7979  — competitor within 0.012 ppm
+  SKIP_OVL Senecioic acid                      rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL Senecioic acid                      rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL Gluconic acid                       rank= 109  ppm=4.1227  — shared peak with: 6-Phosphogluconic acid, Gluconolactone, Allose
+  SKIP Gluconic acid                       rank=  69  ppm=4.0276  — competitor within 0.011 ppm
+  SKIP_OVL 6-Phosphogluconic acid              rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, Gluconolactone, Allose
+  SKIP_OVL Gluconolactone                      rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Allose
+  SKIP_OVL Gluconolactone                      rank= 100  ppm=3.6546  — shared peak with: MANNOHEPTULOSE
+  SKIP_OVL Gluconolactone                      rank=  19  ppm=3.8195  — shared peak with: 3-Methoxybenzenepropanoic acid
+  SKIP_OVL Gluconolactone                      rank=  69  ppm=4.0276  — shared peak with: Gluconic acid
+  SKIP_OVL Vinylacetylglycine                  rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL Vinylacetylglycine                  rank=  68  ppm=3.9167  — shared peak with: D-Xylose
+  SKIP p-Hydroxyphenylacetic acid          rank=  12  ppm=3.4354  — competitor within 0.020 ppm
+  SKIP Homovanillic acid                   rank=  12  ppm=3.4354  — competitor within 0.020 ppm
+  SKIP_OVL Homovanillic acid                   rank=  21  ppm=3.8611  — shared peak with: gamma-Glutamylcysteine, 3-Mercaptopyruvic acid, Ranitidine
+  SKIP_OVL 3-Methylcrotonylglycine             rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL 3-Methylcrotonylglycine             rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL 3-Methylcrotonylglycine             rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL Deoxyadenosine                      rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL Aspartyllysine                      rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL Aspartyllysine                      rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL Aspartyllysine                      rank= 165  ppm=2.9959  — shared peak with: N-alpha-Acetyl-L-lysine, Aminocaproic acid
+  SKIP_OVL L-Dihydroorotic acid                rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL 4,5-Dihydroorotic acid              rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL Phenylglyoxylic acid                rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Benzoic acid                        rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Coumarin                            rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Coumarin                            rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP Xanthosine                          rank=   1  ppm=4.6858  — competitor within 0.017 ppm
+  SKIP_OVL Xanthosine                          rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Guanosine
+  SKIP_OVL Xanthosine                          rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Xanthosine                          rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL N-Acetylserotonin                   rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP N-Acetylserotonin                   rank= 208  ppm=2.8394  — competitor within 0.018 ppm
+  SKIP N-Acetylserotonin                   rank=  85  ppm=3.4980  — competitor within 0.020 ppm
+  SKIP_OVL N-Acetyl-L-phenylalanine            rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL N-Acetyl-L-phenylalanine            rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Deoxyadenosine monophosphate        rank= 109  ppm=4.1227  — shared peak with: Gluconic acid, 6-Phosphogluconic acid, Gluconolactone
+  SKIP_OVL 3-Mercaptopyruvic acid              rank=  21  ppm=3.8611  — shared peak with: gamma-Glutamylcysteine, Ranitidine
+  SKIP 3-Mercaptopyruvic acid              rank= 208  ppm=2.8394  — competitor within 0.019 ppm
+  SKIP 2-Isopropylmalic acid               rank= 142  ppm=2.5499  — competitor within 0.013 ppm
+  SKIP_OVL 2-Isopropylmalic acid               rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP_OVL 3-Hydroxyglutaric acid              rank= 169  ppm=2.5383  — shared peak with: gamma-Glutamylcysteine, 3-Hexanone, Stearic acid
+  SKIP_OVL 3-Hydroxyglutaric acid              rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP 2-Ketobutyric acid                  rank= 149  ppm=2.7608  — competitor within 0.020 ppm
+  SKIP_OVL 1-Methylhistamine                   rank=  14  ppm=3.2639  — shared peak with: Taurine
+  SKIP 1-Methylhistamine                   rank= 182  ppm=2.9273  — competitor within 0.019 ppm
+  SKIP_OVL 1-Methylhistamine                   rank=  51  ppm=3.6887  — shared peak with: Monomethyl glutaric acid
+  SKIP Propylene glycol                    rank=  12  ppm=3.4354  — competitor within 0.020 ppm
+  SKIP Propylene glycol                    rank=  50  ppm=3.5378  — competitor within 0.020 ppm
+  SKIP_OVL 3-Methoxytyramine                   rank=  14  ppm=3.2639  — shared peak with: Taurine
+  SKIP 3-Methoxytyramine                   rank=  32  ppm=3.8805  — competitor within 0.020 ppm
+  SKIP 3-Methoxytyramine                   rank= 176  ppm=2.9408  — competitor within 0.019 ppm
+  SKIP cis-Aconitic acid                   rank=  15  ppm=3.4261  — competitor within 0.008 ppm
+  SKIP 2-Phenylbutyric acid                rank=  79  ppm=3.4131  — competitor within 0.020 ppm
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 172  ppm=4.8987  — shared peak with: Glucosamine 6-phosphate
+  SKIP_OVL 11a-Hydroxyprogesterone             rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, Citramalic acid, Corticosterone
+  SKIP_OVL Chlorpheniramine                    rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP Levulinic acid                      rank= 148  ppm=2.7663  — competitor within 0.018 ppm
+  SKIP_OVL Levulinic acid                      rank= 121  ppm=2.1686  — shared peak with: Monomethyl glutaric acid, Suberylglycine, 12-Hydroxydodecanoic acid
+  SKIP_OVL Levulinic acid                      rank= 152  ppm=2.3848  — shared peak with: FADH, FAD
+  SKIP_OVL Urocanic acid                       rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL 3-Methylhistidine                   rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL 3-Methylhistidine                   rank=  43  ppm=3.7024  — shared peak with: Succinylacetone
+  SKIP_OVL 3-Furoic acid                       rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Deoxyguanosine                      rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Guanosine                           rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Guanosine                           rank=  27  ppm=3.8654  — shared peak with: 1,5-Anhydrosorbitol, Thiamine, Imipramine
+  SKIP_OVL Guanosine                           rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Guanosine                           rank=  19  ppm=3.8195  — shared peak with: Gluconolactone, 3-Methoxybenzenepropanoic acid
+  SKIP_OVL Guanosine                           rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Cytidine, Cytarabine
+  SKIP_OVL Histamine                           rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Histamine                           rank=  17  ppm=3.2752  — shared peak with: Ureidopropionic acid
+  SKIP_OVL L-Histidine                         rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL 3-Nitrotyrosine                     rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP 3-Nitrotyrosine                     rank=  93  ppm=3.0702  — competitor within 0.020 ppm
+  SKIP_OVL 3-Nitrotyrosine                     rank= 131  ppm=3.1955  — shared peak with: Homo-L-arginine, N-Acetylputrescine
+  SKIP_OVL Acetylglycine                       rank=  23  ppm=3.7608  — shared peak with: L-Arginine
+  SKIP Acetylglycine                       rank=  73  ppm=2.0473  — competitor within 0.020 ppm
+  SKIP Dimethylglycine                     rank= 167  ppm=2.9087  — competitor within 0.020 ppm
+  SKIP 3-Methoxybenzenepropanoic acid      rank= 185  ppm=2.8935  — competitor within 0.020 ppm
+  SKIP_OVL 3-Methoxybenzenepropanoic acid      rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP_OVL 3-Methoxybenzenepropanoic acid      rank=  19  ppm=3.8195  — shared peak with: Gluconolactone
+  SKIP_OVL Corticosterone                      rank=  80  ppm=2.3774  — shared peak with: Benzenebutanoic acid, 2-Methylhippuric acid
+  SKIP_OVL Corticosterone                      rank=  18  ppm=5.8599  — shared peak with: Progesterone, Epitestosterone
+  SKIP_OVL Corticosterone                      rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP Corticosterone                      rank= 193  ppm=4.3029  — competitor within 0.013 ppm
+  SKIP_OVL Heneicosanoic acid                  rank=  54  ppm=2.3453  — shared peak with: Elaidic acid, Arachidic acid
+  SKIP_OVL N-alpha-Acetyl-L-lysine             rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL N-alpha-Acetyl-L-lysine             rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL N-alpha-Acetyl-L-lysine             rank= 183  ppm=2.0170  — shared peak with: N6-Acetyl-L-lysine, N-Acetylputrescine
+  SKIP_OVL N-alpha-Acetyl-L-lysine             rank= 165  ppm=2.9959  — shared peak with: Aspartyllysine, Aminocaproic acid
+  SKIP_OVL Glyceraldehyde                      rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone, Glucosamine 6-phosphate
+  SKIP_OVL Deoxycholic acid glycine conjugate  rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Saccharopine                        rank=  20  ppm=3.7497  — shared peak with: Sucrose
+  SKIP Saccharopine                        rank= 128  ppm=3.0475  — competitor within 0.020 ppm
+  SKIP Saccharopine                        rank=  70  ppm=2.0738  — competitor within 0.020 ppm
+  SKIP_OVL Saccharopine                        rank= 152  ppm=2.3848  — shared peak with: FADH, FAD
+  SKIP Saccharopine                        rank= 102  ppm=3.5657  — competitor within 0.017 ppm
+  SKIP_OVL Cytidine triphosphate               rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Cytidine triphosphate               rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Cytidine triphosphate               rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP Cytidine triphosphate               rank= 188  ppm=4.3450  — competitor within 0.020 ppm
+  SKIP_OVL Glucosamine 6-phosphate             rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone
+  SKIP_OVL Glucosamine 6-phosphate             rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL Glucosamine 6-phosphate             rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP_OVL Deoxycytidine                       rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Deoxycytidine                       rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Deoxyuridine                        rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Deoxyuridine                        rank=  23  ppm=3.7608  — shared peak with: Acetylglycine, L-Arginine
+  SKIP_OVL Deoxyuridine                        rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Deoxyuridine                        rank=  45  ppm=3.8386  — shared peak with: 2-Hydroxy-3-methylbutyric acid
+  SKIP_OVL Quinaldic acid                      rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP_OVL Quinaldic acid                      rank=  42  ppm=7.9067  — shared peak with: FADH, FAD, Xanthosine
+  SKIP Citrulline                          rank= 143  ppm=3.1416  — competitor within 0.020 ppm
+  SKIP 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank=  15  ppm=3.4261  — competitor within 0.020 ppm
+  SKIP 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank=  65  ppm=3.5165  — competitor within 0.016 ppm
+  SKIP_OVL 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP_OVL 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank= 129  ppm=3.3888  — shared peak with: 2-Pyrrolidinone
+  SKIP 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid rank=  86  ppm=3.9760  — competitor within 0.020 ppm
+  SKIP_OVL Deoxycorticosterone                 rank= 205  ppm=1.9207  — shared peak with: N-Acetyl-L-tyrosine
+  SKIP Deoxycorticosterone                 rank= 105  ppm=2.0359  — competitor within 0.020 ppm
+  SKIP_OVL Propionylglycine                    rank=  20  ppm=3.7497  — shared peak with: Saccharopine, Sucrose
+  SKIP Propionylglycine                    rank= 133  ppm=2.2987  — competitor within 0.020 ppm
+  SKIP_OVL Levoglucosan                        rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP_OVL Phenylacetylglycine                 rank=  20  ppm=3.7497  — shared peak with: Saccharopine, Sucrose
+  SKIP_OVL Phenylacetylglycine                 rank=  58  ppm=3.6688  — shared peak with: Sucrose
+  SKIP Galactaric acid                     rank=   9  ppm=3.9448  — competitor within 0.020 ppm
+  SKIP_OVL Galactaric acid                     rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Riboflavin                          rank=  54  ppm=2.3453  — shared peak with: Elaidic acid, Arachidic acid
+  SKIP_OVL Riboflavin                          rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL Linoleic acid                       rank=  41  ppm=2.3597  — shared peak with: Palmitic acid, Nonadecanoic acid, Myristic acid
+  SKIP_OVL Linoleic acid                       rank= 107  ppm=2.7809  — shared peak with: 5-Aminolevulinic acid, Biocytin
+  SKIP_OVL Palmitic acid                       rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Nonadecanoic acid, Myristic acid
+  SKIP_OVL Nonadecanoic acid                   rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Palmitic acid, Myristic acid
+  SKIP_OVL Myristic acid                       rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Palmitic acid, Nonadecanoic acid
+  SKIP_OVL Pentadecanoic acid                  rank=  41  ppm=2.3597  — shared peak with: Linoleic acid, Palmitic acid, Nonadecanoic acid
+  SKIP_OVL 3-Phosphoglyceric acid              rank=  32  ppm=3.8805  — shared peak with: 3-Methoxytyramine
+  SKIP_OVL Tyramine                            rank=  74  ppm=3.2320  — shared peak with: Symmetric dimethylarginine
+  SKIP Tyramine                            rank= 182  ppm=2.9273  — competitor within 0.019 ppm
+  SKIP_OVL Cholestenone                        rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Cholestenone                        rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Epitestosterone                     rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone
+  SKIP_OVL Epitestosterone                     rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Dihydrothymine
+  SKIP_OVL Epitestosterone                     rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP_OVL 16-Dehydroprogesterone              rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL 16-Dehydroprogesterone              rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL 16-Dehydroprogesterone              rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL Androstenedione                     rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Androstenedione                     rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL NADH                                rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL NADH                                rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL NADH                                rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Cytidine monophosphate              rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Cytidine monophosphate              rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Guanosine diphosphate               rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Guanosine monophosphate             rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Guanosine monophosphate             rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL Glutathione                         rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Cytosine                            rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Nutriacholic acid                   rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL alpha-Tocopherol                    rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL alpha-Tocopherol                    rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP_OVL alpha-Tocopherol                    rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 2,2-Dimethylsuccinic acid           rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Uracil                              rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Phenylpropanolamine                 rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone, Glucosamine 6-phosphate
+  SKIP_OVL Phenylpropanolamine                 rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL 3-Methoxytyrosine                   rank=  21  ppm=3.8611  — shared peak with: gamma-Glutamylcysteine, 3-Mercaptopyruvic acid, Ranitidine
+  SKIP_OVL Imipramine                          rank=  27  ppm=3.8654  — shared peak with: 1,5-Anhydrosorbitol, Thiamine
+  SKIP_OVL 3-Hydroxymandelic acid              rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone, Glucosamine 6-phosphate
+  SKIP_OVL Mandelic acid                       rank= 172  ppm=4.8987  — shared peak with: 11a-Hydroxyprogesterone, Glucosamine 6-phosphate
+  SKIP Phenylephrine                       rank= 135  ppm=2.7717  — competitor within 0.020 ppm
+  SKIP_OVL 3,4-Dihydroxyphenylglycol           rank=  51  ppm=3.6887  — shared peak with: 1-Methylhistamine, Monomethyl glutaric acid
+  SKIP_OVL 3-Phenylbutyric acid                rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL D-Lactic acid                       rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL Phenylpropionylglycine              rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP Phenylpropionylglycine              rank= 168  ppm=2.9787  — competitor within 0.020 ppm
+  SKIP Phenylpropionylglycine              rank=  83  ppm=4.0408  — competitor within 0.011 ppm
+  SKIP_OVL 2-Octenoic acid                     rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL 2-Octenedioic acid                  rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Traumatic acid                      rank=  18  ppm=5.8599  — shared peak with: Progesterone, Corticosterone, Epitestosterone
+  SKIP_OVL Androstanedione                     rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP Androstanedione                     rank= 134  ppm=2.2821  — competitor within 0.019 ppm
+  SKIP_OVL L-Arabitol                          rank=  20  ppm=3.7497  — shared peak with: Saccharopine, Sucrose
+  SKIP_OVL L-Methionine                        rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP_OVL Propyl alcohol                      rank=   8  ppm=3.5463  — shared peak with: Sucrose
+  SKIP 4-Methoxyphenylacetic acid          rank=  13  ppm=3.8053  — competitor within 0.020 ppm
+  SKIP 4-Methoxyphenylacetic acid          rank= 146  ppm=3.6194  — competitor within 0.020 ppm
+  SKIP_OVL Ferulic acid                        rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL Normetanephrine                     rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL Isoferulic acid                     rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL 5-Methoxytryptophan                 rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL 3-Methoxy-4-Hydroxyphenylglycol sulfate rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL 5-Methoxytryptamine                 rank=  33  ppm=3.8855  — shared peak with: Melatonin
+  SKIP_OVL 5-Methoxytryptamine                 rank= 123  ppm=3.1279  — shared peak with: Ethanolamine
+  SKIP_OVL 5-Methoxytryptamine                 rank= 170  ppm=3.3105  — shared peak with: D-Xylose
+  SKIP_OVL Adenylsuccinic acid                 rank=   6  ppm=3.3654  — shared peak with: Tryptamine, Metoprolol, Hypotaurine
+  SKIP_OVL Adenylsuccinic acid                 rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 3-Hydroxybutyric acid               rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL (S)-3-Hydroxybutyric acid           rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL (S)-3-Hydroxybutyric acid           rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP_OVL L-Threonine                         rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP L-Threonine                         rank= 102  ppm=3.5657  — competitor within 0.011 ppm
+  SKIP_OVL Octadecanol                         rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP Octadecanol                         rank= 130  ppm=3.6355  — competitor within 0.018 ppm
+  SKIP_OVL L-Aspartic acid                     rank=  33  ppm=3.8855  — shared peak with: Melatonin, 5-Methoxytryptamine
+  SKIP_OVL L-Aspartic acid                     rank= 156  ppm=2.8032  — shared peak with: Metoprolol
+  SKIP_OVL L-Aspartic acid                     rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, Hypotaurine
+  SKIP_OVL N-Acryloylglycine                   rank=  32  ppm=3.8805  — shared peak with: 3-Methoxytyramine
+  SKIP_OVL Dihydrothymine                      rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL 5,6-dihydrothymine                  rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Isovalerylalanine                   rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Methylmalonic acid                  rank= 200  ppm=1.3249  — shared peak with: Hydroxocobalamin, Progesterone, Epitestosterone
+  SKIP_OVL Methylmalonic acid                  rank=  11  ppm=3.1596  — shared peak with: Tryptamine
+  SKIP_OVL Isobutyryl-L-carnitine              rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP Isobutyryl-L-carnitine              rank= 146  ppm=3.6194  — competitor within 0.019 ppm
+  SKIP_OVL Pyridine                            rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP Dopamine                            rank= 185  ppm=2.8935  — competitor within 0.019 ppm
+  SKIP Dopamine                            rank= 113  ppm=3.2190  — competitor within 0.019 ppm
+  SKIP_OVL Valerylglycine                      rank=  21  ppm=3.8611  — shared peak with: gamma-Glutamylcysteine, 3-Mercaptopyruvic acid, Ranitidine
+  SKIP Valerylglycine                      rank= 133  ppm=2.2987  — competitor within 0.019 ppm
+  SKIP_OVL N6-Acetyl-L-lysine                  rank=  38  ppm=3.7379  — shared peak with: Maltitol, Homo-L-arginine
+  SKIP_OVL N6-Acetyl-L-lysine                  rank= 183  ppm=2.0170  — shared peak with: N-alpha-Acetyl-L-lysine, N-Acetylputrescine
+  SKIP_OVL N6-Acetyl-L-lysine                  rank= 147  ppm=3.1894  — shared peak with: Biocytin
+  SKIP_OVL Homo-L-arginine                     rank=  38  ppm=3.7379  — shared peak with: Maltitol, N6-Acetyl-L-lysine
+  SKIP_OVL Homo-L-arginine                     rank= 131  ppm=3.1955  — shared peak with: N-Acetylputrescine
+  SKIP Loperamide                          rank= 176  ppm=2.9408  — competitor within 0.020 ppm
+  SKIP Loperamide                          rank= 134  ppm=2.2821  — competitor within 0.020 ppm
+  SKIP_OVL Fructose 6-phosphate                rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Brompheniramine                     rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP Brompheniramine                     rank=  93  ppm=3.0702  — competitor within 0.020 ppm
+  SKIP_OVL trans-2-Octenoic acid               rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP trans-2-Octenoic acid               rank=  92  ppm=2.1471  — competitor within 0.020 ppm
+  SKIP_OVL Lactulose                           rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Lactulose                           rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP Lactulose                           rank=  28  ppm=4.5538  — competitor within 0.013 ppm
+  SKIP_OVL Indole-3-propionic acid             rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP Indole-3-propionic acid             rank= 158  ppm=3.0307  — competitor within 0.020 ppm
+  SKIP_OVL Indole-3-propionic acid             rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL 2-Methylhippuric acid               rank=  69  ppm=4.0276  — shared peak with: Gluconic acid
+  SKIP_OVL 2-Methylhippuric acid               rank=  80  ppm=2.3774  — shared peak with: Benzenebutanoic acid
+  SKIP Tetrahydrofolic acid                rank=  65  ppm=3.5165  — competitor within 0.016 ppm
+  SKIP 5,6,7,8-Tetrahydrofolic acid        rank=  65  ppm=3.5165  — competitor within 0.016 ppm
+  SKIP_OVL Undecanoic acid                     rank=  92  ppm=2.1471  — shared peak with: trans-2-Octenoic acid
+  SKIP Benzyl alcohol                      rank=   7  ppm=4.7137  — competitor within 0.020 ppm
+  SKIP_OVL Epiandrosterone                     rank=  70  ppm=2.0738  — shared peak with: Saccharopine
+  SKIP_OVL Hypotaurine                         rank=   6  ppm=3.3654  — shared peak with: Tryptamine, Metoprolol
+  SKIP_OVL Hypotaurine                         rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP D-threo-Isocitric acid              rank= 185  ppm=2.8935  — competitor within 0.020 ppm
+  SKIP D-threo-Isocitric acid              rank=  28  ppm=4.5538  — competitor within 0.009 ppm
+  SKIP_OVL alpha-Hydroxyisobutyric acid        rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL Mevalonic acid                      rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL Dimethylmalonic acid                rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL 2-Hydroxy-2-methylbutyric acid      rank= 203  ppm=1.3372  — shared peak with: Hydroxocobalamin, 11a-Hydroxyprogesterone, Citramalic acid
+  SKIP_OVL Lathosterol                         rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL Glutaric acid                       rank= 207  ppm=1.9141  — shared peak with: Hydroxocobalamin, Thymidine, Ribothymidine
+  SKIP_OVL Acetaminophen                       rank= 183  ppm=2.0170  — shared peak with: N-alpha-Acetyl-L-lysine, N6-Acetyl-L-lysine, N-Acetylputrescine
+  SKIP_OVL Doxylamine                          rank= 183  ppm=2.0170  — shared peak with: N-alpha-Acetyl-L-lysine, N6-Acetyl-L-lysine, N-Acetylputrescine
+  SKIP_OVL N-Acetyl-L-methionine               rank= 141  ppm=2.0265  — shared peak with: N-Acetyl-L-aspartic acid
+  SKIP_OVL N-Acetyl-L-methionine               rank= 110  ppm=2.1095  — shared peak with: 5'-Methylthioadenosine, Dimethylsulfide
+  SKIP_OVL Isovaleric acid                     rank=  73  ppm=2.0473  — shared peak with: Acetylglycine
+  SKIP_OVL 5'-Methylthioadenosine              rank= 110  ppm=2.1095  — shared peak with: N-Acetyl-L-methionine, Dimethylsulfide
+  SKIP_OVL Dimethylsulfide                     rank= 110  ppm=2.1095  — shared peak with: N-Acetyl-L-methionine, 5'-Methylthioadenosine
+  SKIP_OVL Caprylic acid                       rank= 116  ppm=2.1598  — shared peak with: Caproic acid, Heptanoic acid, Pelargonic acid
+  SKIP_OVL Caproic acid                        rank= 116  ppm=2.1598  — shared peak with: Caprylic acid, Heptanoic acid, Pelargonic acid
+  SKIP_OVL Heptanoic acid                      rank= 116  ppm=2.1598  — shared peak with: Caprylic acid, Caproic acid, Pelargonic acid
+  SKIP_OVL Pelargonic acid                     rank= 116  ppm=2.1598  — shared peak with: Caprylic acid, Caproic acid, Heptanoic acid
+  SKIP_OVL 12-Hydroxydodecanoic acid           rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 3-Hydroxydodecanedioic acid         rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 2-Hydroxydecanedioic acid           rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL Valeric acid                        rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL Aminocaproic acid                   rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL Aminocaproic acid                   rank= 165  ppm=2.9959  — shared peak with: Aspartyllysine, N-alpha-Acetyl-L-lysine
+  SKIP_OVL 3-Hydroxysuberic acid               rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 17-Hydroxyprogesterone              rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 17-Hydroxyprogesterone              rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP_OVL D-Ribose                            rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL 4-Methylcatechol                    rank= 121  ppm=2.1686  — shared peak with: Levulinic acid, Monomethyl glutaric acid, Suberylglycine
+  SKIP_OVL Acetone                             rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL 5-Aminopentanoic acid               rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL 5-Aminopentanoic acid               rank= 165  ppm=2.9959  — shared peak with: Aspartyllysine, N-alpha-Acetyl-L-lysine, Aminocaproic acid
+  SKIP_OVL 2-Aminoadipic acid                  rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL CE(16:0)                            rank= 138  ppm=2.2691  — shared peak with: Hydroxocobalamin
+  SKIP_OVL CE(16:0)                            rank= 115  ppm=2.3211  — shared peak with: FADH, FAD, TG(10:0/10:0/10:0)
+  SKIP_OVL CE(16:0)                            rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP N-Butyrylglycine                    rank= 134  ppm=2.2821  — competitor within 0.019 ppm
+  SKIP Methyl propenyl ketone              rank= 134  ppm=2.2821  — competitor within 0.020 ppm
+  SKIP 2-Pyrrolidinone                     rank= 134  ppm=2.2821  — competitor within 0.020 ppm
+  SKIP 2-Pyrrolidinone                     rank= 129  ppm=3.3888  — competitor within 0.019 ppm
+  SKIP_OVL 3-Methylindole                      rank= 115  ppm=2.3211  — shared peak with: FADH, FAD, TG(10:0/10:0/10:0)
+  SKIP_OVL 3-Methylindole                      rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Isovalerylglutamic acid             rank= 115  ppm=2.3211  — shared peak with: FADH, FAD, TG(10:0/10:0/10:0)
+  SKIP_OVL 2-Piperidinone                      rank= 115  ppm=2.3211  — shared peak with: FADH, FAD, TG(10:0/10:0/10:0)
+  SKIP_OVL TG(10:0/10:0/10:0)                  rank= 115  ppm=2.3211  — shared peak with: FADH, FAD
+  SKIP_OVL Succinic acid                       rank= 152  ppm=2.3848  — shared peak with: FADH, FAD
+  SKIP_OVL (R)-Lipoic acid                     rank= 152  ppm=2.3848  — shared peak with: FADH, FAD
+  SKIP_OVL Decanoylcarnitine                   rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP Decanoylcarnitine                   rank= 146  ppm=3.6194  — competitor within 0.019 ppm
+  SKIP_OVL 3-Hydroxymethylglutaric acid        rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen, gamma-Butyrolactone
+  SKIP_OVL gamma-Butyrolactone                 rank= 190  ppm=2.4035  — shared peak with: Citramalic acid, Ibuprofen
+  SKIP_OVL gamma-Butyrolactone                 rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP_OVL Dimethylamine                       rank= 169  ppm=2.5383  — shared peak with: gamma-Glutamylcysteine, 3-Hexanone, Stearic acid
+  SKIP_OVL 17a-Ethynylestradiol                rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP_OVL Octanoylcarnitine                   rank= 154  ppm=2.5693  — shared peak with: Hydroxocobalamin
+  SKIP Octanoylcarnitine                   rank= 146  ppm=3.6194  — competitor within 0.019 ppm
+  SKIP_OVL Ketoleucine                         rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP_OVL Dihydrouracil                       rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP_OVL Dihydrouracil                       rank=  29  ppm=3.4505  — shared peak with: Ranitidine
+  SKIP_OVL Palmitoylcarnitine                  rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP_OVL Palmitoylcarnitine                  rank=  43  ppm=3.7024  — shared peak with: Succinylacetone
+  SKIP_OVL 2-Ketohexanoic acid                 rank= 197  ppm=2.7232  — shared peak with: Succinylacetone, Carnosine, L-Aspartic acid
+  SKIP Oxoadipic acid                      rank= 208  ppm=2.8394  — competitor within 0.019 ppm
+  SKIP_OVL Lisinopril                          rank= 184  ppm=3.0215  — shared peak with: Ethylmalonic acid
+  SKIP_OVL Lisinopril                          rank=  22  ppm=3.7705  — shared peak with: L-Alanine
+  SKIP_OVL Lisinopril                          rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP Ethylmalonic acid                   rank= 184  ppm=3.0215  — competitor within 0.020 ppm
+  SKIP 1,1-Dimethylbiguanide               rank= 158  ppm=3.0307  — competitor within 0.020 ppm
+  SKIP Ethanolamine                        rank= 123  ppm=3.1279  — competitor within 0.011 ppm
+  SKIP Ethanolamine                        rank=  13  ppm=3.8053  — competitor within 0.011 ppm
+  SKIP 2-Methylbutyroylcarnitine           rank= 113  ppm=3.2190  — competitor within 0.020 ppm
+  SKIP 2-Methylbutyroylcarnitine           rank= 130  ppm=3.6355  — competitor within 0.019 ppm
+  SKIP_OVL O-Phosphoethanolamine               rank=  74  ppm=3.2320  — shared peak with: Symmetric dimethylarginine
+  SKIP_OVL myo-Inositol                        rank=  14  ppm=3.2639  — shared peak with: Taurine
+  SKIP myo-Inositol                        rank= 162  ppm=4.0610  — competitor within 0.012 ppm
+  SKIP 3,4-Dihydroxybenzeneacetic acid     rank= 126  ppm=3.3814  — competitor within 0.020 ppm
+  SKIP_OVL Pipecolic acid                      rank= 124  ppm=3.4011  — shared peak with: Diphenhydramine
+  SKIP 3-Hydroxyphenylacetic acid          rank=  71  ppm=3.4822  — competitor within 0.020 ppm
+  SKIP_OVL Homoveratric acid                   rank=  85  ppm=3.4980  — shared peak with: N-Acetylserotonin
+  SKIP Galacturonic acid                   rank=  65  ppm=3.5165  — competitor within 0.020 ppm
+  SKIP Galacturonic acid                   rank= 162  ppm=4.0610  — competitor within 0.008 ppm
+  SKIP Galacturonic acid                   rank= 188  ppm=4.3450  — competitor within 0.008 ppm
+  SKIP Galacturonic acid                   rank=  28  ppm=4.5538  — competitor within 0.014 ppm
+  SKIP 5-Hydroxyindoleacetic acid          rank= 102  ppm=3.5657  — competitor within 0.020 ppm
+  SKIP Hydroxyphenylacetylglycine          rank= 102  ppm=3.5657  — competitor within 0.020 ppm
+  SKIP Hydroxyphenylacetylglycine          rank=  76  ppm=3.8330  — competitor within 0.012 ppm
+  SKIP 5alpha-Cholestanol                  rank= 146  ppm=3.6194  — competitor within 0.020 ppm
+  SKIP L-Valine                            rank= 146  ppm=3.6194  — competitor within 0.011 ppm
+  SKIP Dihydroandrosterone                 rank= 130  ppm=3.6355  — competitor within 0.020 ppm
+  SKIP_OVL MANNOHEPTULOSE                      rank= 100  ppm=3.6546  — shared peak with: Gluconolactone
+  SKIP_OVL L-Isoleucine                        rank= 100  ppm=3.6546  — shared peak with: Gluconolactone, MANNOHEPTULOSE
+  SKIP_OVL 5-Methoxysalicylic acid             rank=  61  ppm=3.7227  — shared peak with: Ibuprofen
+  SKIP_OVL Sorbitol                            rank=  61  ppm=3.7227  — shared peak with: Ibuprofen
+  SKIP_OVL Sorbitol                            rank=  19  ppm=3.8195  — shared peak with: Gluconolactone, 3-Methoxybenzenepropanoic acid
+  SKIP Aspartame                           rank=  67  ppm=3.7310  — competitor within 0.020 ppm
+  SKIP_OVL L-Glutamine                         rank=  22  ppm=3.7705  — shared peak with: L-Alanine
+  SKIP_OVL Erythritol                          rank=  22  ppm=3.7705  — shared peak with: L-Alanine
+  SKIP Glycylleucine                       rank=  13  ppm=3.8053  — competitor within 0.009 ppm
+  SKIP_OVL Glycylleucine                       rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP 2-Hydroxy-3-methylbutyric acid      rank=  45  ppm=3.8386  — competitor within 0.010 ppm
+  SKIP_OVL Ribonolactone                       rank=  45  ppm=3.8386  — shared peak with: 2-Hydroxy-3-methylbutyric acid
+  SKIP_OVL Ribonolactone                       rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL Syringic acid                       rank=  45  ppm=3.8386  — shared peak with: 2-Hydroxy-3-methylbutyric acid
+  SKIP Vanillic acid                       rank=  44  ppm=3.8956  — competitor within 0.020 ppm
+  SKIP_OVL 4-Aminohippuric acid                rank=  68  ppm=3.9167  — shared peak with: D-Xylose
+  SKIP Hippuric acid                       rank=  91  ppm=3.9699  — competitor within 0.012 ppm
+  SKIP Salicyluric acid                    rank=  91  ppm=3.9699  — competitor within 0.012 ppm
+  SKIP L-Homocysteic acid                  rank=  91  ppm=3.9699  — competitor within 0.017 ppm
+  SKIP Deoxycholic acid                    rank= 162  ppm=4.0610  — competitor within 0.019 ppm
+  SKIP_OVL Geraniol                            rank= 178  ppm=4.0905  — shared peak with: D-Glucuronic acid, Phosphoserine, 5-Aminolevulinic acid
+  SKIP_OVL Geraniol                            rank=  31  ppm=5.3864  — shared peak with: Thiamine
+  SKIP_OVL Chlorogenic acid                    rank= 198  ppm=4.2707  — shared peak with: L-Fucose, Guanosine, Cytidine
+  SKIP_OVL Chlorogenic acid                    rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP Deoxyadenosine triphosphate         rank= 193  ppm=4.3029  — competitor within 0.008 ppm
+  SKIP D-Ribose 5-phosphate                rank= 193  ppm=4.3029  — competitor within 0.015 ppm
+  SKIP_OVL 4-Hydroxyproline                    rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP 4-Hydroxyproline                    rank= 188  ppm=4.3450  — competitor within 0.014 ppm
+  SKIP_OVL Tartaric acid                       rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP_OVL Cyclic AMP                          rank= 189  ppm=4.3393  — shared peak with: Ranitidine
+  SKIP Shikimic acid                       rank= 188  ppm=4.3450  — competitor within 0.014 ppm
+  SKIP_OVL 1-Methylnicotinamide                rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL NADP                                rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP_OVL NADP+                               rank=  55  ppm=4.5160  — shared peak with: Alpha-Lactose, FADH, FADH
+  SKIP Aminopterin                         rank=  28  ppm=4.5538  — competitor within 0.020 ppm
+  SKIP Sumiki's acid                       rank=  28  ppm=4.5538  — competitor within 0.020 ppm
+  SKIP Adenosine triphosphate              rank=   4  ppm=4.6310  — competitor within 0.016 ppm
+  SKIP_OVL Indole                              rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Indole                              rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Indoxyl sulfate                     rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL L-Tryptophan                        rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  SKIP_OVL Indolelactic acid                   rank= 210  ppm=7.6893  — shared peak with: FADH, FADH, FAD
+  CLEAN Epi-coprostanol                     rank= 136  ppm=0.0970  area=244.5  nH=1  eff_nH=0.500
+  SKIP_CLAIMED Epi-coprostanol                     rank= 136  ppm=0.0970  — already claimed by another analyte
+  CLEAN Galacturonic acid                   rank= 195  ppm=5.3190  area=67.84  nH=1  eff_nH=0.500
+  → AUTO-ANCHOR Epi-coprostanol  conc_est=489  (from 1 peak(s))
+  → AUTO-ANCHOR Galacturonic acid  conc_est=135.7  (from 1 peak(s))
+  → all peaks of Isocaproic acid have competitors or were claimed
+  → all peaks of Dodecanoic acid have competitors or were claimed
+  → all peaks of Behenic acid have competitors or were claimed
+  → all peaks of Hydroxocobalamin have competitors or were claimed
+  → all peaks of D-Mannose have competitors or were claimed
+  → all peaks of Phosphoenolpyruvic acid have competitors or were claimed
+  → all peaks of Elaidic acid have competitors or were claimed
+  → all peaks of Arachidic acid have competitors or were claimed
+  → all peaks of L-Arabinose have competitors or were claimed
+  → all peaks of D-Galactose have competitors or were claimed
+  → all peaks of D-Glucose have competitors or were claimed
+  → all peaks of Cellobiose have competitors or were claimed
+  → all peaks of Glucose 6-phosphate have competitors or were claimed
+  → all peaks of D-Maltose have competitors or were claimed
+  → all peaks of L-Fucose have competitors or were claimed
+  → all peaks of Maltitol have competitors or were claimed
+  → all peaks of 5-Hydroxymethyluracil have competitors or were claimed
+  → all peaks of Thymidine have competitors or were claimed
+  → all peaks of Ribothymidine have competitors or were claimed
+  → all peaks of 5-Thymidylic acid have competitors or were claimed
+  → all peaks of Pyridoxal 5'-phosphate have competitors or were claimed
+  → all peaks of Deacetyldiltiazem have competitors or were claimed
+  → all peaks of N-Acetyl-L-tyrosine have competitors or were claimed
+  → all peaks of 2-Furoylglycine have competitors or were claimed
+  → all peaks of Thymidine 5'-triphosphate have competitors or were claimed
+  → all peaks of Epinephrine have competitors or were claimed
+  → all peaks of gamma-Glutamylcysteine have competitors or were claimed
+  → all peaks of Folic acid have competitors or were claimed
+  → all peaks of beta-Alanine have competitors or were claimed
+  → all peaks of Stearic acid have competitors or were claimed
+  → all peaks of Quercetin have competitors or were claimed
+  → all peaks of Iodotyrosine have competitors or were claimed
+  → all peaks of Hexanoylglycine have competitors or were claimed
+  → all peaks of Isobutyrylglycine have competitors or were claimed
+  → all peaks of 2-Methylbutyrylglycine have competitors or were claimed
+  → all peaks of Tiglylglycine have competitors or were claimed
+  → all peaks of Senecioic acid have competitors or were claimed
+  → all peaks of Gluconic acid have competitors or were claimed
+  → all peaks of 6-Phosphogluconic acid have competitors or were claimed
+  → all peaks of Gluconolactone have competitors or were claimed
+  → all peaks of Vinylacetylglycine have competitors or were claimed
+  → all peaks of p-Hydroxyphenylacetic acid have competitors or were claimed
+  → all peaks of Homovanillic acid have competitors or were claimed
+  → all peaks of 3-Methylcrotonylglycine have competitors or were claimed
+  → all peaks of Deoxyadenosine have competitors or were claimed
+  → all peaks of Aspartyllysine have competitors or were claimed
+  → all peaks of L-Dihydroorotic acid have competitors or were claimed
+  → all peaks of 4,5-Dihydroorotic acid have competitors or were claimed
+  → all peaks of Phenylglyoxylic acid have competitors or were claimed
+  → all peaks of Benzoic acid have competitors or were claimed
+  → all peaks of Coumarin have competitors or were claimed
+  → all peaks of Xanthosine have competitors or were claimed
+  → all peaks of N-Acetylserotonin have competitors or were claimed
+  → all peaks of N-Acetyl-L-phenylalanine have competitors or were claimed
+  → all peaks of Deoxyadenosine monophosphate have competitors or were claimed
+  → all peaks of 3-Mercaptopyruvic acid have competitors or were claimed
+  → all peaks of 2-Isopropylmalic acid have competitors or were claimed
+  → all peaks of 3-Hydroxyglutaric acid have competitors or were claimed
+  → all peaks of 2-Ketobutyric acid have competitors or were claimed
+  → all peaks of 1-Methylhistamine have competitors or were claimed
+  → all peaks of Propylene glycol have competitors or were claimed
+  → all peaks of 3-Methoxytyramine have competitors or were claimed
+  → all peaks of cis-Aconitic acid have competitors or were claimed
+  → all peaks of 2-Phenylbutyric acid have competitors or were claimed
+  → all peaks of 11a-Hydroxyprogesterone have competitors or were claimed
+  → all peaks of Chlorpheniramine have competitors or were claimed
+  → all peaks of Levulinic acid have competitors or were claimed
+  → all peaks of Urocanic acid have competitors or were claimed
+  → all peaks of 3-Methylhistidine have competitors or were claimed
+  → all peaks of 3-Furoic acid have competitors or were claimed
+  → all peaks of Deoxyguanosine have competitors or were claimed
+  → all peaks of Guanosine have competitors or were claimed
+  → all peaks of Histamine have competitors or were claimed
+  → all peaks of L-Histidine have competitors or were claimed
+  → all peaks of 3-Nitrotyrosine have competitors or were claimed
+  → all peaks of Acetylglycine have competitors or were claimed
+  → all peaks of Dimethylglycine have competitors or were claimed
+  → all peaks of 3-Methoxybenzenepropanoic acid have competitors or were claimed
+  → all peaks of Corticosterone have competitors or were claimed
+  → all peaks of Heneicosanoic acid have competitors or were claimed
+  → all peaks of N-alpha-Acetyl-L-lysine have competitors or were claimed
+  → all peaks of Glyceraldehyde have competitors or were claimed
+  → all peaks of Deoxycholic acid glycine conjugate have competitors or were claimed
+  → all peaks of Saccharopine have competitors or were claimed
+  → all peaks of Cytidine triphosphate have competitors or were claimed
+  → all peaks of Glucosamine 6-phosphate have competitors or were claimed
+  → all peaks of Deoxycytidine have competitors or were claimed
+  → all peaks of Deoxyuridine have competitors or were claimed
+  → all peaks of Quinaldic acid have competitors or were claimed
+  → all peaks of Citrulline have competitors or were claimed
+  → all peaks of 3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid have competitors or were claimed
+  → all peaks of Deoxycorticosterone have competitors or were claimed
+  → all peaks of Propionylglycine have competitors or were claimed
+  → all peaks of Levoglucosan have competitors or were claimed
+  → all peaks of Phenylacetylglycine have competitors or were claimed
+  → all peaks of Galactaric acid have competitors or were claimed
+  → all peaks of Riboflavin have competitors or were claimed
+  → all peaks of Linoleic acid have competitors or were claimed
+  → all peaks of Palmitic acid have competitors or were claimed
+  → all peaks of Nonadecanoic acid have competitors or were claimed
+  → all peaks of Myristic acid have competitors or were claimed
+  → all peaks of Pentadecanoic acid have competitors or were claimed
+  → all peaks of 3-Phosphoglyceric acid have competitors or were claimed
+  → all peaks of Tyramine have competitors or were claimed
+  → all peaks of Cholestenone have competitors or were claimed
+  → all peaks of Epitestosterone have competitors or were claimed
+  → all peaks of 16-Dehydroprogesterone have competitors or were claimed
+  → all peaks of Androstenedione have competitors or were claimed
+  → all peaks of NADH have competitors or were claimed
+  → all peaks of Cytidine monophosphate have competitors or were claimed
+  → all peaks of Guanosine diphosphate have competitors or were claimed
+  → all peaks of Guanosine monophosphate have competitors or were claimed
+  → all peaks of Glutathione have competitors or were claimed
+  → all peaks of Cytosine have competitors or were claimed
+  → all peaks of Nutriacholic acid have competitors or were claimed
+  → all peaks of alpha-Tocopherol have competitors or were claimed
+  → all peaks of 2,2-Dimethylsuccinic acid have competitors or were claimed
+  → all peaks of Uracil have competitors or were claimed
+  → all peaks of Phenylpropanolamine have competitors or were claimed
+  → all peaks of 3-Methoxytyrosine have competitors or were claimed
+  → all peaks of Imipramine have competitors or were claimed
+  → all peaks of 3-Hydroxymandelic acid have competitors or were claimed
+  → all peaks of Mandelic acid have competitors or were claimed
+  → all peaks of Phenylephrine have competitors or were claimed
+  → all peaks of 3,4-Dihydroxyphenylglycol have competitors or were claimed
+  → all peaks of 3-Phenylbutyric acid have competitors or were claimed
+  → all peaks of D-Lactic acid have competitors or were claimed
+  → all peaks of Phenylpropionylglycine have competitors or were claimed
+  → all peaks of 2-Octenoic acid have competitors or were claimed
+  → all peaks of 2-Octenedioic acid have competitors or were claimed
+  → all peaks of Traumatic acid have competitors or were claimed
+  → all peaks of Androstanedione have competitors or were claimed
+  → all peaks of L-Arabitol have competitors or were claimed
+  → all peaks of L-Methionine have competitors or were claimed
+  → all peaks of Propyl alcohol have competitors or were claimed
+  → all peaks of 4-Methoxyphenylacetic acid have competitors or were claimed
+  → all peaks of Ferulic acid have competitors or were claimed
+  → all peaks of Normetanephrine have competitors or were claimed
+  → all peaks of Isoferulic acid have competitors or were claimed
+  → all peaks of 5-Methoxytryptophan have competitors or were claimed
+  → all peaks of 3-Methoxy-4-Hydroxyphenylglycol sulfate have competitors or were claimed
+  → all peaks of 5-Methoxytryptamine have competitors or were claimed
+  → all peaks of Adenylsuccinic acid have competitors or were claimed
+  → all peaks of 3-Hydroxybutyric acid have competitors or were claimed
+  → all peaks of (S)-3-Hydroxybutyric acid have competitors or were claimed
+  → all peaks of L-Threonine have competitors or were claimed
+  → all peaks of Octadecanol have competitors or were claimed
+  → all peaks of L-Aspartic acid have competitors or were claimed
+  → all peaks of N-Acryloylglycine have competitors or were claimed
+  → all peaks of Dihydrothymine have competitors or were claimed
+  → all peaks of 5,6-dihydrothymine have competitors or were claimed
+  → all peaks of Isovalerylalanine have competitors or were claimed
+  → all peaks of Methylmalonic acid have competitors or were claimed
+  → all peaks of Isobutyryl-L-carnitine have competitors or were claimed
+  → all peaks of Pyridine have competitors or were claimed
+  → all peaks of Dopamine have competitors or were claimed
+  → all peaks of Valerylglycine have competitors or were claimed
+  → all peaks of N6-Acetyl-L-lysine have competitors or were claimed
+  → all peaks of Homo-L-arginine have competitors or were claimed
+  → all peaks of Loperamide have competitors or were claimed
+  → all peaks of Fructose 6-phosphate have competitors or were claimed
+  → all peaks of Brompheniramine have competitors or were claimed
+  → all peaks of trans-2-Octenoic acid have competitors or were claimed
+  → all peaks of Lactulose have competitors or were claimed
+  → all peaks of Indole-3-propionic acid have competitors or were claimed
+  → all peaks of 2-Methylhippuric acid have competitors or were claimed
+  → all peaks of Tetrahydrofolic acid have competitors or were claimed
+  → all peaks of 5,6,7,8-Tetrahydrofolic acid have competitors or were claimed
+  → all peaks of Undecanoic acid have competitors or were claimed
+  → all peaks of Benzyl alcohol have competitors or were claimed
+  → all peaks of Epiandrosterone have competitors or were claimed
+  → all peaks of Hypotaurine have competitors or were claimed
+  → all peaks of D-threo-Isocitric acid have competitors or were claimed
+  → all peaks of alpha-Hydroxyisobutyric acid have competitors or were claimed
+  → all peaks of Mevalonic acid have competitors or were claimed
+  → all peaks of Dimethylmalonic acid have competitors or were claimed
+  → all peaks of 2-Hydroxy-2-methylbutyric acid have competitors or were claimed
+  → all peaks of Lathosterol have competitors or were claimed
+  → all peaks of Glutaric acid have competitors or were claimed
+  → all peaks of Acetaminophen have competitors or were claimed
+  → all peaks of Doxylamine have competitors or were claimed
+  → all peaks of N-Acetyl-L-methionine have competitors or were claimed
+  → all peaks of Isovaleric acid have competitors or were claimed
+  → all peaks of 5'-Methylthioadenosine have competitors or were claimed
+  → all peaks of Dimethylsulfide have competitors or were claimed
+  → all peaks of Caprylic acid have competitors or were claimed
+  → all peaks of Caproic acid have competitors or were claimed
+  → all peaks of Heptanoic acid have competitors or were claimed
+  → all peaks of Pelargonic acid have competitors or were claimed
+  → all peaks of 12-Hydroxydodecanoic acid have competitors or were claimed
+  → all peaks of 3-Hydroxydodecanedioic acid have competitors or were claimed
+  → all peaks of 2-Hydroxydecanedioic acid have competitors or were claimed
+  → all peaks of Valeric acid have competitors or were claimed
+  → all peaks of Aminocaproic acid have competitors or were claimed
+  → all peaks of 3-Hydroxysuberic acid have competitors or were claimed
+  → all peaks of 17-Hydroxyprogesterone have competitors or were claimed
+  → all peaks of D-Ribose have competitors or were claimed
+  → all peaks of 4-Methylcatechol have competitors or were claimed
+  → all peaks of Acetone have competitors or were claimed
+  → all peaks of 5-Aminopentanoic acid have competitors or were claimed
+  → all peaks of 2-Aminoadipic acid have competitors or were claimed
+  → all peaks of CE(16:0) have competitors or were claimed
+  → all peaks of N-Butyrylglycine have competitors or were claimed
+  → all peaks of Methyl propenyl ketone have competitors or were claimed
+  → all peaks of 2-Pyrrolidinone have competitors or were claimed
+  → all peaks of 3-Methylindole have competitors or were claimed
+  → all peaks of Isovalerylglutamic acid have competitors or were claimed
+  → all peaks of 2-Piperidinone have competitors or were claimed
+  → all peaks of TG(10:0/10:0/10:0) have competitors or were claimed
+  → all peaks of Succinic acid have competitors or were claimed
+  → all peaks of (R)-Lipoic acid have competitors or were claimed
+  → all peaks of Decanoylcarnitine have competitors or were claimed
+  → all peaks of 3-Hydroxymethylglutaric acid have competitors or were claimed
+  → all peaks of gamma-Butyrolactone have competitors or were claimed
+  → all peaks of Dimethylamine have competitors or were claimed
+  → all peaks of 17a-Ethynylestradiol have competitors or were claimed
+  → all peaks of Octanoylcarnitine have competitors or were claimed
+  → all peaks of Ketoleucine have competitors or were claimed
+  → all peaks of Dihydrouracil have competitors or were claimed
+  → all peaks of Palmitoylcarnitine have competitors or were claimed
+  → all peaks of 2-Ketohexanoic acid have competitors or were claimed
+  → all peaks of Oxoadipic acid have competitors or were claimed
+  → all peaks of Lisinopril have competitors or were claimed
+  → all peaks of Ethylmalonic acid have competitors or were claimed
+  → all peaks of 1,1-Dimethylbiguanide have competitors or were claimed
+  → all peaks of Ethanolamine have competitors or were claimed
+  → all peaks of 2-Methylbutyroylcarnitine have competitors or were claimed
+  → all peaks of O-Phosphoethanolamine have competitors or were claimed
+  → all peaks of myo-Inositol have competitors or were claimed
+  → all peaks of 3,4-Dihydroxybenzeneacetic acid have competitors or were claimed
+  → all peaks of Pipecolic acid have competitors or were claimed
+  → all peaks of 3-Hydroxyphenylacetic acid have competitors or were claimed
+  → all peaks of Homoveratric acid have competitors or were claimed
+  → all peaks of 5-Hydroxyindoleacetic acid have competitors or were claimed
+  → all peaks of Hydroxyphenylacetylglycine have competitors or were claimed
+  → all peaks of 5alpha-Cholestanol have competitors or were claimed
+  → all peaks of L-Valine have competitors or were claimed
+  → all peaks of Dihydroandrosterone have competitors or were claimed
+  → all peaks of MANNOHEPTULOSE have competitors or were claimed
+  → all peaks of L-Isoleucine have competitors or were claimed
+  → all peaks of 5-Methoxysalicylic acid have competitors or were claimed
+  → all peaks of Sorbitol have competitors or were claimed
+  → all peaks of Aspartame have competitors or were claimed
+  → all peaks of L-Glutamine have competitors or were claimed
+  → all peaks of Erythritol have competitors or were claimed
+  → all peaks of Glycylleucine have competitors or were claimed
+  → all peaks of 2-Hydroxy-3-methylbutyric acid have competitors or were claimed
+  → all peaks of Ribonolactone have competitors or were claimed
+  → all peaks of Syringic acid have competitors or were claimed
+  → all peaks of Vanillic acid have competitors or were claimed
+  → all peaks of 4-Aminohippuric acid have competitors or were claimed
+  → all peaks of Hippuric acid have competitors or were claimed
+  → all peaks of Salicyluric acid have competitors or were claimed
+  → all peaks of L-Homocysteic acid have competitors or were claimed
+  → all peaks of Deoxycholic acid have competitors or were claimed
+  → all peaks of Geraniol have competitors or were claimed
+  → all peaks of Chlorogenic acid have competitors or were claimed
+  → all peaks of Deoxyadenosine triphosphate have competitors or were claimed
+  → all peaks of D-Ribose 5-phosphate have competitors or were claimed
+  → all peaks of 4-Hydroxyproline have competitors or were claimed
+  → all peaks of Tartaric acid have competitors or were claimed
+  → all peaks of Cyclic AMP have competitors or were claimed
+  → all peaks of Shikimic acid have competitors or were claimed
+  → all peaks of 1-Methylnicotinamide have competitors or were claimed
+  → all peaks of NADP have competitors or were claimed
+  → all peaks of NADP+ have competitors or were claimed
+  → all peaks of Aminopterin have competitors or were claimed
+  → all peaks of Sumiki's acid have competitors or were claimed
+  → all peaks of Adenosine triphosphate have competitors or were claimed
+  → all peaks of Indole have competitors or were claimed
+  → all peaks of Indoxyl sulfate have competitors or were claimed
+  → all peaks of L-Tryptophan have competitors or were claimed
+  → all peaks of Indolelactic acid have competitors or were claimed
+
+--- Phase 2: contribution subtraction ---
+  Peak #  41  2.3597 ppm  obs=1995  known=[Ureidopropionic acid: 608.2%]  residual=0.0%  unknowns=['Isocaproic acid', '5-Thymidylic acid', 'Linoleic acid', 'Palmitic acid', 'Nonadecanoic acid', 'Myristic acid', 'Pentadecanoic acid']
+  Peak #  46  2.3505 ppm  obs=2276  known=[]  residual=100.0%  unknowns=['Dodecanoic acid', 'Behenic acid']
+  Peak # 207  1.9141 ppm  obs=19.68  known=[Melatonin: 26176.2%, Monomethyl glutaric acid: 17981.7%]  residual=0.0%  unknowns=['Hydroxocobalamin', 'Thymidine', 'Ribothymidine', '5-Thymidylic acid', 'Tiglylglycine', 'Senecioic acid', 'Senecioic acid', 'N-Acetylserotonin', 'N-Acetyl-L-phenylalanine', '11a-Hydroxyprogesterone', 'Lathosterol', 'Glutaric acid']
+  Peak #  51  3.6887 ppm  obs=949.3  known=[Allose: 117.2%, Monomethyl glutaric acid: 372.8%]  residual=0.0%  unknowns=['Hydroxocobalamin', '1-Methylhistamine']
+  Peak # 200  1.3249 ppm  obs=127.3  known=[Progesterone: 499.5%]  residual=0.0%  unknowns=['Hydroxocobalamin', 'L-Fucose', 'L-Fucose', '2-Methylbutyrylglycine', '11a-Hydroxyprogesterone', 'Epitestosterone', 'Phenylpropanolamine', '3-Hydroxybutyric acid', '(S)-3-Hydroxybutyric acid', 'L-Threonine', 'Octadecanol', 'Dihydrothymine', '5,6-dihydrothymine', 'Isovalerylalanine', 'Methylmalonic acid']
+  Peak #  33  3.8855 ppm  obs=2518  known=[Melatonin: 204.6%, Sucrose: 966.4%]  residual=0.0%  unknowns=['Hydroxocobalamin', 'Glucosamine 6-phosphate', '5-Methoxytryptamine', 'L-Aspartic acid']
+  Peak # 203  1.3372 ppm  obs=70.46  known=[Citramalic acid: 154.6%, L-Alanine: 9743.7%]  residual=0.0%  unknowns=['Hydroxocobalamin', 'Aspartyllysine', '11a-Hydroxyprogesterone', 'Corticosterone', 'N-alpha-Acetyl-L-lysine', '3-Phenylbutyric acid', 'D-Lactic acid', 'trans-2-Octenoic acid']
+  Peak # 138  2.2691 ppm  obs=205.2  known=[]  residual=100.0%  unknowns=['Hydroxocobalamin', 'Hexanoylglycine', '2-Aminoadipic acid', 'CE(16:0)']
+  Peak # 154  2.5693 ppm  obs=96.75  known=[]  residual=100.0%  unknowns=['Hydroxocobalamin', '3-Methoxybenzenepropanoic acid', 'Indole-3-propionic acid', 'Octanoylcarnitine']
+  Peak #  38  3.7379 ppm  obs=2880  known=[Suberylglycine: 11.2%]  residual=88.8%  unknowns=['Hydroxocobalamin', 'Maltitol', 'N6-Acetyl-L-lysine', 'Homo-L-arginine']
+  Peak # 198  4.2707 ppm  obs=75.72  known=[Cytidine: 297.1%, Cytarabine: 297.1%]  residual=0.0%  unknowns=['Hydroxocobalamin', 'L-Fucose', 'Ribothymidine', 'Xanthosine', 'Guanosine', 'NADH', 'NADH', 'Cytidine monophosphate', 'Glutathione', 'Lactulose', 'Glycylleucine', 'Chlorogenic acid']
+  Peak #  66  5.2400 ppm  obs=1933  known=[D-Xylose: 1459.8%, Alpha-Lactose: 175.1%, N-Acetylgalactosamine: 175.1%]  residual=0.0%  unknowns=['D-Mannose', 'Phosphoenolpyruvic acid', 'D-Glucose', 'Cellobiose', 'Glucose 6-phosphate', 'D-Maltose', 'L-Fucose', 'Maltitol']
+  Peak #  31  5.3864 ppm  obs=6562  known=[Sucrose: 741.7%, Thiamine: 152.6%]  residual=0.0%  unknowns=['Phosphoenolpyruvic acid', 'D-Maltose', 'Glucosamine 6-phosphate', 'CE(16:0)', 'Geraniol']
+  Peak #  53  3.4191 ppm  obs=1279  known=[D-Xylose: 2205.3%, Taurine: 1137.4%]  residual=0.0%  unknowns=[]
+  Peak # 170  3.3105 ppm  obs=215.5  known=[D-Xylose: 6546.2%, 3-Methylhistamine: 610.1%, Serotonin: 413.0%]  residual=0.0%  unknowns=['5-Methoxytryptamine']
+  Peak #  68  3.9167 ppm  obs=918.7  known=[D-Xylose: 1535.4%, N-Acetylgalactosamine: 368.3%, 1-Methyladenosine: 810.6%]  residual=0.0%  unknowns=['Vinylacetylglycine', '4-Aminohippuric acid']
+  Peak #  65  3.5165 ppm  obs=2105  known=[D-Xylose: 670.2%, Galacturonic acid: 1.6%]  residual=0.0%  unknowns=[]
+  Peak #  54  2.3453 ppm  obs=1772  known=[]  residual=100.0%  unknowns=['Elaidic acid', 'Arachidic acid', 'Heneicosanoic acid']
+  Peak #  63  5.2471 ppm  obs=1921  known=[D-Glucuronic acid: 176.1%]  residual=0.0%  unknowns=['L-Arabinose', 'D-Galactose']
+  Peak #  55  4.5160 ppm  obs=1.256e+04  known=[Alpha-Lactose: 26.9%, FADH: 58.3%, FAD: 58.3%, 1-Methyladenosine: 59.3%]  residual=0.0%  unknowns=['L-Arabinose', 'Thymidine', 'Guanosine monophosphate', 'Lactulose', 'NADP', 'NADP+']
+  Peak #  86  3.9760 ppm  obs=772.1  known=[]  residual=100.0%  unknowns=['D-Galactose', '3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid']
+  Peak # 162  4.0610 ppm  obs=167.3  known=[Galacturonic acid: 40.5%]  residual=59.5%  unknowns=['D-Galactose', 'myo-Inositol', 'Deoxycholic acid']
+  Peak #   4  4.6310 ppm  obs=3.137e+05  known=[]  residual=100.0%  unknowns=['D-Glucose', 'Glucose 6-phosphate', 'Adenosine triphosphate']
+  Peak # 178  4.0905 ppm  obs=168.1  known=[D-Glucuronic acid: 2012.7%, Phosphoserine: 227.8%, 5-Aminolevulinic acid: 1104.2%]  residual=0.0%  unknowns=['Geraniol']
+  Peak #  27  3.8654 ppm  obs=2758  known=[N-Acetylgalactosamine: 122.7%, 1,5-Anhydrosorbitol: 408.9%, Sucrose: 882.4%, Thiamine: 181.6%, 1-Methyladenosine: 270.1%]  residual=0.0%  unknowns=['Guanosine', 'Imipramine']
+  Peak # 119  3.9302 ppm  obs=321.6  known=[N-Acetylgalactosamine: 1051.9%, 1-Methyladenosine: 2315.3%]  residual=0.0%  unknowns=[]
+  Peak #  29  3.4505 ppm  obs=5517  known=[Ranitidine: 55.5%]  residual=44.5%  unknowns=['Maltitol', 'Dihydrouracil']
+  Peak # 210  7.6893 ppm  obs=21.28  known=[FADH: 68762.6%, FAD: 68762.6%, 1-Methylhistidine: 12385.3%, Tryptamine: 60725.5%]  residual=0.0%  unknowns=['Thymidine', 'Ribothymidine', '5-Thymidylic acid', 'N-Acetyl-L-tyrosine', '2-Furoylglycine', "Thymidine 5'-triphosphate", "Thymidine 5'-triphosphate", 'Quercetin', 'Iodotyrosine', 'Phenylglyoxylic acid', 'Benzoic acid', 'Coumarin', 'Coumarin', 'Pyridine', 'Indole-3-propionic acid', '3-Methylindole', 'Chlorogenic acid', 'Indole', 'Indole', 'Indoxyl sulfate', 'L-Tryptophan', 'Indolelactic acid']
+  Peak #  42  7.9067 ppm  obs=2420  known=[FADH: 604.7%, FAD: 604.7%, N-Acetyl-L-aspartic acid: 3.6%, Cytidine: 9.3%, Cytarabine: 9.3%, Uridine diphosphate glucose: 211.5%]  residual=0.0%  unknowns=['Xanthosine', 'N-Acetyl-L-phenylalanine', 'Guanosine', 'Histamine', 'L-Histidine', '3-Nitrotyrosine', 'N-alpha-Acetyl-L-lysine', 'Deoxycholic acid glycine conjugate', 'Cytidine triphosphate', 'Deoxycytidine', 'Deoxyuridine', 'Quinaldic acid', 'Quinaldic acid']
+  Peak #  18  5.8599 ppm  obs=5979  known=[FADH: 122.4%, FAD: 122.4%, Progesterone: 10.6%, Cytidine: 3.8%, Cytarabine: 3.8%]  residual=0.0%  unknowns=['Ribothymidine', 'Xanthosine', 'Guanosine', 'Corticosterone', 'Cytidine triphosphate', 'Deoxycytidine', 'Deoxyuridine', 'Epitestosterone', 'NADH', 'Cytidine monophosphate', 'Guanosine diphosphate', 'Guanosine monophosphate', 'Cytosine', 'Uracil', '2-Octenoic acid', '2-Octenedioic acid', 'Traumatic acid']
+  Peak # 115  2.3211 ppm  obs=645.7  known=[FADH: 2266.2%, FAD: 2266.2%, Taurodeoxycholic acid: 46.2%]  residual=0.0%  unknowns=['CE(16:0)', '3-Methylindole', 'Isovalerylglutamic acid', '2-Piperidinone', 'TG(10:0/10:0/10:0)']
+  Peak # 152  2.3848 ppm  obs=110.5  known=[FADH: 13245.3%, FAD: 13245.3%]  residual=0.0%  unknowns=['Levulinic acid', 'Saccharopine']
+  Peak #  11  3.1596 ppm  obs=1.082e+04  known=[1-Methylhistidine: 6.1%, Tryptamine: 119.5%]  residual=0.0%  unknowns=['beta-Alanine', 'Methylmalonic acid']
+  Peak #  93  3.0702 ppm  obs=575  known=[1-Methylhistidine: 114.6%, 3-Methylhistamine: 228.7%]  residual=0.0%  unknowns=['3-Nitrotyrosine', 'Brompheniramine']
+  Peak #  13  3.8053 ppm  obs=7440  known=[]  residual=100.0%  unknowns=['Ribothymidine', 'Glycylleucine']
+  Peak # 189  4.3393 ppm  obs=140  known=[Ranitidine: 4375.2%]  residual=0.0%  unknowns=['Ribothymidine', 'Cytidine triphosphate', 'Lisinopril']
+  Peak # 205  1.9207 ppm  obs=32.24  known=[]  residual=100.0%  unknowns=['N-Acetyl-L-tyrosine', "Thymidine 5'-triphosphate", 'Deoxycorticosterone']
+  Peak # 169  2.5383 ppm  obs=69.74  known=[3-Hexanone: 92.4%, Hydrocinnamic acid: 866.4%, 5-Aminolevulinic acid: 1330.8%, Progesterone: 455.8%]  residual=0.0%  unknowns=['gamma-Glutamylcysteine', 'beta-Alanine', 'Stearic acid', '3-Hydroxyglutaric acid']
+  Peak #  21  3.8611 ppm  obs=4190  known=[Ranitidine: 146.2%]  residual=0.0%  unknowns=['gamma-Glutamylcysteine', '3-Mercaptopyruvic acid']
+  Peak # 125  4.1014 ppm  obs=327.2  known=[]  residual=100.0%  unknowns=['Hexanoylglycine', 'Isobutyrylglycine', '2-Methylbutyrylglycine']
+  Peak #  94  3.7979 ppm  obs=558.5  known=[Symmetric dimethylarginine: 2649.7%]  residual=0.0%  unknowns=['Tiglylglycine']
+  Peak # 107  2.7809 ppm  obs=512.1  known=[5-Aminolevulinic acid: 181.2%, Biocytin: 181.2%]  residual=0.0%  unknowns=['Linoleic acid']
+  Peak # 109  4.1227 ppm  obs=660.5  known=[Allose: 336.8%]  residual=0.0%  unknowns=['Gluconic acid', '6-Phosphogluconic acid', 'Gluconolactone', 'Deoxyadenosine', 'L-Dihydroorotic acid', '4,5-Dihydroorotic acid', 'Deoxyadenosine monophosphate']
+  Peak #  69  4.0276 ppm  obs=972.2  known=[]  residual=100.0%  unknowns=['Gluconic acid', '2-Methylhippuric acid']
+  Peak # 100  3.6546 ppm  obs=720.6  known=[]  residual=100.0%  unknowns=['Gluconolactone', 'MANNOHEPTULOSE', 'L-Isoleucine']
+  Peak #  19  3.8195 ppm  obs=5089  known=[Diphenhydramine: 54.4%]  residual=45.6%  unknowns=['Gluconolactone', 'Guanosine', '3-Methoxybenzenepropanoic acid', 'Sorbitol']
+  Peak # 130  3.6355 ppm  obs=466.7  known=[Allose: 238.3%]  residual=0.0%  unknowns=['Octadecanol']
+  Peak # 165  2.9959 ppm  obs=193.2  known=[N-Acetylputrescine: 619.6%]  residual=0.0%  unknowns=['Aspartyllysine', 'N-alpha-Acetyl-L-lysine', 'Aminocaproic acid', '5-Aminopentanoic acid']
+  Peak #  75  2.1308 ppm  obs=891.8  known=[Progesterone: 71.3%, Succinylacetone: 140.9%]  residual=0.0%  unknowns=[]
+  Peak # 208  2.8394 ppm  obs=32.5  known=[]  residual=100.0%  unknowns=['N-Acetylserotonin', '3-Mercaptopyruvic acid', 'Oxoadipic acid']
+  Peak #  84  3.4675 ppm  obs=1204  known=[Melatonin: 160.4%, Sucrose: 4041.9%, Uridine diphosphate glucose: 425.1%]  residual=0.0%  unknowns=[]
+  Peak # 147  3.1894 ppm  obs=159.7  known=[Biocytin: 435.8%, Carnosine: 863.5%, Metoprolol: 463.1%]  residual=0.0%  unknowns=['N6-Acetyl-L-lysine']
+  Peak # 197  2.7232 ppm  obs=70.32  known=[Succinylacetone: 893.3%, Carnosine: 980.8%, Benzenebutanoic acid: 1435.5%]  residual=0.0%  unknowns=['2-Isopropylmalic acid', 'L-Aspartic acid', 'Hypotaurine', 'Dihydrouracil', '2-Ketohexanoic acid']
+  Peak # 190  2.4035 ppm  obs=79.71  known=[Succinylacetone: 788.1%, Citramalic acid: 68.3%, Ibuprofen: 4050.3%]  residual=0.0%  unknowns=['3-Hydroxyglutaric acid', '3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid', 'Epitestosterone', '(S)-3-Hydroxybutyric acid', 'gamma-Butyrolactone']
+  Peak #  14  3.2639 ppm  obs=8104  known=[Taurine: 179.6%]  residual=0.0%  unknowns=['1-Methylhistamine', '3-Methoxytyramine', 'myo-Inositol']
+  Peak # 182  2.9273 ppm  obs=137.8  known=[]  residual=100.0%  unknowns=['1-Methylhistamine', 'Tyramine']
+  Peak #  32  3.8805 ppm  obs=2843  known=[]  residual=100.0%  unknowns=['3-Methoxytyramine', '3-Phosphoglyceric acid']
+  Peak #  15  3.4261 ppm  obs=4433  known=[]  residual=100.0%  unknowns=['cis-Aconitic acid', '3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid']
+  Peak # 172  4.8987 ppm  obs=174.4  known=[]  residual=100.0%  unknowns=['11a-Hydroxyprogesterone', 'Glucosamine 6-phosphate', 'Phenylpropanolamine']
+  Peak # 121  2.1686 ppm  obs=379.9  known=[Monomethyl glutaric acid: 349.3%, Suberylglycine: 85.2%]  residual=0.0%  unknowns=['Levulinic acid', '12-Hydroxydodecanoic acid', '3-Hydroxydodecanedioic acid', '2-Hydroxydecanedioic acid', 'Valeric acid', 'Aminocaproic acid', '3-Hydroxysuberic acid']
+  Peak #  17  3.2752 ppm  obs=4896  known=[Ureidopropionic acid: 185.9%]  residual=0.0%  unknowns=['Histamine']
+  Peak # 131  3.1955 ppm  obs=279.1  known=[N-Acetylputrescine: 429.0%]  residual=0.0%  unknowns=['3-Nitrotyrosine', 'Homo-L-arginine']
+  Peak #  23  3.7608 ppm  obs=5023  known=[L-Arginine: 391.6%]  residual=0.0%  unknowns=['Acetylglycine', 'Deoxyuridine']
+  Peak #  73  2.0473 ppm  obs=1157  known=[]  residual=100.0%  unknowns=['Acetylglycine', 'Isovaleric acid']
+  Peak #  80  2.3774 ppm  obs=509.9  known=[Benzenebutanoic acid: 198.0%]  residual=0.0%  unknowns=['Corticosterone', '2-Methylhippuric acid']
+  Peak # 193  4.3029 ppm  obs=196.9  known=[Cytidine: 114.2%, Cytarabine: 114.2%]  residual=0.0%  unknowns=['Corticosterone', 'Deoxyadenosine triphosphate', 'D-Ribose 5-phosphate']
+  Peak # 158  3.0307 ppm  obs=244.3  known=[Carnosine: 564.7%]  residual=0.0%  unknowns=['Indole-3-propionic acid']
+  Peak #  74  3.2320 ppm  obs=1419  known=[Carnosine: 48.6%, Symmetric dimethylarginine: 782.3%]  residual=0.0%  unknowns=['O-Phosphoethanolamine']
+  Peak # 183  2.0170 ppm  obs=120.1  known=[Benzenebutanoic acid: 1680.7%, N-Acetylputrescine: 1993.5%]  residual=0.0%  unknowns=['N-alpha-Acetyl-L-lysine', 'N6-Acetyl-L-lysine']
+  Peak #  20  3.7497 ppm  obs=4703  known=[Sucrose: 1034.7%]  residual=0.0%  unknowns=['Saccharopine', 'Propionylglycine', 'Phenylacetylglycine', 'L-Arabitol']
+  Peak #  70  2.0738 ppm  obs=1425  known=[]  residual=100.0%  unknowns=['Saccharopine', 'Epiandrosterone']
+  Peak # 188  4.3450 ppm  obs=86.04  known=[Galacturonic acid: 78.8%]  residual=21.2%  unknowns=['Cytidine triphosphate', 'Shikimic acid']
+  Peak #   8  3.5463 ppm  obs=7874  known=[Sucrose: 309.1%, Taurodeoxycholic acid: 2.8%]  residual=0.0%  unknowns=['Propyl alcohol']
+  Peak #  58  3.6688 ppm  obs=1755  known=[Sucrose: 5547.1%]  residual=0.0%  unknowns=['Phenylacetylglycine']
+  Peak #  83  4.0408 ppm  obs=1071  known=[Sucrose: 4543.4%]  residual=0.0%  unknowns=['Phenylpropionylglycine']
+  Peak #  45  3.8386 ppm  obs=3365  known=[]  residual=100.0%  unknowns=['Deoxyuridine', '2-Hydroxy-3-methylbutyric acid', 'Ribonolactone']
+  Peak # 129  3.3888 ppm  obs=261.4  known=[]  residual=100.0%  unknowns=['3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid', '2-Pyrrolidinone']
+  Peak # 136  0.0970 ppm  obs=244.5  known=[Epi-coprostanol: 100.0%]  residual=0.0%  unknowns=[]
+  Peak #   6  3.3654 ppm  obs=1.333e+04  known=[Tryptamine: 97.0%, Metoprolol: 11.1%]  residual=0.0%  unknowns=['Hypotaurine']
+  Peak # 123  3.1279 ppm  obs=278.6  known=[]  residual=100.0%  unknowns=['5-Methoxytryptamine', 'Ethanolamine']
+  Peak # 156  2.8032 ppm  obs=277.1  known=[Metoprolol: 267.0%]  residual=0.0%  unknowns=['L-Aspartic acid']
+  Peak #  92  2.1471 ppm  obs=472.1  known=[]  residual=100.0%  unknowns=['trans-2-Octenoic acid', 'Undecanoic acid']
+  Peak # 110  2.1095 ppm  obs=480.9  known=[]  residual=100.0%  unknowns=['N-Acetyl-L-methionine', "5'-Methylthioadenosine", 'Dimethylsulfide']
+  Peak # 116  2.1598 ppm  obs=325  known=[]  residual=100.0%  unknowns=['Caprylic acid', 'Caproic acid', 'Heptanoic acid', 'Pelargonic acid']
+  Peak # 184  3.0215 ppm  obs=86.35  known=[]  residual=100.0%  unknowns=['Lisinopril', 'Ethylmalonic acid']
+
+--- Phase 3: iterative cascade ---
+  Cascade iteration 1
+    Peak #46: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #138: residual=100.0%  4 unknowns still — cannot resolve yet
+    Peak #154: residual=100.0%  4 unknowns still — cannot resolve yet
+    Peak #38: residual=88.8%  4 unknowns still — cannot resolve yet
+    Peak #54: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #86: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #162: residual=59.5%  3 unknowns still — cannot resolve yet
+    Peak #4: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #29: residual=44.5%  2 unknowns still — cannot resolve yet
+    Peak #13: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #205: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #125: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #69: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #100: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #19: residual=45.6%  4 unknowns still — cannot resolve yet
+    Peak #208: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #182: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #32: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #15: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #172: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #73: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #70: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #188: residual=21.2%  2 unknowns still — cannot resolve yet
+    Peak #45: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #129: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #123: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #92: residual=100.0%  2 unknowns still — cannot resolve yet
+    Peak #110: residual=100.0%  3 unknowns still — cannot resolve yet
+    Peak #116: residual=100.0%  4 unknowns still — cannot resolve yet
+    Peak #184: residual=100.0%  2 unknowns still — cannot resolve yet
+  No cascade possible (no single-unknown peaks with residual ≥5%)
+
+
+=== Final status ===
+  unresolvable    (R)-Lipoic acid                      rel.conc=—  anchors=[]
+  unresolvable    (S)-3-Hydroxybutyric acid            rel.conc=—  anchors=[]
+  unresolvable    1,1-Dimethylbiguanide                rel.conc=—  anchors=[]
+  resolved        1,5-Anhydrosorbitol                  rel.conc=22552  anchors=[14]
+  resolved        1-Methyladenosine                    rel.conc=14894  anchors=[119, 27, 68]
+  unresolvable    1-Methylhistamine                    rel.conc=—  anchors=[]
+  quantifiable    1-Methylhistidine                    rel.conc=2635.8  anchors=[34]
+  unresolvable    1-Methylnicotinamide                 rel.conc=—  anchors=[]
+  unresolvable    11a-Hydroxyprogesterone              rel.conc=—  anchors=[]
+  unresolvable    12-Hydroxydodecanoic acid            rel.conc=—  anchors=[]
+  unresolvable    16-Dehydroprogesterone               rel.conc=—  anchors=[]
+  unresolvable    17-Hydroxyprogesterone               rel.conc=—  anchors=[]
+  unresolvable    17a-Ethynylestradiol                 rel.conc=—  anchors=[]
+  unresolvable    2,2-Dimethylsuccinic acid            rel.conc=—  anchors=[]
+  unresolvable    2-Aminoadipic acid                   rel.conc=—  anchors=[]
+  unresolvable    2-Furoylglycine                      rel.conc=—  anchors=[]
+  unresolvable    2-Hydroxy-2-methylbutyric acid       rel.conc=—  anchors=[]
+  unresolvable    2-Hydroxy-3-methylbutyric acid       rel.conc=—  anchors=[]
+  unresolvable    2-Hydroxydecanedioic acid            rel.conc=—  anchors=[]
+  unresolvable    2-Isopropylmalic acid                rel.conc=—  anchors=[]
+  unresolvable    2-Ketobutyric acid                   rel.conc=—  anchors=[]
+  unresolvable    2-Ketohexanoic acid                  rel.conc=—  anchors=[]
+  unresolvable    2-Methylbutyroylcarnitine            rel.conc=—  anchors=[]
+  unresolvable    2-Methylbutyrylglycine               rel.conc=—  anchors=[]
+  unresolvable    2-Methylhippuric acid                rel.conc=—  anchors=[]
+  unresolvable    2-Octenedioic acid                   rel.conc=—  anchors=[]
+  unresolvable    2-Octenoic acid                      rel.conc=—  anchors=[]
+  unresolvable    2-Phenylbutyric acid                 rel.conc=—  anchors=[]
+  unresolvable    2-Piperidinone                       rel.conc=—  anchors=[]
+  unresolvable    2-Pyrrolidinone                      rel.conc=—  anchors=[]
+  unresolvable    3,4-Dihydroxybenzeneacetic acid      rel.conc=—  anchors=[]
+  unresolvable    3,4-Dihydroxyphenylglycol            rel.conc=—  anchors=[]
+  unresolvable    3-Furoic acid                        rel.conc=—  anchors=[]
+  quantifiable    3-Hexanone                           rel.conc=128.9  anchors=[171]
+  unresolvable    3-Hydroxybutyric acid                rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxydodecanedioic acid          rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxyglutaric acid               rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxymandelic acid               rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxymethylglutaric acid         rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxyphenylacetic acid           rel.conc=—  anchors=[]
+  unresolvable    3-Hydroxysuberic acid                rel.conc=—  anchors=[]
+  unresolvable    3-Mercaptopyruvic acid               rel.conc=—  anchors=[]
+  unresolvable    3-Methoxy-4-Hydroxyphenylglycol sulfate  rel.conc=—  anchors=[]
+  unresolvable    3-Methoxybenzenepropanoic acid       rel.conc=—  anchors=[]
+  unresolvable    3-Methoxytyramine                    rel.conc=—  anchors=[]
+  unresolvable    3-Methoxytyrosine                    rel.conc=—  anchors=[]
+  unresolvable    3-Methylcrotonylglycine              rel.conc=—  anchors=[]
+  quantifiable    3-Methylhistamine                    rel.conc=2629.5  anchors=[30]
+  unresolvable    3-Methylhistidine                    rel.conc=—  anchors=[]
+  unresolvable    3-Methylindole                       rel.conc=—  anchors=[]
+  unresolvable    3-Nitrotyrosine                      rel.conc=—  anchors=[]
+  unresolvable    3-Phenylbutyric acid                 rel.conc=—  anchors=[]
+  unresolvable    3-Phosphoglyceric acid               rel.conc=—  anchors=[]
+  unresolvable    3-[[(2S)-2,4-Dihydroxy-3,3-dimethylbutanoyl]amino]propanoic acid  rel.conc=—  anchors=[]
+  unresolvable    4,5-Dihydroorotic acid               rel.conc=—  anchors=[]
+  unresolvable    4-Aminohippuric acid                 rel.conc=—  anchors=[]
+  unresolvable    4-Hydroxyproline                     rel.conc=—  anchors=[]
+  unresolvable    4-Methoxyphenylacetic acid           rel.conc=—  anchors=[]
+  unresolvable    4-Methylcatechol                     rel.conc=—  anchors=[]
+  unresolvable    5'-Methylthioadenosine               rel.conc=—  anchors=[]
+  unresolvable    5,6,7,8-Tetrahydrofolic acid         rel.conc=—  anchors=[]
+  unresolvable    5,6-dihydrothymine                   rel.conc=—  anchors=[]
+  resolved        5-Aminolevulinic acid                rel.conc=1856.1  anchors=[169]
+  unresolvable    5-Aminopentanoic acid                rel.conc=—  anchors=[]
+  unresolvable    5-Hydroxyindoleacetic acid           rel.conc=—  anchors=[]
+  unresolvable    5-Hydroxymethyluracil                rel.conc=—  anchors=[]
+  unresolvable    5-Methoxysalicylic acid              rel.conc=—  anchors=[]
+  unresolvable    5-Methoxytryptamine                  rel.conc=—  anchors=[]
+  unresolvable    5-Methoxytryptophan                  rel.conc=—  anchors=[]
+  unresolvable    5-Thymidylic acid                    rel.conc=—  anchors=[]
+  unresolvable    5alpha-Cholestanol                   rel.conc=—  anchors=[]
+  unresolvable    6-Phosphogluconic acid               rel.conc=—  anchors=[]
+  unresolvable    Acetaminophen                        rel.conc=—  anchors=[]
+  unresolvable    Acetone                              rel.conc=—  anchors=[]
+  unresolvable    Acetylglycine                        rel.conc=—  anchors=[]
+  unresolvable    Adenosine triphosphate               rel.conc=—  anchors=[]
+  unresolvable    Adenylsuccinic acid                  rel.conc=—  anchors=[]
+  resolved        Allose                               rel.conc=4449.3  anchors=[130]
+  quantifiable    Alpha-Lactose                        rel.conc=6766.8  anchors=[17, 67, 55]
+  unresolvable    Aminocaproic acid                    rel.conc=—  anchors=[]
+  unresolvable    Aminopterin                          rel.conc=—  anchors=[]
+  unresolvable    Androstanedione                      rel.conc=—  anchors=[]
+  unresolvable    Androstenedione                      rel.conc=—  anchors=[]
+  unresolvable    Arachidic acid                       rel.conc=—  anchors=[]
+  unresolvable    Aspartame                            rel.conc=—  anchors=[]
+  unresolvable    Aspartyllysine                       rel.conc=—  anchors=[]
+  unresolvable    Behenic acid                         rel.conc=—  anchors=[]
+  resolved        Benzenebutanoic acid                 rel.conc=2018.8  anchors=[183]
+  unresolvable    Benzoic acid                         rel.conc=—  anchors=[]
+  unresolvable    Benzyl alcohol                       rel.conc=—  anchors=[]
+  resolved        Biocytin                             rel.conc=1856.1  anchors=[138]
+  unresolvable    Brompheniramine                      rel.conc=—  anchors=[]
+  quantifiable    Butyric acid                         rel.conc=1424.2  anchors=[82]
+  unresolvable    CE(16:0)                             rel.conc=—  anchors=[]
+  unresolvable    Caproic acid                         rel.conc=—  anchors=[]
+  unresolvable    Caprylic acid                        rel.conc=—  anchors=[]
+  resolved        Carnosine                            rel.conc=5517.1  anchors=[158, 147]
+  unresolvable    Cellobiose                           rel.conc=—  anchors=[]
+  unresolvable    Chlorogenic acid                     rel.conc=—  anchors=[]
+  unresolvable    Chlorpheniramine                     rel.conc=—  anchors=[]
+  unresolvable    Cholestenone                         rel.conc=—  anchors=[]
+  quantifiable    Citramalic acid                      rel.conc=108.95  anchors=[187]
+  unresolvable    Citrulline                           rel.conc=—  anchors=[]
+  unresolvable    Corticosterone                       rel.conc=—  anchors=[]
+  unresolvable    Coumarin                             rel.conc=—  anchors=[]
+  unresolvable    Cyclic AMP                           rel.conc=—  anchors=[]
+  resolved        Cytarabine                           rel.conc=449.97  anchors=[193]
+  resolved        Cytidine                             rel.conc=449.97  anchors=[193]
+  unresolvable    Cytidine monophosphate               rel.conc=—  anchors=[]
+  unresolvable    Cytidine triphosphate                rel.conc=—  anchors=[]
+  unresolvable    Cytosine                             rel.conc=—  anchors=[]
+  unresolvable    D-Galactose                          rel.conc=—  anchors=[]
+  unresolvable    D-Glucose                            rel.conc=—  anchors=[]
+  resolved        D-Glucuronic acid                    rel.conc=6766.8  anchors=[17]
+  unresolvable    D-Lactic acid                        rel.conc=—  anchors=[]
+  unresolvable    D-Maltose                            rel.conc=—  anchors=[]
+  unresolvable    D-Mannose                            rel.conc=—  anchors=[]
+  unresolvable    D-Ribose                             rel.conc=—  anchors=[]
+  unresolvable    D-Ribose 5-phosphate                 rel.conc=—  anchors=[]
+  quantifiable    D-Xylose                             rel.conc=56425  anchors=[170, 68, 127, 28]
+  unresolvable    D-threo-Isocitric acid               rel.conc=—  anchors=[]
+  unresolvable    Deacetyldiltiazem                    rel.conc=—  anchors=[]
+  unresolvable    Decanoylcarnitine                    rel.conc=—  anchors=[]
+  unresolvable    Deoxyadenosine                       rel.conc=—  anchors=[]
+  unresolvable    Deoxyadenosine monophosphate         rel.conc=—  anchors=[]
+  unresolvable    Deoxyadenosine triphosphate          rel.conc=—  anchors=[]
+  unresolvable    Deoxycholic acid                     rel.conc=—  anchors=[]
+  unresolvable    Deoxycholic acid glycine conjugate   rel.conc=—  anchors=[]
+  unresolvable    Deoxycorticosterone                  rel.conc=—  anchors=[]
+  unresolvable    Deoxycytidine                        rel.conc=—  anchors=[]
+  unresolvable    Deoxyguanosine                       rel.conc=—  anchors=[]
+  unresolvable    Deoxyuridine                         rel.conc=—  anchors=[]
+  unresolvable    Dihydroandrosterone                  rel.conc=—  anchors=[]
+  unresolvable    Dihydrothymine                       rel.conc=—  anchors=[]
+  unresolvable    Dihydrouracil                        rel.conc=—  anchors=[]
+  unresolvable    Dimethylamine                        rel.conc=—  anchors=[]
+  unresolvable    Dimethylglycine                      rel.conc=—  anchors=[]
+  unresolvable    Dimethylmalonic acid                 rel.conc=—  anchors=[]
+  unresolvable    Dimethylsulfide                      rel.conc=—  anchors=[]
+  quantifiable    Diphenhydramine                      rel.conc=5540.2  anchors=[124, 19]
+  unresolvable    Dodecanoic acid                      rel.conc=—  anchors=[]
+  unresolvable    Dopamine                             rel.conc=—  anchors=[]
+  unresolvable    Doxylamine                           rel.conc=—  anchors=[]
+  unresolvable    Elaidic acid                         rel.conc=—  anchors=[]
+  auto_anchored   Epi-coprostanol                      rel.conc=488.97  anchors=[136]
+  unresolvable    Epiandrosterone                      rel.conc=—  anchors=[]
+  unresolvable    Epinephrine                          rel.conc=—  anchors=[]
+  unresolvable    Epitestosterone                      rel.conc=—  anchors=[]
+  unresolvable    Erythritol                           rel.conc=—  anchors=[]
+  quantifiable    Ethanol                              rel.conc=1699.3  anchors=[104]
+  unresolvable    Ethanolamine                         rel.conc=—  anchors=[]
+  unresolvable    Ethylmalonic acid                    rel.conc=—  anchors=[]
+  resolved        FAD                                  rel.conc=14634  anchors=[18, 55]
+  resolved        FADH                                 rel.conc=14634  anchors=[18, 55]
+  quantifiable    Famotidine                           rel.conc=3584.4  anchors=[25]
+  unresolvable    Ferulic acid                         rel.conc=—  anchors=[]
+  unresolvable    Folic acid                           rel.conc=—  anchors=[]
+  unresolvable    Fructose 6-phosphate                 rel.conc=—  anchors=[]
+  unresolvable    Galactaric acid                      rel.conc=—  anchors=[]
+  auto_anchored   Galacturonic acid                    rel.conc=135.67  anchors=[195]
+  unresolvable    Geraniol                             rel.conc=—  anchors=[]
+  unresolvable    Gluconic acid                        rel.conc=—  anchors=[]
+  unresolvable    Gluconolactone                       rel.conc=—  anchors=[]
+  unresolvable    Glucosamine 6-phosphate              rel.conc=—  anchors=[]
+  unresolvable    Glucose 6-phosphate                  rel.conc=—  anchors=[]
+  unresolvable    Glutaric acid                        rel.conc=—  anchors=[]
+  unresolvable    Glutathione                          rel.conc=—  anchors=[]
+  unresolvable    Glyceraldehyde                       rel.conc=—  anchors=[]
+  unresolvable    Glycylleucine                        rel.conc=—  anchors=[]
+  unresolvable    Guanosine                            rel.conc=—  anchors=[]
+  unresolvable    Guanosine diphosphate                rel.conc=—  anchors=[]
+  unresolvable    Guanosine monophosphate              rel.conc=—  anchors=[]
+  unresolvable    Heneicosanoic acid                   rel.conc=—  anchors=[]
+  unresolvable    Heptanoic acid                       rel.conc=—  anchors=[]
+  unresolvable    Hexanoylglycine                      rel.conc=—  anchors=[]
+  unresolvable    Hippuric acid                        rel.conc=—  anchors=[]
+  unresolvable    Histamine                            rel.conc=—  anchors=[]
+  unresolvable    Homo-L-arginine                      rel.conc=—  anchors=[]
+  unresolvable    Homovanillic acid                    rel.conc=—  anchors=[]
+  unresolvable    Homoveratric acid                    rel.conc=—  anchors=[]
+  resolved        Hydrocinnamic acid                   rel.conc=1208.4  anchors=[185]
+  unresolvable    Hydroxocobalamin                     rel.conc=—  anchors=[]
+  unresolvable    Hydroxyphenylacetylglycine           rel.conc=—  anchors=[]
+  unresolvable    Hypotaurine                          rel.conc=—  anchors=[]
+  quantifiable    Ibuprofen                            rel.conc=6456.8  anchors=[61]
+  unresolvable    Imipramine                           rel.conc=—  anchors=[]
+  unresolvable    Indole                               rel.conc=—  anchors=[]
+  unresolvable    Indole-3-propionic acid              rel.conc=—  anchors=[]
+  unresolvable    Indolelactic acid                    rel.conc=—  anchors=[]
+  unresolvable    Indoxyl sulfate                      rel.conc=—  anchors=[]
+  unresolvable    Iodotyrosine                         rel.conc=—  anchors=[]
+  unresolvable    Isobutyryl-L-carnitine               rel.conc=—  anchors=[]
+  unresolvable    Isobutyrylglycine                    rel.conc=—  anchors=[]
+  unresolvable    Isocaproic acid                      rel.conc=—  anchors=[]
+  unresolvable    Isoferulic acid                      rel.conc=—  anchors=[]
+  unresolvable    Isovaleric acid                      rel.conc=—  anchors=[]
+  unresolvable    Isovalerylalanine                    rel.conc=—  anchors=[]
+  unresolvable    Isovalerylglutamic acid              rel.conc=—  anchors=[]
+  unresolvable    Ketoleucine                          rel.conc=—  anchors=[]
+  quantifiable    L-Alanine                            rel.conc=13730  anchors=[22]
+  unresolvable    L-Arabinose                          rel.conc=—  anchors=[]
+  unresolvable    L-Arabitol                           rel.conc=—  anchors=[]
+  resolved        L-Arginine                           rel.conc=39337  anchors=[74]
+  unresolvable    L-Aspartic acid                      rel.conc=—  anchors=[]
+  unresolvable    L-Dihydroorotic acid                 rel.conc=—  anchors=[]
+  unresolvable    L-Fucose                             rel.conc=—  anchors=[]
+  unresolvable    L-Glutamine                          rel.conc=—  anchors=[]
+  unresolvable    L-Histidine                          rel.conc=—  anchors=[]
+  unresolvable    L-Homocysteic acid                   rel.conc=—  anchors=[]
+  unresolvable    L-Isoleucine                         rel.conc=—  anchors=[]
+  unresolvable    L-Methionine                         rel.conc=—  anchors=[]
+  unresolvable    L-Threonine                          rel.conc=—  anchors=[]
+  unresolvable    L-Tryptophan                         rel.conc=—  anchors=[]
+  unresolvable    L-Valine                             rel.conc=—  anchors=[]
+  unresolvable    Lactulose                            rel.conc=—  anchors=[]
+  unresolvable    Lathosterol                          rel.conc=—  anchors=[]
+  unresolvable    Levoglucosan                         rel.conc=—  anchors=[]
+  unresolvable    Levulinic acid                       rel.conc=—  anchors=[]
+  unresolvable    Linoleic acid                        rel.conc=—  anchors=[]
+  unresolvable    Lisinopril                           rel.conc=—  anchors=[]
+  unresolvable    Loperamide                           rel.conc=—  anchors=[]
+  unresolvable    MANNOHEPTULOSE                       rel.conc=—  anchors=[]
+  unresolvable    Maltitol                             rel.conc=—  anchors=[]
+  unresolvable    Mandelic acid                        rel.conc=—  anchors=[]
+  resolved        Melatonin                            rel.conc=5151.4  anchors=[33]
+  unresolvable    Methyl propenyl ketone               rel.conc=—  anchors=[]
+  unresolvable    Methylmalonic acid                   rel.conc=—  anchors=[]
+  resolved        Metoprolol                           rel.conc=1479.3  anchors=[147]
+  unresolvable    Mevalonic acid                       rel.conc=—  anchors=[]
+  resolved        Monomethyl glutaric acid             rel.conc=3538.7  anchors=[190, 51]
+  unresolvable    Myristic acid                        rel.conc=—  anchors=[]
+  quantifiable    N-Acetyl-L-aspartic acid             rel.conc=172.34  anchors=[141]
+  unresolvable    N-Acetyl-L-methionine                rel.conc=—  anchors=[]
+  unresolvable    N-Acetyl-L-phenylalanine             rel.conc=—  anchors=[]
+  unresolvable    N-Acetyl-L-tyrosine                  rel.conc=—  anchors=[]
+  quantifiable    N-Acetylgalactosamine                rel.conc=6766.8  anchors=[52, 27, 68, 119]
+  resolved        N-Acetylputrescine                   rel.conc=2394.6  anchors=[165]
+  unresolvable    N-Acetylserotonin                    rel.conc=—  anchors=[]
+  unresolvable    N-Acryloylglycine                    rel.conc=—  anchors=[]
+  unresolvable    N-Butyrylglycine                     rel.conc=—  anchors=[]
+  unresolvable    N-alpha-Acetyl-L-lysine              rel.conc=—  anchors=[]
+  unresolvable    N6-Acetyl-L-lysine                   rel.conc=—  anchors=[]
+  unresolvable    NADH                                 rel.conc=—  anchors=[]
+  unresolvable    NADP                                 rel.conc=—  anchors=[]
+  unresolvable    NADP+                                rel.conc=—  anchors=[]
+  unresolvable    Nonadecanoic acid                    rel.conc=—  anchors=[]
+  unresolvable    Normetanephrine                      rel.conc=—  anchors=[]
+  unresolvable    Nutriacholic acid                    rel.conc=—  anchors=[]
+  unresolvable    O-Phosphoethanolamine                rel.conc=—  anchors=[]
+  unresolvable    Octadecanol                          rel.conc=—  anchors=[]
+  unresolvable    Octanoylcarnitine                    rel.conc=—  anchors=[]
+  unresolvable    Oxoadipic acid                       rel.conc=—  anchors=[]
+  unresolvable    Palmitic acid                        rel.conc=—  anchors=[]
+  unresolvable    Palmitoylcarnitine                   rel.conc=—  anchors=[]
+  unresolvable    Pelargonic acid                      rel.conc=—  anchors=[]
+  unresolvable    Pentadecanoic acid                   rel.conc=—  anchors=[]
+  unresolvable    Phenylacetylglycine                  rel.conc=—  anchors=[]
+  unresolvable    Phenylephrine                        rel.conc=—  anchors=[]
+  unresolvable    Phenylglyoxylic acid                 rel.conc=—  anchors=[]
+  unresolvable    Phenylpropanolamine                  rel.conc=—  anchors=[]
+  unresolvable    Phenylpropionylglycine               rel.conc=—  anchors=[]
+  unresolvable    Phosphoenolpyruvic acid              rel.conc=—  anchors=[]
+  quantifiable    Phosphoserine                        rel.conc=765.74  anchors=[112]
+  unresolvable    Pipecolic acid                       rel.conc=—  anchors=[]
+  resolved        Progesterone                         rel.conc=635.75  anchors=[75]
+  unresolvable    Propionylglycine                     rel.conc=—  anchors=[]
+  unresolvable    Propyl alcohol                       rel.conc=—  anchors=[]
+  unresolvable    Propylene glycol                     rel.conc=—  anchors=[]
+  quantifiable    Pseudoephedrine                      rel.conc=56.332  anchors=[174]
+  unresolvable    Pyridine                             rel.conc=—  anchors=[]
+  unresolvable    Pyridoxal 5'-phosphate               rel.conc=—  anchors=[]
+  unresolvable    Quercetin                            rel.conc=—  anchors=[]
+  unresolvable    Quinaldic acid                       rel.conc=—  anchors=[]
+  resolved        Ranitidine                           rel.conc=6125  anchors=[21]
+  unresolvable    Riboflavin                           rel.conc=—  anchors=[]
+  unresolvable    Ribonolactone                        rel.conc=—  anchors=[]
+  unresolvable    Ribothymidine                        rel.conc=—  anchors=[]
+  unresolvable    Saccharopine                         rel.conc=—  anchors=[]
+  unresolvable    Salicyluric acid                     rel.conc=—  anchors=[]
+  unresolvable    Senecioic acid                       rel.conc=—  anchors=[]
+  quantifiable    Serotonin                            rel.conc=1780  anchors=[97, 170]
+  unresolvable    Shikimic acid                        rel.conc=—  anchors=[]
+  unresolvable    Sorbitol                             rel.conc=—  anchors=[]
+  unresolvable    Stearic acid                         rel.conc=—  anchors=[]
+  quantifiable    Suberylglycine                       rel.conc=647.13  anchors=[134]
+  unresolvable    Succinic acid                        rel.conc=—  anchors=[]
+  quantifiable    Succinylacetone                      rel.conc=1256.3  anchors=[43, 190]
+  resolved        Sucrose                              rel.conc=97335  anchors=[8, 33, 27]
+  unresolvable    Sumiki's acid                        rel.conc=—  anchors=[]
+  resolved        Symmetric dimethylarginine           rel.conc=29599  anchors=[94]
+  unresolvable    Syringic acid                        rel.conc=—  anchors=[]
+  unresolvable    TG(10:0/10:0/10:0)                   rel.conc=—  anchors=[]
+  unresolvable    Tartaric acid                        rel.conc=—  anchors=[]
+  resolved        Taurine                              rel.conc=29101  anchors=[14]
+  quantifiable    Taurodeoxycholic acid                rel.conc=596.1  anchors=[117]
+  unresolvable    Tetrahydrofolic acid                 rel.conc=—  anchors=[]
+  resolved        Thiamine                             rel.conc=10015  anchors=[31]
+  unresolvable    Thymidine                            rel.conc=—  anchors=[]
+  unresolvable    Thymidine 5'-triphosphate            rel.conc=—  anchors=[]
+  unresolvable    Tiglylglycine                        rel.conc=—  anchors=[]
+  unresolvable    Traumatic acid                       rel.conc=—  anchors=[]
+  resolved        Tryptamine                           rel.conc=25846  anchors=[11]
+  unresolvable    Tyramine                             rel.conc=—  anchors=[]
+  unresolvable    Undecanoic acid                      rel.conc=—  anchors=[]
+  unresolvable    Uracil                               rel.conc=—  anchors=[]
+  resolved        Ureidopropionic acid                 rel.conc=24270  anchors=[41]
+  resolved        Uridine diphosphate glucose          rel.conc=10237  anchors=[42]
+  unresolvable    Urocanic acid                        rel.conc=—  anchors=[]
+  unresolvable    Valeric acid                         rel.conc=—  anchors=[]
+  unresolvable    Valerylglycine                       rel.conc=—  anchors=[]
+  unresolvable    Vanillic acid                        rel.conc=—  anchors=[]
+  unresolvable    Vinylacetylglycine                   rel.conc=—  anchors=[]
+  unresolvable    Xanthosine                           rel.conc=—  anchors=[]
+  unresolvable    alpha-Hydroxyisobutyric acid         rel.conc=—  anchors=[]
+  unresolvable    alpha-Tocopherol                     rel.conc=—  anchors=[]
+  unresolvable    beta-Alanine                         rel.conc=—  anchors=[]
+  unresolvable    cis-Aconitic acid                    rel.conc=—  anchors=[]
+  unresolvable    gamma-Butyrolactone                  rel.conc=—  anchors=[]
+  unresolvable    gamma-Glutamylcysteine               rel.conc=—  anchors=[]
+  unresolvable    myo-Inositol                         rel.conc=—  anchors=[]
+  unresolvable    p-Hydroxyphenylacetic acid           rel.conc=—  anchors=[]
+  unresolvable    trans-2-Octenoic acid                rel.conc=—  anchors=[]
+
+=== Contributions per peak ===
+  Peak #   4  4.6310 ppm  obs=3.137e+05  []  residual=100.0%
+  Peak #   6  3.3654 ppm  obs=1.333e+04  [HMDB0000303: 97.0%, HMDB0001932: 11.1%]  residual=0.0%
+  Peak #   8  3.5463 ppm  obs=7874  [HMDB0000258: 309.1%, HMDB0000896: 2.8%]  residual=0.0%
+  Peak #  11  3.1596 ppm  obs=1.082e+04  [HMDB0000001: 6.1%, HMDB0000303: 119.5%]  residual=0.0%
+  Peak #  13  3.8053 ppm  obs=7440  []  residual=100.0%
+  Peak #  14  3.2639 ppm  obs=8104  [HMDB0000251: 179.6%]  residual=0.0%
+  Peak #  15  3.4261 ppm  obs=4433  []  residual=100.0%
+  Peak #  17  3.2752 ppm  obs=4896  [HMDB0000026: 185.9%]  residual=0.0%
+  Peak #  18  5.8599 ppm  obs=5979  [HMDB0001197: 122.4%, HMDB0001248: 122.4%, HMDB0001830: 10.6%, HMDB0000089: 3.8%, HMDB0015122: 3.8%]  residual=0.0%
+  Peak #  19  3.8195 ppm  obs=5089  [HMDB0001927: 54.4%]  residual=45.6%
+  Peak #  20  3.7497 ppm  obs=4703  [HMDB0000258: 1034.7%]  residual=0.0%
+  Peak #  21  3.8611 ppm  obs=4190  [HMDB0001930: 146.2%]  residual=0.0%
+  Peak #  23  3.7608 ppm  obs=5023  [HMDB0000517: 391.6%]  residual=0.0%
+  Peak #  27  3.8654 ppm  obs=2758  [HMDB0000212: 122.7%, HMDB0002712: 408.9%, HMDB0000258: 882.4%, HMDB0000235: 181.6%, HMDB0003331: 270.1%]  residual=0.0%
+  Peak #  29  3.4505 ppm  obs=5517  [HMDB0001930: 55.5%]  residual=44.5%
+  Peak #  31  5.3864 ppm  obs=6562  [HMDB0000258: 741.7%, HMDB0000235: 152.6%]  residual=0.0%
+  Peak #  32  3.8805 ppm  obs=2843  []  residual=100.0%
+  Peak #  33  3.8855 ppm  obs=2518  [HMDB0001389: 204.6%, HMDB0000258: 966.4%]  residual=0.0%
+  Peak #  38  3.7379 ppm  obs=2880  [HMDB0000953: 11.2%]  residual=88.8%
+  Peak #  41  2.3597 ppm  obs=1995  [HMDB0000026: 608.2%]  residual=0.0%
+  Peak #  42  7.9067 ppm  obs=2420  [HMDB0001197: 604.7%, HMDB0001248: 604.7%, HMDB0000812: 3.6%, HMDB0000089: 9.3%, HMDB0015122: 9.3%, HMDB0000286: 211.5%]  residual=0.0%
+  Peak #  45  3.8386 ppm  obs=3365  []  residual=100.0%
+  Peak #  46  2.3505 ppm  obs=2276  []  residual=100.0%
+  Peak #  51  3.6887 ppm  obs=949.3  [HMDB0001151: 117.2%, HMDB0000858: 372.8%]  residual=0.0%
+  Peak #  53  3.4191 ppm  obs=1279  [HMDB0000098: 2205.3%, HMDB0000251: 1137.4%]  residual=0.0%
+  Peak #  54  2.3453 ppm  obs=1772  []  residual=100.0%
+  Peak #  55  4.5160 ppm  obs=1.256e+04  [HMDB0000186: 26.9%, HMDB0001197: 58.3%, HMDB0001248: 58.3%, HMDB0003331: 59.3%]  residual=0.0%
+  Peak #  58  3.6688 ppm  obs=1755  [HMDB0000258: 5547.1%]  residual=0.0%
+  Peak #  63  5.2471 ppm  obs=1921  [HMDB0000127: 176.1%]  residual=0.0%
+  Peak #  65  3.5165 ppm  obs=2105  [HMDB0000098: 670.2%, HMDB0002545: 1.6%]  residual=0.0%
+  Peak #  66  5.2400 ppm  obs=1933  [HMDB0000098: 1459.8%, HMDB0000186: 175.1%, HMDB0000212: 175.1%]  residual=0.0%
+  Peak #  68  3.9167 ppm  obs=918.7  [HMDB0000098: 1535.4%, HMDB0000212: 368.3%, HMDB0003331: 810.6%]  residual=0.0%
+  Peak #  69  4.0276 ppm  obs=972.2  []  residual=100.0%
+  Peak #  70  2.0738 ppm  obs=1425  []  residual=100.0%
+  Peak #  73  2.0473 ppm  obs=1157  []  residual=100.0%
+  Peak #  74  3.2320 ppm  obs=1419  [HMDB0000033: 48.6%, HMDB0003334: 782.3%]  residual=0.0%
+  Peak #  75  2.1308 ppm  obs=891.8  [HMDB0001830: 71.3%, HMDB0000635: 140.9%]  residual=0.0%
+  Peak #  80  2.3774 ppm  obs=509.9  [HMDB0000543: 198.0%]  residual=0.0%
+  Peak #  83  4.0408 ppm  obs=1071  [HMDB0000258: 4543.4%]  residual=0.0%
+  Peak #  84  3.4675 ppm  obs=1204  [HMDB0001389: 160.4%, HMDB0000258: 4041.9%, HMDB0000286: 425.1%]  residual=0.0%
+  Peak #  86  3.9760 ppm  obs=772.1  []  residual=100.0%
+  Peak #  92  2.1471 ppm  obs=472.1  []  residual=100.0%
+  Peak #  93  3.0702 ppm  obs=575  [HMDB0000001: 114.6%, HMDB0001861: 228.7%]  residual=0.0%
+  Peak #  94  3.7979 ppm  obs=558.5  [HMDB0003334: 2649.7%]  residual=0.0%
+  Peak # 100  3.6546 ppm  obs=720.6  []  residual=100.0%
+  Peak # 107  2.7809 ppm  obs=512.1  [HMDB0001149: 181.2%, HMDB0003134: 181.2%]  residual=0.0%
+  Peak # 109  4.1227 ppm  obs=660.5  [HMDB0001151: 336.8%]  residual=0.0%
+  Peak # 110  2.1095 ppm  obs=480.9  []  residual=100.0%
+  Peak # 115  2.3211 ppm  obs=645.7  [HMDB0001197: 2266.2%, HMDB0001248: 2266.2%, HMDB0000896: 46.2%]  residual=0.0%
+  Peak # 116  2.1598 ppm  obs=325  []  residual=100.0%
+  Peak # 119  3.9302 ppm  obs=321.6  [HMDB0000212: 1051.9%, HMDB0003331: 2315.3%]  residual=0.0%
+  Peak # 121  2.1686 ppm  obs=379.9  [HMDB0000858: 349.3%, HMDB0000953: 85.2%]  residual=0.0%
+  Peak # 123  3.1279 ppm  obs=278.6  []  residual=100.0%
+  Peak # 125  4.1014 ppm  obs=327.2  []  residual=100.0%
+  Peak # 129  3.3888 ppm  obs=261.4  []  residual=100.0%
+  Peak # 130  3.6355 ppm  obs=466.7  [HMDB0001151: 238.3%]  residual=0.0%
+  Peak # 131  3.1955 ppm  obs=279.1  [HMDB0002064: 429.0%]  residual=0.0%
+  Peak # 136  0.0970 ppm  obs=244.5  [HMDB0001569: 100.0%]  residual=0.0%
+  Peak # 138  2.2691 ppm  obs=205.2  []  residual=100.0%
+  Peak # 147  3.1894 ppm  obs=159.7  [HMDB0003134: 435.8%, HMDB0000033: 863.5%, HMDB0001932: 463.1%]  residual=0.0%
+  Peak # 152  2.3848 ppm  obs=110.5  [HMDB0001197: 13245.3%, HMDB0001248: 13245.3%]  residual=0.0%
+  Peak # 154  2.5693 ppm  obs=96.75  []  residual=100.0%
+  Peak # 156  2.8032 ppm  obs=277.1  [HMDB0001932: 267.0%]  residual=0.0%
+  Peak # 158  3.0307 ppm  obs=244.3  [HMDB0000033: 564.7%]  residual=0.0%
+  Peak # 162  4.0610 ppm  obs=167.3  [HMDB0002545: 40.5%]  residual=59.5%
+  Peak # 165  2.9959 ppm  obs=193.2  [HMDB0002064: 619.6%]  residual=0.0%
+  Peak # 169  2.5383 ppm  obs=69.74  [HMDB0000753: 92.4%, HMDB0000764: 866.4%, HMDB0001149: 1330.8%, HMDB0001830: 455.8%]  residual=0.0%
+  Peak # 170  3.3105 ppm  obs=215.5  [HMDB0000098: 6546.2%, HMDB0001861: 610.1%, HMDB0000259: 413.0%]  residual=0.0%
+  Peak # 172  4.8987 ppm  obs=174.4  []  residual=100.0%
+  Peak # 178  4.0905 ppm  obs=168.1  [HMDB0000127: 2012.7%, HMDB0000272: 227.8%, HMDB0001149: 1104.2%]  residual=0.0%
+  Peak # 182  2.9273 ppm  obs=137.8  []  residual=100.0%
+  Peak # 183  2.0170 ppm  obs=120.1  [HMDB0000543: 1680.7%, HMDB0002064: 1993.5%]  residual=0.0%
+  Peak # 184  3.0215 ppm  obs=86.35  []  residual=100.0%
+  Peak # 188  4.3450 ppm  obs=86.04  [HMDB0002545: 78.8%]  residual=21.2%
+  Peak # 189  4.3393 ppm  obs=140  [HMDB0001930: 4375.2%]  residual=0.0%
+  Peak # 190  2.4035 ppm  obs=79.71  [HMDB0000635: 788.1%, HMDB0000426: 68.3%, HMDB0001925: 4050.3%]  residual=0.0%
+  Peak # 193  4.3029 ppm  obs=196.9  [HMDB0000089: 114.2%, HMDB0015122: 114.2%]  residual=0.0%
+  Peak # 197  2.7232 ppm  obs=70.32  [HMDB0000635: 893.3%, HMDB0000033: 980.8%, HMDB0000543: 1435.5%]  residual=0.0%
+  Peak # 198  4.2707 ppm  obs=75.72  [HMDB0000089: 297.1%, HMDB0015122: 297.1%]  residual=0.0%
+  Peak # 200  1.3249 ppm  obs=127.3  [HMDB0001830: 499.5%]  residual=0.0%
+  Peak # 203  1.3372 ppm  obs=70.46  [HMDB0000426: 154.6%, HMDB0000161: 9743.7%]  residual=0.0%
+  Peak # 205  1.9207 ppm  obs=32.24  []  residual=100.0%
+  Peak # 207  1.9141 ppm  obs=19.68  [HMDB0001389: 26176.2%, HMDB0000858: 17981.7%]  residual=0.0%
+  Peak # 208  2.8394 ppm  obs=32.5  []  residual=100.0%
+  Peak # 210  7.6893 ppm  obs=21.28  [HMDB0001197: 68762.6%, HMDB0001248: 68762.6%, HMDB0000001: 12385.3%, HMDB0000303: 60725.5%]  residual=0.0%

@@ -1,0 +1,57 @@
+J-Resolve run  2026-05-04 23:05:29
+Metabolites   : 8
+Peaks         : 205
+Anchor tol    : 0.020 ppm
+Phase 3 iter  : True
+ΔJ filter     : True (tol=1.5 Hz)
+Singlet anchor: True
+Solver        : cascade
+
+=== Overlap map (0 overlapping peaks) ===
+
+J-validated metabolites : 6 (ΔJ ≤ 1.5 Hz on ≥1 multiplet)
+ΔJ filter removals      : 3
+Singlet-anchor removals : 0
+  Detail:
+  SKIP_ΔJ  D-Glucose                                rank=   4  ppm=4.6295  ΔJ=2.26 Hz > 1.5 Hz
+  SKIP_ΔJ  L-Arabinose                              rank=  52  ppm=4.5155  ΔJ=5.76 Hz > 1.5 Hz
+  SKIP_ΔJ  Mannitol                                 rank= 102  ppm=3.6501  ΔJ=2.15 Hz > 1.5 Hz
+
+--- Phase 1: user-marked Good peaks → conc_est (clean peaks only) ---
+  D-Glucose                           rank=  63  ppm=5.2412  area=1874  mult=d  nH=1  eff_nH=0.500  probe=3749
+  → ANCHORED D-Glucose  conc_est=3749  (from 1 clean probe(s))
+  L-Arabinose                         rank=  64  ppm=5.2475  area=1950  mult=d  nH=1  eff_nH=0.500  probe=3900
+  → ANCHORED L-Arabinose  conc_est=3900  (from 1 clean probe(s))
+  Taurine                             rank=  48  ppm=3.4198  area=1272  mult=t  nH=1  eff_nH=0.500  probe=2545
+  → ANCHORED Taurine  conc_est=2545  (from 1 clean probe(s))
+  Mannitol                            rank=  21  ppm=3.7710  area=5123  mult=d  nH=1  eff_nH=0.500  probe=1.025e+04
+  → ANCHORED Mannitol  conc_est=1.025e+04  (from 1 clean probe(s))
+  L-Glutamic acid                     rank=  20  ppm=3.7499  area=4724  mult=dd  nH=1  eff_nH=0.333  probe=1.417e+04
+  → ANCHORED L-Glutamic acid  conc_est=1.417e+04  (from 1 clean probe(s))
+  Caffeine                            rank=  51  ppm=4.0028  area=2960  mult=s  nH=1  eff_nH=1.000  probe=2960
+  → ANCHORED Caffeine  conc_est=2960  (from 1 clean probe(s))
+  Itaconic acid                       rank=  16  ppm=5.8606  area=5898  mult=s  nH=1  eff_nH=1.000  probe=5898
+  → ANCHORED Itaconic acid  conc_est=5898  (from 1 clean probe(s))
+  L-Cysteine                          rank=  92  ppm=3.9682  area=814.9  mult=dd  nH=1  eff_nH=0.667  probe=1222
+  → ANCHORED L-Cysteine  conc_est=1222  (from 1 clean probe(s))
+
+--- Phase 1b: auto-anchor (clean peaks, tol=0.020 ppm) ---
+
+--- Phase 2: contribution subtraction ---
+
+--- Phase 3: iterative cascade ---
+  Cascade iteration 1
+  No cascade possible (no single-unknown peaks with residual ≥5%)
+
+
+=== Final status ===
+  quantifiable    Caffeine                             rel.conc=2960.4  anchors=[51]
+  quantifiable    D-Glucose                            rel.conc=3748.9  anchors=[63]
+  quantifiable    Itaconic acid                        rel.conc=5898.3  anchors=[16]
+  quantifiable    L-Arabinose                          rel.conc=3899.7  anchors=[64]
+  quantifiable    L-Cysteine                           rel.conc=1222.3  anchors=[92]
+  quantifiable    L-Glutamic acid                      rel.conc=14172  anchors=[20]
+  quantifiable    Mannitol                             rel.conc=10246  anchors=[21]
+  quantifiable    Taurine                              rel.conc=2544.8  anchors=[48]
+
+=== Contributions per peak ===
