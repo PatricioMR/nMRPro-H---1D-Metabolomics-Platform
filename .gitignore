@@ -28,3 +28,10 @@ databases/*.bak*
 /settings.json
 *.tmp
 .DS_Store
+
+# ── Excluded from VCS by request (kept locally) ─────────────────────────────
+.claude/
+/CLAUDE.md
+/pytest.ini
+/run_tests.bat
+/ParseHMDBNames.py
