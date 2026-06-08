@@ -1,4 +1,4 @@
-# nMRPipe — NMRAnalysis_Gui
+# nMRPipe
 
 Desktop application (Python / Tkinter) for 1H NMR analysis in metabolomics and
 lipidomics: spectrum import, peak detection, metabolite annotation against
