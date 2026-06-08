@@ -248,14 +248,17 @@ class PeakDetectionStage(BaseStage):
         ttk.Separator(self.frame, orient='horizontal').pack(
             fill=tk.X, padx=5, pady=5)
 
-        # ── STEP 1: Noise ─────────────────────────────────────────────────────
+        # ── STEP 1: Noise region (optional override) ──────────────────────────
+        # Noise is estimated automatically as part of Detect Peaks. These entries
+        # only let the user pin a specific signal-free region; left as-is, the
+        # detector estimates noise from the quietest segment of the spectrum.
         s1 = ttk.LabelFrame(self.frame,
-                             text="📏 STEP 1: Noise Estimation", padding=5)
+                             text="📏 Noise Region (optional)", padding=5)
         s1.pack(fill=tk.X, padx=5, pady=5)
 
         rf = ttk.Frame(s1)
         rf.pack(fill=tk.X, pady=2)
-        ttk.Label(rf, text="Noise Region (ppm):").pack(side=tk.LEFT, padx=2)
+        ttk.Label(rf, text="Region (ppm):").pack(side=tk.LEFT, padx=2)
         self.noise_start_var = tk.StringVar(
             value=str(self.default_noise_region[0]))
         self.noise_end_var = tk.StringVar(
@@ -266,15 +269,10 @@ class PeakDetectionStage(BaseStage):
         ttk.Entry(rf, textvariable=self.noise_end_var,
                   width=8).pack(side=tk.LEFT, padx=2)
 
-        self.btn_calc_noise = ttk.Button(
-            s1, text="🧮 Calculate Noise", command=self.calculate_noise)
-        self.btn_calc_noise.pack(fill=tk.X, pady=5)
-
         self.noise_value_label = ttk.Label(s1, text="Noise Std Dev: --")
         self.noise_value_label.pack(anchor=tk.W, pady=2)
-        self.step1_status = ttk.Label(
-            s1, text="⏳ Not started", foreground="gray")
-        self.step1_status.pack(anchor=tk.W, pady=2)
+        # Kept for project-load compatibility (no longer a separate UI step).
+        self.step1_status = ttk.Label(s1, text="")
 
         # ── STEP 2: Peak Detection ────────────────────────────────────────────
         s2 = ttk.LabelFrame(
@@ -286,8 +284,9 @@ class PeakDetectionStage(BaseStage):
         bf1 = ttk.Frame(s2)
         bf1.pack(fill=tk.X, pady=2)
         self.baseline_correct_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(bf1, text="Apply Baseline Correction",
-                        variable=self.baseline_correct_var).pack(side=tk.LEFT, padx=2)
+        self._baseline_chk = ttk.Checkbutton(bf1, text="Apply Baseline Correction",
+                                              variable=self.baseline_correct_var)
+        self._baseline_chk.pack(side=tk.LEFT, padx=2)
         self.baseline_method_var = tk.StringVar(value='airPLS')
         cb = ttk.Combobox(bf1, textvariable=self.baseline_method_var,
                           values=['airPLS', 'snip', 'rolling', 'constant'],
@@ -296,20 +295,31 @@ class PeakDetectionStage(BaseStage):
         ttk.Label(bf1, text="λ (airPLS):", foreground='gray').pack(side=tk.LEFT, padx=(8, 2))
         self.baseline_lam_var = tk.DoubleVar(value=1e5)
         ttk.Entry(bf1, textvariable=self.baseline_lam_var, width=6).pack(side=tk.LEFT, padx=2)
+        self._baseline_applied_lbl = ttk.Label(
+            s2, text="⚠ Baseline already corrected — 'Apply Baseline Correction' disabled.",
+            foreground='orange', font=('Arial', 8))
+        self._alignment_applied_lbl = ttk.Label(
+            s2, text="⚠ Spectrum already aligned — pipeline alignment skipped.",
+            foreground='orange', font=('Arial', 8))
+        # shown/hidden dynamically; not packed yet
 
-        # Row 2: Min SNR
+        # Row 2: Min SNR + per-sample detection toggle
         pf1 = ttk.Frame(s2)
         pf1.pack(fill=tk.X, pady=2)
         ttk.Label(pf1, text="Min SNR:").pack(side=tk.LEFT, padx=2)
         self.min_snr_var = tk.DoubleVar(value=6.0)
         ttk.Entry(pf1, textvariable=self.min_snr_var,
                   width=6).pack(side=tk.LEFT, padx=2)
+        self.per_sample_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            pf1, text="Detect per sample (union)",
+            variable=self.per_sample_var).pack(side=tk.LEFT, padx=(10, 2))
 
         # Row 3: Min Width + Prominence
         pf2 = ttk.Frame(s2)
         pf2.pack(fill=tk.X, pady=2)
         ttk.Label(pf2, text="Min Width (ppm):").pack(side=tk.LEFT, padx=2)
-        self.min_width_var = tk.DoubleVar(value=0.003)
+        self.min_width_var = tk.DoubleVar(value=0.01)
         ttk.Entry(pf2, textvariable=self.min_width_var,
                   width=6).pack(side=tk.LEFT, padx=2)
         ttk.Label(pf2, text="Prominence:").pack(side=tk.LEFT, padx=(8, 2))
@@ -319,13 +329,13 @@ class PeakDetectionStage(BaseStage):
 
         self.btn_detect = ttk.Button(
             s2, text="🎯 Detect Peaks",
-            command=self.detect_peaks, state="disabled")
+            command=self.detect_peaks, state="normal")
         self.btn_detect.pack(fill=tk.X, pady=5)
 
         self.peaks_count_label = ttk.Label(s2, text="Peaks found: 0")
         self.peaks_count_label.pack(anchor=tk.W, pady=2)
         self.step2_status = ttk.Label(
-            s2, text="⏳ Complete Step 1 first", foreground="gray")
+            s2, text="⏳ Load data, then detect peaks", foreground="gray")
         self.step2_status.pack(anchor=tk.W, pady=2)
 
         self.btn_toggle_peaks = ttk.Button(
@@ -344,6 +354,11 @@ class PeakDetectionStage(BaseStage):
             s2, text="🔍 Search for Overlaps",
             command=self.search_for_overlaps, state="disabled")
         self.btn_search_overlaps.pack(fill=tk.X, pady=2)
+
+        self.btn_auto_deconv_asym = ttk.Button(
+            s2, text="↔ Auto-deconvolve Asymmetric Peaks",
+            command=self.auto_deconvolve_asymmetric, state="disabled")
+        self.btn_auto_deconv_asym.pack(fill=tk.X, pady=2)
 
         self.overlap_status = ttk.Label(
             s2, text="", foreground="gray", font=("Arial", 8))
@@ -377,49 +392,67 @@ class PeakDetectionStage(BaseStage):
 
     # ── Step 1 ────────────────────────────────────────────────────────────────
 
-    def calculate_noise(self):
-        if self.app.ppm is None:
-            messagebox.showerror("Error", "Please load data first.")
-            return
+    def _estimate_noise(self):
+        """Estimate σ from the (optional) noise region; return σ or None.
+
+        Embedded in Detect Peaks — no separate button. If the region entries are
+        valid, noise is taken there (per-sample std → median across samples);
+        otherwise returns None and the detector falls back to its own quiet-
+        segment estimate.
+        """
         try:
             r_start = float(self.noise_start_var.get())
             r_end   = float(self.noise_end_var.get())
-            if r_start <= r_end:
-                messagebox.showerror(
-                    "Error",
-                    "For NMR the left value must be greater than the right.")
-                return
-            self._status("Estimating noise...")
-            t0 = time.monotonic()
-            self.noise_std    = estimate_noise_from_region(
+        except (ValueError, TypeError):
+            return None
+        if r_start <= r_end:
+            return None
+        try:
+            sigma = estimate_noise_from_region(
                 self.app.ppm, self.app.all_intensities, r_start, r_end)
-            self.noise_source = 'ppm'
-            elapsed = time.monotonic() - t0
-            self.noise_value_label.config(
-                text=f"Noise Std Dev: {self.noise_std:.4f}")
-            self.step1_completed = True
-            self.step1_status.config(text="✅ Completed", foreground="green")
-            self.btn_detect.config(state="normal")
-            self.step2_status.config(
-                text="⏳ Ready to detect peaks", foreground="blue")
-            self._status_ok(
-                f"Noise estimated: σ = {self.noise_std:.4f}  ({elapsed:.2f}s)")
-        except ValueError as e:
-            self._status_err(f"Noise failed: {e}")
-            messagebox.showerror("Error", f"Invalid values: {e}")
         except Exception as e:
-            self._status_err(f"Noise failed: {e}")
-            messagebox.showerror("Error", str(e))
+            print(f"[noise] region estimate failed ({e}); using auto fallback")
+            return None
+        self.noise_std    = float(sigma)
+        self.noise_source = 'ppm'
+        self.step1_completed = True
+        self.noise_value_label.config(text=f"Noise Std Dev: {self.noise_std:.4f}")
+        return self.noise_std
+
+    def _sync_baseline_corrected_ui(self):
+        """Reflect baseline_corrected and alignment_corrected flags in Step 2 UI."""
+        try:
+            if getattr(self.app, 'baseline_corrected', False):
+                self.baseline_correct_var.set(False)
+                self._baseline_chk.config(state='disabled')
+                self._baseline_applied_lbl.pack(anchor=tk.W, pady=1)
+            else:
+                self._baseline_chk.config(state='normal')
+                self._baseline_applied_lbl.pack_forget()
+        except Exception:
+            pass
+        try:
+            if getattr(self.app, 'alignment_corrected', False):
+                self._alignment_applied_lbl.pack(anchor=tk.W, pady=1)
+            else:
+                self._alignment_applied_lbl.pack_forget()
+        except Exception:
+            pass
 
     # ── Step 2 ────────────────────────────────────────────────────────────────
 
     def detect_peaks(self):
-        if not self.step1_completed or self.noise_std is None:
-            messagebox.showinfo("Info", "Please estimate noise first.")
+        if self.app.all_intensities is None or self.app.ppm is None:
+            messagebox.showinfo("Info", "Please load data first.")
             return
         if self.processor is None:
             messagebox.showerror("Error", "Peak processor not initialized.")
             return
+
+        # Noise is now estimated here (no separate button). Use the optional
+        # region if set; otherwise detect_peaks() estimates it internally from
+        # the quietest segment (noise_std=None).
+        self._estimate_noise()
 
         # ── Loading overlay ───────────────────────────────────────────────────
         overlay = tk.Toplevel(self.app.root)
@@ -448,22 +481,18 @@ class PeakDetectionStage(BaseStage):
         overlay.update_idletasks()
         overlay.after(1200, lambda: overlay.winfo_exists() and overlay.attributes('-topmost', False))
 
-        # Style
-        outer = tk.Frame(overlay, bg='#2c3e50', bd=2, relief='raised')
+        # Style — native ttk (matches all other progress dialogs)
+        outer = ttk.Frame(overlay, padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        tk.Label(outer, text="🔍  Peak Detection",
-                 bg='#2c3e50', fg='white',
-                 font=('Arial', 12, 'bold')).pack(pady=(16, 4))
+        ttk.Label(outer, text="🔍  Peak Detection",
+                  font=('Arial', 12, 'bold')).pack(pady=(4, 4))
 
-        _lbl = tk.Label(outer, text="Initialising…",
-                        bg='#2c3e50', fg='#aed6f1',
-                        font=('Arial', 9))
-        _lbl.pack(pady=(0, 6))
+        _lbl = ttk.Label(outer, text="Initialising…",
+                         font=('Arial', 9), foreground='gray')
+        _lbl.pack(pady=(0, 4))
 
-        _pct_lbl = tk.Label(outer, text="0%",
-                            bg='#2c3e50', fg='#d6eaf8',
-                            font=('Arial', 9, 'bold'))
+        _pct_lbl = ttk.Label(outer, text="0%", font=('Arial', 9, 'bold'))
         _pct_lbl.pack(pady=(0, 4))
 
         pb = ttk.Progressbar(outer, mode='determinate', length=280, maximum=100)
@@ -490,6 +519,9 @@ class PeakDetectionStage(BaseStage):
                 except (ValueError, TypeError):
                     baseline_lam = 1e5
 
+                # Skip pipeline alignment if already done via Alignment dialog
+                _run_align = not getattr(self.app, 'alignment_corrected', False)
+
                 details = detect_peaks(
                     self.app.ppm, self.app.all_intensities,
                     noise_std=self.noise_std,
@@ -498,10 +530,11 @@ class PeakDetectionStage(BaseStage):
                     baseline_correct=self.baseline_correct_var.get(),
                     baseline_method=self.baseline_method_var.get(),
                     baseline_lam=baseline_lam,
-                    global_align=True,
+                    global_align=_run_align,
                     samples_info=self.app.samples_info,
                     progress_callback=_push_progress,
                     return_details=True,
+                    per_sample_detection=bool(self.per_sample_var.get()),
                 )
                 _result['details'] = details
                 _result['elapsed'] = time.monotonic() - t0
@@ -550,6 +583,14 @@ class PeakDetectionStage(BaseStage):
             self.processor.ppm = np.asarray(self.app.ppm, dtype=float)
             self.processor.mean_intensity = details.get('reference_intensity')
             self.processor.noise_std = float(details.get('noise_std', self.noise_std or 0.0))
+            # Reflect the σ actually used (region or internal fallback) in the UI.
+            self.noise_std = self.processor.noise_std
+            self.step1_completed = True
+            try:
+                self.noise_value_label.config(
+                    text=f"Noise Std Dev: {self.noise_std:.4f}")
+            except Exception:
+                pass
             self.processor.peaks = self.peaks
             self._store_baseline(details.get('baseline'))
 
@@ -569,9 +610,14 @@ class PeakDetectionStage(BaseStage):
                     'index': p.get('index', 0),
                     'area': p.get('area', 0),
                     'area_per_sample': p.get('area_per_sample', np.array([])),
+                    # Per-sample apex alignment (same analyte across samples)
+                    'ppm_per_sample':       p.get('ppm_per_sample'),
+                    'shift_ppm_per_sample': p.get('shift_ppm_per_sample'),
+                    'aligned_per_sample':   p.get('aligned_per_sample'),
                     'overlapping': False,  # Will be set by overlap search
                     # Quality fields
                     'gaussian_r2':       p.get('gaussian_r2',      float('nan')),
+                    'symmetry_score':    p.get('symmetry_score',    float('nan')),
                     'gaussian_quality':  p.get('gaussian_quality',  'unknown'),
                     'status': {'good': 'Good', 'poor': 'Average', 'overlap': 'Poor'}.get(
                         p.get('gaussian_quality', ''), None),
@@ -610,6 +656,7 @@ class PeakDetectionStage(BaseStage):
             self.btn_toggle_peaks.config(state="normal")
             self.btn_show_baseline.config(state="normal")
             self.btn_search_overlaps.config(state="normal")
+            self.btn_auto_deconv_asym.config(state="normal")
             self._status("Drawing peak areas…")
             self.color_peaks(force=True)
             self._status_ok(f"Found {len(self.peaks)} peaks  ({elapsed:.2f}s)")
@@ -783,13 +830,21 @@ class PeakDetectionStage(BaseStage):
                 smooth_pts = max(3, int(0.005 / abs(ppm[1] - ppm[0])) if len(ppm) > 1 else 3)
                 y_smooth   = gaussian_filter1d(y_reg, sigma=smooth_pts)
                 d2         = np.gradient(np.gradient(y_smooth))
-                high_mask  = y_smooth > max(0.10 * region_apex, min_prom)
-                d2_sign    = np.sign(d2)
-                sign_chgs  = np.where((d2_sign[:-1] < 0) & (d2_sign[1:] > 0))[0]
                 edge_pts   = max(2, len(x_reg) // 10)
+                # A shoulder is a SECONDARY curvature maximum (a peak in -d²) that
+                # is not the main apex. A clean single peak has exactly one
+                # curvature maximum (at its apex) → 0 shoulders. Counting raw
+                # d² sign-changes (previous approach) flagged every clean peak,
+                # because a lone Gaussian already has a centre→wing transition.
+                neg_d2  = -d2
+                d2_mad  = float(np.median(np.abs(d2 - np.median(d2)))) * 1.4826
+                cmax, _ = _sig.find_peaks(neg_d2, prominence=max(3.0 * d2_mad, 1e-12))
+                apex_local = int(np.argmax(y_smooth))
                 n_shoulders = sum(
-                    1 for sc in sign_chgs
-                    if high_mask[sc] and edge_pts < sc < (len(x_reg) - edge_pts)
+                    1 for c in cmax
+                    if abs(int(c) - apex_local) > edge_pts
+                    and edge_pts < int(c) < (len(x_reg) - edge_pts)
+                    and y_smooth[int(c)] > max(0.10 * region_apex, min_prom)
                 )
 
             foot_not_grounded = not p.get('baseline_grounded', True)
@@ -1121,6 +1176,115 @@ class PeakDetectionStage(BaseStage):
         # Enable bottom-bar shortcut
         try:
             self.app.btn_deconv_shortcut.config(state="normal")
+        except Exception:
+            pass
+
+    def auto_deconvolve_asymmetric(self, sym_threshold=0.70):
+        """Queue asymmetric peaks (symmetry_score < threshold) for deconvolution
+        and open the tool immediately.
+
+        Intended for peaks with a hidden shoulder that the Gaussian/Lorentzian
+        fit may still score well but that are detectably asymmetric.
+        """
+        if not self.peaks:
+            messagebox.showinfo("Info", "No peaks detected.")
+            return
+
+        mean_vec = _no_blk_group_mean(self.app.all_intensities, self.app.samples_info)
+        if mean_vec is None:
+            mean_vec = getattr(self.processor, 'mean_intensity', None)
+        if mean_vec is None:
+            messagebox.showerror("Error", "No reference spectrum available.")
+            return
+
+        ppm      = self.app.ppm
+        noise_std = self.noise_std or 0.0
+        sigma     = float(noise_std) if noise_std > 0 else 1e-10
+
+        # Candidates: single-apex Good/Average peaks with measured low symmetry.
+        # Multi-apex clusters are already handled by Search for Overlaps.
+        candidate_peaks = [
+            p for p in self.peaks
+            if not p.get('is_sub_peak', False)
+            and int(p.get('n_cluster_peaks', 1)) == 1
+            and p.get('status') in ('Good', 'Average')
+            and float(p.get('symmetry_score', 1.0)) < sym_threshold
+        ]
+
+        if not candidate_peaks:
+            messagebox.showinfo(
+                "Auto-deconvolve",
+                f"No asymmetric peaks found (symmetry < {sym_threshold:.0%}).\n"
+                "All single-apex peaks appear symmetric.")
+            return
+
+        region_peaks    = []
+        accepted_ranges = []
+
+        for p in candidate_peaks:
+            plo = float(min(p.get('start_ppm', p['ppm']), p.get('end_ppm', p['ppm'])))
+            phi = float(max(p.get('start_ppm', p['ppm']), p.get('end_ppm', p['ppm'])))
+            if (phi - plo) < 1e-4:
+                hw  = max(0.02, float(p.get('width_ppm', 0.01)) * 3)
+                plo, phi = p['ppm'] - hw, p['ppm'] + hw
+
+            adj_lo, adj_hi, chosen_m = _expand_region_to_baseline_edges(
+                ppm, mean_vec, plo, phi, sigma)
+            if not chosen_m.get('valid', False):
+                adj_lo, adj_hi = plo, phi
+
+            p['overlapping'] = True
+            accepted_ranges.append((float(min(adj_lo, adj_hi)),
+                                    float(max(adj_lo, adj_hi))))
+            rp = dict(p)
+            rp['start_ppm']           = float(max(adj_lo, adj_hi))
+            rp['end_ppm']             = float(min(adj_lo, adj_hi))
+            rp['overlapping']         = True
+            rp['from_overlap_search'] = True
+            rp['_n_maxima']           = 1
+            rp['_n_shoulders']        = 1   # suspected shoulder
+            rp['_foot_not_grounded']  = not p.get('baseline_grounded', True)
+            rp['_poor_gaussian']      = p.get('gaussian_quality') in ('poor', 'overlap')
+            rp['_sym_score']          = float(p.get('symmetry_score', 0.0))
+            rp['baseline_validation'] = chosen_m
+            region_peaks.append(rp)
+
+        # Merge with any existing overlap regions from Search for Overlaps
+        existing = list(self._overlaps or [])
+        self._overlaps = existing + accepted_ranges
+
+        from gui.notation.deconvolution import DeconvController, DeconvWindow
+        if self._deconv_controller is None:
+            self._deconv_controller = DeconvController(self.processor)
+
+        # Merge with peaks already in controller (if any)
+        existing_peaks = list(getattr(self._deconv_controller, 'peaks', None) or [])
+        existing_ppms  = {round(ep['ppm'], 4) for ep in existing_peaks}
+        new_peaks      = [rp for rp in region_peaks
+                          if round(rp['ppm'], 4) not in existing_ppms]
+        self._deconv_controller.set_peaks(existing_peaks + new_peaks)
+
+        self.btn_open_deconv.config(state="normal")
+        self.processor.peaks = self.peaks
+        if self.app.plot_manager and self.app.plot_manager._peaks_drawn:
+            self.color_peaks(force=True)
+
+        n = len(new_peaks)
+        self.overlap_status.config(
+            text=f"{n} asymmetric peak(s) queued for deconvolution",
+            foreground="orange")
+        self.deconv_status.config(
+            text=f"{n} peak(s) queued — opening tool…",
+            foreground="blue")
+        self._status_ok(f"Auto-deconv: {n} asymmetric peak(s) queued")
+
+        # Open tool immediately
+        dw = DeconvWindow(self.app.root, self._deconv_controller, self)
+        try:
+            self.app._deconv_win = dw
+            dw.window.protocol('WM_DELETE_WINDOW',
+                lambda: (dw.window.destroy(),
+                         setattr(self.app, '_deconv_win', None)))
         except Exception:
             pass
 

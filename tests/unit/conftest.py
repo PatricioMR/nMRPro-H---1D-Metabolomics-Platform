@@ -100,12 +100,34 @@ def _install_mocks():
 
     backends = types.ModuleType('matplotlib.backends')
 
+    colors_mod = types.ModuleType('matplotlib.colors')
+    colors_mod.to_hex        = lambda c, *a, **kw: '#000000'
+    colors_mod.to_rgba       = lambda c, *a, **kw: (0, 0, 0, 1)
+    colors_mod.Normalize     = lambda *a, **kw: types.SimpleNamespace(__call__=lambda v: v)
+    colors_mod.LinearSegmentedColormap = types.SimpleNamespace(
+        from_list=lambda *a, **kw: None)
+    colors_mod.Colormap      = object
+    colors_mod.ListedColormap = lambda *a, **kw: None
+
+    patches_mod = types.ModuleType('matplotlib.patches')
+    patches_mod.Patch        = lambda *a, **kw: types.SimpleNamespace()
+    patches_mod.Rectangle    = lambda *a, **kw: types.SimpleNamespace()
+    patches_mod.FancyArrowPatch = lambda *a, **kw: types.SimpleNamespace()
+
+    figure_mod = types.ModuleType('matplotlib.figure')
+    figure_mod.Figure = lambda *a, **kw: types.SimpleNamespace(
+        add_subplot=lambda *a, **kw: types.SimpleNamespace(),
+        tight_layout=lambda *a, **kw: None)
+
     for mod, name in [
         (mpl,           'matplotlib'),
         (plt,           'matplotlib.pyplot'),
         (gs_mod,        'matplotlib.gridspec'),
         (backends,      'matplotlib.backends'),
         (backend_tkagg, 'matplotlib.backends.backend_tkagg'),
+        (colors_mod,    'matplotlib.colors'),
+        (patches_mod,   'matplotlib.patches'),
+        (figure_mod,    'matplotlib.figure'),
     ]:
         sys.modules.setdefault(name, mod)
 

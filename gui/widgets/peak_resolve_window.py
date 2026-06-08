@@ -176,23 +176,33 @@ class PeakResolveWindow:
             mid_val = met.get('id', '')
             pk_rank = mp.get('peak_rank', '')
             elig_key = f'{mid_val}__{pk_rank}'
+
+            # Other peaks (different rank) where this metabolite is already Good
+            _other_good = sorted(set(
+                mp2.get('peak_rank') for mp2 in met.get('matched_peaks', [])
+                if mp2.get('annotation_quality') == 'good'
+                and mp2.get('peak_rank') is not None
+                and mp2.get('peak_rank') != self.peak_rank
+            ))
+
             rows.append({
-                'met':       met,
-                'mp':        mp,
-                'db_entry':  db_entry,
-                'delta':     delta,
-                'n_matched': n_matched,
-                'n_db':      n_db,
-                'fit':       fit,
-                'db_type':   db_type,
-                'n_db_exp':  n_db_exp,
-                'n_obs':     n_obs,
-                'mult_ok':   mult_ok,
-                'delta_j':   delta_j,   # Hz or None
-                'score':     score,
-                'color':     _CAND_COLORS[len(rows) % len(_CAND_COLORS)],
-                'current':   mp.get('annotation_quality') == 'good',
-                'elig_key':  elig_key,
+                'met':         met,
+                'mp':          mp,
+                'db_entry':    db_entry,
+                'delta':       delta,
+                'n_matched':   n_matched,
+                'n_db':        n_db,
+                'fit':         fit,
+                'db_type':     db_type,
+                'n_db_exp':    n_db_exp,
+                'n_obs':       n_obs,
+                'mult_ok':     mult_ok,
+                'delta_j':     delta_j,   # Hz or None
+                'score':       score,
+                'color':       _CAND_COLORS[len(rows) % len(_CAND_COLORS)],
+                'current':     mp.get('annotation_quality') == 'good',
+                'assigned_at': _other_good,
+                'elig_key':    elig_key,
             })
         rows.sort(key=lambda r: r['score'], reverse=True)
 
@@ -549,7 +559,9 @@ class PeakResolveWindow:
                                  f"{r['n_matched']}/{r['n_db']}",
                                  f"{r['fit']:.3f}",
                                  f"{r['score']:.3f}",
-                                 '✓ Yes' if r['current'] else '—',
+                                 (f'✓ #{self.peak_rank}' if r['current']
+                                  else (', '.join(f'#{rk}' for rk in r['assigned_at'])
+                                        if r.get('assigned_at') else '—')),
                                  elig_sym,
                              ))
 

@@ -19,17 +19,15 @@ import numpy as np
 
 
 def _shift_1d(y, shift_pts):
-    """Integer-shift a 1-D array; fill edges with edge value."""
+    """Integer-shift a 1-D array; fill vacated edges with zero."""
     if shift_pts == 0:
         return y.copy()
     n   = len(y)
-    out = np.empty_like(y)
+    out = np.zeros_like(y)
     if shift_pts > 0:
-        out[:shift_pts] = y[0]
         out[shift_pts:] = y[:n - shift_pts]
     else:
         s = -shift_pts
-        out[n - s:] = y[-1]
         out[:n - s] = y[s:]
     return out
 
@@ -77,6 +75,130 @@ def _best_global_shift(ref, sample, max_shift_pts, use_derivative=True):
             best_score = score
             best_shift = shift_pts
     return int(best_shift)
+
+
+def _refine_one_center(x, y, cen, max_shift_ppm, noise_floor=0.0):
+    """Sub-pixel apex of ``y`` within ±``max_shift_ppm`` of ``cen``.
+
+    Returns ``(center_ppm, aligned)``. ``aligned`` is False when the window
+    holds no signal above ``noise_floor`` — the reference ``cen`` is kept so we
+    never chase noise into a fabricated position for an analyte absent here.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    mask = np.abs(x - cen) <= max_shift_ppm
+    if mask.sum() < 2:
+        return float(cen), False
+    x_w, y_w = x[mask], y[mask]
+    # Subtract a linear baseline across the sub-window before locating the apex.
+    if len(y_w) >= 3:
+        bl_w = np.linspace(float(y_w[0]), float(y_w[-1]), len(y_w))
+        y_bc = y_w - bl_w
+    else:
+        y_bc = y_w
+    y_bc = np.clip(y_bc, 0, None)
+    peak_val = float(y_bc.max())
+    if peak_val <= 0 or peak_val < noise_floor:
+        return float(cen), False
+    apex_idx = int(np.argmax(y_bc))
+    # Parabolic sub-pixel interpolation around the apex.
+    if 0 < apex_idx < len(x_w) - 1:
+        y0, y1, y2 = (float(y_bc[apex_idx - 1]), float(y_bc[apex_idx]),
+                      float(y_bc[apex_idx + 1]))
+        denom = y0 - 2 * y1 + y2
+        if abs(denom) > 1e-12:
+            dx = abs(float(x_w[1] - x_w[0])) if len(x_w) > 1 else 0.0
+            sub = max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom))
+            return float(x_w[apex_idx]) + sub * dx, True
+    return float(x_w[apex_idx]), True
+
+
+def refine_peak_centers_per_sample(peaks, ppm, aligned_2d, noise_std=None,
+                                   min_snr=3.0, max_shift_ppm=0.02):
+    """Locate each detected peak's apex in every sample so the same analyte's
+    peak lines up across samples.
+
+    Targeted and non-destructive: only detected peaks are touched, the shift is
+    bounded by ``max_shift_ppm``, and a sample whose window holds no signal above
+    ``min_snr·noise_std`` keeps the reference position (shift 0, not aligned) —
+    an analyte absent in a sample is never dragged onto noise.
+
+    Mutates each peak in-place, adding:
+      ``ppm_per_sample``       — list[float], apex ppm per sample
+      ``shift_ppm_per_sample`` — list[float], apex − reference ppm per sample
+      ``aligned_per_sample``   — list[bool], whether a real apex was found
+    Returns the peaks list.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    arr = np.asarray(aligned_2d, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    n_s = arr.shape[1]
+    noise_floor = (float(noise_std) * float(min_snr)) if noise_std else 0.0
+    for p in peaks:
+        cen = float(p.get('ppm', 0.0))
+        centers, shifts, ok = [], [], []
+        for s in range(n_s):
+            c, a = _refine_one_center(ppm, arr[:, s], cen, max_shift_ppm,
+                                      noise_floor)
+            centers.append(c)
+            shifts.append(c - cen)
+            ok.append(a)
+        p['ppm_per_sample'] = centers
+        p['shift_ppm_per_sample'] = shifts
+        p['aligned_per_sample'] = ok
+    return peaks
+
+
+def warp_from_peak_shifts(ppm, aligned_2d, peaks, max_shift_ppm=0.02):
+    """Build a per-sample non-linear warp anchored on the detected peaks.
+
+    Each sample's local ppm shift is interpolated across the axis from the
+    per-peak ``shift_ppm_per_sample`` anchors (0 at the spectrum ends and where
+    no peak anchors exist), then applied by linear resampling. Sharpens the
+    per-sample-max reference: misaligned peaks stop smearing into broad/double
+    apexes. Anchored on real peaks, so signal-free regions get only a mild
+    interpolated shift — no blind whole-spectrum warp.
+
+    Returns a new aligned matrix (does not mutate the input).
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    arr = np.asarray(aligned_2d, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    n_pts, n_s = arr.shape
+    anchors = [p for p in peaks
+               if p.get('shift_ppm_per_sample') and p.get('aligned_per_sample')]
+    if not anchors:
+        return arr.copy()
+    # Anchor ppm positions (use reference center) sorted along the axis.
+    anc_ppm = np.array([float(p.get('ppm', 0.0)) for p in anchors], dtype=float)
+    order = np.argsort(anc_ppm)
+    anc_ppm = anc_ppm[order]
+    idx_axis = np.arange(n_pts, dtype=float)
+    out = np.empty_like(arr)
+    for s in range(n_s):
+        # Per-anchor shift for this sample (0 where this sample was not aligned).
+        sh = np.array([
+            (anchors[i].get('shift_ppm_per_sample', [0.0] * n_s)[s]
+             if (s < len(anchors[i].get('aligned_per_sample', []))
+                 and anchors[i]['aligned_per_sample'][s]) else 0.0)
+            for i in order
+        ], dtype=float)
+        sh = np.clip(sh, -max_shift_ppm, max_shift_ppm)
+        # Interpolate shift(ppm) across the whole axis (flat outside anchors).
+        shift_ppm_axis = np.interp(ppm, anc_ppm, sh) if len(anc_ppm) > 1 \
+            else np.full(n_pts, sh[0])
+        # Signed step handles both ppm directions (NMR axis usually decreases
+        # with index). shift = apex − reference in ppm; convert with the signed
+        # step and sample the source at idx + shift to bring the peak onto ref.
+        ppm_step_signed = (float(ppm[1] - ppm[0]) if n_pts > 1 else 1.0)
+        if abs(ppm_step_signed) < 1e-12:
+            ppm_step_signed = 1e-12
+        shift_pts_axis = shift_ppm_axis / ppm_step_signed
+        src_idx = np.clip(idx_axis + shift_pts_axis, 0, n_pts - 1)
+        out[:, s] = np.interp(src_idx, idx_axis, arr[:, s])
+    return out
 
 
 def global_peak_rigid_align(ppm, all_intensities, samples_info=None,

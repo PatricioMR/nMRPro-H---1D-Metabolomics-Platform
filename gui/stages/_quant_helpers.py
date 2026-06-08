@@ -17,6 +17,83 @@ def _trapz(y, x):
         return np.trapz(y, x=x)
 
 
+# ── Robust / non-parametric statistics for J-Resolve ─────────────────────────
+# qNMR fundamental: every peak of a compound yields the same concentration
+# (area ∝ nH·conc).  Per-peak concentration probes should therefore agree.  CV
+# (std/mean) assumes symmetric dispersion and is fragile with 2–3 probes — poor
+# for skewed NMR data.  fold_range (max/min) is scale-free, distribution-free,
+# robust at small n, and its tolerance is physically motivated by T1 differential
+# saturation (≈ the 0.35–2.50 anchor_ratio window → ~2.5× fold).
+
+def fold_range(values):
+    """Max/min ratio of strictly-positive values.
+
+    Returns 1.0 for a single positive value (perfectly consistent by
+    definition) and inf if any non-positive/empty (cannot form a ratio).
+    """
+    v = np.asarray([x for x in values if x is not None and np.isfinite(x) and x > 0],
+                   dtype=float)
+    if v.size == 0:
+        return float('inf')
+    if v.size == 1:
+        return 1.0
+    lo = float(v.min())
+    hi = float(v.max())
+    return hi / lo if lo > 0 else float('inf')
+
+
+def bootstrap_ci_median(values, n_boot=1000, ci=0.95, min_n=4, seed=0):
+    """Non-parametric percentile bootstrap CI for the median of `values`.
+
+    Resamples `values` with replacement n_boot times, takes the median of each
+    resample, and returns the percentile CI.
+
+    Returns (point_median, lo, hi).  When fewer than `min_n` finite-positive
+    values are available the bootstrap is unreliable, so (median, nan, nan) is
+    returned — the caller must treat the CI as unavailable, never fabricate it.
+    """
+    v = np.asarray([x for x in values if x is not None and np.isfinite(x) and x > 0],
+                   dtype=float)
+    if v.size == 0:
+        return (float('nan'), float('nan'), float('nan'))
+    point = float(np.median(v))
+    if v.size < min_n:
+        return (point, float('nan'), float('nan'))
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, v.size, size=(n_boot, v.size))
+    meds = np.median(v[idx], axis=1)
+    alpha = (1.0 - ci) / 2.0
+    lo = float(np.percentile(meds, alpha * 100.0))
+    hi = float(np.percentile(meds, (1.0 - alpha) * 100.0))
+    return (point, lo, hi)
+
+
+def bootstrap_fraction_ci(values, n_boot=1000, ci=0.95, min_n=6, seed=0):
+    """Non-parametric percentile bootstrap CI for the MEAN of a sample cohort.
+
+    Used for cohort-level uncertainty (J-Resolve fractions / concentrations per
+    group), resampling sample columns with replacement.  Distribution-free, so
+    valid for skewed/log-normal metabolomics data.
+
+    Returns (point_mean, lo, hi); (mean, nan, nan) when n < min_n (too few
+    samples to bootstrap — report 'unavailable', do not invent an interval).
+    """
+    v = np.asarray([x for x in values if x is not None and np.isfinite(x)],
+                   dtype=float)
+    if v.size == 0:
+        return (float('nan'), float('nan'), float('nan'))
+    point = float(np.mean(v))
+    if v.size < min_n:
+        return (point, float('nan'), float('nan'))
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, v.size, size=(n_boot, v.size))
+    means = np.mean(v[idx], axis=1)
+    alpha = (1.0 - ci) / 2.0
+    lo = float(np.percentile(means, alpha * 100.0))
+    hi = float(np.percentile(means, (1.0 - alpha) * 100.0))
+    return (point, lo, hi)
+
+
 def _pls_vip(X, y, n_components=2):
     """Compute PLS-DA VIP scores (no sklearn required).
 
@@ -76,12 +153,12 @@ def _pls_vip(X, y, n_components=2):
 
 
 def _cv(vals):
-    """CV% of a 1-D array, returns NaN if < 2 finite positive values."""
+    """CV% of a 1-D array (sample std, ddof=1). NaN if < 2 finite positive values."""
     v = [x for x in vals if np.isfinite(x) and x > 0]
     if len(v) < 2:
         return float('nan')
     m = float(np.mean(v))
-    return float(np.std(v) / m * 100) if m > 0 else float('nan')
+    return float(np.std(v, ddof=1) / m * 100) if m > 0 else float('nan')
 
 
 def _pqn(areas_dict, ref_dict):
@@ -100,48 +177,168 @@ def _effective_nh(hit, detected_ppm, spectrometer_mhz=600.0):
     """Return the effective nH for the specific detected line of a multiplet."""
     import re as _re
     nH = max(1.0, float(hit.get('protons', 1) or 1))
-    pattern = (hit.get('pattern') or 's').lower().strip()
+    # Result entries store multiplicity as 'type' (from DB), not 'pattern'.
+    # 'type' is often a non-multiplicity string (e.g. 'HMDB', 'lipid_region') —
+    # only use 'pattern' or 'multiplicity' to avoid misidentifying the multiplet.
+    pattern = (hit.get('pattern') or hit.get('multiplicity') or 's').lower().strip()
 
     _pascal = {
-        's':  [1],
-        'd':  [1, 1],
-        't':  [1, 2, 1],
-        'q':  [1, 3, 3, 1],
-        'p':  [1, 4, 6, 4, 1],
-        'h':  [1, 5, 10, 10, 5, 1],
-        'dd': [1, 1, 1, 1],
-        'dt': [1, 1, 2, 2, 1, 1],
-        'td': [1, 2, 1, 1, 2, 1],
+        's':   [1],
+        'd':   [1, 1],
+        't':   [1, 2, 1],
+        'q':   [1, 3, 3, 1],
+        'p':   [1, 4, 6, 4, 1],
+        'h':   [1, 5, 10, 10, 5, 1],
+        'dd':  [1, 1, 1, 1],
+        # dt = doublet-of-triplets: [1,1]⊗[1,2,1] → large-J doublet, small-J triplet
+        'dt':  [1, 2, 1, 1, 2, 1],
+        # td = triplet-of-doublets: [1,2,1]⊗[1,1] → large-J triplet, small-J doublet
+        'td':  [1, 1, 2, 2, 1, 1],
+        # ddd = [1,1]⊗[1,1]⊗[1,1] → 8 equal lines
+        'ddd': [1, 1, 1, 1, 1, 1, 1, 1],
+        # dq = [1,1]⊗[1,3,3,1]
+        'dq':  [1, 3, 3, 1, 1, 3, 3, 1],
+        # tt = [1,2,1]⊗[1,2,1]
+        'tt':  [1, 2, 1, 2, 4, 2, 1, 2, 1],
     }
     anchor_idx = hit.get('anchor_line_idx')
     pred_lines = hit.get('predicted_lines', [])
+    coeffs     = _pascal.get(pattern)
+
+    # Priority 0: line_idx stored at annotation time (ppm-matched to predicted_lines).
+    # This is the most direct mapping: annotation search compared detected ppm to
+    # each predicted line and recorded which index matched — no estimation needed.
+    _line_idx = hit.get('line_idx')
+    if (_line_idx is not None and len(pred_lines) > 1
+            and 0 <= _line_idx < len(pred_lines)):
+        rel_int = float(pred_lines[_line_idx].get('rel_intensity', 0))
+        total   = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
+        if total > 0 and rel_int > 0:
+            return nH * rel_int / total
+
+    # Priority 1: Pascal coefficients with known anchor index.
+    # More reliable than measured pred_ri (which uses observed heights,
+    # not theoretical areas, and can be asymmetric due to overlap/noise).
+    if (coeffs and anchor_idx is not None
+            and 0 <= anchor_idx < len(coeffs)):
+        return nH * coeffs[anchor_idx] / sum(coeffs)
+
+    # Priority 2: pred_lines with known anchor (complex multiplets dd/dt/etc.
+    # where Pascal is not directly applicable).
     if anchor_idx is not None and 0 <= anchor_idx < len(pred_lines):
         rel_int = float(pred_lines[anchor_idx].get('rel_intensity', 0))
         total   = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
         if total > 0 and rel_int > 0:
             return nH * rel_int / total
 
-    coeffs = _pascal.get(pattern)
-    if coeffs is None or len(coeffs) == 1:
-        return nH
+    # Priority 3: Pascal + J-coupling positional matching (anchor unknown).
+    if coeffs and len(coeffs) > 1:
+        j_str  = str(hit.get('j_coupling') or '').strip()
+        j_nums = [float(x) for x in _re.findall(r'\d+\.?\d*', j_str)
+                  if float(x) > 0]
+        if j_nums:
+            j_hz        = j_nums[0]
+            spacing_ppm = j_hz / spectrometer_mhz
+            n           = len(coeffs)
+            centre      = float(hit.get('ppm_center', hit.get('ppm', detected_ppm)))
+            positions   = [centre + (i - (n - 1) / 2.0) * spacing_ppm
+                           for i in range(n)]
+            dists   = [abs(detected_ppm - pos) for pos in positions]
+            closest = dists.index(min(dists))
+            return nH * coeffs[closest] / sum(coeffs)
 
-    j_str  = str(hit.get('j_coupling') or '').strip()
-    j_nums = [float(x) for x in _re.findall(r'\d+\.?\d*', j_str) if float(x) > 0]
-    if not j_nums:
-        return nH
+    # Priority 4: pred_lines positional matching (anchor unknown, complex mult).
+    if len(pred_lines) > 1:
+        ppms = [float(pl.get('ppm', float('inf'))) for pl in pred_lines]
+        if any(p != float('inf') for p in ppms):
+            dists   = [abs(detected_ppm - p) for p in ppms]
+            closest = dists.index(min(dists))
+            rel_int = float(pred_lines[closest].get('rel_intensity', 0))
+            total   = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
+            if total > 0 and rel_int > 0:
+                return nH * rel_int / total
 
-    j_hz   = j_nums[0]
-    spacing_ppm = j_hz / spectrometer_mhz
+    # Priority 5: uniform distribution — pred_lines known but no rel_intensity.
+    # Area/Lorentz integrate ONE detected line; nH/n_lines is the unbiased estimate.
+    if len(pred_lines) > 1:
+        return nH / len(pred_lines)
 
-    n      = len(coeffs)
-    centre = float(hit.get('ppm_center', hit.get('ppm', detected_ppm)))
-    positions = [centre + (i - (n - 1) / 2.0) * spacing_ppm for i in range(n)]
+    return nH
 
-    dists   = [abs(detected_ppm - pos) for pos in positions]
-    closest = dists.index(min(dists))
 
-    fraction = coeffs[closest] / sum(coeffs)
-    return nH * fraction
+def _effective_nh_source(hit, detected_ppm, spectrometer_mhz=600.0):
+    """Same logic as _effective_nh but returns (nH, source_description)."""
+    import re as _re
+    nH = max(1.0, float(hit.get('protons', 1) or 1))
+    pattern = (hit.get('pattern') or hit.get('multiplicity') or 's').lower().strip()
+    _pascal = {
+        's': [1], 'd': [1, 1], 't': [1, 2, 1], 'q': [1, 3, 3, 1],
+        'p': [1, 4, 6, 4, 1], 'h': [1, 5, 10, 10, 5, 1],
+        'dd': [1, 1, 1, 1], 'dt': [1, 2, 1, 1, 2, 1], 'td': [1, 1, 2, 2, 1, 1],
+        'ddd': [1, 1, 1, 1, 1, 1, 1, 1], 'dq': [1, 3, 3, 1, 1, 3, 3, 1],
+        'tt': [1, 2, 1, 2, 4, 2, 1, 2, 1],
+    }
+    anchor_idx = hit.get('anchor_line_idx')
+    pred_lines = hit.get('predicted_lines', [])
+    coeffs     = _pascal.get(pattern)
+    n_lines    = len(pred_lines)
+
+    # Priority 0: line_idx from annotation-time ppm matching.
+    _line_idx = hit.get('line_idx')
+    if (_line_idx is not None and n_lines > 1
+            and 0 <= _line_idx < n_lines):
+        ri  = float(pred_lines[_line_idx].get('rel_intensity', 0))
+        tot = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
+        if tot > 0 and ri > 0:
+            frac = ri / tot
+            return nH * frac, f'line_idx={_line_idx}  {nH}×{frac:.4f}'
+
+    if coeffs and anchor_idx is not None and 0 <= anchor_idx < len(coeffs):
+        frac = coeffs[anchor_idx] / sum(coeffs)
+        return nH * frac, f'Pascal+anchor  [{pattern} line {anchor_idx}]  {nH}×{frac:.4f}'
+
+    if anchor_idx is not None and 0 <= anchor_idx < n_lines:
+        ri  = float(pred_lines[anchor_idx].get('rel_intensity', 0))
+        tot = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
+        if tot > 0 and ri > 0:
+            frac = ri / tot
+            return nH * frac, f'pred_lines+anchor  [line {anchor_idx}]  {nH}×{frac:.4f}'
+
+    if coeffs and len(coeffs) > 1:
+        j_str  = str(hit.get('j_coupling') or '').strip()
+        j_nums = [float(x) for x in _re.findall(r'\d+\.?\d*', j_str) if float(x) > 0]
+        if j_nums:
+            j_hz        = j_nums[0]
+            spacing_ppm = j_hz / spectrometer_mhz
+            n           = len(coeffs)
+            centre      = float(hit.get('ppm_center', hit.get('ppm', detected_ppm)))
+            positions   = [centre + (i - (n - 1) / 2.0) * spacing_ppm for i in range(n)]
+            dists       = [abs(detected_ppm - pos) for pos in positions]
+            closest     = dists.index(min(dists))
+            frac        = coeffs[closest] / sum(coeffs)
+            dist_ppm    = dists[closest]
+            return (nH * frac,
+                    f'Pascal+J  [{pattern} J={j_hz}Hz line {closest}/{n-1}]  '
+                    f'{nH}×{frac:.4f}  Δppm={dist_ppm:.4f}')
+
+    if n_lines > 1:
+        ppms = [float(pl.get('ppm', float('inf'))) for pl in pred_lines]
+        if any(p != float('inf') for p in ppms):
+            dists   = [abs(detected_ppm - p) for p in ppms]
+            closest = dists.index(min(dists))
+            ri  = float(pred_lines[closest].get('rel_intensity', 0))
+            tot = sum(float(pl.get('rel_intensity', 0)) for pl in pred_lines)
+            if tot > 0 and ri > 0:
+                frac = ri / tot
+                return nH * frac, f'pred_lines+pos  [line {closest}/{n_lines-1}]  {nH}×{frac:.4f}'
+
+    # Priority 5: uniform distribution — pred_lines known but no rel_intensity.
+    # Area/Lorentz integrate ONE detected line; nH/n_lines is the unbiased estimate.
+    if n_lines > 1:
+        frac = 1.0 / n_lines
+        return nH * frac, f'uniform  [{pattern} {n_lines} lines]  {nH}×{frac:.4f}'
+
+    return nH, f'FALLBACK full-nH  (no J/anchor/pred_lines for {pattern})'
 
 
 def _mcr_als(X, n_components=1, max_iter=200, tol=1e-6, S_init=None):
@@ -172,11 +369,11 @@ def _linear_baseline(x, y):
     return float(y0), float(slope), y0 + slope * (x - x0)
 
 
-def _fit_lorentz_mean(x, y_mean):
-    """Fit Lorentzian to mean spectrum after 2-point baseline subtraction.
+def _fit_lorentz_mean(x, y_mean, with_baseline=True):
+    """Fit Lorentzian to mean spectrum.
 
-    Returns (A, cen, wid_hwhm).  A and wid describe the baseline-corrected
-    peak; area = A * pi * wid.
+    with_baseline=True: subtract 2-point linear baseline before fitting.
+    Returns (A, cen, wid_hwhm).  Area = A * pi * wid.
     """
     from scipy.optimize import curve_fit
     y_raw = np.clip(y_mean, 0, None)
@@ -184,10 +381,13 @@ def _fit_lorentz_mean(x, y_mean):
         i = int(np.argmax(y_raw))
         return float(y_raw[i]), float(x[i]), float(abs(x[-1] - x[0]) / 4)
 
-    _, _, baseline = _linear_baseline(x, y_raw)
-    y = np.clip(y_raw - baseline, 0, None)
-    if y.max() <= 0:
-        y = y_raw   # fallback: no baseline subtraction
+    if with_baseline:
+        _, _, baseline = _linear_baseline(x, y_raw)
+        y = np.clip(y_raw - baseline, 0, None)
+        if y.max() <= 0:
+            y = y_raw
+    else:
+        y = y_raw
 
     i_max = int(np.argmax(y))
     A0 = float(y[i_max])
@@ -205,38 +405,45 @@ def _fit_lorentz_mean(x, y_mean):
             bounds=([0, float(x.min()), dppm],
                     [A0 * 5.0, float(x.max()), x_span]),
             maxfev=4000)
+        if not all(np.isfinite(v) for v in popt):
+            return A0, c0, w0
         return float(popt[0]), float(popt[1]), float(popt[2])
     except Exception:
         return A0, c0, w0
 
 
-def _fit_lorentz_mean_with_bl(x, y_mean):
+def _fit_lorentz_mean_with_bl(x, y_mean, with_baseline=True):
     """Like _fit_lorentz_mean but also returns baseline parameters.
 
     Returns (A, cen, wid, bl_y0, bl_slope).
-    bl_y0 is baseline at x[0]; bl_slope in units/ppm.
+    When with_baseline=False, bl_y0 and bl_slope are 0.
     """
     y_raw = np.clip(y_mean, 0, None)
-    bl_y0, bl_slope, _ = _linear_baseline(x, y_raw)
-    A, cen, wid = _fit_lorentz_mean(x, y_mean)
+    if with_baseline:
+        bl_y0, bl_slope, _ = _linear_baseline(x, y_raw)
+    else:
+        bl_y0, bl_slope = 0.0, 0.0
+    A, cen, wid = _fit_lorentz_mean(x, y_mean, with_baseline=with_baseline)
     return A, cen, wid, bl_y0, bl_slope
 
 
-def _fit_lorentz_sample(x, y, A0, cen0, wid0, max_shift_ppm=0.02):
-    """Per-sample Lorentzian fit after 2-point baseline subtraction.
+def _fit_lorentz_sample(x, y, A0, cen0, wid0, max_shift_ppm=0.02, with_baseline=True):
+    """Per-sample Lorentzian fit.
 
-    Fits each sample independently with tight bounds around the mean-spectrum
-    parameters.  Area = A * pi * wid (analytical integral of baseline-corrected
-    peak).  Returns (area, A, cen, wid) or None on failure.
+    with_baseline=True: subtract 2-point linear baseline before fitting.
+    Area = A * pi * wid.  Returns (area, A, cen, wid) or None on failure.
     """
     from scipy.optimize import curve_fit
     y_raw = np.clip(y, 0, None)
     if len(x) < 4 or y_raw.max() <= 0:
         return None
-    _, _, baseline = _linear_baseline(x, y_raw)
-    y_cl = np.clip(y_raw - baseline, 0, None)
-    if y_cl.max() <= 0:
-        y_cl = y_raw   # fallback
+    if with_baseline:
+        _, _, baseline = _linear_baseline(x, y_raw)
+        y_cl = np.clip(y_raw - baseline, 0, None)
+        if y_cl.max() <= 0:
+            y_cl = y_raw
+    else:
+        y_cl = y_raw
     dppm = abs(float(x[1] - x[0])) if len(x) > 1 else 1e-4
     A_hi  = max(float(y_cl.max()) * 3.0, A0 * 5.0)
     w_lo  = max(wid0 * 0.3, dppm)
@@ -246,6 +453,8 @@ def _fit_lorentz_sample(x, y, A0, cen0, wid0, max_shift_ppm=0.02):
     if c_lo >= c_hi:
         c_lo = float(x.min())
         c_hi = float(x.max())
+    if not (np.isfinite(A0) and np.isfinite(cen0) and np.isfinite(wid0)):
+        return None
     try:
         popt, _ = curve_fit(
             _lorentz_func, x, y_cl,
@@ -253,6 +462,8 @@ def _fit_lorentz_sample(x, y, A0, cen0, wid0, max_shift_ppm=0.02):
             bounds=([0.0, c_lo, w_lo], [A_hi, c_hi, w_hi]),
             maxfev=6000)
         A, cen, wid = float(popt[0]), float(popt[1]), float(popt[2])
+        if not (np.isfinite(A) and np.isfinite(cen) and np.isfinite(wid)):
+            return None
         return A * np.pi * wid, A, cen, wid
     except Exception:
         return None
@@ -349,13 +560,14 @@ def _fit_multi_lorentz(x, y_mean, all_y, peak_ppms, max_shift=0.015):
 
 # kept for back-compat — used by update_sample_area fallback path
 def _align_sample_center(x, y, cen_mean, max_shift_ppm=0.02):
-    mask = np.abs(x - cen_mean) <= max_shift_ppm
-    if mask.sum() < 2:
-        return float(cen_mean)
-    x_w, y_w = x[mask], y[mask]
-    if y_w.max() <= 0:
-        return float(cen_mean)
-    return float(x_w[int(np.argmax(y_w))])
+    # Delegates to the DSP-layer apex finder (single source of truth, shared with
+    # detection-time per-peak alignment). noise_floor=0 preserves prior behaviour
+    # (always return the apex, falling back to cen_mean only when no signal).
+    from processing.peak_alignment import _refine_one_center
+    center, _ = _refine_one_center(np.asarray(x, dtype=float),
+                                   np.asarray(y, dtype=float),
+                                   float(cen_mean), max_shift_ppm, 0.0)
+    return center
 
 
 def _lorentz_amplitude(x, y, cen, wid):

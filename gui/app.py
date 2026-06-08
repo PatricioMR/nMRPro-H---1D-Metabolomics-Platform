@@ -37,7 +37,7 @@ from gui._group_editor import _GroupEditorMixin
 class App(_PlotSettingsMixin, _GroupEditorMixin):
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("NMR Metabolomics Viewer")
+        self.root.title("nMRPipe v0.1 Pre-Alpha")
         self.screen_width  = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
         self.root.withdraw()
@@ -54,6 +54,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.all_intensities = None
         self.ppm = None
         self._ppm_calibration = None
+        self.baseline_corrected  = False
+        self.alignment_corrected = False
         self.eligible_overrides = {}   # {f'{met_id}__{peak_rank}': bool}
 
         self.group_colors = {
@@ -253,15 +255,26 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         groups_menu = _menu(edit_menu)
         groups_menu.add_command(label="Edit Groups and Colors...",
                                 command=self.open_group_editor)
+        groups_menu.add_command(label="Edit Samples...",
+                                command=self._open_sample_editor)
         edit_menu.add_cascade(label="Groups", menu=groups_menu)
 
         edit_menu.add_separator()
-        edit_menu.add_command(label="Axes Settings...",    command=self.open_axes_settings)
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Show/Hide Peak Areas", command=self.toggle_peak_areas)
-        edit_menu.add_separator()
+        edit_menu.add_command(label="⚙ Annotation Parameters…",
+                              command=self._open_annotation_params)
+        _btn('Edit', edit_menu)
 
-        plot_settings_menu = _menu(edit_menu)
+        # ── View ─────────────────────────────────────────────────────────────
+        # Display/appearance controls: legend, axes, peak-area overlay, plot style.
+        view_menu = _menu(mb_frame)
+        view_menu.add_checkbutton(label="Show Legend", variable=self.show_legend,
+                                  command=self.toggle_legend)
+        view_menu.add_separator()
+        view_menu.add_command(label="Axes Settings...",     command=self.open_axes_settings)
+        view_menu.add_command(label="Show/Hide Peak Areas", command=self.toggle_peak_areas)
+        view_menu.add_separator()
+
+        plot_settings_menu = _menu(view_menu)
         plot_settings_menu.add_command(label="Background Color...",
                                        command=self.set_background_color)
 
@@ -292,24 +305,10 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         plot_settings_menu.add_separator()
         plot_settings_menu.add_command(label="Reset to Default",
                                        command=self.reset_plot_settings)
-        edit_menu.add_cascade(label="Plot Settings", menu=plot_settings_menu)
+        view_menu.add_cascade(label="Plot Settings", menu=plot_settings_menu)
 
-        edit_menu.add_separator()
-        edit_menu.add_command(label="🔍 Debug Peak Flow", command=self.open_peak_debugger)
-        edit_menu.add_separator()
-        edit_menu.add_command(label="⚙ Annotation Parameters…",
-                              command=self._open_annotation_params)
-        _btn('Edit', edit_menu)
-
-        # ── View ─────────────────────────────────────────────────────────────
-        view_menu = _menu(mb_frame)
-        view_menu.add_checkbutton(label="Show Legend", variable=self.show_legend,
-                                  command=self.toggle_legend)
         _btn('View', view_menu)
 
-        # ── Validation ────────────────────────────────────────────────────────
-        ttk.Button(mb_frame, text='✓ Validation',
-                   command=self._open_validation).pack(side=tk.LEFT, padx=2)
 
     # ---------- Stage Toolbar ----------
     def create_stage_toolbar(self):
@@ -342,7 +341,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.btn_annotation.pack(side=tk.LEFT, padx=2)
 
         self.btn_mcr_analysis = ttk.Button(
-            stage_frame, text="4. 🔀 J-Resolve",
+            stage_frame, text="4. 🔀 JG-Deconv",
             command=lambda: self.switch_stage('j_resolve'),
             style='Stage.TButton'
         )
@@ -506,6 +505,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                     'name': name,
                     'label': label,
                     'type': _type,
+                    'correction_factor': 1.0,
                     'display': f"{name} ({label})"
                 })
 
@@ -578,6 +578,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                     'name': name,
                     'label': label,
                     'type': _type,
+                    'correction_factor': 1.0,
                     'display': f"{name} ({label})"
                 })
 
@@ -680,46 +681,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.status_label.config(text=f"Showing data")
         self.canvas.draw()
 
-    def _open_validation(self):
-        """Open the Validation window."""
-        qs = self.stages.get('quantification')
-        if qs is None or not getattr(qs, '_quant_results', None):
-            messagebox.showinfo(
-                'Validation',
-                'Run quantification first (Step 5).',
-                parent=self.root)
-            return
-        from gui.widgets.validation_window import ValidationWindow
-        ValidationWindow(self.root, qs, self)
-
-    def _open_resolving_method(self):
-        """Open the Overlap Resolving Method window."""
-        ann = self.stages.get('annotation')
-        metabolites = getattr(ann, '_metabolites', None)
-        if not metabolites and ann and getattr(ann, '_last_results_args', None):
-            # Project was loaded from disk — reconstruct the annotation results window
-            try:
-                self.open_annot_shortcut()
-                metabolites = getattr(ann, '_metabolites', None)
-            except Exception:
-                pass
-        if not metabolites:
-            messagebox.showinfo(
-                'Resolving Method',
-                'Run annotation search and review results first.\n'
-                'Mark peaks as Good (Ctrl+1) in the Annotation Results window.',
-                parent=self.root)
-            return
-        from gui.widgets.resolving_method_window import ResolvingMethodWindow
-        ResolvingMethodWindow(
-            self.root,
-            metabolites=metabolites,
-            peaks=ann.peaks,
-            ppm=self.ppm,
-            all_intensities=self.all_intensities,
-            samples_info=getattr(self, 'samples_info', []),
-            app=self)
-
     def open_peak_debugger(self):
         """Open the peak flow debugger for the current stage."""
         if hasattr(self, 'stages') and 'peak_detection' in self.stages:
@@ -737,20 +698,130 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             messagebox.showinfo("Info", "Please switch to Metabolites Notation stage first.")
 
     def _open_annotation_params(self):
-        """Open Annotation Parameters dialog via the active AnnotationResultsWindow."""
+        """Open Annotation Parameters dialog.
+
+        If an AnnotationResultsWindow is active, delegates to it (enables
+        live recompute).  Otherwise opens a standalone pre-annotation dialog
+        that persists params on the annotation stage for the next run.
+        """
         win = getattr(self, '_annot_win', None)
-        if win is None or not getattr(win, 'win', None):
-            messagebox.showinfo(
-                "Annotation Parameters",
-                "No annotation results window open.\n"
-                "Run annotation first.")
+        if win is not None and getattr(win, 'win', None):
+            try:
+                win.win.deiconify()
+                win.win.lift()
+            except Exception:
+                pass
+            win._open_param_dialog()
             return
-        try:
-            win.win.deiconify()
-            win.win.lift()
-        except Exception:
-            pass
-        win._open_param_dialog()
+
+        # ── Pre-annotation: standalone dialog ────────────────────────────────
+        ann_stage = self.stages.get('annotation')
+        if ann_stage is None:
+            messagebox.showinfo("Annotation Parameters",
+                                "Annotation stage not initialised.",
+                                parent=self.root)
+            return
+
+        _DEFAULTS = {
+            'good_score_thresh': 0.80, 'bad_score_thresh': 0.50,
+            'dj_gold_hz': 0.20, 'dj_bad_hz': 0.50, 'dj_neutral': 0.00,
+            'dppm_gold_hz': 0.50, 'dppm_gold': 0.05,
+            'fp_coverage_pct': 50.0, 'nnls_min_frac': 0.03,
+            'anchor_clean_lo': 0.35, 'anchor_clean_hi': 2.50,
+            'anchor_snr_bdl': 3.0,
+            'w_dj': 0.57, 'w_cosine_ns': 0.14, 'w_ppm_ns': 0.10,
+            'w_found_ns': 0.05, 'w_rri_ns': 0.09, 'w_reverse_ns': 0.05,
+            'w_cosine_s': 0.32, 'w_ppm_s': 0.27,
+            'w_found_s': 0.13, 'w_rri_s': 0.18, 'w_reverse_s': 0.10,
+        }
+        current = dict(_DEFAULTS)
+        if ann_stage._annotation_params:
+            current.update(ann_stage._annotation_params)
+
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Annotation Parameters")
+        dlg.resizable(False, False)
+        dlg.transient(self.root)
+        dlg.grab_set()
+
+        nb = ttk.Notebook(dlg)
+        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        _vars = {}
+
+        def _tab(title, rows):
+            frm = ttk.Frame(nb, padding=10)
+            nb.add(frm, text=title)
+            for r, (lbl, key, tip) in enumerate(rows):
+                ttk.Label(frm, text=lbl, anchor=tk.W).grid(
+                    row=r, column=0, sticky=tk.W, padx=(0, 10), pady=3)
+                var = tk.StringVar(value=str(current[key]))
+                _vars[key] = var
+                ttk.Entry(frm, textvariable=var, width=10).grid(
+                    row=r, column=1, sticky=tk.W, pady=3)
+                if tip:
+                    ttk.Label(frm, text=tip, foreground='gray',
+                              font=('Arial', 8)).grid(
+                        row=r, column=2, sticky=tk.W, padx=(6, 0))
+
+        _tab("Score & Quality", [
+            ("Good score threshold",   'good_score_thresh', "Rules 3/4/5 — min score → Good"),
+            ("Bad score threshold",    'bad_score_thresh',  "Rule 1 — singlets only"),
+            ("Fingerprint coverage %", 'fp_coverage_pct',   "≥2 DB peaks: min coverage %"),
+            ("NNLS min fraction",      'nnls_min_frac',     "< this → downgrade to yellow"),
+        ])
+        _tab("ΔJ Criteria (Hz)", [
+            ("Gold standard ΔJ", 'dj_gold_hz', "ΔJ < this → s_dj=1.0 (binary)"),
+            ("Bad ΔJ threshold", 'dj_bad_hz',  "ΔJ ≥ this → Bad (non-singlet gate)"),
+            ("s_dj neutral",     'dj_neutral', "s_dj when ΔJ unmeasurable"),
+        ])
+        _tab("Δppm Criteria", [
+            ("Gold standard Δppm (Hz)",  'dppm_gold_hz', "Max Δppm in Hz (field-independent)"),
+            ("Gold standard Δppm (ppm)", 'dppm_gold',    "Max Δppm in ppm"),
+        ])
+        _tab("RANSY Anchor", [
+            ("Clean ratio low",   'anchor_clean_lo',  "Min area ratio → clean"),
+            ("Clean ratio high",  'anchor_clean_hi',  "Max area ratio → clean"),
+            ("SNR BDL threshold", 'anchor_snr_bdl',   "SNR < this → below detection limit"),
+        ])
+        _tab("Score Weights", [
+            ("w_dj (non-singlet)",      'w_dj',         "ΔJ score weight"),
+            ("w_cosine (non-singlet)",  'w_cosine_ns',  ""),
+            ("w_ppm (non-singlet)",     'w_ppm_ns',     ""),
+            ("w_found (non-singlet)",   'w_found_ns',   ""),
+            ("w_rri (non-singlet)",     'w_rri_ns',     ""),
+            ("w_reverse (non-singlet)", 'w_reverse_ns', "Reverse-match weight"),
+            ("w_cosine (singlet)",      'w_cosine_s',   ""),
+            ("w_ppm (singlet)",         'w_ppm_s',      ""),
+            ("w_found (singlet)",       'w_found_s',    ""),
+            ("w_rri (singlet)",         'w_rri_s',      ""),
+            ("w_reverse (singlet)",     'w_reverse_s',  "Reverse-match weight"),
+        ])
+
+        bf = ttk.Frame(dlg)
+        bf.pack(fill=tk.X, padx=8, pady=(0, 8))
+
+        def _apply():
+            errs, new_p = [], {}
+            for key, var in _vars.items():
+                try:
+                    new_p[key] = float(var.get())
+                except ValueError:
+                    errs.append(key)
+            if errs:
+                messagebox.showerror("Invalid value",
+                                     f"Not a number: {', '.join(errs)}",
+                                     parent=dlg)
+                return
+            ann_stage._annotation_params = new_p
+            dlg.destroy()
+
+        def _reset():
+            for key, var in _vars.items():
+                var.set(str(_DEFAULTS.get(key, current[key])))
+
+        ttk.Button(bf, text="Reset Defaults", command=_reset).pack(side=tk.LEFT)
+        ttk.Button(bf, text="Apply",  command=_apply).pack(side=tk.RIGHT)
+        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT, padx=6)
 
     def toggle_peak_areas(self):
         """Show or hide peak highlight areas from the Edit menu."""
@@ -919,6 +990,41 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 'WM_DELETE_WINDOW',
                 lambda: self._annot_win.win.withdraw())
 
+    def _on_closing(self):
+        """Clean shutdown — prompt on unsaved changes, then tear down so the
+        process actually exits (autosave 'after' jobs and TkAgg figure managers
+        otherwise keep the interpreter alive after the window closes)."""
+        mgr = getattr(self, '_project_mgr', None)
+        if mgr is not None and getattr(mgr, '_dirty', False):
+            resp = messagebox.askyesnocancel(
+                'Unsaved Changes',
+                'Save changes to the current project before closing?')
+            if resp is None:          # Cancel → abort close
+                return
+            if resp:                  # Yes → save; abort close if save failed
+                if not mgr.save_or_saveas():
+                    return
+        # Stop autosave + cancel its pending Tk 'after' callback
+        try:
+            if mgr is not None:
+                mgr._stop_autosave()
+        except Exception:
+            pass
+        # Close matplotlib figures (TkAgg managers can outlive the root)
+        try:
+            plt.close('all')
+        except Exception:
+            pass
+        try:
+            self.root.quit()
+            self.root.destroy()
+        except Exception:
+            pass
+
     def run(self):
         self._init_project_manager()
+        self.root.protocol('WM_DELETE_WINDOW', self._on_closing)
         self.root.mainloop()
+        # Guarantee the process terminates even if a stray non-daemon thread or
+        # lingering Tk/matplotlib resource would otherwise keep it alive.
+        sys.exit(0)

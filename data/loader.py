@@ -149,6 +149,8 @@ def get_sample_info(filepath):
                 'index': i,
                 'name': name,
                 'label': label,
+                'type': 'BLK' if label.upper() == 'BLK' else 'Sample',
+                'correction_factor': 1.0,
                 'display': f"{name} ({label})"
             })
 

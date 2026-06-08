@@ -9,8 +9,8 @@ import traceback
 
 print("=" * 50)
 print("nMRPipe - Starting")
-print("=" * 50)
 
+print("=" * 50)
 
 def main():
     """

@@ -619,7 +619,7 @@ def deconvolve_region(x, y, params, progress_callback=None, y_samples=None):
     noise_std            = params.get('noise_std',            None)
     detect_tops          = params.get('detect_tops',          True)
     detect_shoulders     = params.get('detect_shoulders',     True)
-    shoulder_snr_factor  = params.get('shoulder_snr_factor',  0.40)
+    shoulder_snr_factor  = params.get('shoulder_snr_factor',  0.25)
     n_boot               = params.get('n_boot',               50)
     onion_mode = (model == 'Onion (Auto-BIC)')
     mcr_mode   = (model == 'MCR (Constrained)')

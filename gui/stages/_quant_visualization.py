@@ -194,11 +194,38 @@ class _QuantVisMixin:
         if ppm_arr is not None and all_int is not None and p:
             lo_i = min(p.get('start_idx', 0), p.get('end_idx', 0))
             hi_i = max(p.get('start_idx', 0), p.get('end_idx', 0))
+
+            # In Multiplet mode expand lo_i/hi_i to the actual integration window
+            _mw = r.get('_multiplet_window')
+            if _mw and integ_mode == 'Multiplet':
+                _step = abs(float(ppm_arr[1] - ppm_arr[0])) if len(ppm_arr) > 1 else 0.001
+                _ppm_max = float(ppm_arr.max())
+                _mw_lo_i = max(0, int((_ppm_max - _mw[1]) / _step))
+                _mw_hi_i = min(len(ppm_arr) - 1, int((_ppm_max - _mw[0]) / _step))
+                if _mw_lo_i < _mw_hi_i:
+                    lo_i = _mw_lo_i
+                    hi_i = _mw_hi_i
+
             pad  = max(8, (hi_i - lo_i))
             lo_e = max(0, lo_i - pad)
             hi_e = min(len(ppm_arr) - 1, hi_i + pad)
             x_view = ppm_arr[lo_e:hi_e + 1]
             x_reg  = ppm_arr[lo_i:hi_i + 1]
+
+            # J-Resolve fractional deconvolution: fraction of this peak
+            # attributed to this metabolite by NNLS (0 < frac ≤ 1).
+            # When < 1, show raw in grey background + scaled contribution in colour.
+            _jr_frac = r.get('_j_resolve_frac')
+            _show_deconv = (_jr_frac is not None
+                            and 0.0 < _jr_frac < 1.0
+                            and r.get('_used_j_resolve'))
+
+            if _show_deconv:
+                # Grey background = raw full peak (context for the reader)
+                _y_raw_mean = (np.mean(all_int[lo_e:hi_e + 1, :], axis=1)
+                               if all_int.ndim > 1 else all_int[lo_e:hi_e + 1])
+                ax1.plot(x_view, _y_raw_mean, color='#aaaaaa', lw=1.0,
+                         alpha=0.45, ls='--', zorder=1, label='Raw (shared peak)')
 
             for g, idxs in groups.items():
                 col = g_colors[g]
@@ -217,23 +244,29 @@ class _QuantVisMixin:
                             x_src[sort_idx], y_s[sort_idx])
                         if x_view[0] > x_view[-1]:   # NMR: decreasing ppm
                             y_aligned = y_aligned[::-1]
+                        if _show_deconv:
+                            y_aligned = y_aligned * _jr_frac
                         ax1.plot(x_view, y_aligned, color=col, lw=0.6, alpha=0.35)
                         ys.append(y_aligned)
                     else:
-                        ax1.plot(x_view, y_s, color=col, lw=0.6, alpha=0.35)
-                        ys.append(y_s)
+                        y_plot = y_s * _jr_frac if _show_deconv else y_s
+                        ax1.plot(x_view, y_plot, color=col, lw=0.6, alpha=0.35)
+                        ys.append(y_plot)
                 if ys:
                     gm = np.mean(ys, axis=0)
                     ax1.plot(x_view, gm, color=col, lw=1.8, alpha=0.95, label=g)
 
                     if integ_mode == 'Lorentz':
                         s_idxs = [i for i in idxs if i < n_s]
-                        if s_idxs and len(x_reg) >= 4:
+                        # Only draw overlay when stored params exist and R² is valid
+                        _lor_r2_viz = float((lorentz_p or {}).get('r2', float('nan')))
+                        _lorentz_valid = (lorentz_p is not None
+                                          and np.isfinite(_lor_r2_viz)
+                                          and _lor_r2_viz >= 0.70)
+                        if s_idxs and len(x_reg) >= 4 and _lorentz_valid:
                             y_gm_reg = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
 
                             # ── Baseline ──────────────────────────────────────
-                            # Prefer stored params (from computation); fallback
-                            # to recomputing from mean spectrum.
                             if lorentz_p and 'bl_y0' in lorentz_p:
                                 _bl_y0    = lorentz_p['bl_y0']
                                 _bl_slope = lorentz_p['bl_slope']
@@ -246,12 +279,11 @@ class _QuantVisMixin:
                                     _fit_lorentz_mean_with_bl(x_reg, y_gm_reg)
                                 _bl_x0 = float(x_reg[0])
 
-                            # Baseline across the full visible window
-                            y_bl_view = _bl_y0 + _bl_slope * (x_view - _bl_x0)
-
-                            # Draw baseline: light red dashed, single line per axis
+                            # Baseline drawn only over the integration region (x_reg),
+                            # not extrapolated across x_view — prevents diagonal artefact.
+                            y_bl_reg = _bl_y0 + _bl_slope * (x_reg - _bl_x0)
                             if g == list(groups.keys())[0]:
-                                ax1.plot(x_view, y_bl_view,
+                                ax1.plot(x_reg, y_bl_reg,
                                          color='#ff6666', lw=1.0, ls='--',
                                          alpha=0.55, zorder=2,
                                          label='baseline')
@@ -259,14 +291,9 @@ class _QuantVisMixin:
                             max_shift = max(
                                 abs(float(x_reg[-1] - x_reg[0])) * 0.15, 0.005)
 
-                            # Fit range: clip Lorentzian tails at 1% amplitude
-                            _tail_hw  = wid_d * np.sqrt(99.0)
-                            x_lo_fit  = max(float(x_view.min()), cen_d - _tail_hw)
-                            x_hi_fit  = min(float(x_view.max()), cen_d + _tail_hw)
-                            x_fit     = np.linspace(x_lo_fit, x_hi_fit, 600)
-
-                            # Baseline evaluated at fit x-range
-                            y_bl_fit  = _bl_y0 + _bl_slope * (x_fit - _bl_x0)
+                            # Fit range clipped to integration window only
+                            x_fit    = np.linspace(float(min(x_reg)), float(max(x_reg)), 600)
+                            y_bl_fit = _bl_y0 + _bl_slope * (x_fit - _bl_x0)
 
                             # Per-sample fits (drawn above baseline)
                             for si_idx in s_idxs:
@@ -306,7 +333,6 @@ class _QuantVisMixin:
                             # HWHM markers on the first group only
                             if g == list(groups.keys())[0]:
                                 hwhm_col = '#ff8c00'
-                                # Baseline value at centre for marker height
                                 _bl_cen = _bl_y0 + _bl_slope * (cen_gm - _bl_x0)
                                 for xv_hw in (cen_gm - wid_gm, cen_gm + wid_gm):
                                     ax1.axvline(xv_hw, color=hwhm_col,
@@ -348,18 +374,44 @@ class _QuantVisMixin:
                 s_idxs = [i for i in idxs if i < n_s]
                 if s_idxs:
                     y_g = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
+                    if _show_deconv:
+                        y_g = y_g * _jr_frac
                     ax1.fill_between(x_reg, 0, y_g,
                                      alpha=0.14, color=g_colors.get(g, '#888'))
+
+            if _show_deconv:
+                ax1.text(0.02, 0.93,
+                         f'JG-Deconv: {_jr_frac * 100:.1f}% of peak',
+                         transform=ax1.transAxes, fontsize=7,
+                         va='top', color='#1565C0',
+                         bbox=dict(fc='white', alpha=0.75, lw=0))
 
             ppm_lo = float(ppm_arr[lo_i])
             ppm_hi = float(ppm_arr[hi_i])
             for xv in (ppm_lo, ppm_hi):
                 ax1.axvline(xv, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
-            ax1.axvline(p['ppm'], color='#e63946', lw=0.9, ls=':', alpha=0.7)
+            # Red apex marker — only meaningful for a singlet (one detected line).
+            # For multiplets the quantified signal spans the whole multiplet window
+            # (the blue window markers), so a single apex line is misleading → hide.
+            _is_singlet = r.get('_is_singlet')
+            if _is_singlet is None:   # legacy result (pre-_is_singlet) → derive
+                _h0 = (r.get('_hits') or [{}])[0]
+                _is_singlet = ((_h0.get('multiplicity') or _h0.get('type') or '')
+                               .strip().lower() in ('s', 'br s', 'brs', 'bs', ''))
+            if _is_singlet:
+                ax1.axvline(p['ppm'], color='#e63946', lw=0.9, ls=':', alpha=0.7)
 
             v_lo = float(x_view.min())
             v_hi = float(x_view.max())
             ax1.set_xlim(v_hi, v_lo)
+
+            # Clamp Y-axis to the integration window so out-of-window peaks
+            # (visible only as context) don't dominate the scale.
+            _y_in_win = (all_int[lo_i:hi_i + 1, :]
+                         if all_int.ndim > 1 else all_int[lo_i:hi_i + 1])
+            if _y_in_win.size > 0:
+                _y_top = float(np.max(_y_in_win))
+                ax1.set_ylim(bottom=0, top=max(_y_top * 1.25, 1e-3))
 
         elif ppm_arr is not None and all_int is not None and lipid_window:
             lo_ppm = float(min(lipid_window[0], lipid_window[1]))
@@ -392,7 +444,12 @@ class _QuantVisMixin:
         ax1.set_xlabel('δ (ppm)', fontsize=8)
         ax1.set_ylabel('Intensity', fontsize=8)
         name  = r['metabolite']
-        if p:
+        _mw_t = r.get('_multiplet_window')
+        if integ_mode == 'Multiplet' and _mw_t and _mw_t[0] is not None:
+            _t_lo = min(float(_mw_t[0]), float(_mw_t[1]))
+            _t_hi = max(float(_mw_t[0]), float(_mw_t[1]))
+            ppm_s = f"{_t_lo:.4f}–{_t_hi:.4f}"
+        elif p:
             ppm_s = f"{p['ppm']:.4f}"
         elif lipid_window:
             ppm_s = f"{min(lipid_window):.4f}-{max(lipid_window):.4f}"
@@ -472,15 +529,28 @@ class _QuantVisMixin:
         _snr_col = ('#1a7a1a' if _snr_global > 10 else
                     '#856404' if _snr_global > 5 else '#9a0000')
 
+        _mw_c = r.get('_multiplet_window')
+        if integ_mode == 'Multiplet' and _mw_c and _mw_c[0] is not None:
+            _c_lo = min(float(_mw_c[0]), float(_mw_c[1]))
+            _c_hi = max(float(_mw_c[0]), float(_mw_c[1]))
+            _ppm_label = 'Region'
+            _ppm_value = f"{_c_lo:.4f}–{_c_hi:.4f}"
+        else:
+            _ppm_label = 'PPM'
+            _ppm_value = f"{p['ppm']:.4f}" if p else '?'
         top_card = [
             ('Metabolite',   r['metabolite'],                                    '#333'),
-            ('PPM',          f"{p['ppm']:.4f}" if p else '?',                  '#333'),
+            (_ppm_label,     _ppm_value,                                         '#333'),
             ('Width',        f"{p.get('width_ppm',0):.4f} ppm" if p else '?', '#333'),
             ('Annot. Score', f"{ann_score:.3f}",                                ann_score_col),
             ('Integration',  integ_lbl,                                          '#555'),
             ('Norm',         norm_mode,                                          '#555'),
             ('Mean SNR',     f"{_snr_global:.1f}",                              _snr_col),
         ]
+        if r.get('_used_j_resolve') and r.get('_j_resolve_frac') is not None:
+            _jr_f = r['_j_resolve_frac']
+            _jr_col = '#1565C0'
+            top_card.append(('JG-Deconv', f'{_jr_f * 100:.1f}% of peak', _jr_col))
         if r.get('_used_mcr') and r.get('_mcr'):
             mcr_m   = r['_mcr'].get('metrics', {})
             lof     = mcr_m.get('lof', float('nan'))
@@ -506,6 +576,9 @@ class _QuantVisMixin:
         _CARD_TIPS = {
             'Metabolite':   'Name from the annotation database (HMDB/BMRB).',
             'PPM':          'Chemical shift of the detected peak centre (ppm).',
+            'Region':       'Multiplet integration window [lo–hi] ppm.\n'
+                            'Area is integrated across this entire region,\n'
+                            'covering all predicted multiplet lines.',
             'Width':        'Peak width at half-maximum (ppm).',
             'Annot. Score': 'Composite annotation score (0–1).\n'
                             'Combines multiplet pattern match + chemical shift\n'
@@ -523,6 +596,9 @@ class _QuantVisMixin:
                             'Good: > 0.99  |  Warn: 0.95–0.99  |  Poor: < 0.95',
             'Iters':        'Number of MCR-ALS iterations until convergence\n'
                             '(max 200). Fewer iterations = faster convergence.',
+            'JG-Deconv':    'Fraction of this shared peak attributed to this metabolite\n'
+                            'by NNLS deconvolution in JG-Deconv.\n'
+                            'Spectrum and area are scaled by this fraction.',
             'Conc (mM)':    'Mean concentration across non-BLK samples (mM).\n'
                             'C = (A_met / nH_met) / (A_IS / nH_IS) × C_IS × dil',
             'Area %':       'Mean area as % of total spectrum area (non-BLK).',
@@ -535,8 +611,9 @@ class _QuantVisMixin:
             ax3.text(0.04, y, f'{key}:', fontsize=7.5,
                      fontweight='bold', color='#555',
                      transform=ax3.transAxes, va='top')
-            ax3.text(0.50, y, val, fontsize=7.5, color=col,
-                     transform=ax3.transAxes, va='top')
+            _display_val = val if key != 'Metabolite' or len(val) <= 28 else val[:25] + '…'
+            ax3.text(0.50, y, _display_val, fontsize=7.5, color=col,
+                     transform=ax3.transAxes, va='top', clip_on=True)
             tip = _CARD_TIPS.get(key)
             if tip:
                 self._card_row_tips[(y, y - row_h)] = tip

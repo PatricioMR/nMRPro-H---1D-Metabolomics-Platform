@@ -145,55 +145,87 @@ class StatisticsStage:
         ttk.Button(tb, text='Run',     command=self._run   ).pack(side=tk.RIGHT, padx=4)
         ttk.Button(tb, text='Export…', command=self._export).pack(side=tk.RIGHT, padx=2)
 
-        # Left panel controls go directly into self.frame
-        left = ttk.Frame(self.frame, padding=4)
-        left.pack(fill=tk.BOTH, expand=True)
+        # Scrollable left panel
+        left_outer = ttk.Frame(self.frame)
+        left_outer.pack(fill=tk.BOTH, expand=True)
+
+        _v = ttk.Scrollbar(left_outer, orient=tk.VERTICAL)
+        _v.pack(side=tk.RIGHT, fill=tk.Y)
+        _lc = tk.Canvas(left_outer, yscrollcommand=_v.set,
+                        highlightthickness=0, bg='#f0f0f0')
+        _lc.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        _v.config(command=_lc.yview)
+
+        left = ttk.Frame(_lc, padding=4)
+        _win = _lc.create_window((0, 0), window=left, anchor='nw')
+        left.bind('<Configure>',
+                  lambda e: _lc.configure(scrollregion=_lc.bbox('all')))
+        # Stretch inner frame to fill canvas width
+        _lc.bind('<Configure>',
+                 lambda e: _lc.itemconfig(_win, width=e.width))
+        _lc.bind('<MouseWheel>',
+                 lambda e: _lc.yview_scroll(-1 * (e.delta // 120), 'units'))
+        left.bind('<MouseWheel>',
+                  lambda e: _lc.yview_scroll(-1 * (e.delta // 120), 'units'))
+
         self._build_left(left)
 
     def _build_left(self, parent):
-        ttk.Label(parent, text='Method', font=('Arial', 9, 'bold')).pack(anchor=tk.W)
+        _SEC = dict(padding=(6, 4, 6, 4), relief='groove')
+        _RB  = dict(anchor=tk.W, padx=2, pady=1)
 
+        # ── Method ───────────────────────────────────────────────────────────
+        mf = ttk.LabelFrame(parent, text='Method', **_SEC)
+        mf.pack(fill=tk.X, pady=(0, 4))
         self._method_var = tk.StringVar(value='PCA')
-        methods = ['PCA', 'PLS-DA', 'OPLS-DA', 'Heatmap',
-                   'VIP Score', 'Volcano', 'Metabolic Profile',
-                   'Boxplot', 'Violin']
-        for m in methods:
-            ttk.Radiobutton(parent, text=m, variable=self._method_var,
+        for m in ['PCA', 'PLS-DA', 'OPLS-DA', 'Heatmap', 'Correlation',
+                  'VIP Score', 'Volcano', 'Metabolic Profile',
+                  'Boxplot', 'Violin']:
+            ttk.Radiobutton(mf, text=m, variable=self._method_var,
                             value=m, command=self._on_method_change
-                            ).pack(anchor=tk.W, pady=1)
+                            ).pack(**_RB)
 
-        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
-
-        # Options frame — rebuilt per method
-        self._opt_frame = ttk.LabelFrame(parent, text='Options', padding=4)
-        self._opt_frame.pack(fill=tk.X)
+        # ── Options (rebuilt per method) ──────────────────────────────────────
+        self._opt_frame = ttk.LabelFrame(parent, text='Options', **_SEC)
+        self._opt_frame.pack(fill=tk.X, pady=(0, 4))
         self._build_options('PCA')
 
-        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
+        # ── Scaling ───────────────────────────────────────────────────────────
+        sf = ttk.LabelFrame(parent, text='Scaling', **_SEC)
+        sf.pack(fill=tk.X, pady=(0, 4))
+        self._log_pre_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sf, text='Log10 pre-transform',
+                        variable=self._log_pre_var).pack(**_RB)
+        ttk.Separator(sf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=3)
+        self._scale_var = tk.StringVar(value='pareto')
+        for lbl, val in [
+            ('None',           'none'),
+            ('UV (unit var.)', 'UV'),
+            ('Pareto',         'pareto'),
+            ('Cube root',      'cbrt'),
+            ('Median center',  'median'),
+        ]:
+            ttk.Radiobutton(sf, text=lbl, variable=self._scale_var,
+                            value=val).pack(**_RB)
 
-        # Scaling
-        ttk.Label(parent, text='Scaling', font=('Arial', 8, 'bold')).pack(anchor=tk.W)
-        self._scale_var = tk.StringVar(value='UV')
-        for lbl, val in [('None', 'none'), ('UV (unit var.)', 'UV'),
-                         ('Pareto', 'pareto'), ('Log  ln(1+x), base e', 'log')]:
-            ttk.Radiobutton(parent, text=lbl, variable=self._scale_var,
-                            value=val).pack(anchor=tk.W, pady=1)
-
-        ttk.Separator(parent, orient=tk.HORIZONTAL).pack(fill=tk.X, pady=6)
-
-        # Filter buttons
-        ttk.Label(parent, text='Filters', font=('Arial', 8, 'bold')).pack(anchor=tk.W)
+        # ── Filters ───────────────────────────────────────────────────────────
+        ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
+        ff.pack(fill=tk.X, pady=(0, 4))
         self._filter_samples_btn = ttk.Button(
-            parent, text='🧪 Samples', command=self._open_sample_selector)
-        self._filter_samples_btn.pack(fill=tk.X, pady=2)
+            ff, text='Samples', command=self._open_sample_selector)
+        self._filter_samples_btn.pack(fill=tk.X, padx=4, pady=2)
         self._filter_metabolites_btn = ttk.Button(
-            parent, text='🔬 Metabolites', command=self._open_metabolite_selector)
-        self._filter_metabolites_btn.pack(fill=tk.X, pady=2)
-        ttk.Button(
-            parent, text='📊 Normality check', command=self._open_normality_popup
-        ).pack(fill=tk.X, pady=2)
-        self._filter_status_lbl = ttk.Label(parent, text='', font=('Arial', 7), foreground='#666')
-        self._filter_status_lbl.pack(anchor=tk.W)
+            ff, text='Metabolites', command=self._open_metabolite_selector)
+        self._filter_metabolites_btn.pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(ff, text='Normality check',
+                   command=self._open_normality_popup
+                   ).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(ff, text='🔬 Pathway Analysis',
+                   command=self._open_pathway_analysis
+                   ).pack(fill=tk.X, padx=4, pady=2)
+        self._filter_status_lbl = ttk.Label(
+            ff, text='', font=('Arial', 7), foreground='#666')
+        self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
 
     def _on_method_change(self):
         self._build_options(self._method_var.get())
@@ -258,6 +290,51 @@ class StatisticsStage:
                                  'plasma', 'RdBu_r'],
                          width=10, state='readonly'
                          ).grid(row=1, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Top N (VIP):',
+                      font=('Arial', 8)).grid(row=2, column=0, sticky=tk.W)
+            self._hm_topn_var = tk.StringVar(value='All')
+            ttk.Combobox(self._opt_frame, textvariable=self._hm_topn_var,
+                         values=['All', '10', '20', '30', '40', '50'],
+                         width=10
+                         ).grid(row=2, column=1, sticky=tk.W, padx=4)
+
+            ttk.Label(self._opt_frame, text='Plot by:',
+                      font=('Arial', 8)).grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
+            self._hm_plot_by_var = tk.StringVar(value='Samples')
+            ttk.Combobox(self._opt_frame, textvariable=self._hm_plot_by_var,
+                         values=['Samples', 'Group mean'],
+                         width=12, state='readonly'
+                         ).grid(row=3, column=1, sticky=tk.W, padx=4, pady=(4, 0))
+
+        elif method == 'Correlation':
+            ttk.Label(self._opt_frame, text='Coefficient:',
+                      font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
+            self._corr_method_var = tk.StringVar(value='spearman')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_method_var,
+                         values=['spearman', 'pearson'],
+                         width=10, state='readonly'
+                         ).grid(row=0, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Linkage:',
+                      font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
+            self._corr_link_var = tk.StringVar(value='average')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_link_var,
+                         values=['average', 'ward', 'complete', 'single'],
+                         width=10, state='readonly'
+                         ).grid(row=1, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Top N analytes:',
+                      font=('Arial', 8)).grid(row=2, column=0, sticky=tk.W)
+            self._corr_topn_var = tk.StringVar(value='30')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_topn_var,
+                         values=['All', '15', '20', '30', '40', '50'],
+                         width=10
+                         ).grid(row=2, column=1, sticky=tk.W, padx=4)
+            self._corr_sig_var = tk.BooleanVar(value=True)
+            ttk.Checkbutton(self._opt_frame, text='Significant only (FDR<0.05)',
+                            variable=self._corr_sig_var
+                            ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
+            ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\nneeds exactly 2 groups.',
+                      font=('Arial', 7), foreground='#666'
+                      ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
 
         elif method == 'VIP Score':
             ttk.Label(self._opt_frame, text='Top N features:',
@@ -716,18 +793,56 @@ class StatisticsStage:
         ttk.Button(bottom, text='OK',     command=_confirm       ).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bottom, text='Cancel', command=dlg.destroy    ).pack(side=tk.RIGHT)
 
-    def _open_normality_popup(self):
-        """Normality check per sample.
+    def _open_pathway_analysis(self):
+        """Open pathway analysis using the same normalization as the current statistics run."""
+        X_raw, sn, fl, gl = _get_quantification_matrix(self.app)
+        if X_raw is None or X_raw.shape[0] == 0 or X_raw.shape[1] == 0:
+            messagebox.showinfo('Pathway Analysis',
+                                'No quantification results. Run Quantification first.')
+            return
 
-        For each sample, the distribution of its analyte values (one value per
-        metabolite) is plotted as a histogram with a fitted normal curve and a
-        Shapiro-Wilk p-value.  This tests whether the overall metabolite profile
-        of each sample is normally distributed — useful for detecting outlier
-        samples or skewed batches.
+        X_scaled = self._scale(X_raw)   # apply log10 + pareto/UV/etc.
+
+        # Rebuild quant_results list with scaled _concs_per_sample so that
+        # PathwayAnalysisWindow sees normalized values in its correlation matrix.
+        quant_stage = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        raw_results = list(getattr(quant_stage, '_quant_results', []) or [])
+
+        # Map feature_label → column index in X_scaled
+        _fl_idx = {name: j for j, name in enumerate(fl)}
+
+        scaled_results = []
+        for r in raw_results:
+            name = r.get('metabolite') or r.get('name', '')
+            j = _fl_idx.get(name)
+            if j is not None:
+                r2 = dict(r)
+                r2['_concs_per_sample'] = X_scaled[:, j].tolist()
+                scaled_results.append(r2)
+            else:
+                scaled_results.append(r)
+
+        if not scaled_results:
+            messagebox.showinfo('Pathway Analysis', 'No metabolites to analyse.')
+            return
+
+        from gui.widgets.pathway_window import PathwayAnalysisWindow
+        try:
+            parent = self.frame.winfo_toplevel()
+        except Exception:
+            parent = self.app.root
+        PathwayAnalysisWindow(parent, scaled_results, self.app)
+
+    def _open_normality_popup(self):
+        """Per-sample normality + Grubbs outlier detection within each group.
+
+        Shapiro-Wilk on each sample's log-transformed analyte profile.
+        Grubbs' G on Euclidean distance from group centroid (log+z-score space)
+        — detects samples with anomalous metabolite profiles regardless of
+        overall concentration magnitude.
         """
         from scipy import stats as spstats
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
-        from matplotlib.figure import Figure
+        import csv
 
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
         if X is None or X.shape[0] == 0:
@@ -736,109 +851,199 @@ class StatisticsStage:
 
         X, feature_labels = self._remove_nan(X, feature_labels)
 
-        # Apply active filters
+        si = getattr(self.app, 'samples_info', []) or []
+        all_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
+        while len(all_names) < X.shape[0]:
+            all_names.append(f'S{len(all_names)}')
+        all_names = all_names[:X.shape[0]]
+
+        all_groups = list(group_labels[:X.shape[0]])
+        while len(all_groups) < X.shape[0]:
+            all_groups.append('Unknown')
+
         if self._excluded_metabolites:
             keep = [i for i, f in enumerate(feature_labels) if f not in self._excluded_metabolites]
             X = X[:, keep]
             feature_labels = [feature_labels[i] for i in keep]
 
-        # Build per-sample names and apply sample filter
-        si = getattr(self.app, 'samples_info', []) or []
-        all_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
-        # Pad or trim to match X rows
-        while len(all_names) < X.shape[0]:
-            all_names.append(f'S{len(all_names)}')
-        all_names = all_names[:X.shape[0]]
-
         if self._excluded_samples:
             keep = [i for i, n in enumerate(all_names) if n not in self._excluded_samples]
             if len(keep) >= 2:
-                X         = X[keep, :]
-                all_names = [all_names[i] for i in keep]
+                X          = X[keep, :]
+                all_names  = [all_names[i]  for i in keep]
+                all_groups = [all_groups[i] for i in keep]
 
-        n_samples = X.shape[0]
+        n_samples  = X.shape[0]
+        n_analytes = X.shape[1]
         if n_samples == 0:
             messagebox.showinfo('No data', 'No samples to display.', parent=self.frame)
             return
 
-        # Grid layout: up to MAX_COLS columns
-        MAX_COLS = 4
-        ncols = min(MAX_COLS, n_samples)
-        nrows = (n_samples + ncols - 1) // ncols
-        fig_h = max(3.0, nrows * 2.4)
-        fig_w = ncols * 2.8
+        # ── Log-transform for normality assessment ────────────────────────────
+        # log(1+x) handles zeros; metabolomics concentrations are log-normal.
+        X_log = np.log1p(np.maximum(X, 0.0))
 
+        # ── Shapiro-Wilk per sample on log-transformed profile ────────────────
+        sw_stats, sw_pvals, sw_normal = [], [], []
+        for i in range(n_samples):
+            row = X_log[i, :]
+            row = row[np.isfinite(row)]
+            if len(row) < 3:
+                sw_stats.append(float('nan'))
+                sw_pvals.append(float('nan'))
+                sw_normal.append(None)
+            else:
+                try:
+                    w, p = spstats.shapiro(row[:5000])
+                    sw_stats.append(float(w))
+                    sw_pvals.append(float(p))
+                    sw_normal.append(p >= 0.05)
+                except Exception:
+                    sw_stats.append(float('nan'))
+                    sw_pvals.append(float('nan'))
+                    sw_normal.append(None)
+
+        # ── Grubbs' test: Euclidean distance to group centroid ────────────────
+        # Normalize each feature across ALL samples (z-score in log space) so
+        # all metabolites contribute equally regardless of concentration range.
+        col_std = np.nanstd(X_log, axis=0, ddof=1)
+        col_std[col_std < 1e-10] = 1.0
+        X_z = (X_log - np.nanmean(X_log, axis=0)) / col_std
+
+        # Per-sample Euclidean distance from its group centroid in z-score space.
+        sample_dist = np.zeros(n_samples)
+        unique_groups = sorted(set(all_groups))
+        for grp in unique_groups:
+            idx_g = [i for i, g in enumerate(all_groups) if g == grp]
+            centroid = np.nanmean(X_z[idx_g, :], axis=0)
+            for i in idx_g:
+                diff = X_z[i, :] - centroid
+                sample_dist[i] = float(np.sqrt(np.nansum(diff ** 2)))
+
+        def _grubbs_critical(n, alpha=0.05):
+            if n < 3:
+                return float('nan')
+            t_crit = spstats.t.ppf(1.0 - alpha / (2.0 * n), df=n - 2)
+            return ((n - 1) / np.sqrt(n)) * np.sqrt(
+                t_crit ** 2 / (n - 2 + t_crit ** 2))
+
+        grubbs_g    = [float('nan')] * n_samples
+        grubbs_crit = [float('nan')] * n_samples
+        grubbs_flag = [False]        * n_samples
+
+        for grp in unique_groups:
+            idx_g = [i for i, g in enumerate(all_groups) if g == grp]
+            if len(idx_g) < 3:
+                continue
+            vals   = sample_dist[idx_g]
+            mu_g   = float(np.mean(vals))
+            s_g    = float(np.std(vals, ddof=1))
+            g_crit = _grubbs_critical(len(idx_g))
+            for i in idx_g:
+                g_val = abs(sample_dist[i] - mu_g) / s_g if s_g > 0 else 0.0
+                grubbs_g[i]    = round(g_val, 4)
+                grubbs_crit[i] = round(g_crit, 4)
+                grubbs_flag[i] = g_val > g_crit
+
+        # ── Build results rows ────────────────────────────────────────────────
+        rows = []
+        for i in range(n_samples):
+            p_v  = sw_pvals[i]
+            norm = sw_normal[i]
+            rows.append({
+                'sample':     all_names[i],
+                'group':      all_groups[i],
+                'n':          n_analytes,
+                'sw_stat':    f'{sw_stats[i]:.4f}' if np.isfinite(sw_stats[i]) else '—',
+                'sw_p':       f'{p_v:.4f}'          if np.isfinite(p_v)         else '—',
+                'parametric': ('Yes' if norm else ('No' if norm is not None else '—')),
+                'dist':       f'{sample_dist[i]:.3f}',
+                'g_stat':     f'{grubbs_g[i]:.4f}'    if np.isfinite(grubbs_g[i])    else '—',
+                'g_crit':     f'{grubbs_crit[i]:.4f}' if np.isfinite(grubbs_crit[i]) else '—',
+                'outlier':    ('⚠ Yes' if grubbs_flag[i] else 'No'),
+                '_norm_flag': norm,
+                '_out_flag':  grubbs_flag[i],
+            })
+
+        # ── Dialog ───────────────────────────────────────────────────────────
         dlg = tk.Toplevel(self.frame)
-        dlg.title('Normality Check — Sample Distributions')
+        dlg.title('Sample Normality & Grubbs Outlier Check')
         dlg.resizable(True, True)
         dlg.update_idletasks()
         px = self.frame.winfo_rootx() + self.frame.winfo_width() // 2
         py = self.frame.winfo_rooty() + self.frame.winfo_height() // 2
-        dw = min(int(fig_w * 96), 1200)
-        dh = min(int(fig_h * 96 + 80), 900)
+        dw, dh = 960, 480
         dlg.geometry(f'{dw}x{dh}+{px - dw//2}+{py - dh//2}')
 
-        fig = Figure(figsize=(fig_w, fig_h), dpi=96, layout='constrained')
+        cols   = ('sample', 'group', 'n', 'sw_stat', 'sw_p',
+                  'parametric', 'dist', 'g_stat', 'g_crit', 'outlier')
+        hdrs   = ('Sample', 'Group', 'n', 'SW stat', 'SW p (log)',
+                  'Parametric?', 'Profile dist.', 'G stat', 'G critical', 'Outlier?')
+        widths = (150, 90, 42, 78, 85, 88, 95, 78, 88, 78)
 
-        for i, sname in enumerate(all_names):
-            ax  = fig.add_subplot(nrows, ncols, i + 1)
-            row = X[i, :]
-            row = row[np.isfinite(row)]
+        frm = ttk.Frame(dlg)
+        frm.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
 
-            if len(row) < 3:
-                ax.set_title(sname, fontsize=6.5)
-                ax.text(0.5, 0.5, 'n<3', transform=ax.transAxes,
-                        ha='center', va='center', fontsize=7, color='#999')
-                ax.set_axis_off()
-                continue
+        vsb = ttk.Scrollbar(frm, orient='vertical')
+        hsb = ttk.Scrollbar(frm, orient='horizontal')
+        tree = ttk.Treeview(frm, columns=cols, show='headings',
+                            yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.config(command=tree.yview)
+        hsb.config(command=tree.xview)
+        vsb.pack(side=tk.RIGHT,  fill=tk.Y)
+        hsb.pack(side=tk.BOTTOM, fill=tk.X)
+        tree.pack(fill=tk.BOTH, expand=True)
 
-            # Shapiro-Wilk (n ≤ 5000)
-            try:
-                _, p_sw    = spstats.shapiro(row[:5000])
-                sw_txt     = f'W p={p_sw:.3f}'
-                sw_color   = '#c62828' if p_sw < 0.05 else '#2e7d32'
-            except Exception:
-                sw_txt, sw_color = '', '#555'
+        for col, hdr, w in zip(cols, hdrs, widths):
+            tree.heading(col, text=hdr)
+            tree.column(col, width=w, minwidth=36, anchor='center')
+        tree.column('sample', anchor='w')
+        tree.column('group',  anchor='w')
 
-            # Histogram
-            ax.hist(row, bins='auto', density=True,
-                    color='#1565c0', alpha=0.55, edgecolor='white', linewidth=0.4)
+        tree.tag_configure('non_normal', background='#fff3e0', foreground='#e65100')
+        tree.tag_configure('outlier',    background='#fce4ec', foreground='#c62828')
+        tree.tag_configure('both',       background='#fce4ec', foreground='#880e4f')
+        tree.tag_configure('ok',         background='#f1f8e9', foreground='#33691e')
 
-            # Fitted normal curve
-            mu, sigma = row.mean(), row.std()
-            if sigma > 0:
-                x_range = np.linspace(row.min(), row.max(), 200)
-                ax.plot(x_range, spstats.norm.pdf(x_range, mu, sigma),
-                        color='#e65100', linewidth=1.4)
+        for r in rows:
+            vals = tuple(r[c] for c in cols)
+            if r['_out_flag']:
+                tag = 'both' if r['_norm_flag'] is False else 'outlier'
+            elif r['_norm_flag'] is False:
+                tag = 'non_normal'
+            else:
+                tag = 'ok'
+            tree.insert('', tk.END, values=vals, tags=(tag,))
 
-            short = sname if len(sname) <= 16 else sname[:14] + '…'
-            ax.set_title(short, fontsize=6.5, pad=2)
-            ax.tick_params(labelsize=5)
-            ax.set_xlabel('Analyte value', fontsize=5.5)
-            ax.set_ylabel('Density',       fontsize=5.5)
-            if sw_txt:
-                ax.text(0.97, 0.95, sw_txt, transform=ax.transAxes,
-                        ha='right', va='top', fontsize=5.5,
-                        color=sw_color, fontweight='bold')
+        # ── Bottom bar ────────────────────────────────────────────────────────
+        bot = ttk.Frame(dlg)
+        bot.pack(fill=tk.X, padx=6, pady=(2, 4))
 
-        canvas = FigureCanvasTkAgg(fig, master=dlg)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        toolbar = NavigationToolbar2Tk(canvas, dlg, pack_toolbar=False)
-        toolbar.update()
-        toolbar.pack(side=tk.BOTTOM, fill=tk.X)
-        canvas.draw()
+        def _export_csv():
+            path = filedialog.asksaveasfilename(
+                parent=dlg, defaultextension='.csv',
+                filetypes=[('CSV', '*.csv')], title='Save normality results')
+            if not path:
+                return
+            with open(path, 'w', newline='', encoding='utf-8') as fh:
+                csv.writer(fh).writerow(list(hdrs))
+                for r in rows:
+                    csv.writer(fh).writerow([r[c] for c in cols])
+            messagebox.showinfo('Saved', f'Exported to {path}', parent=dlg)
 
-        note = ttk.Label(
-            dlg,
-            text=(f'{n_samples} samples  ·  {X.shape[1]} analytes  ·  '
-                  'Red p-value = non-normal (Shapiro-Wilk p < 0.05)  ·  '
-                  'Orange curve = fitted normal'),
-            font=('Arial', 7), foreground='#555')
-        note.pack(side=tk.BOTTOM, pady=(0, 4))
+        ttk.Button(bot, text='Export CSV', command=_export_csv).pack(side=tk.LEFT, padx=4)
+        ttk.Label(
+            bot,
+            text=(f'{n_samples} samples · {n_analytes} analytes · '
+                  'SW on log-profile (p<0.05 → non-parametric) · '
+                  'Profile dist. = Euclidean distance to group centroid (log+z-score) · '
+                  'G > G_crit (α=0.05) → possible outlier'),
+            font=('Arial', 7), foreground='#555'
+        ).pack(side=tk.LEFT, padx=8)
 
     def _build_right_panel(self):
         """Build the statistics plot area inside app.right_panel."""
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
+        from matplotlib.backends.backend_agg import FigureCanvasAgg
         from matplotlib.figure import Figure
 
         self._right_widget = ttk.Frame(self.app.right_panel)
@@ -847,8 +1052,8 @@ class StatisticsStage:
         eb = ttk.Frame(self._right_widget)
         eb.pack(side=tk.BOTTOM, fill=tk.X, pady=(4, 0))
         ttk.Label(eb, text='DPI:', font=('Arial', 8)).pack(side=tk.LEFT, padx=(4, 2))
-        self._dpi_var = tk.IntVar(value=150)
-        ttk.Spinbox(eb, from_=72, to=600, increment=25,
+        self._dpi_var = tk.IntVar(value=1200)
+        ttk.Spinbox(eb, from_=72, to=1200, increment=100,
                     textvariable=self._dpi_var, width=5
                     ).pack(side=tk.LEFT, padx=(0, 8))
         ttk.Label(eb, text='Format:', font=('Arial', 8)).pack(side=tk.LEFT, padx=(0, 2))
@@ -859,20 +1064,96 @@ class StatisticsStage:
         ttk.Button(eb, text='💾 Save figure', command=self._export
                    ).pack(side=tk.LEFT, padx=4)
 
-        # Plot canvas
-        self._fig = Figure(figsize=(8, 5), dpi=100, layout='constrained')
-        self._ax  = self._fig.add_subplot(111)
-        self._ax.text(0.5, 0.5, 'Select a method and click Run',
-                      transform=self._ax.transAxes,
-                      ha='center', va='center', color='#888888', fontsize=12)
-        self._ax.set_axis_off()
+        # Scrollable display canvas
+        plot_outer = ttk.Frame(self._right_widget)
+        plot_outer.pack(fill=tk.BOTH, expand=True)
 
-        self._canvas = FigureCanvasTkAgg(self._fig, master=self._right_widget)
-        self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        self._toolbar = NavigationToolbar2Tk(
-            self._canvas, self._right_widget, pack_toolbar=False)
-        self._toolbar.update()
-        self._toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+        h_scroll = ttk.Scrollbar(plot_outer, orient=tk.HORIZONTAL)
+        v_scroll = ttk.Scrollbar(plot_outer, orient=tk.VERTICAL)
+        self._scroll_canvas = tk.Canvas(plot_outer,
+                                        xscrollcommand=h_scroll.set,
+                                        yscrollcommand=v_scroll.set,
+                                        highlightthickness=0, bg='white')
+        h_scroll.config(command=self._scroll_canvas.xview)
+        v_scroll.config(command=self._scroll_canvas.yview)
+        v_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+        h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
+        self._scroll_canvas.pack(fill=tk.BOTH, expand=True)
+
+        # Matplotlib non-interactive renderer (no tk widget, no artifacts)
+        self._fig = Figure(figsize=(8, 5), dpi=100, layout='constrained')
+        self._canvas = FigureCanvasAgg(self._fig)
+
+        # PIL display state
+        self._zoom_level  = 1.0
+        self._base_image  = None   # PIL image at container size
+        self._photo       = None   # PhotoImage reference (keep alive)
+        self._image_id    = None   # canvas item id
+        self._resize_job  = None
+
+        # Initial placeholder
+        ax = self._fig.add_subplot(111)
+        ax.text(0.5, 0.5, 'Select a method and click Run',
+                transform=ax.transAxes, ha='center', va='center',
+                color='#888888', fontsize=12)
+        ax.set_axis_off()
+
+        self._scroll_canvas.bind('<Configure>', self._on_container_resize)
+        self._scroll_canvas.bind('<MouseWheel>', self._on_scroll_zoom)
+        self._scroll_canvas.after(80, self._render_and_display)
+
+    # ── PIL image zoom ────────────────────────────────────────────────────────
+
+    def _render_and_display(self):
+        """Render figure at current container size and display as PIL image.
+
+        Uses savefig(bbox_inches='tight') so rotated axis labels and other
+        artists that extend outside the axes area are never clipped.
+        """
+        import io
+        from PIL import Image as _PILImage
+        w_px = self._scroll_canvas.winfo_width()
+        h_px = self._scroll_canvas.winfo_height()
+        if w_px < 50 or h_px < 50:
+            self._scroll_canvas.after(80, self._render_and_display)
+            return
+        dpi = self._fig.dpi
+        self._fig.set_size_inches(w_px / dpi, h_px / dpi)
+        buf = io.BytesIO()
+        self._fig.savefig(buf, format='png', dpi=dpi,
+                          bbox_inches='tight', facecolor='white')
+        buf.seek(0)
+        self._base_image = _PILImage.open(buf).copy()
+        buf.close()
+        self._display_image()
+
+    def _display_image(self):
+        """Scale stored base image by zoom level and put in scroll canvas."""
+        from PIL import Image as _PILImage, ImageTk as _ImageTk
+        if self._base_image is None:
+            return
+        new_w = max(1, int(self._base_image.width  * self._zoom_level))
+        new_h = max(1, int(self._base_image.height * self._zoom_level))
+        img = self._base_image.resize((new_w, new_h), _PILImage.LANCZOS)
+        self._photo = _ImageTk.PhotoImage(img)
+        if self._image_id is None:
+            self._image_id = self._scroll_canvas.create_image(
+                0, 0, anchor='nw', image=self._photo)
+        else:
+            self._scroll_canvas.itemconfig(self._image_id, image=self._photo)
+        self._scroll_canvas.configure(scrollregion=(0, 0, new_w, new_h))
+
+    def _on_container_resize(self, event):
+        if self._zoom_level != 1.0:
+            return
+        if self._resize_job:
+            self._scroll_canvas.after_cancel(self._resize_job)
+        self._resize_job = self._scroll_canvas.after(150, self._render_and_display)
+
+    def _on_scroll_zoom(self, event):
+        factor = 1.15 if event.delta > 0 else 1 / 1.15
+        self._zoom_level = max(self._zoom_level * factor, 0.3)
+        self._display_image()
 
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
@@ -972,6 +1253,9 @@ class StatisticsStage:
 
         X_scaled = self._scale(X)
 
+        self._zoom_level = 1.0
+        self._base_image = None
+        self._fig.set_layout_engine('constrained')
         self._fig.clear()
         try:
             if method == 'PCA':
@@ -982,6 +1266,8 @@ class StatisticsStage:
                 self._plot_plsda(X_scaled, sample_names, feature_labels, group_labels, opls=True)
             elif method == 'Heatmap':
                 self._plot_heatmap(X_scaled, sample_names, feature_labels, group_labels)
+            elif method == 'Correlation':
+                self._plot_correlation(X, sample_names, feature_labels, group_labels)
             elif method == 'VIP Score':
                 self._plot_vip(X_scaled, sample_names, feature_labels, group_labels)
             elif method == 'Volcano':
@@ -1000,7 +1286,7 @@ class StatisticsStage:
                     color='red', fontsize=9, wrap=True)
             ax.set_axis_off()
 
-        self._canvas.draw_idle()
+        self._render_and_display()
 
     # ── NaN cleanup ──────────────────────────────────────────────────────────
 
@@ -1023,11 +1309,26 @@ class StatisticsStage:
         mode = getattr(self, '_scale_var', None)
         mode = mode.get() if mode else 'UV'
         Xs = X.copy().astype(float)
-        # Replace zeros/negatives with small positive for log
+
+        # Log10 pre-transform (checkbox — combinável com qualquer scaling)
+        if getattr(self, '_log_pre_var', None) and self._log_pre_var.get():
+            Xs = np.log10(np.clip(Xs, 0, None) + 1)
+
+        # ── Transformações (antes de centrar) ────────────────────────────────
         if mode == 'log':
-            Xs = np.log1p(np.clip(Xs, 0, None))
-            mode = 'UV'   # then UV scale the log-transformed data
-        # Mean-centre always
+            # log10(x + 1) — shift garante x >= 0 antes da transformação
+            Xs = np.log10(np.clip(Xs, 0, None) + 1)
+            mode = 'UV'
+
+        elif mode == 'cbrt':
+            Xs = np.cbrt(Xs)
+            mode = 'UV'
+
+        elif mode == 'median':
+            Xs -= np.median(Xs, axis=0)
+            return Xs   # centrado na mediana, sem divisão
+
+        # ── Mean-centre + divisão de escala ──────────────────────────────────
         Xs -= Xs.mean(axis=0)
         if mode == 'UV':
             std = Xs.std(axis=0)
@@ -1037,6 +1338,7 @@ class StatisticsStage:
             std = Xs.std(axis=0)
             std[std == 0] = 1.0
             Xs /= np.sqrt(std)
+        # mode == 'none': só mean-centre
         return Xs
 
     # ── Plot methods ─────────────────────────────────────────────────────────
@@ -1246,20 +1548,40 @@ class StatisticsStage:
         from scipy.cluster.hierarchy import linkage, dendrogram
         import matplotlib.patches as mpatches
 
-        clust = getattr(self, '_clust_var', None)
-        clust = clust.get() if clust else 'ward'
-        cmap  = getattr(self, '_cmap_var',  None)
-        cmap  = cmap.get()  if cmap  else 'RdYlBu_r'
+        clust  = getattr(self, '_clust_var',   None)
+        clust  = clust.get()  if clust  else 'ward'
+        cmap   = getattr(self, '_cmap_var',    None)
+        cmap   = cmap.get()   if cmap   else 'RdYlBu_r'
+        _topn  = getattr(self, '_hm_topn_var', None)
+        _topn  = _topn.get()  if _topn  else 'All'
 
-        # Limit features for legibility
-        MAX_FEAT = 60
-        if X.shape[1] > MAX_FEAT:
-            var_order = np.argsort(X.var(axis=0))[::-1][:MAX_FEAT]
-            X_h  = X[:, var_order]
-            flbl = [feature_labels[i] for i in var_order]
+        # Collapse samples to group means when requested
+        _plot_by = getattr(self, '_hm_plot_by_var', None)
+        _plot_by = _plot_by.get() if _plot_by else 'Samples'
+        if _plot_by == 'Group mean':
+            _yi, _uniq = _group_to_int(group_labels)
+            X            = np.array([X[_yi == gi, :].mean(axis=0) for gi in range(len(_uniq))])
+            sample_names = list(_uniq)
+            group_labels = list(_uniq)
+
+        # Feature selection: Top N by VIP score or top variance
+        vip_scores = getattr(self, '_last_vip_scores', None)
+        try:
+            top_n = int(_topn)
+        except (ValueError, TypeError):
+            top_n = None
+
+        if top_n is not None and vip_scores is not None and len(vip_scores) == X.shape[1]:
+            order = np.argsort(vip_scores)[::-1][:top_n]
+        elif top_n is not None:
+            order = np.argsort(X.var(axis=0))[::-1][:top_n]
         else:
-            X_h  = X
-            flbl = feature_labels
+            MAX_FEAT = 60
+            order = (np.argsort(X.var(axis=0))[::-1][:MAX_FEAT]
+                     if X.shape[1] > MAX_FEAT else np.arange(X.shape[1]))
+
+        X_h  = X[:, order]
+        flbl = [feature_labels[i] for i in order]
 
         # Cluster rows (samples) and cols (features)
         row_link = linkage(X_h,   method=clust, metric='euclidean')
@@ -1271,33 +1593,78 @@ class StatisticsStage:
         flbl_ord = [flbl[i]          for i in col_ord]
         glbl_ord = [group_labels[i]  for i in row_ord]
 
-        gs   = self._fig.add_gridspec(1, 2, width_ratios=[1, 12], wspace=0.02)
-        ax_g = self._fig.add_subplot(gs[0])
-        ax_h = self._fig.add_subplot(gs[1])
+        n_feat = X_ord.shape[1]
+        n_samp = X_ord.shape[0]
 
         y_int, unique = _group_to_int(glbl_ord)
         gcols = self._group_colors(unique)
         import matplotlib.colors as mcolors
-        group_arr = np.array([[mcolors.to_rgba(gcols[g])[:3] for g in glbl_ord]])
+
+        # Disable all layout engines — use manual subplots_adjust only
+        self._fig.set_layout_engine('none')
+
+        # GridSpec: 2 rows × 2 cols  (colorbar/legend placed manually)
+        #   row 0: [blank | col_dendrogram]
+        #   row 1: [grp   | heatmap       ]
+        gs = self._fig.add_gridspec(
+            2, 2,
+            height_ratios=[1, 4],
+            width_ratios=[0.75, 12],
+            hspace=0.01, wspace=0.02)
+
+        ax_top = self._fig.add_subplot(gs[0, 1])   # column dendrogram
+        ax_g   = self._fig.add_subplot(gs[1, 0])   # group color squares
+        ax_h   = self._fig.add_subplot(gs[1, 1])   # heatmap
+
+        # ── Column dendrogram (top) ───────────────────────────────────────────
+        dendrogram(col_link, ax=ax_top, orientation='top',
+                   no_labels=True, color_threshold=0,
+                   above_threshold_color='#555555', link_color_func=lambda k: '#555555')
+        ax_top.set_axis_off()
+
+        # ── Group colour bar ─────────────────────────────────────────────────
         ax_g.imshow(np.array([[mcolors.to_rgba(gcols[g])[:3]] for g in glbl_ord]),
                     aspect='auto', interpolation='nearest')
         ax_g.set_xticks([]); ax_g.set_yticks(range(len(slbl_ord)))
         ax_g.set_yticklabels(slbl_ord, fontsize=7)
 
+        # ── Heatmap ──────────────────────────────────────────────────────────
         im = ax_h.imshow(X_ord, aspect='auto', cmap=cmap,
                          interpolation='nearest',
                          vmin=np.percentile(X_ord, 2),
                          vmax=np.percentile(X_ord, 98))
-        ax_h.set_xticks(range(len(flbl_ord)))
-        ax_h.set_xticklabels(flbl_ord, rotation=90, fontsize=6)
+        ax_h.set_xticks(range(n_feat))
+        _MAX = 20
+        flbl_trunc = [f'{l[:_MAX]}…' if len(l) > _MAX else l for l in flbl_ord]
+        ax_h.set_xticklabels(flbl_trunc, rotation=45, ha='right', fontsize=6)
         ax_h.set_yticks([])
-        self._fig.colorbar(im, ax=ax_h, fraction=0.02, pad=0.01,
-                           label='Scaled intensity')
+
         self._fig.suptitle('Heatmap (hierarchical clustering)', fontsize=10)
 
+        # bbox_inches='tight' in _render_and_display captures labels that
+        # extend outside the figure — bottom margin only needs to provide
+        # spacing between heatmap and label text, not full label height.
+        self._fig.subplots_adjust(left=0.13, right=0.78, top=0.93, bottom=0.22)
+
+        # ── Colorbar: upper ~40% of heatmap height, just right of it ─────────
+        hm  = ax_h.get_position()          # Bbox in figure fractions
+        cb_w = 0.018
+        cb_h = hm.height * 0.42
+        cb_x = hm.x1 + 0.014
+        cb_y = hm.y0 + hm.height * 0.55   # centred in upper half
+        cbax = self._fig.add_axes([cb_x, cb_y, cb_w, cb_h])
+        cb   = self._fig.colorbar(im, cax=cbax)
+        cb.set_label('Scaled intensity', fontsize=7)
+        cb.ax.tick_params(labelsize=7)
+
+        # ── Groups legend: below colorbar ────────────────────────────────────
         patches = [mpatches.Patch(color=gcols[g], label=g) for g in unique]
-        ax_h.legend(handles=patches, fontsize=7, loc='upper right',
-                    bbox_to_anchor=(1.18, 1), framealpha=0.85)
+        leg_y = cb_y - 0.04
+        self._fig.legend(handles=patches, fontsize=7,
+                         loc='upper left',
+                         bbox_to_anchor=(cb_x - 0.01, leg_y),
+                         bbox_transform=self._fig.transFigure,
+                         framealpha=0.85, title='Groups', title_fontsize=7)
 
     def _vip_scores(self, X, Y, n_comp):
         """Compute VIP scores from a PLSRegression model."""
@@ -1316,6 +1683,159 @@ class StatisticsStage:
                                for j in range(h)])
             vips[i] = np.sqrt(p * weight.sum() / s_total)
         return vips
+
+    def _plot_correlation(self, X, sample_names, feature_labels, group_labels):
+        """Metabolite–metabolite correlation: clustered heatmap (A) and, when
+        exactly two groups are present, the differential correlation (C).
+
+        Spearman (rank) by default — robust to the non-normal, outlier-prone
+        concentrations typical of NMR. Hierarchical clustering reorders features
+        so co-regulated modules form visible blocks; the differential panel
+        highlights pairs whose association rewires between the two groups.
+        """
+        from scipy.cluster.hierarchy import linkage, leaves_list
+        from scipy.spatial.distance import squareform
+        from scipy.stats import spearmanr, t as _tdist
+
+        cmethod = getattr(self, '_corr_method_var', None)
+        cmethod = cmethod.get() if cmethod else 'spearman'
+        linkm   = getattr(self, '_corr_link_var', None)
+        linkm   = linkm.get() if linkm else 'average'
+        topn    = getattr(self, '_corr_topn_var', None)
+        topn    = topn.get() if topn else 'All'
+        sig_only = getattr(self, '_corr_sig_var', None)
+        sig_only = bool(sig_only.get()) if sig_only is not None else False
+        ALPHA = 0.05
+
+        def _corr(mat):
+            """(n_samples, n_features) → (R, P) feature×feature."""
+            n_s, n_f = mat.shape
+            if n_s < 3:
+                return np.full((n_f, n_f), np.nan), np.ones((n_f, n_f))
+            if cmethod == 'pearson':
+                R = np.corrcoef(mat, rowvar=False)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    tt = R * np.sqrt((n_s - 2) / np.clip(1 - R ** 2, 1e-12, None))
+                    P = 2.0 * _tdist.sf(np.abs(tt), n_s - 2)
+            else:
+                R, P = spearmanr(mat, axis=0)
+                R = np.atleast_2d(R); P = np.atleast_2d(P)
+            R = np.nan_to_num(R, nan=0.0)
+            P = np.nan_to_num(P, nan=1.0)
+            np.fill_diagonal(P, 0.0)
+            return R, P
+
+        def _fdr_sig(P):
+            """Benjamini-Hochberg significance mask over the upper triangle."""
+            n = P.shape[0]
+            iu = np.triu_indices(n, k=1)
+            pv = P[iu]
+            m = pv.size
+            mask = np.zeros((n, n), dtype=bool)
+            if m == 0:
+                return mask
+            order_p = np.argsort(pv)
+            ranked = pv[order_p]
+            thresh = ALPHA * (np.arange(1, m + 1) / m)
+            passed = np.where(ranked <= thresh)[0]
+            crit = ranked[passed.max()] if passed.size else -1.0
+            sig = pv <= crit if crit >= 0 else np.zeros(m, dtype=bool)
+            mask[iu[0][sig], iu[1][sig]] = True
+            mask |= mask.T
+            return mask
+
+        R, P = _corr(X)
+        sig = _fdr_sig(P)
+        feature_labels = list(feature_labels)
+
+        # ── Feature selection: significant-only drop + Top N by connectivity ──
+        keep = list(range(R.shape[0]))
+        if sig_only:
+            keep = [i for i in keep if sig[i].sum() > 0]
+        if topn != 'All':
+            try:
+                N = int(topn)
+                degree = sig.sum(axis=1) if sig.any() else np.abs(R).sum(axis=1)
+                ranked_idx = sorted(keep, key=lambda i: degree[i], reverse=True)[:N]
+                keep = sorted(ranked_idx)
+            except (ValueError, TypeError):
+                pass
+        if len(keep) < 2:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No significant correlations to display\n'
+                    '(loosen filters / Top N).', ha='center', va='center')
+            ax.axis('off')
+            return
+
+        sub = np.ix_(keep, keep)
+        R, P, sig = R[sub], P[sub], sig[sub]
+        feature_labels = [feature_labels[i] for i in keep]
+        X = X[:, keep]
+        n_feat = len(keep)
+
+        # Hierarchical clustering order from the (sub)matrix (1 − |r|).
+        dist = 1.0 - np.abs(R)
+        np.fill_diagonal(dist, 0.0)
+        dist = (dist + dist.T) / 2.0          # enforce symmetry for squareform
+        try:
+            Z = linkage(squareform(dist, checks=False), method=linkm)
+            order = list(leaves_list(Z))
+        except Exception:
+            order = list(range(n_feat))
+        feats_o = [feature_labels[i] for i in order]
+        Ro = R[np.ix_(order, order)]
+        if sig_only:
+            sig_o = sig[np.ix_(order, order)]
+            Ro = np.ma.masked_where(~sig_o & ~np.eye(n_feat, dtype=bool), Ro)
+
+        # Two groups (excluding BLK) → differential panel.
+        groups = [g for g in dict.fromkeys(group_labels)
+                  if str(g).upper() != 'BLK']
+        rows_by_g = {g: [i for i, gl in enumerate(group_labels) if gl == g]
+                     for g in groups}
+        do_diff = (len(groups) == 2
+                   and all(len(rows_by_g[g]) >= 3 for g in groups))
+
+        if do_diff:
+            g1, g2 = groups
+            R1, _ = _corr(X[rows_by_g[g1], :])
+            R2, _ = _corr(X[rows_by_g[g2], :])
+            D  = (R1 - R2)[np.ix_(order, order)]
+            axA = self._fig.add_subplot(1, 2, 1)
+            axC = self._fig.add_subplot(1, 2, 2)
+        else:
+            axA = self._fig.add_subplot(1, 1, 1)
+            axC = None
+
+        # ── Panel A: clustered correlation heatmap ────────────────────────────
+        import matplotlib as _mpl
+        _cmapA = _mpl.colormaps['RdBu_r'].copy()
+        _cmapA.set_bad('#f2f2f2')             # non-significant cells → light grey
+        imA = axA.imshow(Ro, cmap=_cmapA, vmin=-1, vmax=1, aspect='auto')
+        axA.set_xticks(range(n_feat)); axA.set_yticks(range(n_feat))
+        _fs = max(4, min(8, int(420 / max(n_feat, 1))))
+        axA.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
+        axA.set_yticklabels(feats_o, fontsize=_fs)
+        axA.set_title(f'A · Clustered correlation ({cmethod.title()})',
+                      fontsize=10, fontweight='bold')
+        self._fig.colorbar(imA, ax=axA, fraction=0.046, pad=0.04,
+                           label='ρ' if cmethod == 'spearman' else 'r')
+
+        # ── Panel C: differential correlation ─────────────────────────────────
+        if axC is not None:
+            vmax = float(min(2.0, np.nanmax(np.abs(D)) or 1.0))
+            imC = axC.imshow(D, cmap='PRGn', vmin=-vmax, vmax=vmax, aspect='auto')
+            axC.set_xticks(range(n_feat)); axC.set_yticks(range(n_feat))
+            axC.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
+            axC.set_yticklabels(feats_o, fontsize=_fs)
+            axC.set_title(f'C · Differential ({g1} − {g2})',
+                          fontsize=10, fontweight='bold')
+            self._fig.colorbar(imC, ax=axC, fraction=0.046, pad=0.04, label='Δρ')
+        elif len(groups) != 2:
+            axA.text(0.5, -0.18,
+                     f'Differential panel needs exactly 2 groups (have {len(groups)})',
+                     transform=axA.transAxes, ha='center', va='top',
+                     fontsize=7, color='#666')
 
     def _plot_vip(self, X, sample_names, feature_labels, group_labels):
         y_int, unique = _group_to_int(group_labels)
@@ -1336,6 +1856,7 @@ class StatisticsStage:
         vip_thr = vip_thr.get() if vip_thr else 1.0
 
         vips = self._vip_scores(X, Y, n_comp)
+        self._last_vip_scores = vips
         order = np.argsort(vips)[::-1][:top_n]
         vips_top  = vips[order]
         feats_top = [feature_labels[i] for i in order]
@@ -1916,7 +2437,7 @@ class StatisticsStage:
                               bbox_inches='tight', facecolor='white')
             if _is_pie or _is_box:
                 self._fig.set_size_inches(_orig_size)
-                self._canvas.draw_idle()
+                self._render_and_display()
             messagebox.showinfo('Saved', f'Figure saved to:\n{fn}', parent=self.frame)
         except Exception as e:
             messagebox.showerror('Export error', str(e), parent=self.frame)

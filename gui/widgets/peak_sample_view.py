@@ -174,9 +174,19 @@ class PeakSampleView:
                 inten = float(np.max(lint)) if lint.size else 0.0
 
             snr_s = inten / noise_std if noise_std > 0 else 0.0
-            lppm  = (float(p['ppm']) if self._is_sub
-                     else (float(self.ppm[pk_m][np.argmax(lint)])
-                           if lint.size else p['ppm']))
+            # Prefer the per-sample apex computed at detection (bounded + noise-
+            # gated, so absent samples keep the reference position instead of
+            # chasing noise); fall back to the in-window argmax for older peaks.
+            _pps = p.get('ppm_per_sample')
+            _ppk = p.get('aligned_per_sample')
+            if self._is_sub:
+                lppm = float(p['ppm'])
+            elif (_pps is not None and s < len(_pps)
+                  and not (_ppk is not None and s < len(_ppk) and not _ppk[s])):
+                lppm = float(_pps[s])
+            else:
+                lppm = (float(self.ppm[pk_m][np.argmax(lint)])
+                        if lint.size else p['ppm'])
 
             bg = {'Good':      '#f0fff0',
                   'Poor':      '#fff0f0',

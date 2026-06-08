@@ -171,9 +171,12 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
         mf = ttk.Frame(s2); mf.pack(fill=tk.X, pady=1)
         ttk.Label(mf, text='Signal:').pack(side=tk.LEFT)
-        self.integ_var = tk.StringVar(value='Area')
-        for v, lbl in [('Area', 'Area (trapz)'), ('Lorentz', 'Lorentz Fit'),
-                       ('Multiplet', 'Multiplet (whole)')]:
+        # Default = whole multiplet ÷ total protons (robust qNMR): no dependence
+        # on identifying which single line was detected. Area/Lorentz integrate a
+        # single line with a fractional nH and are opt-in.
+        self.integ_var = tk.StringVar(value='Multiplet')
+        for v, lbl in [('Multiplet', 'Multiplet (whole)'),
+                       ('Area', 'Area (trapz)'), ('Lorentz', 'Lorentz Fit')]:
             ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
                             value=v, command=self._on_integ_change).pack(side=tk.LEFT, padx=4)
 
@@ -192,7 +195,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self.mcr_var = tk.BooleanVar(value=False)   # kept for internal MCR-MCR path
         self.j_resolve_var = tk.BooleanVar(value=False)
         self._j_resolve_cb = ttk.Checkbutton(
-            mf2, text='J-Resolve correction (overlap)',
+            mf2, text='JG-Deconv correction (overlap)',
             variable=self.j_resolve_var,
             command=self._on_j_resolve_change)
         self._j_resolve_cb.pack(side=tk.LEFT)
@@ -203,8 +206,8 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                   text='Lorentz Fit: fits Lorentzian per sample (BATMAN-style).\n'
                        'Multiplet (whole): integrates full DB multiplet span; uses total nH.\n'
                        'Local baseline: subtracts linear baseline at window edges before integration.\n'
-                       'J-Resolve: applies fractional areas from Overlap Resolving Method.\n'
-                       'Run J-Resolve (step 4) and click "✓ Apply" before enabling.',
+                       'JG-Deconv: applies fractional areas from Overlap Resolving Method.\n'
+                       'Run JG-Deconv (step 4) and click "✓ Apply" before enabling.',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
@@ -246,9 +249,46 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # Run
         ttk.Separator(sf, orient='horizontal').pack(
             fill=tk.X, padx=5, pady=6)
+        def _safe_run():
+            import threading
+            # askyesno must run on main thread — it needs a user answer before
+            # the computation thread starts.
+            if self.ext_is_var.get() and self._ext_is_indices:
+                if not messagebox.askyesno(
+                        'External IS — Confirm',
+                        'External IS mode is active.\n\n'
+                        'Please confirm that the IS concentration and nH are the same\n'
+                        'for both the External IS samples and the analytical samples.\n\n'
+                        'Proceed with quantification?'):
+                    return
+            self._ext_is_confirmed = True
+            self.btn_run.config(state='disabled')
+            self.run_status.config(text='Running…', foreground='blue')
+            self._show_placeholder()
+            self._build_progress_dialog()
+
+            def _worker():
+                try:
+                    self._run()
+                except Exception as _run_exc:
+                    import traceback
+                    traceback.print_exc()
+                    self.app.root.after(0, lambda e=_run_exc: messagebox.showerror(
+                        'Quantification Error',
+                        f'Unexpected error:\n{type(e).__name__}: {e}\n\n'
+                        f'Check quant_debug.log for details.'))
+                finally:
+                    self._ext_is_confirmed = False
+                    def _cleanup():
+                        self._close_progress_dialog()
+                        self.btn_run.config(state='normal')
+                    self.app.root.after(0, _cleanup)
+
+            threading.Thread(target=_worker, daemon=True).start()
+
         self.btn_run = ttk.Button(
             sf, text='⚗ Run Quantification',
-            command=self._run, state='disabled')
+            command=_safe_run, state='disabled')
         self.btn_run.pack(fill=tk.X, padx=6, pady=2)
         self.run_status = ttk.Label(
             sf, text='Run Annotation first',
@@ -274,6 +314,14 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                        'MetaboAnalyst: samples × metabolites',
                   font=('Arial', 7), foreground='gray').pack(
                       anchor=tk.W, padx=6)
+
+        ttk.Separator(sf, orient='horizontal').pack(fill='x', padx=6, pady=4)
+        self.btn_pdf = ttk.Button(
+            sf, text='📄 Export PDF Report',
+            command=self._export_pdf, state='disabled')
+        self.btn_pdf.pack(fill=tk.X, padx=6, pady=2)
+        ttk.Label(sf, text='Technical report: spectrum + per-analyte\ncrop + quantification parameters',
+                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W, padx=6)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
@@ -305,6 +353,67 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             pass
         try:
             self.app.toolbar.pack_forget()
+        except Exception:
+            pass
+
+    # ── Progress dialog ───────────────────────────────────────────────────────
+
+    def _build_progress_dialog(self):
+        _root = self.app.root
+        win = tk.Toplevel(_root)
+        win.title('Quantification')
+        win.resizable(False, False)
+        win.protocol('WM_DELETE_WINDOW', lambda: None)
+        win.transient(_root)
+
+        tk.Label(win, text='Running quantification…',
+                 font=('Arial', 10, 'bold')).pack(pady=(18, 4), padx=28)
+
+        self._prog_step_var = tk.StringVar(value='Initializing…')
+        tk.Label(win, textvariable=self._prog_step_var,
+                 font=('Arial', 9), foreground='#555555').pack(padx=28)
+
+        self._prog_var = tk.DoubleVar(value=0.0)
+        ttk.Progressbar(win, variable=self._prog_var, maximum=100.0,
+                        length=340, mode='determinate').pack(
+            pady=(10, 4), padx=28)
+
+        self._prog_pct_var = tk.StringVar(value='0%')
+        tk.Label(win, textvariable=self._prog_pct_var,
+                 font=('Arial', 8), foreground='#888888').pack(pady=(0, 18))
+
+        win.update_idletasks()
+        pw = win.winfo_reqwidth()
+        ph = win.winfo_reqheight()
+        rx = _root.winfo_rootx() + (_root.winfo_width()  - pw) // 2
+        ry = _root.winfo_rooty() + (_root.winfo_height() - ph) // 2
+        win.geometry(f'+{max(rx, 0)}+{max(ry, 0)}')
+
+        win.update()
+        win.grab_set()
+        win.lift()
+
+        self._prog_win = win
+
+    def _prog_update(self, pct, step=''):
+        """Thread-safe: schedule on main thread via app.root.after(0, ...)."""
+        self.app.root.after(0, lambda p=float(pct), s=str(step): self._prog_apply(p, s))
+
+    def _prog_apply(self, pct, step):
+        try:
+            self._prog_var.set(pct)
+            self._prog_pct_var.set(f'{int(pct)}%')
+            if step:
+                self._prog_step_var.set(step)
+        except Exception:
+            pass
+
+    def _close_progress_dialog(self):
+        try:
+            if getattr(self, '_prog_win', None):
+                self._prog_win.grab_release()
+                self._prog_win.destroy()
+                self._prog_win = None
         except Exception:
             pass
 
@@ -523,6 +632,13 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             peak_rank = peak_rank.get('rank', '–') if peak_rank else '–'
             vip = r.get('vip_score', float('nan'))
             vip_s = f'{vip:.2f}' if np.isfinite(vip) else '—'
+            _mw_r = r.get('_multiplet_window')
+            _im_r = r.get('_integ_mode', '')
+            if _im_r == 'Multiplet' and _mw_r and _mw_r[0] is not None:
+                _ppm_str = (f"{min(float(_mw_r[0]), float(_mw_r[1])):.4f}"
+                            f"–{max(float(_mw_r[0]), float(_mw_r[1])):.4f}")
+            else:
+                _ppm_str = f"{r.get('ppm', 0):.4f}"
             # Ensure IID is a unique non-empty string
             raw_iid = r.get('hmdb_id') or r.get('metabolite', 'unknown')
             iid = str(raw_iid)
@@ -536,7 +652,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                     tags=(conf_tag,),
                     values=(peak_rank,
                             r['metabolite'],
-                            f"{r.get('ppm', 0):.4f}",
+                            _ppm_str,
                             conc_s,
                             f'{area:.4e}',
                             f'{snr:.1f}',
@@ -643,7 +759,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                 text=f'({n} peaks resolved)', foreground='#2e7d32')
         else:
             self._j_resolve_status_lbl.config(
-                text='(not applied — run J-Resolve step 4)', foreground='#b71c1c')
+                text='(not applied — run JG-Deconv step 4)', foreground='#b71c1c')
 
     # ── Standard preset ───────────────────────────────────────────────────────
 

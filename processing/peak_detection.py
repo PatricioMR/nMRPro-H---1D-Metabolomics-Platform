@@ -149,7 +149,8 @@ def find_valley_points(intensity, peak_idx, left_bound, right_bound):
     return left_valley, right_valley
 
 
-def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, method="auto"):
+def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
+                               method="auto", baseline_level=0.0):
     """
     Two-phase foot-head-foot boundary algorithm — one record per apex.
 
@@ -212,7 +213,10 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, met
     eff_noise = (float(noise_std)
                  if (noise_std is not None and float(noise_std) > 0)
                  else estimate_noise_region(intensity))
-    thr = 3.0 * eff_noise      # intensity ≤ thr  →  at baseline
+    # Foot = baseline level + 3σ. On a per-sample-max reference the quiet
+    # baseline sits above zero (upward bias of the max of N draws); ignoring it
+    # would never ground the feet there. baseline_level defaults to 0 (mean path).
+    thr = float(baseline_level) + 3.0 * eff_noise      # intensity ≤ thr → baseline
 
     # ──────────────────────────────────────────────────────────────────────────
     # Phase 1a  ·  outer baseline feet for every apex
@@ -222,50 +226,54 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, met
     lg_map      = {}   # apex → bool  left  grounded
     rg_map      = {}   # apex → bool  right grounded
 
+    # Foot = first of (baseline return ≤ thr) OR (valley: signal turns back up).
+    # The rise margin keeps noise wiggles from being mistaken for a valley.
+    rise_margin = 2.0 * eff_noise
+
+    def _walk(apex, step):
+        """Walk outward from apex (step ±1). Returns (foot_idx, grounded)."""
+        run_min_idx, run_min_val = apex, float(intensity[apex])
+        j = apex + step
+        while 0 <= j < n:
+            v = float(intensity[j])
+            if v <= thr:                       # reached baseline
+                return j, True
+            if v < run_min_val:
+                run_min_val, run_min_idx = v, j
+            elif v > run_min_val + rise_margin:  # signal rising again → valley
+                return run_min_idx, bool(run_min_val <= thr)
+            j += step
+        # Hit the spectrum edge without grounding → lowest point seen.
+        return run_min_idx, bool(run_min_val <= thr)
+
     for apex in sorted_indices:
-        # Walk left
-        lf, lg = 0, False
-        for j in range(apex, -1, -1):
-            if float(intensity[j]) <= thr:
-                lf, lg = j, True
-                break
-        if not lg:
-            lf = int(np.argmin(intensity[:apex + 1])) if apex > 0 else 0
-
-        # Walk right
-        rf, rg = n - 1, False
-        for j in range(apex, n):
-            if float(intensity[j]) <= thr:
-                rf, rg = j, True
-                break
-        if not rg:
-            rf = apex + int(np.argmin(intensity[apex:])) if apex < n - 1 else n - 1
-
+        lf, lg = _walk(apex, -1)
+        rf, rg = _walk(apex, +1)
         outer_left[apex]  = lf
         outer_right[apex] = rf
         lg_map[apex]      = lg
         rg_map[apex]      = rg
 
     # ──────────────────────────────────────────────────────────────────────────
-    # Phase 1b  ·  merge overlapping envelopes into clusters
+    # Phase 1b  ·  group apices into clusters by the saddle between them
     # ──────────────────────────────────────────────────────────────────────────
-    # A cluster is a contiguous spectral segment bounded by two baseline
-    # crossings that contains one or more detected apices.
+    # Two adjacent apices belong to the same (overlapping) cluster when the
+    # minimum between them does NOT return to baseline (saddle > thr). If the
+    # valley grounds (≤ thr) the peaks are resolved → separate clusters. This is
+    # robust with the valley-stopping foot walk above (where an isolated peak
+    # stops at its own saddle instead of extending across a neighbour).
     clusters = []     # list of {'lo', 'hi', 'apices': [...]}
-    for apex in sorted_indices:
-        lf = outer_left[apex]
-        rf = outer_right[apex]
-        merged = False
-        for cl in clusters:
-            # Envelopes overlap ↔ [lf,rf] and [cl['lo'],cl['hi']] intersect
-            if lf <= cl['hi'] and rf >= cl['lo']:
-                cl['lo']    = min(cl['lo'], lf)
-                cl['hi']    = max(cl['hi'], rf)
-                cl['apices'].append(apex)
-                merged = True
-                break
-        if not merged:
-            clusters.append({'lo': lf, 'hi': rf, 'apices': [apex]})
+    cur = [sorted_indices[0]]
+    for a, b in zip(sorted_indices, sorted_indices[1:]):
+        saddle = float(np.min(intensity[a:b + 1])) if b > a else float(intensity[a])
+        if saddle > thr:
+            cur.append(b)          # overlapping → same cluster
+        else:
+            clusters.append(cur)
+            cur = [b]
+    clusters.append(cur)
+    clusters = [{'lo': outer_left[ap[0]], 'hi': outer_right[ap[-1]], 'apices': ap}
+                for ap in clusters]
 
     # ──────────────────────────────────────────────────────────────────────────
     # Phase 2  ·  per-apex boundaries
@@ -304,26 +312,59 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, met
                 right_idx  = apex + int(np.argmin(seg))
                 right_grounded = float(intensity[right_idx]) <= thr
 
-            start_idx = min(left_idx,  apex)
-            end_idx   = max(right_idx, apex)
-
-            # ── Height ────────────────────────────────────────────────────────
-            foot_bl = (float(intensity[left_idx]) + float(intensity[right_idx])) / 2.0
-            height  = float(intensity[apex]) - foot_bl
-
-            # ── Area (trapezoid, linear baseline between the two feet) ─────────
-            peak_reg  = intensity[start_idx:end_idx + 1]
-            x_reg     = ppm[start_idx:end_idx + 1]
-            if end_idx > start_idx and right_idx != left_idx:
-                denom = right_idx - left_idx
-                slope = (float(intensity[right_idx]) - float(intensity[left_idx])) / denom
-                bl_reg = (float(intensity[left_idx])
-                          + slope * np.arange(end_idx - start_idx + 1))
-                corr_reg = np.maximum(peak_reg - bl_reg, 0.0)
+            if n_ap == 1:
+                # ── Isolated peak → symmetric feet ────────────────────────────
+                # Make start/end land at the same intensity (Y_start ≈ Y_end):
+                # raise the LOWER foot to the HIGHER one and trim that side inward
+                # to where the flank crosses that level. Horizontal integration
+                # baseline so a neighbour on one side cannot skew the area.
+                left_val  = float(intensity[left_idx])
+                right_val = float(intensity[right_idx])
+                foot_level = max(left_val, right_val)
+                if left_val < foot_level:
+                    j = left_idx
+                    while j < apex and float(intensity[j]) < foot_level:
+                        j += 1
+                    left_idx = j
+                elif right_val < foot_level:
+                    j = right_idx
+                    while j > apex and float(intensity[j]) < foot_level:
+                        j -= 1
+                    right_idx = j
+                start_idx = min(left_idx, apex)
+                end_idx   = max(right_idx, apex)
+                height = float(intensity[apex]) - foot_level
+                peak_reg = intensity[start_idx:end_idx + 1]
+                x_reg    = ppm[start_idx:end_idx + 1]
+                corr_reg = np.maximum(peak_reg - foot_level, 0.0)
+                area = (abs(float(np.trapezoid(corr_reg, x_reg)))
+                        if len(x_reg) > 1 else 0.0)
             else:
-                corr_reg = peak_reg
-            area = (abs(float(np.trapezoid(corr_reg, x_reg)))
-                    if len(x_reg) > 1 else 0.0)
+                # ── Cluster member (multiplet line / shoulder) ────────────────
+                # The valley IS the boundary; do NOT raise to the neighbour-side
+                # foot (that would zero an overlapped line). Linear baseline
+                # between the two feet (one of which is the shared valley).
+                start_idx = min(left_idx, apex)
+                end_idx   = max(right_idx, apex)
+                lv = float(intensity[left_idx])
+                rv = float(intensity[right_idx])
+                # baseline height under the apex (linear between feet)
+                if right_idx != left_idx:
+                    t = (apex - left_idx) / (right_idx - left_idx)
+                    foot_bl_apex = lv + t * (rv - lv)
+                else:
+                    foot_bl_apex = lv
+                height = float(intensity[apex]) - foot_bl_apex
+                peak_reg = intensity[start_idx:end_idx + 1]
+                x_reg    = ppm[start_idx:end_idx + 1]
+                if end_idx > start_idx and right_idx != left_idx:
+                    slope = (rv - lv) / (right_idx - left_idx)
+                    bl_reg = lv + slope * np.arange(end_idx - start_idx + 1)
+                    corr_reg = np.maximum(peak_reg - bl_reg, 0.0)
+                else:
+                    corr_reg = peak_reg
+                area = (abs(float(np.trapezoid(corr_reg, x_reg)))
+                        if len(x_reg) > 1 else 0.0)
 
             # ── Gaussian quality ──────────────────────────────────────────────
             # For isolated peaks (n_ap == 1) run the Gaussian fit to assess
@@ -333,13 +374,17 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, met
             # (good R²) from badly overlapping regions (poor R²).
             ppm_reg = ppm[start_idx:end_idx + 1]
             int_reg = intensity[start_idx:end_idx + 1]
-            if end_idx - start_idx + 1 >= 8:
-                gauss_r2, _fit_model = fit_peak_quality(ppm_reg, int_reg)
+            # 5 points is the minimum a 3-parameter line-shape fit needs
+            # (fit_peak_quality guards n<5). Requiring 8 wrongly forced narrow,
+            # sharp singlets to gaussian_r2=0 → 'overlap'/Poor.
+            if end_idx - start_idx + 1 >= 5:
+                gauss_r2, _fit_model, sym_score = fit_peak_quality(ppm_reg, int_reg)
             else:
-                gauss_r2 = 0.0
-            if gauss_r2 >= 0.90:
+                gauss_r2, sym_score = 0.0, 0.5
+            # Both shape fit and symmetry must qualify for Good/Average.
+            if gauss_r2 >= 0.90 and sym_score >= 0.75:
                 gauss_qual = 'good'
-            elif gauss_r2 >= 0.70:
+            elif gauss_r2 >= 0.70 and sym_score >= 0.50:
                 gauss_qual = 'poor'
             else:
                 gauss_qual = 'overlap'
@@ -362,6 +407,7 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None, met
                 'right_valley_ppm': float(ppm[right_idx]),
                 # Quality
                 'gaussian_r2':       float(gauss_r2),
+                'symmetry_score':    float(sym_score),
                 'gaussian_quality':  gauss_qual,
                 'left_grounded':     bool(left_grounded),
                 'right_grounded':    bool(right_grounded),
@@ -415,52 +461,182 @@ def estimate_noise_region(intensity, region_fraction=0.1):
     return max(noise_std, 1e-10)
 
 
+def _quiet_segment_stats(intensity, n_segments=32):
+    """Baseline level and noise σ of the quietest region of the spectrum.
+
+    Splits the spectrum into ``n_segments`` and selects the lowest-MAD segments
+    (a genuinely signal-free region, wherever it sits) rather than trusting the
+    blind edges — which in 1H spectra carry TSP/DSS and downfield signals and a
+    rolling baseline that inflates an edge estimate. Returns ``(median, sigma)``
+    of that quiet region; ``median`` is the local baseline level (≈0 on a mean
+    spectrum, but positive on a per-sample-max reference) and ``sigma`` its MAD-
+    based noise spread.
+    """
+    intensity = np.asarray(intensity, dtype=float)
+    n = len(intensity)
+    if n < 2 * n_segments:
+        med = float(np.median(intensity))
+        mad = float(np.median(np.abs(intensity - med))) * 1.4826
+        return med, max(mad, 1e-10)
+    seg_len = n // n_segments
+    stats = []   # (mad, median)
+    for s in range(n_segments):
+        seg = intensity[s * seg_len:(s + 1) * seg_len]
+        if seg.size < 3:
+            continue
+        med = float(np.median(seg))
+        mad = float(np.median(np.abs(seg - med))) * 1.4826
+        if mad > 0:
+            stats.append((mad, med))
+    if not stats:
+        med = float(np.median(intensity))
+        mad = float(np.median(np.abs(intensity - med))) * 1.4826
+        return med, max(mad, 1e-10)
+    mads = np.array([a for a, _ in stats])
+    order = np.argsort(mads)
+    k = max(1, len(order) // 10)        # lowest ~10% of segments = quiet region
+    sel = order[:k]
+    sigma = float(np.median(mads[sel]))
+    med   = float(np.median([stats[i][1] for i in sel]))
+    return med, max(sigma, 1e-10)
+
+
+def estimate_noise_minimum_segment(intensity, n_segments=32):
+    """Noise σ from the quietest segment (see ``_quiet_segment_stats``)."""
+    _, sigma = _quiet_segment_stats(intensity, n_segments)
+    return sigma
+
+
+def _second_derivative_candidates(spectrum, min_height, smooth_win):
+    """Apex indices for peaks AND shoulders, via the second derivative.
+
+    ``find_peaks`` only locates local maxima, so a shoulder — or a partially
+    overlapped multiplet line with no maximum of its own — is invisible. A peak
+    is a minimum (most-negative curvature) of d²/dx², so detecting minima of the
+    second derivative recovers those hidden apexes. Candidates are gated by:
+      • spectrum value ≥ ``min_height`` (must sit on real signal), and
+      • curvature prominence ≥ 3·MAD(d²) (significant inflection, not noise).
+
+    Returns a list of integer indices (may be empty).
+    """
+    from scipy.signal import savgol_filter, find_peaks as _fp
+    n = len(spectrum)
+    win = int(smooth_win)
+    if win % 2 == 0:
+        win += 1
+    win = max(5, win)
+    if win > n:
+        win = n if n % 2 == 1 else n - 1
+    if win < 5:
+        return []
+    try:
+        d2 = savgol_filter(np.asarray(spectrum, dtype=float),
+                           window_length=win, polyorder=2, deriv=2)
+    except Exception:
+        return []
+    d2_mad = float(np.median(np.abs(d2 - np.median(d2)))) * 1.4826
+    prom = max(3.0 * d2_mad, 1e-12)
+    idx, _ = _fp(-d2, prominence=prom)        # peaks/shoulders = maxima of -d²
+    spectrum = np.asarray(spectrum, dtype=float)
+    out = []
+    for i in idx:
+        if spectrum[i] < min_height:
+            continue
+        # Reject single-point spikes: a real apex/shoulder spans ≥2 points above
+        # half of its own height; a lone spike has only itself.
+        half = 0.5 * spectrum[i]
+        w = 1
+        j = i - 1
+        while j >= 0 and spectrum[j] >= half:
+            w += 1; j -= 1
+        j = i + 1
+        while j < n and spectrum[j] >= half:
+            w += 1; j += 1
+        if w >= 2:
+            out.append(int(i))
+    return out
+
+
 def fit_peak_quality(ppm_region, intensity_region):
     """
-    Fit both a Lorentzian and a Gaussian to a peak region; return the best R².
+    Assess peak quality from shape fit and symmetry.
 
-    NMR solution-state peaks follow a Lorentzian lineshape (T2 broadening),
-    so trying both models and keeping the better fit gives a reliable quality
-    metric even for peaks that are not perfectly symmetric.
+    Fits Lorentzian and Gaussian; keeps best R².
+    Computes symmetry as HWHM ratio (left vs right of apex).
+    Both metrics are needed to classify a peak as good.
 
     Parameters
     ----------
-    ppm_region       : 1-D array — chemical shift axis for the peak region
+    ppm_region       : 1-D array — chemical shift axis (may decrease)
     intensity_region : 1-D array — intensities (same length)
 
     Returns
     -------
-    r2    : float — best coefficient of determination (0–1)
-    model : str   — 'lorentzian', 'gaussian', or 'none'
+    r2       : float — best shape R² (0–1)
+    model    : str   — 'lorentzian', 'gaussian', or 'none'
+    sym      : float — symmetry score (0–1); 1.0 = perfectly symmetric
     """
     from scipy.optimize import curve_fit
 
     n = len(ppm_region)
     if n < 5:
-        return 0.0, 'none'
+        return 0.0, 'none', 0.5
 
     ppm_region = np.asarray(ppm_region, dtype=float)
     y = np.asarray(intensity_region, dtype=float).copy()
 
     # Subtract linear baseline between the two feet
     bl = np.linspace(y[0], y[-1], n)
+    y_raw_max = float(y.max())
     y -= bl
     y = np.maximum(y, 0.0)
 
     y_max = float(y.max())
     if y_max <= 1e-15:
-        return 0.0, 'none'
+        return 0.0, 'none', 0.5
 
-    amp0 = y_max
-    cen0 = float(ppm_region[int(np.argmax(y))])
-    above = np.where(y >= y_max * 0.5)[0]
-    fwhm = abs(float(ppm_region[above[-1]] - ppm_region[above[0]])) if len(above) >= 2 \
-           else abs(float(ppm_region[-1] - ppm_region[0])) / 3.0
+    # Peak amplitude after baseline removal is < 5% of raw amplitude →
+    # signal dominated by underlying broad peak/baseline, not a real peak.
+    if y_raw_max > 1e-15 and y_max / y_raw_max < 0.05:
+        return 0.0, 'none', 0.5
+
+    apex_idx = int(np.argmax(y))
+    cen0     = float(ppm_region[apex_idx])
+
+    # ── Symmetry via HWHM on each side of apex ───────────────────────────────
+    # ppm_region may decrease (NMR convention); use abs() for widths.
+    half = y_max * 0.5
+
+    left_y    = y[:apex_idx]
+    left_cross = np.where(left_y >= half)[0]
+    lhw = (abs(float(ppm_region[left_cross[0]]) - cen0)
+           if len(left_cross) > 0
+           else abs(float(ppm_region[0]) - cen0))
+
+    right_y    = y[apex_idx:]
+    right_cross = np.where(right_y >= half)[0]
+    rhw = (abs(cen0 - float(ppm_region[apex_idx + right_cross[-1]]))
+           if len(right_cross) > 0
+           else abs(cen0 - float(ppm_region[-1])))
+
+    if lhw > 1e-9 and rhw > 1e-9:
+        sym = float(min(lhw, rhw) / max(lhw, rhw))
+    elif lhw < 1e-9 and rhw < 1e-9:
+        sym = 1.0
+    else:
+        sym = 0.3  # one side collapsed → very asymmetric
+
+    # ── Lineshape fit ─────────────────────────────────────────────────────────
+    above = np.where(y >= half)[0]
+    fwhm  = (abs(float(ppm_region[above[-1]] - ppm_region[above[0]]))
+             if len(above) >= 2
+             else abs(float(ppm_region[-1] - ppm_region[0])) / 3.0)
     fwhm = max(fwhm, 1e-5)
 
     ppm_lo = float(min(ppm_region[0], ppm_region[-1]))
     ppm_hi = float(max(ppm_region[0], ppm_region[-1]))
     span   = max(ppm_hi - ppm_lo, 1e-5)
+    amp0   = y_max
 
     def _lorentz(x, amp, cen, hwhm):
         return amp * hwhm ** 2 / ((x - cen) ** 2 + hwhm ** 2)
@@ -485,17 +661,17 @@ def fit_peak_quality(ppm_region, intensity_region):
             rss = float(np.sum((y - y_fit) ** 2))
             r2  = max(0.0, 1.0 - rss / tss) if tss > 1e-30 else 0.0
             if r2 > best_r2:
-                best_r2   = r2
+                best_r2    = r2
                 best_model = name
         except Exception:
             pass
 
-    return float(best_r2), best_model
+    return float(best_r2), best_model, float(sym)
 
 
 def fit_gaussian_quality(ppm_region, intensity_region):
     """Backward-compatible wrapper — delegates to fit_peak_quality."""
-    r2, _model = fit_peak_quality(ppm_region, intensity_region)
+    r2, _model, _sym = fit_peak_quality(ppm_region, intensity_region)
     return r2, None
 
 
@@ -522,12 +698,96 @@ def check_foot_at_baseline(intensity, foot_idx, noise_std,
     return float(intensity[foot_idx]) <= threshold_factor * float(noise_std)
 
 
+def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
+                   detect_shoulders=False, smooth_win=None):
+    """Apex indices in ONE spectrum (find_peaks + optional hidden-shoulder pass).
+
+    Shared by the consolidated path and per-sample detection. Returns a sorted
+    list of int apex indices (boundaries/clusters are computed later by
+    separate_overlapping_peaks on the chosen reference).
+    """
+    if smooth_win is None:
+        smooth_win = max(5, 2 * distance_in_points + 1)
+    idx_primary, _ = find_peaks(
+        spectrum,
+        height=min_height,
+        distance=distance_in_points,
+        prominence=eff_noise * min_snr * 0.5,
+        width=2,                                 # reject 1-point noise spikes
+    )
+    idx_primary = sorted(int(i) for i in idx_primary)
+    kept_shoulders = []
+    if detect_shoulders:
+        prim = np.asarray(idx_primary, dtype=int)
+        for si in _second_derivative_candidates(spectrum, min_height, smooth_win):
+            if prim.size and np.min(np.abs(prim - si)) <= distance_in_points:
+                continue                                 # near a real apex
+            if kept_shoulders and min(abs(si - k) for k in kept_shoulders) \
+                    <= distance_in_points:
+                continue                                 # near another shoulder
+            kept_shoulders.append(int(si))
+    return sorted(idx_primary + kept_shoulders)
+
+
+def _consensus_apices(per_sample_idx, n_points, merge_tol_pts):
+    """Merge per-sample apex indices into a consensus master set (union).
+
+    Apices from different samples that fall within ``merge_tol_pts`` of each
+    other are one analyte line. Greedy single-link clustering over the pooled,
+    sorted apices.
+
+    Parameters
+    ----------
+    per_sample_idx : list[list[int]]  — apex indices found in each sample
+    n_points       : int              — spectrum length (unused guard)
+    merge_tol_pts  : int              — max index gap to treat apices as the same line
+
+    Returns
+    -------
+    consensus_idx : list[int]          — one master index per cluster (median of members)
+    presence      : list[list[bool]]   — presence[k][s] True if sample s contributed to cluster k
+    """
+    n_s = len(per_sample_idx)
+    pooled = []  # (idx, sample)
+    for s, idxs in enumerate(per_sample_idx):
+        for i in idxs:
+            pooled.append((int(i), s))
+    if not pooled:
+        return [], []
+    pooled.sort(key=lambda t: t[0])
+
+    # Width-bounded clustering (NOT single-link): a cluster spans at most
+    # merge_tol_pts from its first member. Single-link would chain distinct
+    # lines in dense regions (a→b→c each within tol) into one giant blob;
+    # bounding the width keeps lines that are ≥ detection-distance apart separate.
+    clusters = []  # list of dict(members=[idx...], samples=set())
+    cur = {'members': [pooled[0][0]], 'samples': {pooled[0][1]}}
+    cur_start = pooled[0][0]
+    for idx, s in pooled[1:]:
+        if idx - cur_start <= merge_tol_pts:
+            cur['members'].append(idx)
+            cur['samples'].add(s)
+        else:
+            clusters.append(cur)
+            cur = {'members': [idx], 'samples': {s}}
+            cur_start = idx
+    clusters.append(cur)
+
+    consensus_idx, presence = [], []
+    for cl in clusters:
+        consensus_idx.append(int(np.median(cl['members'])))
+        presence.append([s in cl['samples'] for s in range(n_s)])
+    return consensus_idx, presence
+
+
 def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                  min_distance=0.01, baseline_correct=True,
                  baseline_method='airPLS', baseline_lam=1e5,
                  global_align=True, global_align_max_shift_ppm=0.03,
                  samples_info=None, progress_callback=None,
-                 return_details=False):
+                 return_details=False, per_peak_align=True,
+                 per_peak_max_shift_ppm=0.02, detect_shoulders=False,
+                 per_sample_detection=False):
     """
     Detect peaks with SNR > min_snr - WITH BASELINE CORRECTION.
 
@@ -629,17 +889,25 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             )
             print(f"   Baseline estimated. Mean baseline level: {np.mean(baseline):.4f}")
 
-            # Also correct each sample individually for integration
+            # Correct each sample: for airPLS reuse mean baseline shape + per-sample
+            # constant offset (running airPLS per sample is O(n_samples * n * niter)).
             corrected_samples = []
+            edge_pts = max(5, n_points // 20)
+            edge_mask = np.concatenate([np.arange(edge_pts),
+                                        np.arange(n_points - edge_pts, n_points)])
             for s in range(n_samples):
                 if n_samples > 1:
                     _report(0.20 + 0.22 * ((s + 1) / n_samples),
                             f"Baseline correction per sample ({s + 1}/{n_samples})")
-                corr_s, _ = correct_baseline(
-                    ppm, intensities_2d[:, s],
-                    method=baseline_method,
-                    lam=baseline_lam
-                )
+                if baseline_method == 'airPLS':
+                    offset = np.median(intensities_2d[edge_mask, s] - baseline[edge_mask])
+                    corr_s = intensities_2d[:, s] - (baseline + offset)
+                else:
+                    corr_s, _ = correct_baseline(
+                        ppm, intensities_2d[:, s],
+                        method=baseline_method,
+                        lam=baseline_lam
+                    )
                 corrected_samples.append(corr_s)
             corrected_2d = np.column_stack(corrected_samples)
         else:
@@ -663,40 +931,214 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         else:
             corrected_mean = np.mean(corrected_2d, axis=1) if n_samples > 1 else corrected_2d.flatten()
 
+        # Detection reference: pointwise max across the individual samples so that
+        # a resonance present in only ONE sample (or a few) is preserved at full
+        # height instead of being diluted by the cross-sample mean — otherwise an
+        # analyte present in sample X but absent in Y would never enter the peak
+        # list and would be silently lost. A peak real in ANY (non-BLK, included)
+        # sample therefore becomes a candidate. The mean spectrum is still used for
+        # the displayed reference and the per-peak (mean) SNR below; noise spikes
+        # in the max spectrum are rejected by the prominence requirement and the
+        # positive >= min_height gate.
+        if n_samples > 1:
+            _incl = []
+            for _s in range(n_samples):
+                _info = (samples_info[_s]
+                         if (samples_info and _s < len(samples_info)) else {})
+                if (str(_info.get('type', 'Sample')).upper() == 'BLK'
+                        or _info.get('excluded', False)):
+                    continue
+                _incl.append(_s)
+            if not _incl:
+                _incl = list(range(n_samples))
+            detection_ref = np.max(corrected_2d[:, _incl], axis=1).astype(float)
+            print(f"   Detection reference: pointwise-max of {len(_incl)} "
+                  f"included sample(s) (single-sample analytes preserved)")
+        else:
+            detection_ref = np.asarray(corrected_mean, dtype=float)
+
         # STEP 6: Estimate or validate noise
         _report(0.60, "Estimating detection threshold")
-        if noise_std is None:
-            # Estimate from baseline-corrected spectrum edges
-            noise_std = estimate_noise_region(corrected_mean)
-            print(f"\n[INFO] Noise estimated from edges: sigma = {noise_std:.6f}")
+        _noise_was_provided = noise_std is not None
+        if not _noise_was_provided:
+            # Robust estimate from the quietest segment (not blind edges, which
+            # in 1H spectra carry TSP/DSS and downfield signals).
+            noise_std = estimate_noise_minimum_segment(corrected_mean)
+            print(f"\n[INFO] Noise estimated (min-segment): sigma = {noise_std:.6f}")
         else:
             print(f"\n[INFO] Using provided noise_std: {noise_std:.6f}")
+
+        # The detection reference is the per-sample MAX over N samples. The
+        # maximum of N noise draws is biased upward with a wider upper tail
+        # (≈σ·√(2·ln N)); gating with the plain mean sigma would flood the result
+        # with noise maxima. So: take the quiet-region baseline + spread of the
+        # detection spectrum itself and inflate the spread by √(2·ln N) to keep
+        # the false-positive rate at the requested min_snr. The returned
+        # noise_std (and per-peak SNR in STEP 10) stays mean-based.
+        _n_det = len(_incl) if n_samples > 1 else 1
+        _infl = float(np.sqrt(2.0 * np.log(_n_det))) if _n_det >= 2 else 1.0
+        if _noise_was_provided:
+            det_med, det_noise = 0.0, float(noise_std)
+        else:
+            det_med, det_noise = _quiet_segment_stats(detection_ref)
+        print(f"[INFO] Detection floor: baseline={det_med:.6f} sigma={det_noise:.6f} "
+              f"inflation(N={_n_det})={_infl:.2f}")
 
         # STEP 7: Calculate detection parameters
         _report(0.68, "Computing peak detection parameters")
         ppm_range = np.max(ppm) - np.min(ppm)
         ppm_step = ppm_range / n_points
         distance_in_points = max(1, int(min_distance / ppm_step))
-        min_height = noise_std * min_snr
+        _eff_noise = det_noise * _infl
+        min_height = det_med + _eff_noise * min_snr
 
         print(f"\n[INFO] Detection parameters:")
         print(f"   ppm_range: {ppm_range:.4f}")
         print(f"   distance: {min_distance} ppm = {distance_in_points} points")
-        print(f"   min_height: {min_height:.6f} (SNR={min_snr} * sigma={noise_std:.6f})")
+        print(f"   min_height: {min_height:.6f} (baseline + SNR={min_snr} * eff_sigma={_eff_noise:.6f})")
 
-        # STEP 8: Find peaks in baseline-corrected spectrum
+        # STEP 8+9: find apexes (find_peaks + conservative second-derivative)
+        # then separate. Wrapped so it can be re-run on a peak-aligned reference.
+        _smooth_win = max(5, 2 * distance_in_points + 1)
+
+        def _detect_and_separate(ref):
+            idx = np.asarray(_detect_single(
+                ref, _eff_noise, min_height, min_snr, distance_in_points,
+                detect_shoulders, _smooth_win), dtype=int)
+            if len(idx) == 0:
+                return []
+            # Boundary geometry uses the REAL noise spread (det_noise), not the
+            # detection-inflated eff_noise — inflation is for the false-positive
+            # gate only; using it here puts the 3σ baseline foot too high and
+            # clips peak tails (narrow widths / under-integrated areas).
+            seps = separate_overlapping_peaks(
+                ref, idx, ppm, noise_std=det_noise, method='auto',
+                baseline_level=det_med)
+            # Positive gate on the detection reference. Cluster members
+            # (shoulders / multiplet lines) can have ~0 height above the local
+            # linear baseline yet be real signal — gate those on apex intensity.
+            return [pk for pk in seps
+                    if ref[pk['index']] >= min_height
+                    and (pk['height'] > 0 or pk.get('n_cluster_peaks', 1) > 1)]
+
+        # STEP 8: Find peaks
         _report(0.76, "Locating candidate apexes")
-        print("\n[INFO] Running find_peaks on baseline-corrected spectrum...")
-        peak_indices, properties = find_peaks(
-            corrected_mean,
-            height=min_height,
-            distance=distance_in_points,
-            prominence=noise_std * min_snr * 0.5  # Add prominence requirement
-        )
+        _presence_full = None   # per-sample mode: master apex idx -> presence vector
+        if per_sample_detection and n_samples > 1:
+            # Genuine per-sample detection, then UNION merge. A peak found in any
+            # single sample (above that sample's own SNR gate) is kept; samples
+            # where it is absent are recorded so downstream can mark them n.d.
+            print("\n[INFO] Per-sample detection (union over samples)...")
+            per_sample_idx = []
+            for s in _incl:
+                col = corrected_2d[:, s].astype(float)
+                med_s, sig_s = _quiet_segment_stats(col)
+                mh_s = med_s + sig_s * min_snr
+                per_sample_idx.append(_detect_single(
+                    col, sig_s, mh_s, min_snr, distance_in_points,
+                    detect_shoulders, _smooth_win))
+            # Merge tolerance only absorbs cross-sample alignment jitter of the
+            # SAME line — it must stay well below distance_in_points (the minimum
+            # spacing between distinct apices), or separate multiplet lines /
+            # neighbouring peaks collapse into one blob.
+            merge_tol_pts = max(1, distance_in_points // 2)
+            cons_idx, presence = _consensus_apices(
+                per_sample_idx, n_points, merge_tol_pts)
+            print(f"   Per-sample union: {sum(len(x) for x in per_sample_idx)} raw "
+                  f"apex(es) -> {len(cons_idx)} master peak(s)")
+            # Snap each consensus index (median of member apices) to the nearest
+            # LOCAL MAX on the detection reference. The median can land off-apex
+            # on a flank; separate_overlapping_peaks then mistakes the adjacent
+            # rise for a valley and collapses the peak.
+            _snap_w = max(1, distance_in_points // 2)
+            def _snap(ci):
+                lo = max(0, ci - _snap_w); hi = min(n_points, ci + _snap_w + 1)
+                return lo + int(np.argmax(detection_ref[lo:hi]))
+            # Expand presence (over included cols) to all samples (BLK/excluded → False).
+            idx_to_presence = {}
+            snapped = []
+            for k, ci in enumerate(cons_idx):
+                sc = _snap(int(ci))
+                full = [False] * n_samples
+                for pos, s in enumerate(_incl):
+                    full[s] = presence[k][pos]
+                # Same master apex can appear twice after snapping → union presence.
+                if sc in idx_to_presence:
+                    idx_to_presence[sc] = [a or b for a, b in
+                                           zip(idx_to_presence[sc], full)]
+                else:
+                    idx_to_presence[sc] = full
+                    snapped.append(sc)
 
-        print(f"   [OK] Raw peaks detected: {len(peak_indices)}")
+            # Enforce the GLOBAL min peak distance on the master apices (same as
+            # the consolidated path keeps via find_peaks(distance=...)). Without
+            # this, the union over-splits broad/cross-sample-shifted features that
+            # the global distance would merge — inflating the peak count. Keep the
+            # stronger apex (on the max reference) and UNION the presence vectors.
+            snapped.sort()
+            deduped = []
+            for sc in snapped:
+                if deduped and (sc - deduped[-1]) < distance_in_points:
+                    prev = deduped[-1]
+                    merged = [a or b for a, b in
+                              zip(idx_to_presence[prev], idx_to_presence[sc])]
+                    if detection_ref[sc] > detection_ref[prev]:
+                        deduped[-1] = sc
+                        idx_to_presence[sc] = merged
+                    else:
+                        idx_to_presence[prev] = merged
+                else:
+                    deduped.append(sc)
+            cons_idx = deduped
+            if cons_idx:
+                idx_arr = np.asarray(sorted(cons_idx), dtype=int)
+                seps = separate_overlapping_peaks(
+                    detection_ref, idx_arr, ppm, noise_std=det_noise, method='auto',
+                    baseline_level=det_med)
+                separated_peaks = [
+                    pk for pk in seps
+                    if detection_ref[pk['index']] >= min_height
+                    and (pk['height'] > 0 or pk.get('n_cluster_peaks', 1) > 1)]
+                _presence_full = idx_to_presence
+            else:
+                separated_peaks = []
+        else:
+            print("\n[INFO] Running find_peaks on consolidated reference...")
+            separated_peaks = _detect_and_separate(detection_ref)
+        print(f"   [OK] Raw peaks detected: {len(separated_peaks)}")
 
-        if len(peak_indices) == 0:
+        # Per-peak alignment + detection refinement (one bounded extra pass):
+        # find each analyte's apex per sample, warp each sample onto those anchors
+        # to sharpen the per-sample-max reference (misaligned peaks stop smearing),
+        # then re-detect once on the sharper reference. Deterministic, no loop.
+        # Skipped in per-sample mode — the master set is already the result there.
+        if (per_peak_align and n_samples > 1 and separated_peaks
+                and not per_sample_detection):
+            from .peak_alignment import (refine_peak_centers_per_sample,
+                                         warp_from_peak_shifts)
+            _report(0.80, "Per-peak alignment refinement")
+            refine_peak_centers_per_sample(
+                separated_peaks, ppm, corrected_2d, noise_std=det_noise,
+                min_snr=min_snr, max_shift_ppm=per_peak_max_shift_ppm)
+            _warped = warp_from_peak_shifts(
+                ppm, corrected_2d[:, _incl], separated_peaks,
+                max_shift_ppm=per_peak_max_shift_ppm)
+            _warped_ref = np.max(_warped, axis=1).astype(float)
+            _refined = _detect_and_separate(_warped_ref)
+            # Aligning samples should SHARPEN the max reference (de-smear), giving
+            # the same or fewer apexes — never substantially more. If the warp
+            # would inflate the peak count (over-splitting that breaks multiplet
+            # patterns the DB matches), reject it and keep the initial peaks.
+            if _refined and len(_refined) <= max(3, int(round(len(separated_peaks) * 1.1))):
+                detection_ref = _warped_ref
+                separated_peaks = _refined
+                print(f"   [OK] After alignment refinement: {len(separated_peaks)} peaks")
+            else:
+                print(f"   Alignment refinement rejected "
+                      f"(initial={len(separated_peaks)}, refined={len(_refined)}); "
+                      f"keeping initial peaks")
+
+        if len(separated_peaks) == 0:
             print("\n[WARN] No peaks detected. Try lowering min_snr or adjusting baseline.")
             empty_result = []
             if return_details:
@@ -712,21 +1154,37 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 }
             return empty_result
 
-        # STEP 9: Separate peaks by valleys
-        _report(0.84, "Estimating peak boundaries")
-        print("\n[INFO] Separating peaks by valley points...")
-        separated_peaks = separate_overlapping_peaks(
-            corrected_mean, peak_indices, ppm, noise_std=noise_std, method='auto')
+        # Final per-sample apex positions on the ORIGINAL (un-warped) spectra, so
+        # quant and overlays use each analyte's true position in each sample.
+        if n_samples > 1:
+            from .peak_alignment import refine_peak_centers_per_sample
+            refine_peak_centers_per_sample(
+                separated_peaks, ppm, corrected_2d, noise_std=det_noise,
+                min_snr=min_snr, max_shift_ppm=per_peak_max_shift_ppm)
 
-        # Safety gate: this workflow only accepts positive resonances.
-        # Valleys / negative deflections must never be promoted to peaks.
-        positive_peaks = [
-            peak for peak in separated_peaks
-            if peak['height'] > 0 and corrected_mean[peak['index']] >= min_height
-        ]
-        if len(positive_peaks) != len(separated_peaks):
-            print(f"   [INFO] Discarded {len(separated_peaks) - len(positive_peaks)} non-positive candidate(s)")
-        separated_peaks = positive_peaks
+        # Per-sample mode: aligned_per_sample = GENUINE per-sample detection
+        # presence (which samples actually had this apex), overriding the
+        # signal-gated inference from refine. Drives true n.d. downstream.
+        # (Keys on the current peak['index']; must run BEFORE the apex snap.)
+        if _presence_full is not None:
+            for peak in separated_peaks:
+                pres = _presence_full.get(peak['index'])
+                if pres is not None:
+                    peak['aligned_per_sample'] = list(pres)
+
+        # Mark the apex at the top of the DISPLAYED (mean) spectrum, not the
+        # per-sample-MAX reference used for detection — the max apex can sit a
+        # few points off the visible mean peak (per-sample shifts), leaving the
+        # overlay marker beside the top. Fall back to the detection apex when the
+        # mean is flat there (single-sample analyte, no mean peak to land on).
+        _mean_gate = (det_med if not _noise_was_provided else 0.0) + det_noise * min_snr
+        for peak in separated_peaks:
+            s, e = peak['start_idx'], peak['end_idx']
+            if e > s:
+                ma = s + int(np.argmax(corrected_mean[s:e + 1]))
+                if float(corrected_mean[ma]) >= _mean_gate:
+                    peak['index'] = int(ma)
+                    peak['ppm'] = float(ppm[ma])
 
         print(f"   [OK] Separated peaks: {len(separated_peaks)}")
 
@@ -764,6 +1222,17 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             peak['mean_intensity'] = float(np.mean([corrected_2d[peak['index'], s]
                                                      for s in range(n_samples)]))
 
+            # height/area come from separate_overlapping_peaks on the per-sample
+            # MAX reference (used for detection). Re-express them on the MEAN
+            # spectrum so they match the displayed spectrum (overlay markers) and
+            # the mean-scale SNR/quant — otherwise markers float far above the
+            # plotted mean line.
+            peak['height'] = float(max(
+                np.max(corrected_mean[start_idx:end_idx + 1]) -
+                0.5 * (corrected_mean[start_idx] + corrected_mean[end_idx]),
+                0.0))
+            peak['area'] = float(np.mean(areas)) if len(areas) else float(peak.get('area', 0.0))
+
             # SNR based on mean intensity
             peak['snr'] = peak['mean_intensity'] / noise_std if noise_std > 0 else 0.0
             peak['alignment_applied'] = bool(global_align and n_samples > 1)
@@ -787,6 +1256,7 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             return {
                 'peaks': separated_peaks,
                 'reference_intensity': corrected_mean,
+                'detection_reference': detection_ref,
                 'aligned_intensities': corrected_2d,
                 'baseline': baseline,
                 'noise_std': float(noise_std),

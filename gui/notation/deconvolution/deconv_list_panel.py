@@ -302,7 +302,7 @@ class DeconvListPanel:
             row=9, column=1, columnspan=3, sticky=tk.W, padx=4)
 
         # Advanced params — not shown inline, exposed via Parameters dialog
-        self.shoulder_snr_var     = tk.DoubleVar(value=0.40)
+        self.shoulder_snr_var     = tk.DoubleVar(value=0.25)
         self.n_boot_var           = tk.IntVar(value=50)
         self._params_dlg          = None
 
@@ -888,7 +888,7 @@ class DeconvListPanel:
         self.max_width_var.set(0.010)
         self.detect_tops_var.set(True)
         self.detect_shoulders_var.set(True)
-        self.shoulder_snr_var.set(0.40)
+        self.shoulder_snr_var.set(0.25)
         self.n_boot_var.set(50)
         if hasattr(self, 'baseline_var'):
             self.baseline_var.set('Linear')

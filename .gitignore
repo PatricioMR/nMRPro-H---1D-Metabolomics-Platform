@@ -1,0 +1,26 @@
+# ── Python ──────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# ── Virtual environment ─────────────────────────────────────────────────────
+venv/
+.venv/
+env/
+
+# ── IDE / editor ────────────────────────────────────────────────────────────
+.idea/
+.vscode/
+
+# ── Local-only (utilities, examples, scratch — not part of the running app) ──
+_local/
+
+# ── Runtime-generated ───────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Local config / scratch ──────────────────────────────────────────────────
+/settings.json
+*.tmp
+.DS_Store

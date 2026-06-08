@@ -74,12 +74,14 @@ class ProjectManager:
         """Gather everything needed to restore the session."""
         app = self.app
         state = {
-            'version':         5,
+            'version':         6,
             # Raw data
             'ppm':             app.ppm,
             'ppm_calibration': getattr(app, '_ppm_calibration', None),
-            'all_intensities': app.all_intensities,
-            'samples_info':    app.samples_info,
+            'all_intensities':     app.all_intensities,
+            'baseline_corrected':  getattr(app, 'baseline_corrected',  False),
+            'alignment_corrected': getattr(app, 'alignment_corrected', False),
+            'samples_info':        app.samples_info,
             'group_colors':    app.group_colors,
             'source_file':     app.current_file,
             'group_dilution_factors': dict(getattr(app, 'group_dilution_factors', {})),
@@ -107,6 +109,7 @@ class ProjectManager:
                 'min_snr_var':     _safe_var(pd, 'min_snr_var'),
                 'min_width_var':   _safe_var(pd, 'min_width_var'),
                 'prominence_var':  _safe_var(pd, 'prominence_var'),
+                'per_sample_detection': bool(_safe_var(pd, 'per_sample_var') or False),
             }
             ctrl = getattr(pd, '_deconv_controller', None)
             if ctrl:
@@ -143,6 +146,12 @@ class ProjectManager:
                 'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
                 'subline_quality_marks': dict(getattr(ann, '_subline_quality_marks', {})),
                 'metabolites':           _mets,
+                # Applied J-Resolve fractions consumed by Quantification.
+                # Without these the corrected areas are lost on reload.
+                'jr_contributions':            getattr(ann, '_j_resolve_contributions', None),
+                'jr_contributions_per_sample': getattr(ann, '_j_resolve_contributions_per_sample', None),
+                'jr_status':                   getattr(ann, '_j_resolve_status', None),
+                'jr_conc_est':                 getattr(ann, '_j_resolve_conc_est', None),
             }
 
         # ── J-Resolve ─────────────────────────────────────────────────────────
@@ -154,6 +163,14 @@ class ProjectManager:
                 'nnls_rejected':     list(getattr(jr, '_nnls_rejected', set())),
                 'j_validated':       list(getattr(jr, '_j_validated', set())),
                 'peak_overlap':      dict(getattr(jr, '_peak_overlap', {})),
+                'contributions':           dict(getattr(jr, '_contributions', {})),
+                'contributions_per_sample': dict(getattr(jr, '_contributions_per_sample', {})),
+                'status_map':        dict(getattr(jr, '_status_map', {})),
+                'anchor_confidence': dict(getattr(jr, '_anchor_confidence', {})),
+                'anchor_foldrange':  dict(getattr(jr, '_anchor_foldrange', {})),
+                'anchor_ci':         dict(getattr(jr, '_anchor_ci', {})),
+                'residual_attributed': dict(getattr(jr, '_residual_attributed', {})),
+                'residual_diagnostic': dict(getattr(jr, '_residual_diagnostic', {})),
                 'anchor_tol':        _safe_var(jr, '_anchor_tol'),
                 'dj_filter':         _safe_var(jr, '_dj_filter_var'),
                 'dj_tol':            _safe_var(jr, '_dj_tol'),
@@ -237,9 +254,11 @@ class ProjectManager:
             app._annot_win = None
 
         # ── Raw data ──────────────────────────────────────────────────────────
-        app.ppm              = state.get('ppm')
-        app.all_intensities  = state.get('all_intensities')
-        app._ppm_calibration = state.get('ppm_calibration')
+        app.ppm                  = state.get('ppm')
+        app.all_intensities      = state.get('all_intensities')
+        app._ppm_calibration     = state.get('ppm_calibration')
+        app.baseline_corrected   = state.get('baseline_corrected',  False)
+        app.alignment_corrected  = state.get('alignment_corrected', False)
         app.samples_info     = state.get('samples_info', [])
         app.group_colors     = state.get('group_colors', app.group_colors)
         app.current_file     = state.get('source_file')
@@ -272,6 +291,12 @@ class ProjectManager:
         except Exception:
             pass
 
+        # Sync processing-flag warnings in peak detection UI after data is loaded
+        try:
+            app.stages['peak_detection']._sync_baseline_corrected_ui()
+        except Exception:
+            pass
+
         # ── Peak detection ────────────────────────────────────────────────────
         pd_state = state.get('pd')
         pd       = app.stages.get('peak_detection')
@@ -286,6 +311,7 @@ class ProjectManager:
             _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
             _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
             _set_var(pd, 'prominence_var',  pd_state.get('prominence_var'))
+            _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', False))
 
             if pd.processor and app.ppm is not None:
                 try:
@@ -359,6 +385,18 @@ class ProjectManager:
                 ann._anchor_lines          = ann_state.get('anchor_lines', {})
                 ann._subline_quality_marks = ann_state.get('subline_quality_marks', {})
 
+                # Restore applied J-Resolve fractions so Quantification reproduces
+                # the corrected areas without re-running J-Resolve.
+                if ann_state.get('jr_contributions') is not None:
+                    ann._j_resolve_contributions = ann_state['jr_contributions']
+                if ann_state.get('jr_contributions_per_sample') is not None:
+                    ann._j_resolve_contributions_per_sample = \
+                        ann_state['jr_contributions_per_sample']
+                if ann_state.get('jr_status') is not None:
+                    ann._j_resolve_status = ann_state['jr_status']
+                if ann_state.get('jr_conc_est') is not None:
+                    ann._j_resolve_conc_est = ann_state['jr_conc_est']
+
                 if ann_state.get('metabolites'):
                     ann._metabolites = ann_state['metabolites']
                     # Re-apply quality marks into the saved metabolites' matched_peaks
@@ -393,6 +431,15 @@ class ProjectManager:
                 jr._nnls_rejected = set(jr_state.get('nnls_rejected', []))
                 jr._j_validated  = set(jr_state.get('j_validated', []))
                 jr._peak_overlap = jr_state.get('peak_overlap', {})
+                jr._contributions = jr_state.get('contributions', {})
+                jr._contributions_per_sample = jr_state.get(
+                    'contributions_per_sample', {})
+                jr._status_map = jr_state.get('status_map', {})
+                jr._anchor_confidence = jr_state.get('anchor_confidence', {})
+                jr._anchor_foldrange = jr_state.get('anchor_foldrange', {})
+                jr._anchor_ci = jr_state.get('anchor_ci', {})
+                jr._residual_attributed = jr_state.get('residual_attributed', {})
+                jr._residual_diagnostic = jr_state.get('residual_diagnostic', {})
                 _set_var(jr, '_anchor_tol',        jr_state.get('anchor_tol'))
                 _set_var(jr, '_dj_filter_var',     jr_state.get('dj_filter'))
                 _set_var(jr, '_dj_tol',            jr_state.get('dj_tol'))
@@ -420,6 +467,7 @@ class ProjectManager:
                     try:
                         qnt.btn_csv.config(state='normal')
                         qnt.btn_metaboanalyst.config(state='normal')
+                        qnt.btn_pdf.config(state='normal')
                     except Exception:
                         pass
                 _set_var(qnt, 'integ_var',      qnt_state.get('integ'))
@@ -577,6 +625,10 @@ class ProjectManager:
                 pickle.dump(state, f, protocol=5)
             self.project_path = path
             self._dirty       = False
+            # Begin (or restart) autosave now that a project path exists.
+            # Previously autosave only started on open_project, so a freshly
+            # created+saved project never auto-saved.
+            self._start_autosave()
             self.app.root.after(
                 0, lambda: self.app.status_label.config(
                     text=f'Project saved: {os.path.basename(path)}',

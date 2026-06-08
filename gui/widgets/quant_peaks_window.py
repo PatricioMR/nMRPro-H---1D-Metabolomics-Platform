@@ -319,26 +319,9 @@ class QuantPeaksWindow:
             if not c['hit'].get('composite_score') and not c['hit'].get('multiplet_score'):
                 c['hit']['composite_score'] = _best_score
 
-        # Exclude bad-quality peaks — they are rejected for quantification.
-        # _quality_marks key = (met['id'], peak_rank). Try all possible ID
-        # fields from self.result to handle HMDB/BMRB/name format mismatches.
-        ann_stage = getattr(self.qs, 'annotation_stage', None)
-        _qm = getattr(ann_stage, '_quality_marks', {}) or {}
-        _id_candidates = list(dict.fromkeys(filter(None, [
-            str(self.result.get('_mid', '') or ''),
-            str(self.result.get('hmdb_id', '') or ''),
-            str(self.result.get('bmrb_id', '') or ''),
-            str(self.result.get('id', '') or ''),
-            str(self.result.get('name', '') or ''),
-        ])))
-        def _is_bad(c):
-            pr = c['peak_rank']
-            for _key_id in _id_candidates:
-                manual = _qm.get((_key_id, pr))
-                if manual is not None:
-                    return manual == 'bad'
-            return c['hit'].get('annotation_quality') == 'bad'
-        candidates = [c for c in candidates if not _is_bad(c)]
+        # All peaks in the multiplicity family are included regardless of quality.
+        # Bad-quality marks are reflected visually (grey row) and block Apply,
+        # but do not exclude a peak from candidates or from best-peak selection.
 
         # Sort: by DB multiplet ppm desc (matches Annotation Results order),
         # then by detected ppm desc within group.
@@ -485,38 +468,71 @@ class QuantPeaksWindow:
 
         def _overlap_pct(members):
             """
-            Width-based overlap indicator for each peak in a multiplet group.
-
-            Ratio = area / height ∝ FWHM.  For peaks of the same multiplet,
-            FWHM should be equal (same T2, same field).  A peak wider than its
-            siblings has inflated area — indicative of overlap.
-
-            Reference = narrowest peak (ratio_min = 0.0%).
-            Others show % excess width relative to reference.
+            DB-expectation overlap indicator.
+            Compares each peak's actual area fraction against the expected
+            fraction from annotated relative intensities (BD). A peak whose
+            area exceeds its expected share has positive overlap%, indicating
+            contamination from an adjacent signal.
+            Returns {peak_rank: '+N.N%' | '0.0%' | '-N.N%'} or {} for singletons.
             """
-            entries = []
+            if len(members) < 2:
+                return {}
+
+            areas, rel_ints, ranks = [], [], []
             for c in members:
                 pk    = c['peak']
                 snr   = float(pk.get('snr', 0) or 0)
                 width = float(pk.get('width_ppm', pk.get('width_at_half', 0)) or 0)
-                if snr <= 0:
+                area  = float(pk.get('area', 0) or 0)
+                if area <= 0:
+                    area = snr * width if width > 0 else snr
+                if area <= 0:
                     continue
-                ratio = width if width > 0 else 1.0   # area/height ∝ width
-                entries.append((c['peak_rank'], ratio))
+                ri = float(c.get('_rel_intensity', 0) or 0)
+                if ri <= 0:
+                    ri = 1.0  # fallback: treat as equal weight
+                areas.append(area)
+                rel_ints.append(ri)
+                ranks.append(c['peak_rank'])
 
-            if len(entries) < 2:
+            if len(areas) < 2:
                 return {}
 
-            ratio_ref = min(r for _, r in entries)
-            if ratio_ref <= 0:
+            total_area = sum(areas)
+            total_ri   = sum(rel_ints)
+            if total_area <= 0 or total_ri <= 0:
                 return {}
 
-            return {
-                rank: f'{(ratio - ratio_ref) / ratio_ref * 100:.1f}%'
-                for rank, ratio in entries
-            }
+            result = {}
+            for rank, area, ri in zip(ranks, areas, rel_ints):
+                actual_frac   = area   / total_area
+                expected_frac = ri     / total_ri
+                pct = (actual_frac - expected_frac) / expected_frac * 100
+                result[rank] = '0.0%' if abs(pct) < 0.05 else f'{pct:+.1f}%'
+            return result
 
-        def _child_values(peak, hit, c, prop_dev):
+        def _best_rank_in_group(members, prop_dev):
+            """Return peak_rank of the recommended peak in this multiplicity group.
+            All peaks are considered regardless of quality — bad-quality marks
+            reflect user judgement but do not disqualify a line from the algorithm.
+            Criterion: minimum |overlap%|; tiebreak by composite_score desc.
+            """
+            candidates = []
+            for c in members:
+                ovlp_s = prop_dev.get(c['peak_rank'], '—')
+                try:
+                    ovlp_val = abs(float(ovlp_s.replace('%', '').replace('+', '')))
+                except (ValueError, AttributeError):
+                    ovlp_val = 0.0
+                score = float((c['hit'] or {}).get('composite_score',
+                               (c['hit'] or {}).get('multiplet_score', 0)) or 0)
+                candidates.append((c['peak_rank'], ovlp_val, score))
+            if not candidates:
+                return None
+            candidates.sort(key=lambda x: (x[1], -x[2]))
+            return candidates[0][0]
+
+        def _child_values(peak, hit, c, prop_dev, best_rank):
             pr        = c['peak_rank'] if c else '—'
             disp_ppm  = float(peak.get('ppm', c['hit_ppm'])) if peak else c['hit_ppm']
             snr       = peak.get('snr', float('nan')) if peak else float('nan')
@@ -532,12 +548,22 @@ class QuantPeaksWindow:
             mm        = c['mean_mm'] if c else float('nan')
             mm_s      = f'{mm:.4f}' if np.isfinite(mm) else '—'
             cbg       = c['concs_by_group'] if c else {}
+            is_curr   = c['is_current'] if c else False
+            is_best   = (c is not None and pr == best_rank)
+            if is_curr and is_best:
+                marker = '◉'
+            elif is_curr:
+                marker = '●'
+            elif is_best:
+                marker = '○'
+            else:
+                marker = ''
             g_vals = []
             for g in self._groups:
                 gv = cbg.get(g, [])
                 g_vals.append(f'{np.mean(gv):.4f}' if gv else '—')
             return (
-                '●' if (c and c['is_current']) else '',
+                marker,
                 prop_s,
                 str(pr),
                 f'{disp_ppm:.4f}',
@@ -597,7 +623,8 @@ class QuantPeaksWindow:
                         values=('', '', '', '', '', '', '', '', '', '', '',
                                 *([''] * len(self._group_cols))))
 
-            prop_dev = _overlap_pct(members)
+            prop_dev  = _overlap_pct(members)
+            best_rank = _best_rank_in_group(members, prop_dev)
 
             # Children sorted by ppm descending (high field → low field)
             for idx, c in enumerate(sorted(members,
@@ -612,7 +639,7 @@ class QuantPeaksWindow:
                     tag = 'normal'
                 row_iid = f'{hdr_iid}_{idx}'
                 tree.insert(hdr_iid, 'end', iid=row_iid, tags=(tag,),
-                            values=_child_values(c['peak'], c['hit'], c, prop_dev))
+                            values=_child_values(c['peak'], c['hit'], c, prop_dev, best_rank))
 
         tree.tag_configure('hdr_current',  background='#c8e6c9',
                            font=('Arial', 9, 'bold italic'))
@@ -743,6 +770,16 @@ class QuantPeaksWindow:
             self.result['_peak']      = new_peak
             self.result['_peak_rank'] = applied_rank
             self.result['snr']        = float(new_peak.get('snr', self.result.get('snr', 0)))
+
+        # Recompute line_idx for the new peak: compare its ppm to predicted_lines
+        # so _effective_nh uses the exact DB fractional weight for this line.
+        self.result.pop('anchor_line_idx', None)
+        _pred_lines = self.result.get('predicted_lines', [])
+        if len(_pred_lines) > 1 and new_peak is not None:
+            _new_ppm = float(new_peak.get('ppm', 0))
+            self.result['line_idx'] = min(
+                range(len(_pred_lines)),
+                key=lambda _i: abs(float(_pred_lines[_i].get('ppm', 0)) - _new_ppm))
 
         self._selected_rank       = None
         # Commit preview — clear saved original, update baseline rank

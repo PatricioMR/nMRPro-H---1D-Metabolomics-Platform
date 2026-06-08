@@ -38,6 +38,7 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self._anchor_lines        = {}   # {(met_id, peak_rank): line_idx} — anchor line for quantification
         self._subline_quality_marks = {} # {(met_id, peak_rank, line_idx): 'good'|'bad'} — persisted
         self.mcr_r2_threshold   = 0.95   # used by annotation MCR deconvolution
+        self._annotation_params = None   # pre-annotation params; None = use defaults
         self.create_widgets()
 
     # ── Status helpers ────────────────────────────────────────────────────────
@@ -128,7 +129,7 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
             info_frame, text='No peaks detected yet.', foreground='gray')
         self.peaks_info_label.pack(anchor=tk.W)
         ttk.Label(info_frame,
-                  text='Only peaks marked Good in Peak List are annotated.',
+                  text='All detected peaks are annotated regardless of quality.',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         mf = ttk.LabelFrame(self.frame, text='🐭 Mouse Controls', padding=5)
@@ -156,7 +157,7 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
                 foreground='orange')
         else:
             self.peaks_info_label.config(
-                text=f'{n} peaks loaded — {n_good} Good (will annotate).',
+                text=f'{n} peaks loaded — {n_good} Good ({n - n_good} other quality).',
                 foreground='blue')
 
     def on_deactivate(self):

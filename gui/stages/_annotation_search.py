@@ -31,6 +31,18 @@ from ._annotation_helpers import (
 from gui.notation.evidence_weighting import dynamic_composite
 
 
+def is_unquantifiable_multiplicity(mult):
+    """True for DB multiplicities that must not be used for annotation/quant.
+
+    Covers generic multiplets ('m') — no J, no predictable pattern — and any
+    BROAD signal ('br s', 'br. s.', 'br d', …): broad lines are exchangeable
+    protons (OH/NH), whose integral and position drift with pH/temperature/
+    solvent suppression, so they are unreliable quantification targets.
+    """
+    m = str(mult or '').lower().strip()
+    return m in ('m', 'multiplet') or m.startswith('br')
+
+
 class _AnnotationSearchMixin:
     """Mixin — mixed into AnnotationStage. Uses self.* freely."""
 
@@ -55,14 +67,11 @@ class _AnnotationSearchMixin:
             tolerance = float(self.tolerance_var.get())
         except Exception:
             tolerance = 0.05
-        relax_tol = min(0.20, max(tolerance + 0.01, tolerance * 1.8))
-        delta_max = max(0.05, relax_tol * 1.2)
-        if relax_tol > tolerance:
-            self._status(
-                f'⚠ Rescue pass: tolerance expanded '
-                f'{tolerance:.3f} → {relax_tol:.3f} ppm. '
-                'Candidates from this pass may have lower positional confidence.'
-            )
+        relax_tol = tolerance * 1.10   # hard cap: never search beyond 10 % of user tolerance
+        delta_max = tolerance * 1.10
+        self._status(
+            f'Rescue pass: tolerance {tolerance:.3f} ppm (cap {relax_tol:.4f} ppm ± 10 %).'
+        )
         try:
             mhz = float(self.spectrometer_var.get())
         except Exception:
@@ -112,6 +121,14 @@ class _AnnotationSearchMixin:
                 messagebox.showerror('Incompatible DB', 'Database must contain shifts_1h or multiplets.')
                 return
 
+            _rescue_protons_col = ''
+            if is_bmrb:
+                _rescue_shift_cols = {r[1] for r in cur.execute(
+                    "PRAGMA table_info(shifts_1h)").fetchall()}
+                _rescue_protons_col = (", s.protons"
+                                       if 'protons' in _rescue_shift_cols
+                                       else ", 1 as protons")
+
             _ppm_arr = getattr(self.app, 'ppm', None)
             _raw_int = getattr(self.app, 'all_intensities', None)
             _int_arr = np.mean(_raw_int, axis=1) if _ppm_arr is not None and _raw_int is not None else None
@@ -129,7 +146,7 @@ class _AnnotationSearchMixin:
                         "SELECT s.bmrb_id as hmdb_id, met.name,"
                         " s.ppm as ppm_center, s.ppm as ppm,"
                         " s.atom_name, s.multiplicity as type,"
-                        " s.j_coupling, s.multiplicity,"
+                        f" s.j_coupling, s.multiplicity{_rescue_protons_col},"
                         " ? as peak_ppm, ? as peak_rank,"
                         " ABS(s.ppm - ?) as ppm_diff"
                         " FROM shifts_1h s"
@@ -179,7 +196,7 @@ class _AnnotationSearchMixin:
             # Deduplicate per rescued peak and entry
             seen = {}
             for r in rescued:
-                key = (int(r.get('peak_rank', -1)),
+                key = ((int(r['peak_rank']) if r.get('peak_rank') is not None else -1),
                        r.get('hmdb_id') or r.get('bmrb_id', ''),
                        round(float(r.get('ppm_center') or r.get('ppm') or 0), 3))
                 if key not in seen or r.get('composite_score', 0) > seen[key].get('composite_score', 0):
@@ -190,7 +207,7 @@ class _AnnotationSearchMixin:
             # Apply MCR on rescued ranks with >=2 candidates
             _by_rank = {}
             for r in rescued:
-                _by_rank.setdefault(int(r.get('peak_rank', -1)), []).append(r)
+                _by_rank.setdefault((int(r['peak_rank']) if r.get('peak_rank') is not None else -1), []).append(r)
             _ppm_full = getattr(self.app, 'ppm', None)
             _all_int = getattr(self.app, 'all_intensities', None)
             if _ppm_full is not None and _all_int is not None:
@@ -271,7 +288,7 @@ class _AnnotationSearchMixin:
 
         by_rank = {}
         for r in results:
-            rk = int(r.get('peak_rank', -1))
+            rk = (int(r['peak_rank']) if r.get('peak_rank') is not None else -1)
             by_rank.setdefault(rk, []).append(r)
 
         all_ranks = by_rank  # process every rank, not just overlaps
@@ -383,7 +400,7 @@ class _AnnotationSearchMixin:
                 if not mid or k_idx >= C_mat.shape[1]:
                     continue
                 peers = [r for r in by_met.get(mid, [])
-                         if int(r.get('peak_rank', -1)) != rk]
+                         if (int(r['peak_rank']) if r.get('peak_rank') is not None else -1) != rk]
                 if not peers:
                     continue
                 c_vec = C_mat[:, k_idx]
@@ -391,7 +408,7 @@ class _AnnotationSearchMixin:
                     continue
                 peer_corrs = []
                 for peer in peers:
-                    peer_rk  = int(peer.get('peak_rank', -1))
+                    peer_rk  = (int(peer['peak_rank']) if peer.get('peak_rank') is not None else -1)
                     peer_peak = next(
                         (p for p in self.peak_stage.peaks
                          if int(p.get('rank', -1)) == peer_rk), None)
@@ -542,19 +559,17 @@ class _AnnotationSearchMixin:
         except ValueError:
             mhz = 600.0
 
-        good_peaks = [p for p in self.peaks
-                      if p.get('status', 'Undefined') == 'Good']
+        all_peaks = [p for p in self.peaks if p.get('rank') is not None]
 
-        if not good_peaks:
+        if not all_peaks:
             messagebox.showinfo(
-                'No Good Peaks',
-                'No peaks are marked as Good in the Peak List.\n\n'
-                'Open the Peak List and mark peaks as Good (Ctrl+1) '
-                'before running annotation.')
+                'No Peaks',
+                'No detected peaks found.\n\n'
+                'Run Peak Detection first.')
             return
 
         if incremental and self._last_results_args:
-            prev_results  = self._last_results_args.get('results', [])
+            prev_results       = self._last_results_args.get('results', [])
             already_good_ranks = set()
             for r in prev_results:
                 rk  = r.get('peak_rank')
@@ -563,20 +578,20 @@ class _AnnotationSearchMixin:
                 if self._quality_marks.get(key) == 'good':
                     if rk is not None:
                         already_good_ranks.add(int(rk))
-            peaks_to_search = [p for p in good_peaks
+            peaks_to_search = [p for p in all_peaks
                                if int(p.get('rank', -1))
                                not in already_good_ranks]
             if not peaks_to_search:
                 messagebox.showinfo(
                     'Nothing to update',
-                    'All Good peaks already have confirmed annotations.\n'
+                    'All peaks already have confirmed annotations.\n'
                     'Use "Reset & start over" to redo everything.')
                 return
             carry_results = [r for r in prev_results
-                             if int(r.get('peak_rank', -1))
-                             in already_good_ranks]
+                             if (int(r['peak_rank']) if r.get('peak_rank') is not None else -1) in already_good_ranks
+                             and r.get('ppm_diff', float('inf')) <= tolerance]
         else:
-            peaks_to_search = good_peaks
+            peaks_to_search = all_peaks
             carry_results   = []
 
         # Expand with deconvolved sub-peaks if available
@@ -590,11 +605,11 @@ class _AnnotationSearchMixin:
                     _deconv_ranks_pre.add(int(_cp['rank']))
             if _deconv_ranks_pre:
                 _stripped = [r for r in carry_results
-                             if int(r.get('peak_rank', -1)) not in _deconv_ranks_pre]
+                             if (int(r['peak_rank']) if r.get('peak_rank') is not None else -1) not in _deconv_ranks_pre]
                 if len(_stripped) != len(carry_results):
-                    _missing_rks = _deconv_ranks_pre - {int(r.get('peak_rank', -1))
+                    _missing_rks = _deconv_ranks_pre - {(int(r['peak_rank']) if r.get('peak_rank') is not None else -1)
                                                         for r in peaks_to_search}
-                    _extra = [p for p in good_peaks
+                    _extra = [p for p in all_peaks
                               if int(p.get('rank', -1)) in _missing_rks]
                     peaks_to_search = peaks_to_search + _extra
                 carry_results = _stripped
@@ -652,44 +667,30 @@ class _AnnotationSearchMixin:
                     _sp['_obs_j_hz'] = _obs_j
                     _sp['_obs_mult'] = _obs_m
 
-        # Progress window
+        # Unified progress window — covers all phases (search + build)
         pw = tk.Toplevel(self.app.root)
-        pw.title('Searching Database')
-        pw.geometry('500x270')
+        pw.title('nMRPipe — Annotating…')
+        pw.resizable(False, False)
         pw.transient(self.app.root)
         pw.grab_set()
+        self.app.root.update_idletasks()
+        _px = (self.app.root.winfo_rootx()
+               + self.app.root.winfo_width() // 2 - 230)
+        _py = (self.app.root.winfo_rooty()
+               + self.app.root.winfo_height() // 2 - 65)
+        pw.geometry(f'460x130+{_px}+{_py}')
 
         ttk.Label(pw, text=f'Database: {os.path.basename(db_path)}',
-                  font=('Arial', 9)).pack(pady=5)
-        mode_txt = (f'Incremental  ·  {len(peaks_to_search)} peak(s) to search  '
-                    f'({len(carry_results)} Good result(s) kept)'
-                    if incremental
-                    else f'Full reset  ·  {len(peaks_to_search)} good peak(s)')
-        ttk.Label(pw, text=mode_txt,
-                  font=('Arial', 8), foreground='gray').pack()
+                  font=('Arial', 9)).pack(pady=(10, 2))
         self.progress_bar = ttk.Progressbar(
-            pw, length=400, mode='determinate')
-        self.progress_bar.pack(pady=8)
-
-        cf = ttk.Frame(pw); cf.pack(pady=4)
-        for row, (lbl, attr) in enumerate([
-            ('DB entries scanned:',  'progress_peaks_label'),
-            ('Matches found:',       'progress_matches_label'),
-            ('Peaks with matches:',  'progress_peaks_matched_label'),
-        ]):
-            ttk.Label(cf, text=lbl, font=('Arial', 9)).grid(
-                row=row, column=0, padx=5)
-            w = ttk.Label(cf, text='0', font=('Arial', 9, 'bold'))
-            w.grid(row=row, column=1, padx=5)
-            setattr(self, attr, w)
-
-        self.progress_time_label = ttk.Label(
-            pw, text='0.0 s', font=('Arial', 9, 'bold'))
-        self.progress_time_label.pack()
+            pw, length=420, mode='determinate', maximum=100)
+        self.progress_bar.pack(pady=(4, 2), padx=20)
         self.progress_op_label = ttk.Label(
-            pw, text='Initializing…',
-            font=('Arial', 8), foreground='blue')
-        self.progress_op_label.pack(pady=4)
+            pw, text='Initialising…', font=('Arial', 8), foreground='gray')
+        self.progress_op_label.pack()
+        self.progress_time_label = ttk.Label(
+            pw, text='', font=('Arial', 8), foreground='gray')
+        self.progress_time_label.pack(pady=(2, 8))
         pw.update()
 
         def search_task():
@@ -754,11 +755,17 @@ class _AnnotationSearchMixin:
 
             try:
                 from gui.widgets.annotation_results_window import (
-                    _build_stick_positions)
+                    _build_stick_positions, lines_from_transitions)
                 from gui.utils.mcr_utils import simulate_lorentzian_profile
 
                 _cal = getattr(self.app, '_ppm_calibration', None)
                 _cal_delta = float(_cal['delta_mean']) if _cal else 0.0
+                # Guard against stale/corrupt calibration from old project versions.
+                # The in-window calibration logic limits each anchor to Δ < 0.02 ppm,
+                # so a valid delta_mean must be well below that.  Values beyond ±0.05
+                # ppm indicate a broken or accumulated calibration — discard them.
+                if abs(_cal_delta) > 0.05:
+                    _cal_delta = 0.0
 
                 ppm_vals   = [p['ppm'] for p in peaks_to_search]
                 g_lo       = min(ppm_vals) - _cal_delta - max(tolerance * 2, 0.10)
@@ -778,10 +785,17 @@ class _AnnotationSearchMixin:
                     has_multiplets = 'multiplets' in tables
 
                     # Detectar ID primário: bmrb_id (BMRB) vs hmdb_id (HMDB nativo)
+                    # Prefer bmrb_id only when the column exists AND has non-NULL values;
+                    # a column present but fully NULL means the DB uses hmdb_id as PK.
                     if has_shifts:
                         shift_cols = {r[1] for r in cur.execute(
                             "PRAGMA table_info(shifts_1h)").fetchall()}
-                        id_col = 'bmrb_id' if 'bmrb_id' in shift_cols else 'hmdb_id'
+                        if 'bmrb_id' in shift_cols:
+                            _bmrb_count = cur.execute(
+                                "SELECT COUNT(bmrb_id) FROM shifts_1h").fetchone()[0]
+                            id_col = 'bmrb_id' if _bmrb_count > 0 else 'hmdb_id'
+                        else:
+                            id_col = 'hmdb_id'
                         met_id_col = id_col
                     else:
                         id_col = met_id_col = 'hmdb_id'
@@ -794,11 +808,13 @@ class _AnnotationSearchMixin:
                         return
 
                     if has_shifts:
+                        _protons_col = (", s.protons" if 'protons' in shift_cols
+                                        else ", 1 as protons")
                         cur.execute(
                             f"SELECT s.{id_col} as hmdb_id, met.name,"
                             " s.ppm as ppm_center, s.ppm as ppm,"
                             " s.atom_name, s.multiplicity as type,"
-                            " s.j_coupling, s.multiplicity"
+                            f" s.j_coupling, s.multiplicity{_protons_col}"
                             " FROM shifts_1h s"
                             " JOIN metabolites met"
                             f"   ON s.{id_col} = met.{met_id_col}"
@@ -847,9 +863,6 @@ class _AnnotationSearchMixin:
                                     pass
 
                 total_entries = max(1, len(db_entries))
-                self.app.root.after(
-                    0, lambda n=total_entries:
-                    self.progress_bar.configure(maximum=n))
                 self.app.root.after(
                     0, lambda: self._status(
                         f'Fitting fingerprints for {total_entries} '
@@ -914,56 +927,127 @@ class _AnnotationSearchMixin:
                         j_hz = 0.0
 
                     is_singlet  = mult_raw in ('s', 'singlet', '')
-                    is_mult_m   = mult_raw in ('m', 'multiplet')
+
+                    # Skip unquantifiable multiplicities: generic 'm' (no J, no
+                    # predictable pattern) and BROAD/exchangeable signals (br s,
+                    # br. s., br d…). Broad lines are exchangeable protons whose
+                    # area/position drift → unreliable for quantification and a
+                    # source of false matches (previously a broad singlet was
+                    # mis-built as a 2-line doublet).
+                    if is_unquantifiable_multiplicity(mult_raw):
+                        continue
+
                     n_lns       = _n_lines_map.get(mult_raw, 2)
                     j_ppm       = (j_hz / mhz
                                    if j_hz > 0 and mhz > 0 else 0.0)
                     half_width  = max(
                         j_ppm * (n_lns / 2) * 1.4, tolerance, 0.010)
 
-                    # Generic multiplets ('m') are not skipped — they are scored
-                    # with reduced confidence because their pattern is unspecified.
-                    # mult_conf=0.30 and a fixed mult_compat=0.55 prevent them from
-                    # displacing well-defined multiplets in ranking.
-                    if is_mult_m:
-                        mult_conf_m  = 0.30
-                        mult_compat_m = 0.55
-                    else:
-                        mult_conf_m  = 1.0
-                        mult_compat_m = None  # computed below
 
                     try:
                         protons = int(entry.get('protons') or 1)
                     except (ValueError, TypeError):
                         protons = 1
-                    sticks = _build_stick_positions(
-                        db_ppm, mult_raw, protons, j_raw)
+                    # Prefer EXACT line positions from the DB transitions table
+                    # (independent of J, which is missing for ~half the lines);
+                    # fall back to the J-modelled stick pattern when unavailable.
+                    _met_id_tr = entry.get('hmdb_id') or entry.get('bmrb_id')
+                    _tr_lines = lines_from_transitions(
+                        conn, _met_id_tr,
+                        db_ppm - half_width, db_ppm + half_width, mhz)
+                    if len(_tr_lines) >= 2:
+                        sticks = _tr_lines
+                        _sp = [p for p, _ in _tr_lines]
+                        half_width = max(half_width,
+                                         (max(_sp) - min(_sp)) / 2.0 + tolerance)
+                    else:
+                        sticks = _build_stick_positions(
+                            db_ppm, mult_raw, protons, j_raw)
                     if not sticks:
                         sticks = [(db_ppm, 1.0)]
 
-                    nearest = min(
-                        peaks_to_search,
-                        key=lambda p: abs(p['ppm'] - db_ppm),
-                        default=None)
-                    if nearest is None:
+                    # Local window: 10% of the DB ppm value, floored at user tolerance.
+                    # Defines the candidate pool for sibling/J search.
+                    # The anchor peak must still be within tolerance to be accepted.
+                    search_window = max(tolerance, abs(db_ppm) * 0.10)
+                    local_peaks = [p for p in peaks_to_search
+                                   if abs(p['ppm'] - db_ppm) <= search_window]
+                    if not local_peaks:
                         continue
+                    # Any detected peak within tolerance can serve as anchor —
+                    # quality filtering is left to the composite score.
+                    # Siblings (J-coupling partners) can be any quality.
+                    good_in_tol = [p for p in local_peaks
+                                   if abs(p['ppm'] - db_ppm) <= tolerance]
+                    if not good_in_tol:
+                        # Spectrum-based fallback: no detected peak within
+                        # tolerance, but the signal may still be present in the
+                        # raw spectrum (peak missed by detection — sub-threshold,
+                        # merged, or too close to a neighbour).
+                        # Mirror what the manual right-drag selection does.
+                        if not has_spec:
+                            continue
+                        _syn_lo = db_ppm - tolerance
+                        _syn_hi = db_ppm + tolerance
+                        _syn_mask = (_ppm_arr >= _syn_lo) & (_ppm_arr <= _syn_hi)
+                        if _syn_mask.sum() < 3:
+                            continue
+                        _syn_y = _mean_int[_syn_mask]
+                        _syn_x = _ppm_arr[_syn_mask]
+                        _syn_max_i = int(np.argmax(_syn_y))
+                        _syn_h = float(_syn_y[_syn_max_i])
+                        # Require ≥ 3× the local noise floor to avoid false matches
+                        _syn_noise = float(np.percentile(np.abs(_syn_y), 25)) + 1e-12
+                        if _syn_h < _syn_noise * 3.0:
+                            continue
+                        _syn_peak = {
+                            'ppm':           float(_syn_x[_syn_max_i]),
+                            'rank':          None,
+                            'status':        'Good',
+                            'height':        _syn_h,
+                            'width_ppm':     0.010,
+                            'width_at_half': 0.010,
+                            '_synthetic':    True,
+                            '_obs_j_hz':     0,
+                            '_obs_mult':     mult_raw,
+                        }
+                        good_in_tol = [_syn_peak]
+                        # Augment local_peaks with spectrum-derived sibling
+                        # positions so the sibling loop and _multiplet_score
+                        # can find them even if peak detection missed them.
+                        _syn_aug = list(local_peaks)
+                        if not is_singlet and j_ppm > 0 and n_lns >= 2:
+                            for _k in range(1, n_lns):
+                                for _sgn in (+1, -1):
+                                    _sib_c = _syn_peak['ppm'] + _sgn * _k * j_ppm
+                                    _sm = ((_ppm_arr >= _sib_c - tolerance * 0.7) &
+                                           (_ppm_arr <= _sib_c + tolerance * 0.7))
+                                    if _sm.sum() < 2:
+                                        continue
+                                    _sy = _mean_int[_sm]
+                                    _sx = _ppm_arr[_sm]
+                                    _si = int(np.argmax(_sy))
+                                    if float(_sy[_si]) < _syn_noise * 2.0:
+                                        continue
+                                    _sp = float(_sx[_si])
+                                    if any(abs(p['ppm'] - _sp) < 0.005
+                                           for p in local_peaks):
+                                        continue
+                                    _syn_aug.append({
+                                        'ppm':           _sp,
+                                        'rank':          None,
+                                        'status':        'Good',
+                                        'height':        float(_sy[_si]),
+                                        'width_ppm':     0.010,
+                                        'width_at_half': 0.010,
+                                        '_synthetic':    True,
+                                        '_obs_j_hz':     0,
+                                        '_obs_mult':     mult_raw,
+                                    })
+                        local_peaks = _syn_aug
+                    nearest   = min(good_in_tol, key=lambda p: abs(p['ppm'] - db_ppm))
                     delta_ppm = abs(nearest['ppm'] - db_ppm)
-
-                    if delta_ppm > tolerance * 3 and not is_singlet:
-                        for cand in peaks_to_search:
-                            p_hi = max(float(cand.get('start_ppm', cand['ppm'])),
-                                       float(cand.get('end_ppm',   cand['ppm'])))
-                            p_lo = min(float(cand.get('start_ppm', cand['ppm'])),
-                                       float(cand.get('end_ppm',   cand['ppm'])))
-                            if (p_lo - tolerance) <= db_ppm <= (p_hi + tolerance):
-                                d = abs(cand['ppm'] - db_ppm)
-                                if d < delta_ppm:
-                                    nearest   = cand
-                                    delta_ppm = d
-
-                    if delta_ppm > tolerance * 3:
-                        continue
-                    peak_rank = int(nearest['rank'])
+                    peak_rank = nearest.get('rank')   # None for spectrum-derived peaks
                     peak_ppm  = float(nearest['ppm'])
 
                     _eff_j_ppm = j_ppm
@@ -978,12 +1062,12 @@ class _AnnotationSearchMixin:
                             for sign in (+1, -1):
                                 expected = peak_ppm + sign * k * _eff_j_ppm
                                 best_sib = min(
-                                    (p for p in peaks_to_search if p is not nearest),
+                                    (p for p in local_peaks if p is not nearest),
                                     key=lambda p: abs(p['ppm'] - expected),
                                     default=None)
                                 if best_sib is not None:
                                     dist = abs(best_sib['ppm'] - expected)
-                                    if dist <= tolerance * 2:
+                                    if dist <= tolerance * 1.5:
                                         if best_sib['ppm'] not in found_line_ppms:
                                             found_line_ppms.append(float(best_sib['ppm']))
                                         break
@@ -1023,11 +1107,7 @@ class _AnnotationSearchMixin:
                         ppm_score_val = _ppm_score(multiplet_centre, db_ppm, tolerance)
                     mult_compat, _ = _mult_compat_check(
                         entry, peaks_to_search, tolerance, mhz)
-                    if is_mult_m:
-                        mult_compat = mult_compat_m   # 0.55 — generic, low specificity
-                        mult_conf   = mult_conf_m      # 0.30 — downweighted
-                    else:
-                        mult_conf   = 1.0
+                    mult_conf   = 1.0
 
                     obs_mult_pk = nearest.get('_obs_mult', 's')
                     obs_j_pk    = nearest.get('_obs_j_hz')
@@ -1106,7 +1186,7 @@ class _AnnotationSearchMixin:
                         _score_r = dict(entry)
                         _score_r['peak_ppm'] = multiplet_centre
                         _ms_main, _md_main, _pl_main = _multiplet_score(
-                            _score_r, peaks_to_search, tolerance, mhz,
+                            _score_r, local_peaks, tolerance, mhz,
                             ppm_array=(_ppm_arr if has_spec else None),
                             intensity_array=(_mean_int if has_spec else None))
                         predicted_lines = (_pl_main if _pl_main else
@@ -1177,6 +1257,19 @@ class _AnnotationSearchMixin:
                     r['composite_score']  = round(
                         float(r['composite_score']) * _src_wt, 4)
                     r['source_weight']    = _src_wt
+                    # Map detected peak to which predicted line it corresponds to.
+                    # Stored as line_idx so _effective_nh can use it directly
+                    # without positional estimation at quantification time.
+                    _pl_li = r.get('predicted_lines') or []
+                    if len(_pl_li) > 1:
+                        _det_ppm_li = float(r.get('peak_ppm') or 0)
+                        r['line_idx'] = min(
+                            range(len(_pl_li)),
+                            key=lambda _i: abs(float(_pl_li[_i].get('ppm', 0)) - _det_ppm_li))
+                    else:
+                        r['line_idx'] = 0
+                    if r.get('ppm_diff', float('inf')) > tolerance:
+                        continue
                     all_results.append(r)
 
                     if (i + 1) % 100 == 0 or i == total_entries - 1:
@@ -1207,7 +1300,7 @@ class _AnnotationSearchMixin:
                 if carry_results:
                     all_results = carry_results + all_results
 
-                total_peaks = len(good_peaks)
+                total_peaks = len(all_peaks)
                 elapsed = time.monotonic() - t0
                 nm  = len(all_results)
                 np_ = len(peaks_matched)
@@ -1286,10 +1379,10 @@ class _AnnotationSearchMixin:
 
     def _update_progress(self, processed, total, matches, peaks_matched, elapsed):
         try:
-            self.progress_bar['value'] = processed
-            self.progress_peaks_label.config(text=f'{processed} / {total}')
-            self.progress_matches_label.config(text=str(matches))
-            self.progress_peaks_matched_label.config(text=str(peaks_matched))
+            # Phase 1 occupies 0→55% of the unified bar
+            self.progress_bar['value'] = int(processed / max(total, 1) * 55)
+            self.progress_op_label.config(
+                text=f'Searching — {processed}/{total} entries  ·  {matches} match(es)')
             self.progress_time_label.config(text=f'{elapsed:.1f} s')
         except Exception:
             pass
@@ -1304,11 +1397,11 @@ class _AnnotationSearchMixin:
     # ── Open results window ───────────────────────────────────────────────────
 
     def _open_results_window(self, results, pw, total_peaks, db_path, elapsed):
-        try:
-            pw.destroy()
-        except Exception:
-            pass
         if not results:
+            try:
+                pw.destroy()
+            except Exception:
+                pass
             messagebox.showinfo('No Results',
                 'No matches found.\n'
                 'Try increasing the tolerance or checking the DB file.')
@@ -1340,37 +1433,16 @@ class _AnnotationSearchMixin:
                 pass
             self.app._annot_win = None
 
-        # ── Progress dialog shown while AnnotationResultsWindow initialises ──
-        import tkinter as tk
-        import tkinter.ttk as ttk
-
-        _pdlg = tk.Toplevel(self.app.root)
-        _pdlg.title('Building Results…')
-        _pdlg.resizable(False, False)
-        _pdlg.grab_set()
-        self.app.root.update_idletasks()
-        _px = self.app.root.winfo_rootx() + self.app.root.winfo_width()  // 2 - 175
-        _py = self.app.root.winfo_rooty() + self.app.root.winfo_height() // 2 - 60
-        _pdlg.geometry(f'350x120+{_px}+{_py}')
-
-        ttk.Label(_pdlg, text='Processing annotation results…',
-                  font=('Arial', 9, 'bold')).pack(pady=(12, 4))
-        _pb = ttk.Progressbar(_pdlg, orient='horizontal', length=310,
-                               mode='determinate', maximum=100)
-        _pb.pack(padx=20)
-        _msg_var = tk.StringVar(value='Initialising…')
-        ttk.Label(_pdlg, textvariable=_msg_var,
-                  font=('Arial', 8), foreground='gray').pack(pady=(4, 8))
-        _pdlg.update()
-
-        # progress_cb(step, total, msg) — called via root.after() from bg thread
-        def _progress_cb(step, total, msg):
-            try:
-                _pb['value'] = int(step / max(total, 1) * 100)
-                _msg_var.set(msg)
-                _pdlg.update_idletasks()
-            except Exception:
-                pass
+        # ── Phase 2: reuse pw for build progress (55→100%) ───────────────────
+        _build_start = 55
+        try:
+            pw.title('nMRPipe — Building Results…')
+            self.progress_bar['value'] = _build_start
+            self.progress_op_label.config(text='Preparing results…')
+            self.progress_time_label.config(text='')
+            pw.update_idletasks()
+        except Exception:
+            pass
 
         run_mcr = getattr(self, 'mcr_run_var', None)
         if run_mcr is not None and run_mcr.get():
@@ -1378,13 +1450,31 @@ class _AnnotationSearchMixin:
                 mhz = float(self.spectrometer_var.get())
             except Exception:
                 mhz = 600.0
-            _msg_var.set('Running MCR deconvolution…')
-            _pb['value'] = 5
-            _pdlg.update()
+            try:
+                self.progress_op_label.config(text='Running MCR deconvolution…')
+                self.progress_bar['value'] = 57
+                pw.update_idletasks()
+            except Exception:
+                pass
             n_mcr = self._run_mcr_on_results(results, mhz)
-            _msg_var.set(f'MCR: {n_mcr} region(s) — building results…')
-            _pb['value'] = 30
-            _pdlg.update()
+            _build_start = 62
+            try:
+                self.progress_bar['value'] = _build_start
+                self.progress_op_label.config(
+                    text=f'MCR: {n_mcr} region(s) — building results…')
+                pw.update_idletasks()
+            except Exception:
+                pass
+
+        # progress_cb: steps 1-11 map from _build_start→95%; UI build → 100%
+        def _progress_cb(step, total, msg):
+            try:
+                pct = _build_start + int(step / max(total, 1) * (95 - _build_start))
+                self.progress_bar['value'] = pct
+                self.progress_op_label.config(text=msg)
+                pw.update_idletasks()
+            except Exception:
+                pass
 
         from gui.widgets.annotation_results_window import AnnotationResultsWindow
         _win = AnnotationResultsWindow(
@@ -1399,7 +1489,12 @@ class _AnnotationSearchMixin:
             progress_cb=_progress_cb)
 
         try:
-            _pdlg.destroy()
+            self.progress_bar['value'] = 100
+            pw.update_idletasks()
+        except Exception:
+            pass
+        try:
+            pw.destroy()
         except Exception:
             pass
 
@@ -1448,13 +1543,11 @@ class _AnnotationSearchMixin:
             return
 
         tolerance = float(self.tolerance_var.get())
-        good_peaks = [p for p in self.peaks
-                      if p.get('status', 'Undefined') == 'Good']
+        good_peaks = [p for p in self.peaks if p.get('rank') is not None]
         if (not is_lipidomics) and (not good_peaks):
-            messagebox.showinfo('No Good Peaks',
-                'No peaks are marked as Good in the Peak List.\n\n'
-                'Open the Peak List and mark peaks as Good (Ctrl+1) '
-                'before running annotation.')
+            messagebox.showinfo('No Peaks',
+                'No detected peaks found.\n\n'
+                'Run Peak Detection first.')
             return
 
         self.hmdb_status.config(text='Internal DB: searching…', foreground='blue')

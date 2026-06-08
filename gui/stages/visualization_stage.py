@@ -34,14 +34,14 @@ class VisualizationStage(BaseStage):
             proc, text="📐 Alignment",
             command=self._open_alignment_dialog, state="disabled")
         self.btn_alignment.pack(fill=tk.X, pady=1)
-        self.btn_smooth = ttk.Button(
-            proc, text="🌊 Smooth",
-            command=self._open_smooth_dialog, state="disabled")
-        self.btn_smooth.pack(fill=tk.X, pady=1)
         self.btn_baseline = ttk.Button(
             proc, text="📉 Baseline Correction",
             command=self._open_baseline_dialog, state="disabled")
         self.btn_baseline.pack(fill=tk.X, pady=1)
+        self.btn_quality = ttk.Button(
+            proc, text="📊 Spectral Quality",
+            command=self._open_quality_window, state="disabled")
+        self.btn_quality.pack(fill=tk.X, pady=1)
         self.btn_revert = ttk.Button(
             proc, text="↩ Revert Processing",
             command=self._revert_processing, state="disabled")
@@ -158,8 +158,8 @@ class VisualizationStage(BaseStage):
         self._color_btns = []
         try:
             self.btn_alignment.config(state='normal')
-            self.btn_smooth.config(state='normal')
             self.btn_baseline.config(state='normal')
+            self.btn_quality.config(state='normal')
             if self.app.all_intensities is not None:
                 self._original_intensities = self.app.all_intensities.copy()
             self.btn_revert.config(state='disabled')
@@ -284,6 +284,8 @@ class VisualizationStage(BaseStage):
                 "This will undo ALL alignment and baseline corrections.\n"
                 "Continue?", parent=self.app.root):
             self.app.all_intensities = self._original_intensities.copy()
+            self.app.baseline_corrected  = False
+            self.app.alignment_corrected = False
             self.app.update_plot()
             try:
                 self.btn_revert.config(state='disabled')
@@ -291,151 +293,6 @@ class VisualizationStage(BaseStage):
                 pass
 
     # ── Smooth dialog ─────────────────────────────────────────────────────────
-
-    def _open_smooth_dialog(self):
-        """Dialog with Whittaker and Savitzky-Golay smoothing options."""
-        if self.app.ppm is None or self.app.all_intensities is None:
-            return
-
-        import matplotlib.pyplot as plt
-        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-
-        dlg = tk.Toplevel(self.app.root)
-        dlg.title("Smooth Spectra")
-        dlg.geometry("900x580")
-        dlg.grab_set()
-
-        ppm  = self.app.ppm
-        orig = self.app.all_intensities.copy()
-        mean_orig = np.mean(orig, axis=1)
-        _preview_data = [orig.copy()]
-        _debounce_id  = [None]
-
-        # ── Left controls ─────────────────────────────────────────────────────
-        left = ttk.Frame(dlg, width=270)
-        left.pack(side=tk.LEFT, fill=tk.Y, padx=8, pady=8)
-        left.pack_propagate(False)
-
-        ttk.Label(left, text="Smoothing Method", font=('Arial', 9, 'bold')).pack(anchor='w')
-        method_var = tk.StringVar(value='whittaker')
-        ttk.Radiobutton(left, text="Whittaker",      variable=method_var,
-                        value='whittaker',  command=lambda: _schedule_preview()).pack(anchor='w', pady=2)
-        ttk.Radiobutton(left, text="Savitzky-Golay", variable=method_var,
-                        value='savgol',     command=lambda: _schedule_preview()).pack(anchor='w', pady=2)
-
-        ttk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=6)
-
-        # Whittaker λ — log scale (slider maps 0–6 → λ = 10^slider)
-        w_frame = ttk.LabelFrame(left, text="Whittaker  λ (penalidade)", padding=4)
-        w_frame.pack(fill=tk.X, pady=2)
-        lam_log_var = tk.DoubleVar(value=2.0)   # default λ = 10² = 100
-
-        def _lam_label_text():
-            v = lam_log_var.get()
-            return f"10^{v:.2f}  =  {10**v:.1f}"
-
-        ttk.Label(w_frame, text="λ  (escala log)", font=('Arial', 8)).pack(anchor='w')
-        lam_scale = ttk.Scale(w_frame, from_=0, to=6, variable=lam_log_var,
-                              orient='horizontal',
-                              command=lambda _: (
-                                  lam_lbl.config(text=_lam_label_text()),
-                                  _schedule_preview()))
-        lam_scale.pack(fill=tk.X)
-        lam_lbl = ttk.Label(w_frame, text=_lam_label_text(), font=('Courier', 8))
-        lam_lbl.pack(anchor='e')
-
-        # Savitzky-Golay window — dynamic max = 10 % of spectrum, min 5
-        sg_max = max(51, int(0.10 * len(ppm)) | 1)
-        lo_frame = ttk.LabelFrame(left, text="Savitzky-Golay  janela (pontos)", padding=4)
-        lo_frame.pack(fill=tk.X, pady=(6, 2))
-        sg_var = tk.IntVar(value=7)
-        ttk.Label(lo_frame, text=f"Janela ímpar, ordem 2  (máx {sg_max})",
-                  font=('Arial', 8), wraplength=220).pack(anchor='w')
-        sg_scale = ttk.Scale(lo_frame, from_=5, to=sg_max, variable=sg_var,
-                             orient='horizontal',
-                             command=lambda _: (
-                                 sg_lbl.config(text=f"{int(sg_var.get()) | 1}"),
-                                 _schedule_preview()))
-        sg_scale.pack(fill=tk.X)
-        sg_lbl = ttk.Label(lo_frame, text="7", font=('Courier', 8))
-        sg_lbl.pack(anchor='e')
-
-        ttk.Separator(left, orient='horizontal').pack(fill=tk.X, pady=8)
-
-        def _apply():
-            self.app.all_intensities = _preview_data[0].copy()
-            try:
-                self.btn_revert.config(state='normal')
-            except Exception:
-                pass
-            self.app.update_plot()
-            dlg.destroy()
-
-        ttk.Button(left, text="✔ Apply",  command=_apply).pack(fill=tk.X, pady=2)
-        ttk.Button(left, text="✖ Cancel", command=dlg.destroy).pack(fill=tk.X, pady=2)
-
-        # ── Right: preview plot (spectrum + residual) ─────────────────────────
-        right = ttk.Frame(dlg)
-        right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 8), pady=8)
-
-        fig, (ax_spec, ax_res) = plt.subplots(
-            2, 1, figsize=(5.8, 4.6), sharex=True,
-            gridspec_kw={'height_ratios': [3, 1]})
-        fig.tight_layout(pad=1.8)
-        canvas = FigureCanvasTkAgg(fig, master=right)
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-
-        def _whittaker_smooth_matrix(Y, lam):
-            # Eilers-Whittaker, 2nd-order differences.
-            # One LU factorisation → solves all spectra columns in one call.
-            from scipy.sparse import diags as _diags, csc_matrix
-            from scipy.sparse.linalg import splu
-            n = Y.shape[0]
-            d = np.ones(n)
-            D = _diags([d[:-2], -2*d[:-1], d], [0, 1, 2], shape=(n-2, n))
-            A = csc_matrix(_diags([d], [0], shape=(n, n)) + lam * (D.T @ D))
-            return splu(A).solve(Y)
-
-        def _savgol_smooth_matrix(Y, window):
-            from scipy.signal import savgol_filter as _savgol
-            w = int(window) | 1
-            w = max(w, 5)
-            return _savgol(Y, window_length=w, polyorder=2, axis=0)
-
-        def _update_preview():
-            method = method_var.get()
-            if method == 'whittaker':
-                lam = 10 ** lam_log_var.get()
-                smoothed = _whittaker_smooth_matrix(orig.astype(float), lam)
-            else:
-                smoothed = _savgol_smooth_matrix(orig.astype(float), int(sg_var.get()))
-            _preview_data[0] = smoothed
-            mean_smooth = np.mean(smoothed, axis=1)
-            residual    = mean_orig - mean_smooth
-
-            ax_spec.cla()
-            ax_spec.plot(ppm, mean_orig,   color='#aaaaaa', lw=0.8, label='Original')
-            ax_spec.plot(ppm, mean_smooth, color='#1a7a1a', lw=1.2, label='Smoothed')
-            ax_spec.set_ylabel('au', fontsize=8)
-            ax_spec.invert_xaxis()
-            ax_spec.legend(fontsize=7)
-            ax_spec.set_title(f'Média — {method}', fontsize=9)
-
-            ax_res.cla()
-            ax_res.plot(ppm, residual, color='#c05000', lw=0.8)
-            ax_res.axhline(0, color='#888888', lw=0.5, ls='--')
-            ax_res.set_xlabel('ppm', fontsize=8)
-            ax_res.set_ylabel('resíduo', fontsize=7)
-
-            fig.tight_layout(pad=1.8)
-            canvas.draw()
-
-        def _schedule_preview(*_):
-            if _debounce_id[0] is not None:
-                dlg.after_cancel(_debounce_id[0])
-            _debounce_id[0] = dlg.after(250, _update_preview)
-
-        _update_preview()
 
     # ── Alignment dialog ──────────────────────────────────────────────────────
 
@@ -759,6 +616,7 @@ class VisualizationStage(BaseStage):
                 status_lbl.config(text="Run Preview first.", foreground="red")
                 return
             self.app.all_intensities = _state['aligned']
+            self.app.alignment_corrected = True
             self.app.update_plot()
             try:
                 self.btn_revert.config(state='normal')
@@ -859,7 +717,6 @@ class VisualizationStage(BaseStage):
         snip_frame = ttk.LabelFrame(sf_l, text="SNIP Parameters", padding=6)
         snip_frame.pack(fill=tk.X, padx=6, pady=2)
         snip_iter_var = tk.StringVar(value="40")
-        snip_int_var = tk.StringVar(value="1.0")
 
         sf1 = ttk.Frame(snip_frame);
         sf1.pack(fill=tk.X, pady=2)
@@ -868,15 +725,8 @@ class VisualizationStage(BaseStage):
         ttk.Label(sf1, text="(10 – 200)", font=("Arial", 8),
                   foreground="gray").pack(side=tk.LEFT, padx=2)
 
-        sf2 = ttk.Frame(snip_frame);
-        sf2.pack(fill=tk.X, pady=2)
-        ttk.Label(sf2, text="Intensity:", width=14).pack(side=tk.LEFT)
-        ttk.Entry(sf2, textvariable=snip_int_var, width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Label(sf2, text="(0.0 – 1.0)", font=("Arial", 8),
-                  foreground="gray").pack(side=tk.LEFT, padx=2)
-
         ttk.Label(snip_frame,
-                  text="Iterations: more = deeper.  Intensity: fraction subtracted.",
+                  text="Iterations: more = deeper clipping.",
                   font=("Arial", 8), foreground="gray").pack(anchor=tk.W)
 
         # arPLS params (hidden by default) — campos numéricos, sem sliders
@@ -943,16 +793,16 @@ class VisualizationStage(BaseStage):
         # ── Algorithms ────────────────────────────────────────────────────────
         _state = {'corrected': None}
 
-        def _snip_baseline(y, n_iter=40, intensity=1.0):
+        def _snip_baseline(y, n_iter=40):
             y_shift = y - y.min()
             z = np.log(np.log(np.sqrt(y_shift + 1) + 1) + 1)
+            n = len(z)
             for p in range(1, n_iter + 1):
                 z_new = z.copy()
-                z_new[p:-p] = np.minimum(z[p:-p],
-                                         (z[:len(z) - 2 * p] + z[2 * p:]) / 2)
+                z_new[p:-p] = np.minimum(z[p:-p], (z[:n - 2 * p] + z[2 * p:]) / 2)
                 z = z_new
             base = (np.exp(np.exp(z) - 1) - 1) ** 2 + y.min()
-            return np.minimum(base, y) * intensity
+            return np.minimum(base, y)
 
         def _arPLS_baseline(y, lam=1e5, p=0.01, n_iter=100):
             from scipy.sparse import diags
@@ -981,7 +831,6 @@ class VisualizationStage(BaseStage):
             try:
                 if method == 'SNIP':
                     _iter = max(10, min(200, int(float(snip_iter_var.get()))))
-                    _intv = max(0.0, min(1.0, float(snip_int_var.get())))
                 else:
                     _lam = max(1e3, min(1e7, float(lam_var.get())))
                     _p = max(0.001, min(0.1, float(p_var.get())))
@@ -999,7 +848,7 @@ class VisualizationStage(BaseStage):
                 for s in range(n_s):
                     col = all_int[:, s].astype(float)
                     try:
-                        b = (_snip_baseline(col, _iter, _intv) if method == 'SNIP'
+                        b = (_snip_baseline(col, _iter) if method == 'SNIP'
                              else _arPLS_baseline(col, _lam, _p))
                     except Exception:
                         b = np.zeros_like(col)
@@ -1021,7 +870,7 @@ class VisualizationStage(BaseStage):
                 else:
                     col = all_int.ravel().astype(float)
                 try:
-                    b = (_snip_baseline(col, _iter, _intv) if method == 'SNIP'
+                    b = (_snip_baseline(col, _iter) if method == 'SNIP'
                          else _arPLS_baseline(col, _lam, _p))
                 except Exception as e:
                     status_lbl.config(text=f"Error: {e}", foreground="red")
@@ -1058,8 +907,7 @@ class VisualizationStage(BaseStage):
                 col = (all_int[:, s] if all_int.ndim == 2
                        else all_int.ravel()).astype(float)
                 try:
-                    b = (_snip_baseline(col, _iter, _intv)
-                         if method == 'SNIP'
+                    b = (_snip_baseline(col, _iter) if method == 'SNIP'
                          else _arPLS_baseline(col, _lam, _p))
                 except Exception:
                     b = np.zeros_like(col)
@@ -1074,6 +922,7 @@ class VisualizationStage(BaseStage):
                 status_lbl.config(text="Run Preview first.", foreground="red")
                 return
             self.app.all_intensities = _state['corrected']
+            self.app.baseline_corrected = True
             self.app.update_plot()
             try:
                 self.btn_revert.config(state='normal')
@@ -1117,3 +966,32 @@ class VisualizationStage(BaseStage):
         for v in self.sample_vars:
             v.set(False)
         self.app.update_plot()
+
+    # ── Spectral Quality ──────────────────────────────────────────────────────
+
+    def _open_quality_window(self):
+        """Compute FWHM + Asymmetry per sample and open the quality window."""
+        if self.app.ppm is None or self.app.all_intensities is None:
+            return
+
+        # Resolve spectrometer frequency: Bruker sets app.spectrometer_mhz;
+        # CSV imports may have it in the annotation stage's spectrometer_var.
+        mhz = getattr(self.app, 'spectrometer_mhz', None)
+        if mhz is None:
+            ann = self.app.stages.get('annotation')
+            if ann and hasattr(ann, 'spectrometer_var'):
+                try:
+                    mhz = float(ann.spectrometer_var.get())
+                except (ValueError, TypeError):
+                    mhz = None
+
+        from processing.spectral_quality import assess_all_samples
+        results = assess_all_samples(
+            self.app.ppm,
+            self.app.all_intensities,
+            self.app.samples_info or [],
+            spectrometer_mhz=mhz,
+        )
+
+        from gui.widgets.spectral_quality_window import SpectralQualityWindow
+        SpectralQualityWindow(self.app.root, results, spectrometer_mhz=mhz)

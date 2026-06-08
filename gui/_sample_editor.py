@@ -55,10 +55,10 @@ class SampleEditorDialog:
         dlg.geometry(f"{w}x{h}+{(sw-w)//2}+{(sh-h)//2}")
         dlg.minsize(640, 300)
 
-        ttk.Label(dlg, text="Configure samples — group, color, dilution and type",
+        ttk.Label(dlg, text="Configure samples — group, color, dilution, correction and type",
                   font=("Arial", 10, "bold")).pack(pady=(10, 2))
         ttk.Label(dlg,
-                  text="Color and Type are shared per group — editing one row updates all rows with the same group.",
+                  text="Color and Type are shared per group. Correction Factor is per sample (multiplies quantification result).",
                   font=("Arial", 8), foreground="gray").pack()
         ttk.Separator(dlg, orient='horizontal').pack(fill=tk.X, padx=8, pady=4)
 
@@ -84,7 +84,7 @@ class SampleEditorDialog:
 
         # ── Cabeçalho ─────────────────────────────────────────────────────────
         headers = [("Sample", 26), ("Group", 14), ("Color", 10),
-                   ("Dil. Factor", 11), ("Type", 11)]
+                   ("Dil. Factor", 11), ("Corr. Factor", 11), ("Type", 11)]
         for col, (hdr, w_ch) in enumerate(headers):
             ttk.Label(self._inner, text=hdr, font=('Arial', 9, 'bold'),
                       width=w_ch, anchor=tk.W).grid(
@@ -150,21 +150,27 @@ class SampleEditorDialog:
         btn.config(command=lambda cv=color_var, lbl_ref=[label]:
                    self._pick_color(cv, lbl_ref[0]))
 
-        # Col 3 — Dil. Factor
+        # Col 3 — Dil. Factor (partilhado por grupo)
         dil_var = tk.DoubleVar(value=self.group_dilution_factors.get(label, 1.0))
         ttk.Entry(self._inner, textvariable=dil_var, width=11).grid(
             row=row_idx, column=3, padx=6, pady=2, sticky=tk.W)
 
-        # Col 4 — Type (Combobox partilhado pelo grupo via StringVar)
+        # Col 4 — Corr. Factor (por amostra)
+        corr_var = tk.StringVar(value=str(sample.get('correction_factor', 1.0)))
+        ttk.Entry(self._inner, textvariable=corr_var, width=11).grid(
+            row=row_idx, column=4, padx=6, pady=2, sticky=tk.W)
+
+        # Col 5 — Type (Combobox partilhado pelo grupo via StringVar)
         cb = ttk.Combobox(self._inner, textvariable=type_var,
                           values=_GROUP_TYPES, state='readonly', width=11)
-        cb.grid(row=row_idx, column=4, padx=6, pady=2, sticky=tk.W)
+        cb.grid(row=row_idx, column=5, padx=6, pady=2, sticky=tk.W)
 
         row_data = {
             'sample':    sample,
             'group_var': group_var,
             'color_var': color_var,   # aponta para o grupo actual
             'dil_var':   dil_var,
+            'corr_var':  corr_var,    # por amostra
             'type_var':  type_var,    # aponta para o grupo actual
             'btn':       btn,
             'cb':        cb,
@@ -237,10 +243,17 @@ class SampleEditorDialog:
                 new_dil = float(rv['dil_var'].get())
             except (ValueError, tk.TclError):
                 new_dil = 1.0
+            try:
+                new_corr = float(rv['corr_var'].get())
+                if new_corr <= 0:
+                    new_corr = 1.0
+            except (ValueError, tk.TclError):
+                new_corr = 1.0
 
-            sample['label']   = new_label
-            sample['type']    = new_type
-            sample['display'] = f"{sample['name']} ({new_label})"
+            sample['label']             = new_label
+            sample['type']              = new_type
+            sample['correction_factor'] = new_corr
+            sample['display']           = f"{sample['name']} ({new_label})"
 
             self.group_colors[new_label]              = new_color
             self.group_dilution_factors[new_label]    = new_dil
