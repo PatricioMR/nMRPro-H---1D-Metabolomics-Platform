@@ -20,6 +20,10 @@ _local/
 logs/
 *.log
 
+# ── Database backups / superseded versions (keep only the active *.db) ──────
+databases/backup_*/
+databases/*.bak*
+
 # ── Local config / scratch ──────────────────────────────────────────────────
 /settings.json
 *.tmp
