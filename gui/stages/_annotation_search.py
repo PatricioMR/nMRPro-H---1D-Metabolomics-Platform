@@ -80,7 +80,8 @@ class _AnnotationSearchMixin:
         existing_results = list(self._last_results_args.get('results', []))
         already_matched = {int(r.get('peak_rank')) for r in existing_results
                            if r.get('peak_rank') is not None}
-        good_peaks = [p for p in self.peaks if p.get('status', 'Undefined') == 'Good']
+        good_peaks = self._exclude_water_peaks(
+            [p for p in self.peaks if p.get('status', 'Undefined') == 'Good'])
         unassigned = [p for p in good_peaks if int(p.get('rank', -1)) not in already_matched]
         if not unassigned:
             messagebox.showinfo('Rescue', 'No unassigned Good peaks to rescue.')
@@ -429,6 +430,31 @@ class _AnnotationSearchMixin:
 
     # ── Search ────────────────────────────────────────────────────────────────
 
+    def _exclude_water_peaks(self, peaks):
+        """Drop peaks inside the water-suppression exclusion zone.
+
+        Standard 1H-NMR metabolomics practice: the residual water region
+        (~4.70–4.90 ppm) is dominated by solvent-suppression artefacts and is
+        excluded from analysis. Controlled by the annotation-stage checkbox and
+        the editable lo/hi range.
+        """
+        try:
+            if not bool(self.exclude_water_var.get()):
+                return peaks
+            lo = float(self.water_lo_var.get())
+            hi = float(self.water_hi_var.get())
+        except Exception:
+            return peaks
+        if lo > hi:
+            lo, hi = hi, lo
+        kept = [p for p in peaks
+                if not (lo <= float(p.get('ppm', 1e9)) <= hi)]
+        _n = len(peaks) - len(kept)
+        if _n:
+            print(f'[annotation] water exclusion {lo:.2f}-{hi:.2f} ppm: '
+                  f'skipped {_n} peak(s)')
+        return kept
+
     def search_internal_db(self):
         if not self.peaks:
             messagebox.showinfo('Info',
@@ -559,7 +585,8 @@ class _AnnotationSearchMixin:
         except ValueError:
             mhz = 600.0
 
-        all_peaks = [p for p in self.peaks if p.get('rank') is not None]
+        all_peaks = self._exclude_water_peaks(
+            [p for p in self.peaks if p.get('rank') is not None])
 
         if not all_peaks:
             messagebox.showinfo(
@@ -1523,8 +1550,7 @@ class _AnnotationSearchMixin:
                 'No peaks detected.\nRun Peak Detection first.')
             return
 
-        _root = os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))))
+        from app_paths import asset_path
         if mode == 'Lipidomics':
             lib_name = 'lipidomics_simple_library.csv'
             lib_label = 'Internal Lipidomics DB'
@@ -1536,14 +1562,15 @@ class _AnnotationSearchMixin:
             prog_title = 'Searching Internal Library'
             prog_text = 'Searching built-in NMR metabolite library…'
 
-        lib_path = os.path.join(_root, 'data', lib_name)
+        lib_path = asset_path('data', lib_name)
         if not os.path.isfile(lib_path):
             messagebox.showerror('Error',
                 f'Built-in library not found:\n{lib_path}')
             return
 
         tolerance = float(self.tolerance_var.get())
-        good_peaks = [p for p in self.peaks if p.get('rank') is not None]
+        good_peaks = self._exclude_water_peaks(
+            [p for p in self.peaks if p.get('rank') is not None])
         if (not is_lipidomics) and (not good_peaks):
             messagebox.showinfo('No Peaks',
                 'No detected peaks found.\n\n'

@@ -128,13 +128,20 @@ class JResolveStage(BaseStage):
     def create_widgets(self):
         self.frame = ttk.Frame(self.parent)
 
-        sf = tk.Frame(self.frame, width=260, bg='#f0f0f0')
-        sf.pack(side=tk.LEFT, fill=tk.Y)
-        sf.pack_propagate(False)
+        # Fill the whole stage frame — a fixed 260px width left a wide grey gap
+        # on the right of the (320px) left panel.
+        sf = tk.Frame(self.frame, bg='#f0f0f0')
+        sf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sf.pack_propagate(True)
 
-        # Scrollable left panel
+        # Scrollable left panel — classic Tk scrollbar so we can make it thin
+        # (the themed ttk scrollbar width is fixed by the OS theme on Windows).
         canvas_sf = tk.Canvas(sf, bg='#f0f0f0', highlightthickness=0)
-        vsb_sf = ttk.Scrollbar(sf, orient=tk.VERTICAL, command=canvas_sf.yview)
+        vsb_sf = tk.Scrollbar(sf, orient=tk.VERTICAL, command=canvas_sf.yview,
+                              width=9, borderwidth=0, elementborderwidth=0,
+                              highlightthickness=0, relief='flat', bd=0,
+                              troughcolor='#e8e8e8', activebackground='#7d7d7d',
+                              background='#9e9e9e')
         canvas_sf.configure(yscrollcommand=vsb_sf.set)
         vsb_sf.pack(side=tk.RIGHT, fill=tk.Y)
         canvas_sf.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
@@ -147,6 +154,14 @@ class JResolveStage(BaseStage):
         inner.bind('<Configure>',
                    lambda e: canvas_sf.configure(
                        scrollregion=canvas_sf.bbox('all')))
+
+        # Mouse-wheel scrolls the panel while the cursor is over it. bind_all on
+        # enter routes wheel events even over child widgets; released on leave so
+        # it does not hijack scrolling elsewhere.
+        def _on_mw(e):
+            canvas_sf.yview_scroll(int(-e.delta / 120), 'units')
+        canvas_sf.bind('<Enter>', lambda e: canvas_sf.bind_all('<MouseWheel>', _on_mw))
+        canvas_sf.bind('<Leave>', lambda e: canvas_sf.unbind_all('<MouseWheel>'))
 
         # ── Title ─────────────────────────────────────────────────────────────
         ttk.Label(inner, text='JG-Deconv', font=('Arial', 12, 'bold')
@@ -337,6 +352,14 @@ class JResolveStage(BaseStage):
         else:
             self._placeholder_lbl.pack(expand=True)
             self._btn_run.config(state='disabled')
+        # Restore the results table when a previous run's state was loaded from a
+        # project (status_map populated) — otherwise the stage opens empty.
+        if self._status_map:
+            try:
+                self._populate_table()
+                self._update_summary()
+            except Exception as _e:
+                print(f'[JResolve] table restore failed: {_e}')
 
     def on_deactivate(self):
         self.frame.pack_forget()
@@ -2329,6 +2352,44 @@ class JResolveStage(BaseStage):
             'unresolvable':  _COL_RESIDUAL,
         }.get(status, _COL_UNKNOWN)
 
+        # Colour map for EVERY contributor appearing in this metabolite's peaks,
+        # shared by the spectrum fills (top) AND the contribution bars (bottom)
+        # so they are consistent. Selected metabolite = its status colour; the
+        # other contributors get distinct palette colours.
+        import matplotlib.pyplot as _plt
+        from matplotlib.patches import Patch as _Patch
+        _id2name = {str(m['id']): m.get('name', str(m['id']))
+                    for m in (self._metabolites or [])}
+        _contrib_ids = []
+        for _r in my_ranks:
+            for _k, _v in self._contributions.get(_r, {}).items():
+                if (not str(_k).startswith('_') and _v > 0
+                        and str(_k) not in _contrib_ids):
+                    _contrib_ids.append(str(_k))
+        _cmap = _plt.get_cmap('tab10')
+        _contrib_col, _ci = {}, 0
+        for _cid in _contrib_ids:
+            if _cid == str(mid):
+                _contrib_col[_cid] = status_col
+            else:
+                _contrib_col[_cid] = _cmap(_ci % 10)
+                _ci += 1
+
+        # Multiplicity per peak (from the annotation matched_peaks) so it is
+        # shown on the peak labels — not just buried in the quality tooltip.
+        _mult_by_rank = {
+            mp.get('peak_rank'): str(mp.get('multiplicity')
+                                     or mp.get('type') or '')
+            for mp in (met.get('matched_peaks') or []) if 'peak_rank' in mp}
+        # Predicted line ppm of the whole multiplet per peak, so the fill spans
+        # ALL lines of the multiplicity (e.g. both legs of a doublet), not just
+        # the single detected line.
+        _lines_by_rank = {
+            mp.get('peak_rank'): [float(l['ppm'])
+                                  for l in (mp.get('predicted_lines') or [])
+                                  if isinstance(l, dict) and 'ppm' in l]
+            for mp in (met.get('matched_peaks') or []) if 'peak_rank' in mp}
+
         # ══════════════════════════════════════════════════════════════════════
         # TOP — spectrum with peak regions highlighted
         # ══════════════════════════════════════════════════════════════════════
@@ -2336,12 +2397,12 @@ class JResolveStage(BaseStage):
             ppm_arr = np.asarray(self._ppm)
             int_arr = np.asarray(self._mean_int)
 
-            # Determine zoom window: 0.4 ppm around each assigned peak,
-            # expanded to cover all peaks of this metabolite.
+            # Determine zoom window around the assigned peaks (tight 0.1 ppm
+            # margin so the metabolite's own peaks fill the view).
             if my_ranks:
                 ppms_of_peaks = [(self._peak_by_rank(r) or {}).get('ppm', 0)
                                  for r in my_ranks]
-                margin = 0.5
+                margin = 0.1
                 lo = min(ppms_of_peaks) - margin
                 hi = max(ppms_of_peaks) + margin
                 mask = (ppm_arr >= lo) & (ppm_arr <= hi)
@@ -2359,33 +2420,84 @@ class JResolveStage(BaseStage):
             for spine in ('top', 'right'):
                 ax_spec.spines[spine].set_visible(False)
 
+            # Per-line contributors: each line of a multiplet is painted with the
+            # NNLS contributions of ITS OWN detected peak (the doublet legs can
+            # resolve differently), falling back to the parent rank's split when a
+            # line has no detected peak of its own.
+            def _items_for(_contribs):
+                return sorted(
+                    ((str(_k), _v) for _k, _v in (_contribs or {}).items()
+                     if not str(_k).startswith('_') and _v > 0),
+                    key=lambda kv: -kv[1])
+
+            def _nearest_rank(_lp, _tol):
+                _best_r, _best_d = None, _tol
+                for _pk in self._peaks:
+                    _pr = _pk.get('rank')
+                    if _pr is None:
+                        continue
+                    _d = abs(float(_pk.get('ppm', 1e9)) - _lp)
+                    if _d < _best_d:
+                        _best_r, _best_d = _pr, _d
+                return _best_r
+
             # Shade each peak region and draw contribution
+            _our_ymax = 0.0   # adapt Y-zoom to THIS metabolite's peaks, not a
+                              #   foreign giant (water/edge) in the same window
+            _painted = []     # ppm of lines already painted (avoid duplicates)
             for rank in my_ranks:
                 peak = self._peak_by_rank(rank)
                 if peak is None:
                     continue
-                p_lo = float(peak.get('start_ppm', peak['ppm'] - 0.03))
-                p_hi = float(peak.get('end_ppm',   peak['ppm'] + 0.03))
-                pmask = (ppm_arr >= p_lo) & (ppm_arr <= p_hi)
-                ppm_seg = ppm_arr[pmask]
-                int_seg = int_arr[pmask]
-
                 pct  = self._contributions.get(rank, {}).get(mid, 0)
                 cov  = self._nnls_coverage.get(rank)
+                _rank_items = _items_for(self._contributions.get(rank, {}))
 
-                # Background shade for the peak region
-                ax_spec.fill_between(ppm_seg, 0, int_seg,
-                                     alpha=0.18, color=status_col, zorder=2)
-                # Foreground — fraction attributed to this metabolite
-                if pct > 0 and int_seg.size > 0:
-                    ax_spec.fill_between(ppm_seg, 0, int_seg * (pct / 100.0),
-                                         alpha=0.50, color=status_col, zorder=3)
+                # Regions to paint = ALL lines of the multiplet (predicted_lines),
+                # so e.g. both legs of a doublet are filled — not just the single
+                # detected line. Fall back to the detected peak position.
+                _hw = max(float(peak.get('width_ppm', 0.0) or 0.0), 0.01)
+                _line_ppms = _lines_by_rank.get(rank) or [float(peak.get('ppm', 0))]
+                for _lp in _line_ppms:
+                    if any(abs(_lp - q) < _hw for q in _painted):
+                        continue                      # already painted this line
+                    _painted.append(_lp)
+                    # This line's OWN contributions (its detected peak), else the
+                    # parent rank's split.
+                    _lr = _nearest_rank(_lp, _hw * 1.5)
+                    _items = (_items_for(self._contributions.get(_lr, {}))
+                              if _lr is not None else [])
+                    if not _items:
+                        _items = _rank_items
+                    _r_lo, _r_hi = _lp - _hw, _lp + _hw
+                    _pm = (ppm_arr >= _r_lo) & (ppm_arr <= _r_hi)
+                    _ps, _is = ppm_arr[_pm], int_arr[_pm]
+                    if _is.size < 2:
+                        continue
+                    # Neutral background for the line region
+                    ax_spec.fill_between(_ps, 0, _is, alpha=0.10,
+                                         color='#bbbbbb', zorder=2)
+                    # Proportional STACKED fill by contributor (height fraction)
+                    _cum = 0.0
+                    for _cid, _v in _items:
+                        _f0 = _cum / 100.0
+                        _f1 = min(1.0, (_cum + _v) / 100.0)
+                        ax_spec.fill_between(
+                            _ps, _is * _f0, _is * _f1,
+                            color=_contrib_col.get(_cid, status_col),
+                            alpha=0.55, zorder=3)
+                        _cum += _v
+                    _our_ymax = max(_our_ymax, float(np.max(_is)))
 
-                # Annotation above peak
+                # Annotation above the detected line
                 peak_ppm = float(peak.get('ppm', 0))
-                peak_top = float(np.max(int_seg)) if int_seg.size else 0
+                _apex_pm = (ppm_arr >= peak_ppm - _hw) & (ppm_arr <= peak_ppm + _hw)
+                peak_top = float(np.max(int_arr[_apex_pm])) if _apex_pm.any() else 0.0
+                _our_ymax = max(_our_ymax, peak_top)
                 is_anchor = rank in self._anchor_peaks.get(mid, [])
-                lbl = f"#{rank}\n{peak_ppm:.3f}\n{pct:.0f}%"
+                _mlt = _mult_by_rank.get(rank, '')
+                _mtag = f" [{_mlt}]" if _mlt else ""
+                lbl = f"#{rank}{_mtag}\n{peak_ppm:.3f}\n{pct:.0f}%"
                 if is_anchor:
                     lbl += '\n✓'
                 ax_spec.annotate(lbl,
@@ -2393,6 +2505,23 @@ class JResolveStage(BaseStage):
                                  xytext=(0, 6), textcoords='offset points',
                                  ha='center', fontsize=6, color=status_col,
                                  fontweight='bold', zorder=5)
+
+            # Adapt the Y range to this metabolite's own peaks so a foreign
+            # giant (e.g. residual water at the window edge) does not flatten
+            # them. Extra headroom for the labels drawn above each apex.
+            if _our_ymax > 0:
+                _ylo = min(0.0, float(np.min(int_w)) if int_w.size else 0.0)
+                ax_spec.set_ylim(_ylo, _our_ymax * 1.45)
+
+            # Legend: contributor → colour (matches the proportional peak fills)
+            if _contrib_ids:
+                _handles = [
+                    _Patch(facecolor=_contrib_col[_cid],
+                           label=(_id2name.get(_cid, _cid)[:18]
+                                  + ('  ◀' if _cid == str(mid) else '')))
+                    for _cid in _contrib_ids]
+                ax_spec.legend(handles=_handles, fontsize=6, loc='upper right',
+                               framealpha=0.6, ncol=1)
 
             # Title with quality badge
             status_label = {
@@ -2427,32 +2556,35 @@ class JResolveStage(BaseStage):
 
             for bi, rank in enumerate(my_ranks):
                 info   = self._contributions.get(rank, {})
-                pct    = info.get(mid, 0.0)
                 resid  = info.get('_residual_pct', 0.0)
                 cov    = self._nnls_coverage.get(rank)
                 is_anch = rank in self._anchor_peaks.get(mid, [])
-                is_auto = is_anch and mid in self._auto_anchored
 
-                col = (_COL_AUTO if is_auto else
-                       _COL_ANCHOR if is_anch else status_col)
-
-                ax_bar.barh(bi, pct, height=bar_h, color=col,
-                            edgecolor='white', linewidth=0.5)
+                # Stack EVERY contributor at this peak (same colours as the
+                # spectrum fills above), so an overlapping peak shows all the
+                # analytes that share it — not just the selected one.
+                _segs = sorted(((str(k), v) for k, v in info.items()
+                                if not str(k).startswith('_') and v > 0),
+                               key=lambda kv: -kv[1])
+                _cum = 0.0
+                for _cid, _v in _segs:
+                    ax_bar.barh(bi, _v, left=_cum, height=bar_h,
+                                color=_contrib_col.get(_cid, status_col),
+                                edgecolor='white', linewidth=0.5)
+                    if _v >= 7:
+                        ax_bar.text(_cum + _v / 2, bi, f'{_v:.0f}%',
+                                    ha='center', va='center', fontsize=6,
+                                    color='white', fontweight='bold')
+                    _cum += _v
                 if resid > 0.5:
-                    ax_bar.barh(bi, resid, left=pct, height=bar_h,
+                    ax_bar.barh(bi, resid, left=_cum, height=bar_h,
                                 color=_COL_RESIDUAL, edgecolor='white',
                                 linewidth=0.5, alpha=0.7)
-
-                # Label on bar
-                if pct >= 5:
-                    ax_bar.text(pct / 2, bi, f'{pct:.0f}%',
-                                ha='center', va='center', fontsize=7,
-                                color='white', fontweight='bold')
+                    _cum += resid
 
                 # Coverage annotation to the right
-                right_val = pct + (resid if resid > 0.5 else 0)
                 cov_txt = f'  cov={cov:.2f}' if cov is not None else ''
-                ax_bar.text(right_val + 1, bi, cov_txt, va='center',
+                ax_bar.text(_cum + 1, bi, cov_txt, va='center',
                             fontsize=6, color='#555')
 
                 peak = self._peak_by_rank(rank)

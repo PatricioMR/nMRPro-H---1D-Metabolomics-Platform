@@ -389,6 +389,12 @@ class _QuantCompMixin:
                     if _mp_gmi.get('annotation_quality') == 'good':
                         good_met_ids.add(_mid_gmi)
                         break
+            # A manual Good mark makes the metabolite eligible even if it has no
+            # auto-good / anchored peak (e.g. a user-confirmed multiplet with no
+            # detected apex → DB gap-fill quantification).
+            for (_mid_q, _pr_q), _qv in quality_marks.items():
+                if _qv == 'good':
+                    good_met_ids.add(str(_mid_q))
             print(f'[Quant] good_met_ids built: {len(good_met_ids)} Good metabolites '
                   f'from {len(_all_mets_gmi)} total')
         except Exception as _gmi_exc:
@@ -516,20 +522,27 @@ class _QuantCompMixin:
                        if p.get('rank') is not None}
         _ann_stage_q = getattr(self, 'annotation_stage', None)
 
-        # ── Populate _line_selection on every hit before sorting ─────────────
-        # Always recompute — never cache across _run() calls, since peak data,
-        # NNLS contributions, or use_j_resolve may have changed since last run.
-        _ppm_min = float(self.app.ppm.min()) if self.app.ppm is not None else 0.0
-        _ppm_max = float(self.app.ppm.max()) if self.app.ppm is not None else 10.0
-        for _sh in results:
-            _sh['_line_selection'] = select_clean_lines(
-                hit=_sh,
-                pk_by_rank=_pk_by_rank,
-                j_resolve_contribs=_j_resolve_contribs if use_j_resolve else {},
-                mid_str=str(_sh.get('_mid', '')),
-                use_nnls=use_j_resolve,
-                ppm_limits=(_ppm_min, _ppm_max),
-            )
+        # ── Populate _line_selection — ONLY when J-Resolve is active ─────────
+        # _line_selection is consumed only under use_j_resolve (integration at
+        # ~1344/1740); the sort key falls back to safe defaults without it. It is
+        # also only needed for hits that can actually win — good-quality hits of
+        # Good metabolites — not every candidate in `results`. Computing it for
+        # all results on every run was the main quantification slowdown.
+        if use_j_resolve:
+            _ppm_min = float(self.app.ppm.min()) if self.app.ppm is not None else 0.0
+            _ppm_max = float(self.app.ppm.max()) if self.app.ppm is not None else 10.0
+            for _sh in results:
+                if (str(_sh.get('_mid', '')) not in good_met_ids
+                        or _effective_quality(_sh) == 'bad'):
+                    continue
+                _sh['_line_selection'] = select_clean_lines(
+                    hit=_sh,
+                    pk_by_rank=_pk_by_rank,
+                    j_resolve_contribs=_j_resolve_contribs,
+                    mid_str=str(_sh.get('_mid', '')),
+                    use_nnls=True,
+                    ppm_limits=(_ppm_min, _ppm_max),
+                )
 
         def _hit_sort_key(h, mid_str):
             pr   = h.get('peak_rank')
@@ -606,10 +619,15 @@ class _QuantCompMixin:
                 if _h_mid in _assigned_mets:
                     continue
                 _pr = _h.get('peak_rank')
-                if _pr in _assigned_peaks:
+                # peak_rank None = no detected peak (DB gap-fill candidate). Such
+                # hits still compete (claim their predicted-lines region below) but
+                # must NOT occupy the single None slot — otherwise the first one
+                # would block every other gap-fill metabolite.
+                if _pr is not None and _pr in _assigned_peaks:
                     continue
                 _assigned_mets.add(_h_mid)
-                _assigned_peaks.add(_pr)
+                if _pr is not None:
+                    _assigned_peaks.add(_pr)
                 met_map[_h_mid] = {'name': _h.get('name', _h_mid), 'hits': [_h]}
 
                 # Non-singlet: claim every peak_rank whose ppm falls within the
@@ -971,6 +989,7 @@ class _QuantCompMixin:
             s_areas = np.zeros(n_s)
             found   = False
             _hit_has_anchor = False
+            _met_synthetic_db = False   # quantified from DB window (no detected peak)
             _j_frac_this_met = None
             for hit in info['hits']:
                 # Prefer rank-based lookup: annotation peak_rank maps directly to
@@ -978,8 +997,31 @@ class _QuantCompMixin:
                 # search which can land on the wrong peak when lines are close.
                 p = _pk_by_rank.get(hit.get('peak_rank')) or \
                     self._find_peak(hit.get('peak_ppm', hit.get('ppm', 0)))
+                _synthetic_db = False
                 if p is None:
-                    continue
+                    # No detected peak. In Multiplet mode, gap-fill: integrate the
+                    # DB-predicted window (exact line positions from transitions)
+                    # by trapz, so a user-confirmed multiplet with visible signal
+                    # but no detected apex is still quantified. (Area/Lorentz need
+                    # a detected line → skip as before.)
+                    _pl0 = hit.get('predicted_lines') or []
+                    _pl0_ppms = [float(l['ppm']) for l in _pl0 if 'ppm' in l]
+                    if use_multiplet and _pl0_ppms:
+                        _cen = float(hit.get('peak_ppm') or hit.get('ppm')
+                                     or float(np.mean(_pl0_ppms)))
+                        _si = int(np.argmin(np.abs(ppm_arr - max(_pl0_ppms))))
+                        _ei = int(np.argmin(np.abs(ppm_arr - min(_pl0_ppms))))
+                        p = {'ppm': _cen,
+                             'start_ppm': float(min(_pl0_ppms)),
+                             'end_ppm':   float(max(_pl0_ppms)),
+                             'start_idx': min(_si, _ei),
+                             'end_idx':   max(_si, _ei),
+                             'width_ppm': 0.008,
+                             'rank':      hit.get('peak_rank')}
+                        _synthetic_db = True
+                        _met_synthetic_db = True
+                    else:
+                        continue
                 found = True
                 lo_i = min(p.get('start_idx', 0), p.get('end_idx', 0))
                 hi_i = max(p.get('start_idx', 0), p.get('end_idx', 0))
@@ -1219,7 +1261,12 @@ class _QuantCompMixin:
                 _n_cl = int(p.get('n_cluster_peaks', 1) or 1)
 
                 _lorentz_rejected = use_lorentz and mid not in _lorentz_params
-                if (_gr2 < _R2_MULTI_TRIGGER or _lorentz_rejected) and _n_cl >= 2:
+                # Skip in Multiplet mode: there we integrate the WHOLE multiplet
+                # window (trapz) by design, so per-cluster multi-Lorentz curve_fit
+                # would both contradict that and dominate runtime.
+                if ((not use_multiplet)
+                        and (_gr2 < _R2_MULTI_TRIGGER or _lorentz_rejected)
+                        and _n_cl >= 2):
                     # cluster_lo / cluster_hi are spectrum indices (from peak
                     # detection) — use them directly; avoids searchsorted on the
                     # descending ppm_arr (NMR convention).
@@ -1454,7 +1501,8 @@ class _QuantCompMixin:
                                   '_j_resolve_frac': _jr_frac,
                                   '_align_shifts': _align_shifts.get(mid),
                                   '_multiplet_window': _mult_win,
-                                  '_multiplet_ppm':   _mult_ppm}
+                                  '_multiplet_ppm':   _mult_ppm,
+                                  '_synthetic_db':    _met_synthetic_db}
 
             if not found:
                 continue

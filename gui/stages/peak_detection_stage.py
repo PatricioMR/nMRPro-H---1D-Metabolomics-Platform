@@ -560,16 +560,34 @@ class PeakDetectionStage(BaseStage):
                 overlay.after(100, _poll)
                 return
 
-            # Close overlay
+            # Detection done — keep the overlay up while we finalise (peak
+            # format conversion, area drawing, STOCSY matrix). Destroying it
+            # here would leave that heavy post-processing running with no
+            # progress indicator.
             try:
                 pb['value'] = 100
                 _pct_lbl.config(text="100%")
-                overlay.grab_release()
-                overlay.destroy()
+                _lbl.config(text="Finalising…")
+                overlay.update_idletasks()
             except Exception:
                 pass
 
+            def _destroy_overlay():
+                try:
+                    overlay.grab_release()
+                    overlay.destroy()
+                except Exception:
+                    pass
+
+            def _overlay_step(msg):
+                try:
+                    _lbl.config(text=msg)
+                    overlay.update_idletasks()
+                except Exception:
+                    pass
+
             if _result['error'] is not None:
+                _destroy_overlay()
                 self._status_err(f"Peak detection failed: {_result['error']}")
                 messagebox.showerror("Error",
                                      f"Peak detection failed:\n{_result['error']}")
@@ -657,11 +675,13 @@ class PeakDetectionStage(BaseStage):
             self.btn_show_baseline.config(state="normal")
             self.btn_search_overlaps.config(state="normal")
             self.btn_auto_deconv_asym.config(state="normal")
+            _overlay_step("Drawing peak areas…")
             self._status("Drawing peak areas…")
             self.color_peaks(force=True)
             self._status_ok(f"Found {len(self.peaks)} peaks  ({elapsed:.2f}s)")
 
             # Build graph STOCSY correlation matrix from area_per_sample vectors.
+            _overlay_step("Computing peak correlations…")
             try:
                 from processing.stocsy import compute_peak_correlation_matrix
                 _aint = getattr(self.app, 'all_intensities', None)
@@ -677,6 +697,7 @@ class PeakDetectionStage(BaseStage):
             self.deconv_status.config(
                 text="Run 'Search for Overlaps' to find regions needing deconvolution",
                 foreground="gray")
+            _destroy_overlay()
             messagebox.showinfo(
                 "Success",
                 f"Detected {len(self.peaks)} peaks\n"

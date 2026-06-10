@@ -3133,23 +3133,11 @@ class AnnotationResultsWindow:
         self._peak_assignments = {}  # rank → (met, mp)
 
         for rank, cands in all_cands.items():
-            # Sort: auto-anchored (all lines found + ΔJ < 0.2 + Δppm < 0.05) first, then by composite score.
-            # This ensures a J-confirmed match wins over a higher-scoring singlet
-            # when both compete for the same peak.
-            def _sort_key(x):
-                _sc, _m, _mp = x
-                dj = _mp.get('delta_j_hz')
-                j_anchor_bonus = 0.20 if (dj is not None and dj < 0.5) else 0.0
-                # J-anchored clean singlet: companion multiplet proves identity
-                _mt = str(_mp.get('type') or _mp.get('multiplicity') or 's').lower().strip()
-                singlet_j_bonus = 0.25 if (
-                    _mt in ('s', 'singlet', '', 'm', 'multiplet')
-                    and _mp.get('j_met_confirmed')
-                    and _mp.get('anchor_status') == 'clean'
-                    and _mp.get('anchor_pos_confidence') in ('high', 'medium')
-                ) else 0.0
-                return _sc + j_anchor_bonus + singlet_j_bonus
-            cands.sort(key=_sort_key, reverse=True)
+            # Sort: J-confirmed match wins over a higher-scoring singlet when both
+            # compete for the same peak. Shared key keeps the Peak List in sync.
+            from gui.stages._annotation_helpers import _assignment_sort_key
+            cands.sort(key=lambda x: _assignment_sort_key(x[0], x[2]),
+                       reverse=True)
             self._peak_candidates[rank] = cands
             # Prefer a manually-assigned 'good' match, otherwise take best score
             manual = next(

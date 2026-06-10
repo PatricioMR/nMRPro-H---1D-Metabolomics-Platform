@@ -379,6 +379,12 @@ class StatisticsStage:
             ttk.Checkbutton(self._opt_frame, text='FDR correction (BH)',
                             variable=self._p_adj_var
                             ).grid(row=4, column=0, columnspan=2, sticky=tk.W)
+            # Persistent label/colour style (survives option rebuilds)
+            self._ensure_volcano_style()
+            # Gear button pinned to the top-right corner of the Options frame
+            _gear = ttk.Button(self._opt_frame, text='⚙', width=3,
+                               command=self._open_volcano_style_dialog)
+            _gear.place(relx=1.0, rely=0.0, anchor='ne', x=-2, y=-2)
             # Populate group comboboxes
             self._refresh_groups()
 
@@ -970,10 +976,9 @@ class StatisticsStage:
         dlg.title('Sample Normality & Grubbs Outlier Check')
         dlg.resizable(True, True)
         dlg.update_idletasks()
-        px = self.frame.winfo_rootx() + self.frame.winfo_width() // 2
-        py = self.frame.winfo_rooty() + self.frame.winfo_height() // 2
         dw, dh = 960, 480
-        dlg.geometry(f'{dw}x{dh}+{px - dw//2}+{py - dh//2}')
+        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        dlg.geometry(f'{dw}x{dh}+{(sw - dw) // 2}+{(sh - dh) // 2}')
 
         cols   = ('sample', 'group', 'n', 'sw_stat', 'sw_p',
                   'parametric', 'dist', 'g_stat', 'g_crit', 'outlier')
@@ -1032,6 +1037,11 @@ class StatisticsStage:
             messagebox.showinfo('Saved', f'Exported to {path}', parent=dlg)
 
         ttk.Button(bot, text='Export CSV', command=_export_csv).pack(side=tk.LEFT, padx=4)
+        ttk.Button(
+            bot, text='📈 Normality plots',
+            command=lambda: self._open_normality_plots(
+                X, X_log, all_names, all_groups)
+        ).pack(side=tk.LEFT, padx=4)
         ttk.Label(
             bot,
             text=(f'{n_samples} samples · {n_analytes} analytes · '
@@ -1040,6 +1050,92 @@ class StatisticsStage:
                   'G > G_crit (α=0.05) → possible outlier'),
             font=('Arial', 7), foreground='#555'
         ).pack(side=tk.LEFT, padx=8)
+
+    def _open_normality_plots(self, X, X_log, all_names, all_groups):
+        """MetaboAnalyst-style normality diagnostics.
+
+        Three panels:
+          • Density before  — per-sample KDE of raw concentrations
+                               (typically right-skewed → non-normal).
+          • Density after    — per-sample KDE of log-transformed values
+                               (should approach a symmetric bell → normal).
+          • Q-Q plot         — pooled, mean-centred per sample on the log
+                               scale, against the normal quantiles. Points on
+                               the diagonal ⇒ normal.
+
+        Per-sample lines are coloured by group so batch/group effects are
+        visible, matching MetaboAnalyst's normalization QC view.
+        """
+        from scipy import stats as spstats
+        from matplotlib.figure import Figure
+        from matplotlib.backends.backend_tkagg import (
+            FigureCanvasTkAgg, NavigationToolbar2Tk)
+
+        dlg = tk.Toplevel(self.frame)
+        dlg.title('Normality Plots')
+        dlg.resizable(True, True)
+        dlg.update_idletasks()
+        dw, dh = 1100, 460
+        sw, sh = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        dlg.geometry(f'{dw}x{dh}+{(sw - dw) // 2}+{(sh - dh) // 2}')
+
+        g_colors = getattr(self.app, 'group_colors', {}) if self.app else {}
+
+        def _kde_curve(ax, values, color, label):
+            v = values[np.isfinite(values)]
+            if v.size < 2 or np.std(v) < 1e-12:
+                return
+            try:
+                kde = spstats.gaussian_kde(v)
+                xs  = np.linspace(float(v.min()), float(v.max()), 200)
+                ax.plot(xs, kde(xs), color=color, lw=1.0, alpha=0.75, label=label)
+            except Exception:
+                ax.hist(v, bins=20, density=True, color=color, alpha=0.25)
+
+        fig = Figure(figsize=(11, 4.4), dpi=100, layout='constrained')
+        ax1 = fig.add_subplot(1, 3, 1)
+        ax2 = fig.add_subplot(1, 3, 2)
+        ax3 = fig.add_subplot(1, 3, 3)
+
+        seen_groups = set()
+        for i in range(X.shape[0]):
+            grp = all_groups[i] if i < len(all_groups) else 'Unknown'
+            col = g_colors.get(grp, '#1f77b4')
+            lbl = grp if grp not in seen_groups else None
+            seen_groups.add(grp)
+            _kde_curve(ax1, X[i, :],     col, lbl)
+            _kde_curve(ax2, X_log[i, :], col, lbl)
+
+        ax1.set_title('Density — raw', fontsize=9)
+        ax1.set_xlabel('Concentration (au)', fontsize=8)
+        ax1.set_ylabel('Density', fontsize=8)
+        ax2.set_title('Density — log(1+x)', fontsize=9)
+        ax2.set_xlabel('log concentration', fontsize=8)
+        for ax in (ax1, ax2):
+            ax.tick_params(labelsize=7)
+            ax.grid(True, alpha=0.25, linestyle=':')
+        if seen_groups:
+            ax2.legend(fontsize=6, framealpha=0.7)
+
+        # Q-Q on pooled, per-sample mean-centred log values (removes overall
+        # concentration offset so the test reflects distribution shape).
+        pooled = (X_log - np.nanmean(X_log, axis=1, keepdims=True)).ravel()
+        pooled = pooled[np.isfinite(pooled)]
+        if pooled.size >= 3:
+            spstats.probplot(pooled, dist='norm', plot=ax3)
+            ax3.get_lines()[0].set_markersize(2.5)
+            ax3.get_lines()[0].set_alpha(0.4)
+            ax3.get_lines()[1].set_color('#c62828')
+        ax3.set_title('Q-Q plot (log, pooled)', fontsize=9)
+        ax3.set_xlabel('Theoretical quantiles', fontsize=8)
+        ax3.set_ylabel('Sample quantiles', fontsize=8)
+        ax3.tick_params(labelsize=7)
+        ax3.grid(True, alpha=0.25, linestyle=':')
+
+        canvas = FigureCanvasTkAgg(fig, master=dlg)
+        canvas.draw()
+        NavigationToolbar2Tk(canvas, dlg).update()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
     def _build_right_panel(self):
         """Build the statistics plot area inside app.right_panel."""
@@ -1112,6 +1208,8 @@ class StatisticsStage:
         """
         import io
         from PIL import Image as _PILImage
+        if self._fig is None or getattr(self, '_scroll_canvas', None) is None:
+            return                      # panel not built yet — nothing to render
         w_px = self._scroll_canvas.winfo_width()
         h_px = self._scroll_canvas.winfo_height()
         if w_px < 50 or h_px < 50:
@@ -1203,13 +1301,30 @@ class StatisticsStage:
             pass
 
     def _show_right_panel(self):
-        if self._right_widget is None:
+        # Rebuild if never built OR if a previous build aborted before creating
+        # the figure (leaves _right_widget set but _fig None → later crashes).
+        if self._right_widget is None or self._fig is None:
+            if self._right_widget is not None:
+                try:
+                    self._right_widget.destroy()
+                except Exception:
+                    pass
+                self._right_widget = None
             self._build_right_panel()
         self._right_widget.pack(fill=tk.BOTH, expand=True)
 
     # ── Run ──────────────────────────────────────────────────────────────────
 
     def _run(self):
+        # Ensure the plot panel/figure exist (a prior build may have aborted,
+        # leaving self._fig None).
+        if self._fig is None:
+            self._show_right_panel()
+        if self._fig is None:
+            messagebox.showerror('Statistics',
+                                 'Plot panel failed to initialise.',
+                                 parent=self.frame)
+            return
         method = self._method_var.get()
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
         _single_sample_ok = method in ('Metabolic Profile', 'Boxplot', 'Violin')
@@ -1874,6 +1989,165 @@ class StatisticsStage:
         ax.legend(fontsize=8)
         ax.set_facecolor('#f9f9f9')
 
+    def _ensure_volcano_style(self):
+        """Lazily create the persistent volcano style dict with defaults."""
+        if not hasattr(self, '_volcano_style') or not self._volcano_style:
+            self._volcano_style = {
+                'n_labels':       10,
+                'color_up':       '#c62828',
+                'color_down':     '#1565c0',
+                'color_ns':       '#888888',
+                'dot_size':       28,
+                'label_fontsize': 6.5,
+                'label_bold':     False,
+                'leader_lines':   True,
+            }
+        return self._volcano_style
+
+    def _open_volcano_style_dialog(self):
+        """Editor for volcano label/colour style. Re-renders on Apply."""
+        from tkinter import colorchooser
+        st = self._ensure_volcano_style()
+
+        dlg = tk.Toplevel(self.frame)
+        dlg.title('Volcano Style')
+        dlg.resizable(False, False)
+        dlg.transient(self.frame)
+        dlg.grab_set()
+
+        frm = ttk.Frame(dlg, padding=10)
+        frm.pack(fill=tk.BOTH, expand=True)
+
+        n_var    = tk.IntVar(value=int(st['n_labels']))
+        size_var = tk.DoubleVar(value=float(st['label_fontsize']))
+        dot_var  = tk.IntVar(value=int(st['dot_size']))
+        bold_var = tk.BooleanVar(value=bool(st['label_bold']))
+        lead_var = tk.BooleanVar(value=bool(st['leader_lines']))
+        colors   = {'color_up': st['color_up'], 'color_down': st['color_down'],
+                    'color_ns': st['color_ns']}
+
+        r = 0
+        ttk.Label(frm, text='Labels shown (top significant):').grid(
+            row=r, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(frm, from_=0, to=100, increment=1, width=6,
+                    textvariable=n_var).grid(row=r, column=1, sticky=tk.W, padx=6)
+        r += 1
+        ttk.Label(frm, text='Label font size:').grid(
+            row=r, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(frm, from_=3.0, to=20.0, increment=0.5, width=6, format='%.1f',
+                    textvariable=size_var).grid(row=r, column=1, sticky=tk.W, padx=6)
+        r += 1
+        ttk.Label(frm, text='Dot size:').grid(
+            row=r, column=0, sticky=tk.W, pady=2)
+        ttk.Spinbox(frm, from_=5, to=120, increment=1, width=6,
+                    textvariable=dot_var).grid(row=r, column=1, sticky=tk.W, padx=6)
+        r += 1
+        ttk.Checkbutton(frm, text='Bold labels', variable=bold_var).grid(
+            row=r, column=0, columnspan=2, sticky=tk.W, pady=2)
+        r += 1
+        ttk.Checkbutton(frm, text='Leader lines for crowded labels',
+                        variable=lead_var).grid(
+            row=r, column=0, columnspan=2, sticky=tk.W, pady=2)
+        r += 1
+
+        swatches = {}
+        for key, label in (('color_up',   'Up dots colour'),
+                           ('color_down', 'Down dots colour'),
+                           ('color_ns',   'NS dots colour')):
+            ttk.Label(frm, text=label + ':').grid(
+                row=r, column=0, sticky=tk.W, pady=2)
+            sw = tk.Label(frm, width=6, background=colors[key], relief='solid', bd=1)
+            sw.grid(row=r, column=1, sticky=tk.W, padx=6)
+            swatches[key] = sw
+
+            def _pick(k=key):
+                c = colorchooser.askcolor(color=colors[k], parent=dlg)[1]
+                if c:
+                    colors[k] = c
+                    swatches[k].config(background=c)
+            ttk.Button(frm, text='…', width=3,
+                       command=_pick).grid(row=r, column=2, padx=2)
+            r += 1
+
+        def _apply():
+            st['n_labels']       = int(n_var.get())
+            st['label_fontsize'] = float(size_var.get())
+            st['dot_size']       = int(dot_var.get())
+            st['label_bold']     = bool(bold_var.get())
+            st['leader_lines']   = bool(lead_var.get())
+            st['color_up']       = colors['color_up']
+            st['color_down']     = colors['color_down']
+            st['color_ns']       = colors['color_ns']
+            dlg.destroy()
+            try:
+                self._run()
+            except Exception:
+                pass
+
+        btns = ttk.Frame(frm)
+        btns.grid(row=r, column=0, columnspan=3, sticky=tk.EW, pady=(10, 0))
+        ttk.Button(btns, text='Apply', command=_apply).pack(side=tk.LEFT, padx=4)
+        ttk.Button(btns, text='Cancel', command=dlg.destroy).pack(side=tk.LEFT, padx=4)
+
+        dlg.update_idletasks()
+        sw_, sh_ = dlg.winfo_screenwidth(), dlg.winfo_screenheight()
+        w_, h_ = dlg.winfo_width(), dlg.winfo_height()
+        dlg.geometry(f'+{(sw_ - w_) // 2}+{(sh_ - h_) // 2}')
+
+    def _repel_labels(self, ax, xy, labels, fontsize, bold, leader, leader_color):
+        """Place point labels with greedy overlap removal + optional leader lines.
+
+        No external dependency (adjustText). Operates in display space: starts
+        each label at a small offset from its point, then iteratively pushes
+        overlapping label boxes apart. When a label ends up far from its point,
+        an arrowless leader line connects them so the mapping stays unambiguous.
+        """
+        if not labels:
+            return
+        fig = ax.figure
+        weight = 'bold' if bold else 'normal'
+        arrow = (dict(arrowstyle='-', color=leader_color, lw=0.4,
+                      shrinkA=0, shrinkB=2) if leader else None)
+        anns = []
+        for (x, y), lab in zip(xy, labels):
+            anns.append(ax.annotate(
+                lab, xy=(x, y), xytext=(7, 5), textcoords='offset points',
+                fontsize=fontsize, weight=weight, color='#222',
+                zorder=6, ha='left', va='bottom',
+                arrowprops=arrow))
+
+        # One draw to obtain a usable renderer; extents recompute without redraw.
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+        except Exception:
+            return
+
+        def _extent(a):
+            return a.get_window_extent(renderer)
+
+        for _ in range(120):
+            moved = False
+            boxes = [_extent(a) for a in anns]
+            for i in range(len(anns)):
+                for j in range(i + 1, len(anns)):
+                    bi, bj = boxes[i], boxes[j]
+                    if not bi.overlaps(bj):
+                        continue
+                    moved = True
+                    # Push apart mostly vertically (labels read in stacked rows).
+                    ci = (bi.y0 + bi.y1) / 2
+                    cj = (bj.y0 + bj.y1) / 2
+                    step = max(1.0, (bi.height + bj.height) / 4)
+                    up, down = (i, j) if ci >= cj else (j, i)
+                    for idx, dy in ((up, +step), (down, -step)):
+                        ox, oy = anns[idx].get_position()
+                        anns[idx].set_position((ox, oy + dy))
+                    boxes[i] = _extent(anns[i])
+                    boxes[j] = _extent(anns[j])
+            if not moved:
+                break
+
     def _plot_volcano(self, X_raw, sample_names, feature_labels, group_labels):
         from scipy import stats
         ga = getattr(self, '_grp_a_var', None)
@@ -1925,25 +2199,38 @@ class StatisticsStage:
 
         neg_log_p = -np.log10(np.clip(pvals_plot, 1e-15, 1.0))
 
+        style = self._ensure_volcano_style()
+        c_up   = style['color_up']
+        c_down = style['color_down']
+        c_ns   = style['color_ns']
+        dot_s  = float(style['dot_size'])
+
         ax = self._fig.add_subplot(111)
         sig_up   = (log2fc > np.log2(fc_thr))  & (pvals_plot < p_thr)
         sig_down = (log2fc < -np.log2(fc_thr)) & (pvals_plot < p_thr)
         ns       = ~(sig_up | sig_down)
 
-        ax.scatter(log2fc[ns],       neg_log_p[ns],       color='#888888', s=20,
+        ax.scatter(log2fc[ns],       neg_log_p[ns],       color=c_ns, s=dot_s * 0.7,
                    alpha=0.5, label='NS', edgecolors='none')
-        ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color='#c62828', s=28,
+        ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color=c_up, s=dot_s,
                    alpha=0.85, label=f'Up in {gb}', edgecolors='white', lw=0.4)
-        ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color='#1565c0', s=28,
+        ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down, s=dot_s,
                    alpha=0.85, label=f'Up in {ga}', edgecolors='white', lw=0.4)
 
-        # Label top significant
-        top_idx = np.argsort(neg_log_p)[::-1][:10]
-        for i in top_idx:
-            if pvals_plot[i] < p_thr:
-                ax.annotate(feature_labels[i], (log2fc[i], neg_log_p[i]),
-                            fontsize=5.5, xytext=(3, 2),
-                            textcoords='offset points', color='#333')
+        # Label the top-N significant features. Names are de-overlapped and, when
+        # crowded, tethered to their dot by a leader line (see _repel_labels).
+        n_lab = int(style['n_labels'])
+        if n_lab > 0:
+            sig_mask = pvals_plot < p_thr
+            cand = [i for i in np.argsort(neg_log_p)[::-1] if sig_mask[i]][:n_lab]
+            self._repel_labels(
+                ax,
+                xy=[(log2fc[i], neg_log_p[i]) for i in cand],
+                labels=[feature_labels[i] for i in cand],
+                fontsize=float(style['label_fontsize']),
+                bold=bool(style['label_bold']),
+                leader=bool(style['leader_lines']),
+                leader_color='#555')
 
         ax.axhline(-np.log10(p_thr), color='#555', lw=0.8, ls='--',
                    label=f'p={p_thr}')
@@ -2017,7 +2304,9 @@ class StatisticsStage:
         ]
 
         n_groups = len(unique_groups)
-        ncols = min(n_groups, 4)
+        # Max 2 columns — extra groups stack into new rows so the figure grows
+        # downward without losing per-pie proportion/quality.
+        ncols = min(n_groups, 2)
         nrows = (n_groups + ncols - 1) // ncols
         # Store desired export size (not applied to canvas — fits window as-is)
         self._pie_export_figsize = (max(7.0 * ncols, 7), max(5.0 * nrows, 4.5))

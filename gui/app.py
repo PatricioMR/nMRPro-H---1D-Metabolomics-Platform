@@ -102,9 +102,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
         try:
             from PIL import Image, ImageTk
-            logo_path = os.path.join(
-                os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                'utils', 'Logo_nMRPipe.png')
+            from app_paths import asset_path
+            logo_path = asset_path('utils', 'Logo_nMRPipe.png')
             img = Image.open(logo_path).convert('RGBA')
             img = img.resize((300, 300), Image.LANCZOS)
             self._splash_logo = ImageTk.PhotoImage(img)

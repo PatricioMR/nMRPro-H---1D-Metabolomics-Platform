@@ -86,6 +86,24 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
                   font=('Arial', 7), foreground='gray').pack(
                       side=tk.LEFT, padx=4)
 
+        # Water-suppression exclusion zone — standard 1H-NMR metabolomics
+        # practice: the residual water region (~4.70–4.90 ppm) is dominated by
+        # solvent-suppression artefacts and must not be annotated (Emwas 2019;
+        # Chenomx/MetaboAnalyst exclusion lists).
+        wf = ttk.Frame(s3); wf.pack(fill=tk.X, pady=2)
+        self.exclude_water_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(wf, text='Exclude water region',
+                        variable=self.exclude_water_var).pack(side=tk.LEFT)
+        self.water_lo_var = tk.DoubleVar(value=4.70)
+        self.water_hi_var = tk.DoubleVar(value=4.90)
+        ttk.Entry(wf, textvariable=self.water_lo_var, width=5).pack(
+            side=tk.LEFT, padx=(6, 1))
+        ttk.Label(wf, text='–').pack(side=tk.LEFT)
+        ttk.Entry(wf, textvariable=self.water_hi_var, width=5).pack(
+            side=tk.LEFT, padx=1)
+        ttk.Label(wf, text='ppm', font=('Arial', 7),
+                  foreground='gray').pack(side=tk.LEFT)
+
         mf = ttk.Frame(s3); mf.pack(fill=tk.X, pady=2)
         ttk.Label(mf, text='Internal library:', width=18).pack(side=tk.LEFT)
         self.internal_library_mode_var = tk.StringVar(value='Metabolomics (default)')

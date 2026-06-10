@@ -331,50 +331,16 @@ class PeakListWindow:
         _show_none = not getattr(self, '_filt_none', None) or self._filt_none.get()
 
         # Build metabolite lookup: one label per peak, best candidate wins.
-        #
-        # Eligibility (same rules as annotation_results_window):
-        #   • annotation_quality == 'bad'  → discard
-        #   • singlet                      → always eligible
-        #   • non-singlet                  → eligible only when ΔJ < 0.5 Hz
-        #
-        # Priority (one metabolite per rank):
-        #   composite_score is the unified tiebreaker — it already encodes
-        #   ΔJ quality (60 %) and ppm closeness (10 %), so:
-        #     · best ΔJ wins among multiplets
-        #     · closest ppm wins among singlets
-        #     · J-confirmed multiplet beats any singlet at the same rank
+        # The winner must match the Annotation Results window, so this reuses
+        # the same canonical selection (select_metabolite_per_rank) instead of
+        # a divergent composite_score-only tiebreak.
         _met_by_rank = {}  # rank → metabolite name
         _ann = getattr(self.app, 'stages', {}).get('annotation', None) if self.app else None
         if _ann:
             _metabolites = getattr(_ann, '_metabolites', None)
             if _metabolites:
-                def _is_singlet_mp(mp):
-                    mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                    return mult in ('s', 'singlet', '', 'm', 'multiplet')
-
-                # Collect all valid candidates: {rank: [(score, name), ...]}
-                _candidates = {}
-                for _met in _metabolites:
-                    _mname = _met.get('name', '')
-                    for _mp in _met.get('matched_peaks', []):
-                        if _mp.get('annotation_quality') == 'bad':
-                            continue
-                        _pr = _mp.get('peak_rank')
-                        if _pr is None:
-                            continue
-                        if _is_singlet_mp(_mp):
-                            _eligible = True
-                        else:
-                            _dj = _mp.get('delta_j_hz')
-                            _eligible = (_dj is not None and float(_dj) < 0.5)
-                        if not _eligible:
-                            continue
-                        _score = float(_mp.get('composite_score', 0) or 0)
-                        _candidates.setdefault(_pr, []).append((_score, _mname))
-
-                # Pick highest-scoring candidate per rank
-                for _pr, _cands in _candidates.items():
-                    _met_by_rank[_pr] = max(_cands, key=lambda x: x[0])[1]
+                from gui.stages._annotation_helpers import select_metabolite_per_rank
+                _met_by_rank = select_metabolite_per_rank(_metabolites)
             else:
                 # Fallback: raw results list (no ΔJ filtering possible)
                 _last = getattr(_ann, '_last_results_args', None) or {}
@@ -445,32 +411,12 @@ class PeakListWindow:
         if not self.tree.exists(iid):
             return
         ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        # Same single-winner logic as _populate: best composite_score per rank
+        # Same canonical single-winner logic as _populate
         _metabolites_rr = getattr(ann, '_metabolites', None)
         _met_by_rank = {}
         if _metabolites_rr:
-            def _is_sing_rr(mp):
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                return mult in ('s', 'singlet', '', 'm', 'multiplet')
-            _cands_rr = {}
-            for _met_rr in _metabolites_rr:
-                for _mp_rr in _met_rr.get('matched_peaks', []):
-                    if _mp_rr.get('annotation_quality') == 'bad':
-                        continue
-                    _pr_rr = _mp_rr.get('peak_rank')
-                    if _pr_rr is None:
-                        continue
-                    if _is_sing_rr(_mp_rr):
-                        _elig = True
-                    else:
-                        _dj_rr = _mp_rr.get('delta_j_hz')
-                        _elig = (_dj_rr is not None and float(_dj_rr) < 0.5)
-                    if not _elig:
-                        continue
-                    _sc_rr = float(_mp_rr.get('composite_score', 0) or 0)
-                    _cands_rr.setdefault(_pr_rr, []).append((_sc_rr, _met_rr.get('name', '')))
-            for _pr_rr, _cl in _cands_rr.items():
-                _met_by_rank[_pr_rr] = max(_cl, key=lambda x: x[0])[1]
+            from gui.stages._annotation_helpers import select_metabolite_per_rank
+            _met_by_rank = select_metabolite_per_rank(_metabolites_rr)
         met_name = (peak.get('assigned_metabolite')
                     or peak.get('metabolite')
                     or _met_by_rank.get(peak.get('rank'), '—'))

@@ -55,6 +55,67 @@ def _align_peaks_to_reference(peaks, ppm_arr, all_intensities,
         return 0.0, False
 
 
+def _assignment_sort_key(score, mp):
+    """Ranking key for the per-peak metabolite winner.
+
+    Single source of truth shared by AnnotationResultsWindow._build_peak_assignments
+    and the Peak List metabolite column, so both pick the SAME metabolite for a
+    given peak rank. A pure composite_score tiebreak (the old Peak List logic)
+    diverged from the results window: it ignored these bonuses, so in overlap
+    regions the two views could disagree on which metabolite owns a peak.
+
+      • j_anchor_bonus  — a J-confirmed multiplet (ΔJ < 0.5 Hz) beats a higher
+                          scoring singlet competing for the same peak.
+      • singlet_j_bonus — a clean singlet whose companion multiplet proves the
+                          metabolite identity outranks an unsupported singlet.
+    """
+    dj = mp.get('delta_j_hz')
+    j_anchor_bonus = 0.20 if (dj is not None and float(dj) < 0.5) else 0.0
+    _mt = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
+    singlet_j_bonus = 0.25 if (
+        _mt in ('s', 'singlet', '', 'm', 'multiplet')
+        and mp.get('j_met_confirmed')
+        and mp.get('anchor_status') == 'clean'
+        and mp.get('anchor_pos_confidence') in ('high', 'medium')
+    ) else 0.0
+    return float(score) + j_anchor_bonus + singlet_j_bonus
+
+
+def select_metabolite_per_rank(metabolites):
+    """Canonical peak_rank → metabolite-name map (1 peak → 1 metabolite).
+
+    Mirrors AnnotationResultsWindow._build_peak_assignments candidate selection:
+      • discard matched peaks marked annotation_quality == 'bad'
+      • a manually-confirmed 'good' match wins over any auto candidate
+      • otherwise the highest _assignment_sort_key wins
+
+    Used by the Peak List as the fallback when a detected peak has no
+    assigned_metabolite propagated onto it yet.
+    """
+    cands = {}  # rank -> [(key, name, is_good)]
+    for met in metabolites or []:
+        name = met.get('name', '')
+        for mp in met.get('matched_peaks', []):
+            if mp.get('annotation_quality') == 'bad':
+                continue
+            rank = mp.get('peak_rank')
+            if rank is None:
+                continue
+            score = float(mp.get('composite_score',
+                                 mp.get('multiplet_score', 0.0)) or 0.0)
+            cands.setdefault(rank, []).append((
+                _assignment_sort_key(score, mp),
+                name,
+                mp.get('annotation_quality') == 'good',
+            ))
+    out = {}
+    for rank, lst in cands.items():
+        good = [c for c in lst if c[2]]
+        pool = good if good else lst
+        out[rank] = max(pool, key=lambda c: c[0])[1]
+    return out
+
+
 def _ppm_score(exp_ppm, db_ppm, tolerance):
     """Gaussian score centred at 0 delta. Score=1 at perfect match."""
     sigma = tolerance / 2.0
@@ -296,8 +357,8 @@ def _ask_search_mode(parent_widget):
 
 def _pick_database(parent_widget):
     """Show dialog to pick a database: bundled DBs or browse. Returns path or None."""
-    _here = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    _db_folder = os.path.join(_here, 'databases')
+    from app_paths import databases_dir
+    _db_folder = databases_dir()
     bundled = []
     if os.path.isdir(_db_folder):
         for fname in sorted(os.listdir(_db_folder)):

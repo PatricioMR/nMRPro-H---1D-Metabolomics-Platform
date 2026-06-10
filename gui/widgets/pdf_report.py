@@ -221,17 +221,6 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     si = samples_info or []
     n  = all_int.shape[1] if all_int.ndim > 1 else 1
 
-    grp_idx: dict[str, list[int]] = {}
-    for i, s in enumerate(si):
-        if i >= n: break
-        lbl   = s.get('label', 'Unknown')
-        stype = str(s.get('type', lbl)).upper()
-        if stype == 'BLK': continue
-        grp_idx.setdefault(lbl, []).append(i)
-
-    def _grp_color(lbl):
-        return group_colors.get(lbl) or _DEFAULT_GROUP_COLORS.get(lbl, '#888888')
-
     _jr_frac     = result.get('_j_resolve_frac')
     _show_deconv = (result.get('_used_j_resolve')
                     and _jr_frac is not None
@@ -251,36 +240,19 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         ax.plot(x, _y_raw_mean, color='#aaaaaa', lw=0.9, alpha=0.45,
                 ls='--', zorder=1, label='Raw (shared peak)')
 
-    if grp_idx:
-        # Todas as amostras individualmente — baixa opacidade
-        for grp, idxs in grp_idx.items():
-            c = _grp_color(grp)
-            for si_i in idxs:
-                y = all_int[i_lo:i_hi+1, si_i]
-                if _show_deconv:
-                    y = y * float(_jr_frac)
-                ax.plot(x, y, color=c, lw=0.5, alpha=0.25)
-                all_ys.append(y)
-        # Média por grupo — opacidade total, linha mais grossa
-        for grp, idxs in grp_idx.items():
-            c  = _grp_color(grp)
-            ym = np.mean(all_int[i_lo:i_hi+1, :][:, idxs], axis=1)
-            if _show_deconv:
-                ym = ym * float(_jr_frac)
-            ax.plot(x, ym, color=c, lw=1.8, alpha=1.0)
-            y_peak_max = max(y_peak_max, float(np.max(ym)))
-    else:
-        y = (all_int[i_lo:i_hi+1] if all_int.ndim == 1
-             else np.mean(all_int[i_lo:i_hi+1], axis=1))
-        if _show_deconv:
-            y = y * float(_jr_frac)
-        ax.plot(x, y, color='#2e6da4', lw=1.5)
-        y_peak_max = float(np.max(y))
-        all_ys.append(y)
+    # Single fill colour for the integrated area (no per-group colouring): the
+    # mean spectrum is drawn once; for NNLS-resolved analytes the curve and fill
+    # are scaled by this analyte's contribution fraction, so the painted area is
+    # exactly the portion of the (shared) peak integrated for THIS analyte.
+    _INTEG_COL = '#2e6da4'
+    _y_mean_full = (all_int[i_lo:i_hi+1] if all_int.ndim == 1
+                    else np.mean(all_int[i_lo:i_hi+1, :], axis=1))
+    _y_plot = _y_mean_full * float(_jr_frac) if _show_deconv else _y_mean_full
+    ax.plot(x, _y_plot, color=_INTEG_COL, lw=1.5, zorder=3)
+    y_peak_max = float(np.max(_y_plot))
+    all_ys.append(_y_plot)
 
-    # Fill região integrada — uma faixa por amostra, cor do grupo, sem overlap
-    # (cada fill usa np.maximum(y, 0) para não descer abaixo de zero e
-    #  fundo branco opaco sobrepõe a faixa anterior — efeito waterfall leve)
+    # Integration window indices
     _mw = result.get('_multiplet_window')
     if _mw and result.get('_integ_mode', '') == 'Multiplet':
         _f_lo_ppm, _f_hi_ppm = min(_mw), max(_mw)
@@ -292,27 +264,15 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         lo_f = max(lo_idx, i_lo)
         hi_f = min(hi_idx, i_hi)
 
+    # Single-colour fill of the integrated area (NNLS → this analyte's fraction).
     if lo_f < hi_f:
         xf = ppm_f[lo_f:hi_f + 1]
-        if grp_idx:
-            for grp, idxs in grp_idx.items():
-                c = _grp_color(grp)
-                for si_i in idxs:
-                    yf = all_int[lo_f:hi_f + 1, si_i]
-                    if _show_deconv:
-                        yf = yf * float(_jr_frac)
-                    # white backing to prevent colour bleed from samples below
-                    ax.fill_between(xf, 0, np.maximum(yf, 0),
-                                    color='white', alpha=1.0, linewidth=0, zorder=1)
-                    ax.fill_between(xf, 0, np.maximum(yf, 0),
-                                    color=c, alpha=0.18, linewidth=0, zorder=2)
-        else:
-            yf = (np.mean(all_int[lo_f:hi_f + 1, :], axis=1)
-                  if all_int.ndim > 1 else all_int[lo_f:hi_f + 1])
-            if _show_deconv:
-                yf = yf * float(_jr_frac)
-            ax.fill_between(xf, 0, np.maximum(yf, 0),
-                            alpha=0.18, color='#2e6da4', zorder=2)
+        yf = (np.mean(all_int[lo_f:hi_f + 1, :], axis=1)
+              if all_int.ndim > 1 else all_int[lo_f:hi_f + 1])
+        if _show_deconv:
+            yf = yf * float(_jr_frac)
+        ax.fill_between(xf, 0, np.maximum(yf, 0),
+                        alpha=0.30, color=_INTEG_COL, linewidth=0, zorder=2)
 
     # Média global para Lorentz overlay
     y_mean = (np.mean(all_int[i_lo:i_hi+1, :], axis=1)
@@ -697,8 +657,8 @@ def generate_pdf(output_path: str, quant_stage, app,
     avail_w = PAGE_W - 2 * MARGIN
 
     # Logo
-    logo_path = (Path(__file__).resolve().parent.parent.parent
-                 / 'utils' / 'Logo_nMRPipe.png')
+    from app_paths import asset_path
+    logo_path = Path(asset_path('utils', 'Logo_nMRPipe.png'))
     logo_img = None
     if logo_path.exists():
         try:

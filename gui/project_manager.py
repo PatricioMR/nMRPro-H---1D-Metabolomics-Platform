@@ -141,6 +141,9 @@ class ProjectManager:
                 'annotations':           dict(getattr(ann, 'annotations', {})),
                 'tolerance':             _safe_var(ann, 'tolerance_var'),
                 'align':                 _safe_var(ann, 'align_var'),
+                'exclude_water':         _safe_var(ann, 'exclude_water_var'),
+                'water_lo':              _safe_var(ann, 'water_lo_var'),
+                'water_hi':              _safe_var(ann, 'water_hi_var'),
                 'quality_marks':         dict(getattr(ann, '_quality_marks', {})),
                 'child_quality_marks':   dict(getattr(ann, '_child_quality_marks', {})),
                 'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
@@ -235,6 +238,7 @@ class ProjectManager:
                 'excluded_metabolites': list(getattr(st, '_excluded_metabolites', set())),
                 'pie_style':           dict(getattr(st, '_pie_style', {})),
                 'box_style':           dict(getattr(st, '_box_style', {})),
+                'volcano_style':       dict(getattr(st, '_volcano_style', {})),
             }
 
         return state
@@ -379,6 +383,9 @@ class ProjectManager:
 
                 _set_var(ann, 'tolerance_var', ann_state.get('tolerance'))
                 _set_var(ann, 'align_var',     ann_state.get('align'))
+                _set_var(ann, 'exclude_water_var', ann_state.get('exclude_water'))
+                _set_var(ann, 'water_lo_var',      ann_state.get('water_lo'))
+                _set_var(ann, 'water_hi_var',      ann_state.get('water_hi'))
 
                 ann._quality_marks         = ann_state.get('quality_marks', {})
                 ann._child_quality_marks   = ann_state.get('child_quality_marks', {})
@@ -588,6 +595,11 @@ class ProjectManager:
                     st._pie_style.update(st_state['pie_style'])
                 if st_state.get('box_style'):
                     st._box_style.update(st_state['box_style'])
+                if st_state.get('volcano_style'):
+                    try:
+                        st._ensure_volcano_style().update(st_state['volcano_style'])
+                    except Exception:
+                        pass
             except Exception as _e:
                 print(f'  statistics restore: {_e}')
 

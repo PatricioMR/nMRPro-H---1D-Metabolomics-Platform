@@ -22,8 +22,8 @@ from pathlib import Path
 
 # ── Path to local pathway DB ──────────────────────────────────────────────────
 
-_HERE       = Path(__file__).parent.parent.parent   # project root
-_LOCAL_DB   = _HERE / 'databases' / 'hmdb_pathways.db'
+from app_paths import databases_dir
+_LOCAL_DB   = Path(databases_dir()) / 'hmdb_pathways.db'
 HMDB_URL    = 'https://hmdb.ca/metabolites/{}.json'
 SMPDB_URL   = 'https://smpdb.ca/view/{}'
 RATE_DELAY  = 0.35
