@@ -233,12 +233,26 @@ class ProjectManager:
         if st:
             state['st'] = {
                 'method':              _safe_var(st, '_method_var'),
+                'mode':                _safe_var(st, '_mode_var'),
                 'scale':               _safe_var(st, '_scale_var'),
                 'excluded_samples':    list(getattr(st, '_excluded_samples', set())),
                 'excluded_metabolites': list(getattr(st, '_excluded_metabolites', set())),
                 'pie_style':           dict(getattr(st, '_pie_style', {})),
                 'box_style':           dict(getattr(st, '_box_style', {})),
                 'volcano_style':       dict(getattr(st, '_volcano_style', {})),
+                'pathway': {
+                    'plot':     _safe_var(st, '_pw_plot_var'),
+                    'category': _safe_var(st, '_pw_cat_var'),
+                    'p_thr':    _safe_var(st, '_pw_p_thr_var'),
+                    'min_mets': _safe_var(st, '_pw_minmets_var'),
+                    'top_n':    _safe_var(st, '_pw_topn_var'),
+                    'use_fdr':  _safe_var(st, '_pw_use_fdr_var'),
+                    'jaccard':  _safe_var(st, '_pw_jaccard_var'),
+                    'sig_only': _safe_var(st, '_pw_sig_only_var'),
+                    'cmap':     _safe_var(st, '_pw_cmap_var'),
+                    'group_a':  _safe_var(st, '_grp_a_var'),
+                    'group_b':  _safe_var(st, '_grp_b_var'),
+                },
             }
 
         return state
@@ -591,6 +605,17 @@ class ProjectManager:
                 _set_var(st, '_scale_var',  st_state.get('scale'))
                 st._excluded_samples    = set(st_state.get('excluded_samples', []))
                 st._excluded_metabolites = set(st_state.get('excluded_metabolites', []))
+                # Pathway-mode params: stash so the lazily-built panel seeds from
+                # them, then rebuild the left panel for the restored mode.
+                if st_state.get('pathway'):
+                    st._pw_saved = dict(st_state['pathway'])
+                _mode = st_state.get('mode')
+                if _mode and hasattr(st, '_mode_var') and hasattr(st, '_left_inner'):
+                    _set_var(st, '_mode_var', _mode)
+                    try:
+                        st._build_left(st._left_inner)
+                    except Exception:
+                        pass
                 if st_state.get('pie_style'):
                     st._pie_style.update(st_state['pie_style'])
                 if st_state.get('box_style'):

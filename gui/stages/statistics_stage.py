@@ -168,9 +168,44 @@ class StatisticsStage:
         left.bind('<MouseWheel>',
                   lambda e: _lc.yview_scroll(-1 * (e.delta // 120), 'units'))
 
+        self._left_inner = left
         self._build_left(left)
 
     def _build_left(self, parent):
+        # Clear (rebuilt when the Statistics/Pathway mode toggles)
+        for w in parent.winfo_children():
+            w.destroy()
+
+        # ── Mode toggle: Statistics | Pathway ────────────────────────────────
+        if not hasattr(self, '_mode_var'):
+            self._mode_var = tk.StringVar(value='statistics')
+        try:
+            _style = ttk.Style()
+            _style.configure('Mode.Toolbutton', borderwidth=1,
+                             relief='raised', padding=4)
+            _style.map('Mode.Toolbutton',
+                       relief=[('selected', 'sunken')])
+            _mode_style = 'Mode.Toolbutton'
+        except Exception:
+            _mode_style = 'Toolbutton'
+        mode_bar = ttk.Frame(parent, relief='groove', borderwidth=1)
+        mode_bar.pack(fill=tk.X, pady=(0, 6))
+        ttk.Radiobutton(mode_bar, text='Statistics', value='statistics',
+                        variable=self._mode_var, command=self._on_mode_change,
+                        style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
+        ttk.Radiobutton(mode_bar, text='Pathway', value='pathway',
+                        variable=self._mode_var, command=self._on_mode_change,
+                        style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
+
+        if self._mode_var.get() == 'pathway':
+            self._build_left_pathway(parent)
+        else:
+            self._build_left_statistics(parent)
+
+    def _on_mode_change(self):
+        self._build_left(self._left_inner)
+
+    def _build_left_statistics(self, parent):
         _SEC = dict(padding=(6, 4, 6, 4), relief='groove')
         _RB  = dict(anchor=tk.W, padx=2, pady=1)
 
@@ -220,12 +255,123 @@ class StatisticsStage:
         ttk.Button(ff, text='Normality check',
                    command=self._open_normality_popup
                    ).pack(fill=tk.X, padx=4, pady=2)
-        ttk.Button(ff, text='🔬 Pathway Analysis',
-                   command=self._open_pathway_analysis
+        self._filter_status_lbl = ttk.Label(
+            ff, text='', font=('Arial', 7), foreground='#666')
+        self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    # ── Pathway mode left panel ──────────────────────────────────────────────
+
+    def _build_left_pathway(self, parent):
+        _SEC = dict(padding=(6, 4, 6, 4), relief='groove')
+        _RB  = dict(anchor=tk.W, padx=2, pady=1)
+
+        # Persistent state (survives mode toggles; seeded from a restored
+        # project via self._pw_saved when present)
+        _sv = getattr(self, '_pw_saved', {}) or {}
+        if not hasattr(self, '_pw_plot_var'):
+            self._pw_plot_var = tk.StringVar(value=_sv.get('plot') or 'Overview enrichment')
+        if not hasattr(self, '_pw_cat_var'):
+            self._pw_cat_var = tk.StringVar(value=_sv.get('category') or 'metabolic')
+        if not hasattr(self, '_pw_p_thr_var'):
+            self._pw_p_thr_var = tk.DoubleVar(value=_sv.get('p_thr') or 0.05)
+        if not hasattr(self, '_pw_minmets_var'):
+            self._pw_minmets_var = tk.IntVar(value=_sv.get('min_mets') or 2)
+        if not hasattr(self, '_pw_topn_var'):
+            self._pw_topn_var = tk.IntVar(value=_sv.get('top_n') or 25)
+        if not hasattr(self, '_pw_use_fdr_var'):
+            self._pw_use_fdr_var = tk.BooleanVar(value=bool(_sv.get('use_fdr', False)))
+        if not hasattr(self, '_pw_jaccard_var'):
+            self._pw_jaccard_var = tk.DoubleVar(value=_sv.get('jaccard') or 0.20)
+        if not hasattr(self, '_pw_sig_only_var'):
+            self._pw_sig_only_var = tk.BooleanVar(value=bool(_sv.get('sig_only', False)))
+        if not hasattr(self, '_pw_cmap_var'):
+            self._pw_cmap_var = tk.StringVar(value=_sv.get('cmap') or 'YlOrRd_r')
+
+        # ── Plot type ────────────────────────────────────────────────────────
+        pf = ttk.LabelFrame(parent, text='Plot', **_SEC)
+        pf.pack(fill=tk.X, pady=(0, 4))
+        for m in ['Overview enrichment', 'Network', 'Dot plot', 'Lollipop']:
+            ttk.Radiobutton(pf, text=m, variable=self._pw_plot_var,
+                            value=m).pack(**_RB)
+
+        # ── Groups (A vs B) ──────────────────────────────────────────────────
+        gf = ttk.LabelFrame(parent, text='Comparison', **_SEC)
+        gf.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(gf, text='Group A:', font=('Arial', 8)
+                  ).grid(row=0, column=0, sticky=tk.W)
+        if not hasattr(self, '_grp_a_var'):
+            self._grp_a_var = tk.StringVar(value=_sv.get('group_a') or '')
+        self._cb_a = ttk.Combobox(gf, textvariable=self._grp_a_var,
+                                  width=14, state='readonly')
+        self._cb_a.grid(row=0, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(gf, text='Group B:', font=('Arial', 8)
+                  ).grid(row=1, column=0, sticky=tk.W)
+        if not hasattr(self, '_grp_b_var'):
+            self._grp_b_var = tk.StringVar(value=_sv.get('group_b') or '')
+        self._cb_b = ttk.Combobox(gf, textvariable=self._grp_b_var,
+                                  width=14, state='readonly')
+        self._cb_b.grid(row=1, column=1, sticky=tk.W, padx=4, pady=1)
+        self._refresh_groups()
+
+        # ── Options ──────────────────────────────────────────────────────────
+        of = ttk.LabelFrame(parent, text='Options', **_SEC)
+        of.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(of, text='Category:', font=('Arial', 8)
+                  ).grid(row=0, column=0, sticky=tk.W)
+        ttk.Combobox(of, textvariable=self._pw_cat_var,
+                     values=['metabolic', 'drug', 'disease', 'all'],
+                     width=11, state='readonly'
+                     ).grid(row=0, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(of, text='Sig. p <:', font=('Arial', 8)
+                  ).grid(row=1, column=0, sticky=tk.W)
+        ttk.Spinbox(of, from_=0.001, to=0.50, increment=0.01, format='%.3f',
+                    textvariable=self._pw_p_thr_var, width=6
+                    ).grid(row=1, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(of, text='Min mets:', font=('Arial', 8)
+                  ).grid(row=2, column=0, sticky=tk.W)
+        ttk.Spinbox(of, from_=1, to=20, textvariable=self._pw_minmets_var,
+                    width=6).grid(row=2, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(of, text='Top N:', font=('Arial', 8)
+                  ).grid(row=3, column=0, sticky=tk.W)
+        ttk.Spinbox(of, from_=3, to=100, textvariable=self._pw_topn_var,
+                    width=6).grid(row=3, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(of, text='Jaccard ≥:', font=('Arial', 8)
+                  ).grid(row=4, column=0, sticky=tk.W)
+        ttk.Spinbox(of, from_=0.05, to=1.0, increment=0.05, format='%.2f',
+                    textvariable=self._pw_jaccard_var, width=6
+                    ).grid(row=4, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Label(of, text='Color map:', font=('Arial', 8)
+                  ).grid(row=5, column=0, sticky=tk.W)
+        ttk.Combobox(of, textvariable=self._pw_cmap_var,
+                     values=['YlOrRd_r', 'RdPu_r', 'RdYlBu_r', 'viridis',
+                             'plasma', 'magma', 'coolwarm', 'seismic'],
+                     width=11, state='readonly'
+                     ).grid(row=5, column=1, sticky=tk.W, padx=4, pady=1)
+        ttk.Checkbutton(of, text='Color by FDR (else raw p)',
+                        variable=self._pw_use_fdr_var
+                        ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
+        ttk.Checkbutton(of, text='Significant only (< 0.05)',
+                        variable=self._pw_sig_only_var
+                        ).grid(row=7, column=0, columnspan=2, sticky=tk.W)
+
+        # ── Filters (shared sample/metabolite exclusion) ─────────────────────
+        ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
+        ff.pack(fill=tk.X, pady=(0, 4))
+        ttk.Button(ff, text='Samples', command=self._open_sample_selector
+                   ).pack(fill=tk.X, padx=4, pady=2)
+        ttk.Button(ff, text='Metabolites', command=self._open_metabolite_selector
                    ).pack(fill=tk.X, padx=4, pady=2)
         self._filter_status_lbl = ttk.Label(
             ff, text='', font=('Arial', 7), foreground='#666')
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+        self._update_filter_status()
+
+        ttk.Label(parent,
+                  text='ORA (Fisher) on metabolites significant\n'
+                       'between Group A and B (t-test / Mann-Whitney).\n'
+                       'Needs HMDB IDs on quantified metabolites.',
+                  font=('Arial', 7), foreground='#666', justify=tk.LEFT
+                  ).pack(anchor=tk.W, padx=4, pady=(2, 0))
 
     def _on_method_change(self):
         self._build_options(self._method_var.get())
@@ -799,46 +945,6 @@ class StatisticsStage:
         ttk.Button(bottom, text='OK',     command=_confirm       ).pack(side=tk.RIGHT, padx=4)
         ttk.Button(bottom, text='Cancel', command=dlg.destroy    ).pack(side=tk.RIGHT)
 
-    def _open_pathway_analysis(self):
-        """Open pathway analysis using the same normalization as the current statistics run."""
-        X_raw, sn, fl, gl = _get_quantification_matrix(self.app)
-        if X_raw is None or X_raw.shape[0] == 0 or X_raw.shape[1] == 0:
-            messagebox.showinfo('Pathway Analysis',
-                                'No quantification results. Run Quantification first.')
-            return
-
-        X_scaled = self._scale(X_raw)   # apply log10 + pareto/UV/etc.
-
-        # Rebuild quant_results list with scaled _concs_per_sample so that
-        # PathwayAnalysisWindow sees normalized values in its correlation matrix.
-        quant_stage = (getattr(self.app, 'stages', {}) or {}).get('quantification')
-        raw_results = list(getattr(quant_stage, '_quant_results', []) or [])
-
-        # Map feature_label → column index in X_scaled
-        _fl_idx = {name: j for j, name in enumerate(fl)}
-
-        scaled_results = []
-        for r in raw_results:
-            name = r.get('metabolite') or r.get('name', '')
-            j = _fl_idx.get(name)
-            if j is not None:
-                r2 = dict(r)
-                r2['_concs_per_sample'] = X_scaled[:, j].tolist()
-                scaled_results.append(r2)
-            else:
-                scaled_results.append(r)
-
-        if not scaled_results:
-            messagebox.showinfo('Pathway Analysis', 'No metabolites to analyse.')
-            return
-
-        from gui.widgets.pathway_window import PathwayAnalysisWindow
-        try:
-            parent = self.frame.winfo_toplevel()
-        except Exception:
-            parent = self.app.root
-        PathwayAnalysisWindow(parent, scaled_results, self.app)
-
     def _open_normality_popup(self):
         """Per-sample normality + Grubbs outlier detection within each group.
 
@@ -1325,6 +1431,9 @@ class StatisticsStage:
                                  'Plot panel failed to initialise.',
                                  parent=self.frame)
             return
+        if getattr(self, '_mode_var', None) and self._mode_var.get() == 'pathway':
+            self._run_pathway()
+            return
         method = self._method_var.get()
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
         _single_sample_ok = method in ('Metabolic Profile', 'Boxplot', 'Violin')
@@ -1402,6 +1511,379 @@ class StatisticsStage:
             ax.set_axis_off()
 
         self._render_and_display()
+
+    # ── Pathway mode run ─────────────────────────────────────────────────────
+
+    def _pathway_status(self, msg):
+        """Show a centred status message in the right viewer."""
+        if self._fig is None:
+            return
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+        ax.text(0.5, 0.5, msg, transform=ax.transAxes,
+                ha='center', va='center', fontsize=11, color='#444', wrap=True)
+        ax.set_axis_off()
+        self._render_and_display()
+
+    def _run_pathway(self):
+        ga = self._grp_a_var.get() if hasattr(self, '_grp_a_var') else ''
+        gb = self._grp_b_var.get() if hasattr(self, '_grp_b_var') else ''
+        if not ga or not gb or ga == gb:
+            messagebox.showwarning('Pathway',
+                'Select two different groups (Group A ≠ Group B).',
+                parent=self.frame)
+            return
+
+        X, sample_names, feature_labels, group_labels = \
+            _get_quantification_matrix(self.app)
+        if X is None or X.shape[0] < 2 or X.shape[1] < 2:
+            messagebox.showwarning('No data',
+                'Not enough data. Run Quantification (or mark Good peaks) first.',
+                parent=self.frame)
+            return
+
+        # Sample / metabolite exclusion filters
+        if self._excluded_samples:
+            keep = [i for i, n in enumerate(sample_names)
+                    if n not in self._excluded_samples]
+            X = X[keep, :]
+            sample_names = [sample_names[i] for i in keep]
+            group_labels = [group_labels[i] for i in keep]
+        if self._excluded_metabolites:
+            keep = [i for i, f in enumerate(feature_labels)
+                    if f not in self._excluded_metabolites]
+            X = X[:, keep]
+            feature_labels = [feature_labels[i] for i in keep]
+
+        X, feature_labels = self._remove_nan(X, feature_labels)
+        if X.shape[1] < 2:
+            messagebox.showwarning('No data',
+                'Not enough valid metabolites after filtering.', parent=self.frame)
+            return
+
+        if ga not in group_labels or gb not in group_labels:
+            messagebox.showwarning('Pathway',
+                'Selected groups are not present in the (filtered) samples.',
+                parent=self.frame)
+            return
+
+        # ── Build membership (cached; fetch in background thread) ─────────────
+        quant_results = self._pathway_quant_results(feature_labels)
+        n_with_id = sum(1 for r in quant_results
+                        if str(r.get('hmdb_id') or '').upper().startswith('HMDB'))
+        if n_with_id == 0:
+            self._pathway_status(
+                'No metabolite has an HMDB ID.\n'
+                'Pathway analysis needs HMDB IDs from annotation/quantification.')
+            return
+
+        cache_key = frozenset(feature_labels)
+        use_api = False   # internal only — local pathway DB, no external HMDB calls
+        cached = getattr(self, '_pw_membership_cache', None)
+        if (cached is not None and cached.get('key') == cache_key
+                and cached.get('use_api') == use_api):
+            self._finish_pathway(cached['table'], cached['skipped'],
+                                 X, feature_labels, group_labels, ga, gb)
+            return
+
+        self._pathway_status('Fetching pathway membership…')
+
+        import threading
+        from data import pathway_membership as pwm
+
+        def _worker():
+            try:
+                table, skipped = pwm.build_membership(
+                    quant_results, use_api=use_api)
+            except Exception as e:
+                self.frame.after(0, lambda: self._pathway_status(
+                    f'Membership lookup failed:\n{e}'))
+                return
+            self._pw_membership_cache = {
+                'key': cache_key, 'use_api': use_api,
+                'table': table, 'skipped': skipped}
+            self.frame.after(0, lambda: self._finish_pathway(
+                table, skipped, X, feature_labels, group_labels, ga, gb))
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _pathway_quant_results(self, feature_labels):
+        """Build [{metabolite, hmdb_id}] for the given features, pulling HMDB
+        IDs from the quantification stage results when available."""
+        quant_stage = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        raw = getattr(quant_stage, '_quant_results', None) or []
+        id_map = {}
+        for r in raw:
+            nm = r.get('metabolite') or r.get('name')
+            if nm:
+                id_map[nm] = r.get('hmdb_id') or r.get('id') or ''
+        return [{'metabolite': f, 'hmdb_id': id_map.get(f, '')}
+                for f in feature_labels]
+
+    def _finish_pathway(self, pathway_table, skipped, X, feature_labels,
+                        group_labels, ga, gb):
+        """Compute ORA and render the selected pathway plot (main thread)."""
+        from data import pathway_membership as pwm
+        from processing import pathway_enrichment as pwe
+
+        cat = self._pw_cat_var.get()
+        table = pwm.filter_by_category(pathway_table, cat)
+        if not table:
+            self._pathway_status(
+                f'No "{cat}" pathways found for these metabolites.\n'
+                'Try Category = all.')
+            return
+
+        test_res = pwe.per_metabolite_test(X, group_labels, ga, gb, feature_labels)
+        p_thr = float(self._pw_p_thr_var.get())
+        hits = pwe.select_hits(test_res, p_thr)
+        if not hits:
+            self._pathway_status(
+                f'No metabolite is significant at p < {p_thr:g}\n'
+                f'between {ga} and {gb}. Relax the threshold.')
+            return
+
+        bg_sizes = pwm.pathway_background_sizes(list(table.keys()))
+        rows = pwe.compute_ora(table, hits, background_sizes=bg_sizes,
+                               n_background=pwm.N_BACKGROUND)
+        if not rows:
+            self._pathway_status(
+                'No pathway is enriched in the significant metabolites.')
+            return
+
+        # Min mets = minimum significant hits (k) a pathway must contain.
+        min_mets = int(self._pw_minmets_var.get())
+        rows = [r for r in rows if r['k'] >= min_mets]
+        if not rows:
+            self._pathway_status(
+                f'No pathway has ≥ {min_mets} significant metabolite(s).\n'
+                'Lower "Min mets" or relax the significance threshold.')
+            return
+
+        if self._pw_sig_only_var.get():
+            _pk = 'fdr' if self._pw_use_fdr_var.get() else 'p'
+            sig = [r for r in rows if r[_pk] < 0.05]
+            if not sig:
+                self._pathway_status(
+                    'No pathway is significant (< 0.05).\n'
+                    'Uncheck "Significant only" to see all enriched pathways.')
+                return
+            rows = sig
+
+        top_n = int(self._pw_topn_var.get())
+        rows = rows[:top_n]
+        self._pw_last_rows = rows
+        self._pw_skipped   = skipped
+
+        self._zoom_level = 1.0
+        self._base_image = None
+        self._fig.set_layout_engine('constrained')
+        self._fig.clear()
+        plot = self._pw_plot_var.get()
+        try:
+            if plot == 'Network':
+                self._plot_pathway_network(rows, ga, gb)
+            elif plot == 'Dot plot':
+                self._plot_pathway_dotplot(rows, ga, gb)
+            elif plot == 'Lollipop':
+                self._plot_pathway_lollipop(rows, ga, gb)
+            else:
+                self._plot_pathway_overview(rows, ga, gb)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, f'Error:\n{e}', transform=ax.transAxes,
+                    ha='center', va='center', color='red', fontsize=9, wrap=True)
+            ax.set_axis_off()
+        self._render_and_display()
+
+    # ── Pathway plots ────────────────────────────────────────────────────────
+
+    def _pathway_color(self, rows):
+        """Return (values, LogNorm, cmap, label) for colouring by p or FDR."""
+        import matplotlib.colors as mcolors
+        import matplotlib.cm as cm
+        key   = 'fdr' if self._pw_use_fdr_var.get() else 'p'
+        label = 'BH-FDR' if key == 'fdr' else 'p-value'
+        vals  = [max(r[key], 1e-10) for r in rows]
+        vmin  = min(vals)
+        norm  = mcolors.LogNorm(vmin=max(vmin, 1e-10), vmax=1.0)
+        _cm = getattr(self, '_pw_cmap_var', None)
+        cmap  = cm.get_cmap(_cm.get() if _cm else 'YlOrRd_r')
+        return vals, norm, cmap, label
+
+    def _pathway_colorbar(self, mappable, label):
+        cb = self._fig.colorbar(mappable, ax=self._fig.axes,
+                                fraction=0.046, pad=0.04, shrink=0.5)
+        cb.set_label(label, fontsize=8)
+        cb.ax.tick_params(labelsize=7)
+
+    def _plot_pathway_overview(self, rows, ga, gb):
+        import numpy as np
+        import matplotlib.cm as cm
+        rows = sorted(rows, key=lambda r: r['enrichment_ratio'])
+        names = [r['name'] for r in rows]
+        ratios = [r['enrichment_ratio'] for r in rows]
+        vals, norm, cmap, label = self._pathway_color(rows)
+        colors = [cmap(norm(v)) for v in vals]
+
+        ax = self._fig.add_subplot(111)
+        y = np.arange(len(rows))
+        ax.barh(y, ratios, color=colors, edgecolor='#888', linewidth=0.4)
+        ax.set_yticks(y)
+        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5)
+        ax.set_xlabel('Enrichment Ratio', fontsize=8)
+        ax.set_title(f'Overview of Enriched Metabolite Sets\n{ga} vs {gb}',
+                     fontsize=10, fontweight='bold')
+        ax.tick_params(axis='x', labelsize=7.5)
+        ax.grid(axis='x', ls='--', alpha=0.4)
+        sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+        self._pathway_colorbar(sm, label)
+
+    def _plot_pathway_dotplot(self, rows, ga, gb):
+        import numpy as np
+        import matplotlib.cm as cm
+        rows = sorted(rows, key=lambda r: -np.log10(max(r['p'], 1e-10)))
+        names = [r['name'] for r in rows]
+        xs = np.array([-np.log10(max(r['p'], 1e-10)) for r in rows], dtype=float)
+        ratios = np.array([r['enrichment_ratio'] for r in rows], dtype=float)
+        vals, norm, cmap, label = self._pathway_color(rows)
+        colors = [cmap(norm(v)) for v in vals]
+
+        rmax = ratios.max() if ratios.size and ratios.max() > 0 else 1.0
+        # Dot area ∝ enrichment ratio; capped so neighbouring rows don't overlap.
+        sizes = 70 + 240 * (ratios / rmax)
+
+        ax = self._fig.add_subplot(111)
+        y = np.arange(len(rows)) * 1.0
+        ax.scatter(xs, y, s=sizes, c=colors, edgecolors='#444',
+                   linewidths=0.7, alpha=0.95, zorder=3)
+        # k/K (hits found / pathway size) written inside each dot
+        for xi, yi, r in zip(xs, y, rows):
+            ax.text(xi, yi, f"{r['k']}/{r['K']}", ha='center', va='center',
+                    fontsize=5.5, color='#111', zorder=4, clip_on=False)
+        ax.set_yticks(y)
+        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5)
+        ax.set_xlabel('-log10(p-value)', fontsize=8)
+        ax.set_title(f'Overview of Enriched Metabolite Sets\n{ga} vs {gb}',
+                     fontsize=10, fontweight='bold')
+        ax.tick_params(axis='x', labelsize=7.5)
+        ax.grid(axis='x', ls='--', alpha=0.4)
+        # Pad x so capped dots near the right edge stay clear of the spine
+        _xpad = max((xs.max() if xs.size else 1.0) * 0.12, 0.2)
+        ax.set_xlim(-_xpad, (xs.max() if xs.size else 1.0) + _xpad)
+        ax.set_ylim(-0.8, len(rows) - 0.2)
+        # Size legend — markers scaled down (×0.6) and widely spaced so the
+        # circles never touch each other.
+        from matplotlib.lines import Line2D
+        legend_ratios = sorted({round(r, 1) for r in
+                                (rmax * 0.33, rmax * 0.66, rmax) if r > 0})
+        handles = [Line2D([0], [0], marker='o', linestyle='',
+                          markerfacecolor='#bbb', markeredgecolor='#555',
+                          markersize=np.sqrt(70 + 240 * (lr / rmax)) * 0.6,
+                          label=f'{lr:.1f}') for lr in legend_ratios]
+        if handles:
+            ax.legend(handles=handles, title='Enrichment Ratio',
+                      fontsize=6.5, title_fontsize=7, loc='lower right',
+                      framealpha=0.9, labelspacing=2.4, borderpad=1.0,
+                      handletextpad=1.4)
+        sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+        self._pathway_colorbar(sm, label)
+
+    def _plot_pathway_lollipop(self, rows, ga, gb):
+        import numpy as np
+        import matplotlib.cm as cm
+        rows = sorted(rows, key=lambda r: r['enrichment_ratio'])
+        names = [r['name'] for r in rows]
+        ratios = [r['enrichment_ratio'] for r in rows]
+        vals, norm, cmap, label = self._pathway_color(rows)
+        colors = [cmap(norm(v)) for v in vals]
+
+        ax = self._fig.add_subplot(111)
+        y = np.arange(len(rows))
+        ax.hlines(y, 0, ratios, color='#bbb', lw=1.2, zorder=1)
+        ax.scatter(ratios, y, s=120, c=colors, edgecolors='#555',
+                   linewidths=0.7, zorder=3)
+        ax.set_yticks(y)
+        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5)
+        ax.set_xlabel('Enrichment Ratio', fontsize=8)
+        ax.set_title(f'Enriched Metabolite Sets\n{ga} vs {gb}',
+                     fontsize=10, fontweight='bold')
+        ax.tick_params(axis='x', labelsize=7.5)
+        ax.grid(axis='x', ls='--', alpha=0.4)
+        ax.margins(y=0.04)
+        sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+        self._pathway_colorbar(sm, label)
+
+    def _plot_pathway_network(self, rows, ga, gb):
+        import numpy as np
+        import matplotlib.cm as cm
+        try:
+            import networkx as nx
+        except ImportError:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5,
+                    'networkx not installed.\n'
+                    'Install it to use the Network view, or pick another plot.',
+                    transform=ax.transAxes, ha='center', va='center',
+                    color='#c62828', fontsize=10, wrap=True)
+            ax.set_axis_off()
+            return
+
+        vals, norm, cmap, label = self._pathway_color(rows)
+        jac_thr = float(self._pw_jaccard_var.get())
+
+        G = nx.Graph()
+        for r in rows:
+            G.add_node(r['name'], k=r['k'],
+                       pcol=('fdr' if self._pw_use_fdr_var.get() else 'p'))
+        for i, r1 in enumerate(rows):
+            s1 = set(r1.get('mets', []))
+            for r2 in rows[i + 1:]:
+                s2 = set(r2.get('mets', []))
+                u = s1 | s2
+                if not u:
+                    continue
+                j = len(s1 & s2) / len(u)
+                if j >= jac_thr:
+                    G.add_edge(r1['name'], r2['name'], weight=j)
+
+        ax = self._fig.add_subplot(111)
+        ax.set_axis_off()
+        ax.set_title(f'Pathway Network  (Jaccard ≥ {jac_thr:.2f})\n{ga} vs {gb}',
+                     fontsize=10, fontweight='bold')
+
+        node_list = list(G.nodes)
+        if not node_list:
+            ax.text(0.5, 0.5, 'No pathways to display.',
+                    transform=ax.transAxes, ha='center', va='center',
+                    color='#666', fontsize=10)
+            return
+        try:
+            pos = nx.kamada_kawai_layout(G)
+        except Exception:
+            pos = nx.spring_layout(G, seed=42, k=1.4)
+
+        pkey   = 'fdr' if self._pw_use_fdr_var.get() else 'p'
+        rmap   = {r['name']: r for r in rows}
+        ncolor = [cmap(norm(max(rmap[n][pkey], 1e-10))) for n in node_list]
+        kmax   = max((rmap[n]['k'] for n in node_list), default=1) or 1
+        nsize  = [180 + 520 * (rmap[n]['k'] / kmax) for n in node_list]
+
+        if G.edges:
+            ew = [G[u][v]['weight'] for u, v in G.edges]
+            nx.draw_networkx_edges(G, pos, ax=ax, edge_color='#999',
+                                   width=[2.5 * w for w in ew], alpha=0.4)
+        nx.draw_networkx_nodes(G, pos, nodelist=node_list, ax=ax,
+                               node_color=ncolor, node_size=nsize,
+                               edgecolors='#444', linewidths=1.2, alpha=0.95)
+        nx.draw_networkx_labels(
+            G, pos, ax=ax,
+            labels={n: (n[:18] + '…' if len(n) > 18 else n) for n in node_list},
+            font_size=6.5)
+        sm = cm.ScalarMappable(norm=norm, cmap=cmap); sm.set_array([])
+        cb = self._fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.04, shrink=0.5)
+        cb.set_label(label, fontsize=8); cb.ax.tick_params(labelsize=7)
 
     # ── NaN cleanup ──────────────────────────────────────────────────────────
 
