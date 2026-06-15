@@ -226,22 +226,7 @@ class StatisticsStage:
         self._build_options('PCA')
 
         # ── Scaling ───────────────────────────────────────────────────────────
-        sf = ttk.LabelFrame(parent, text='Scaling', **_SEC)
-        sf.pack(fill=tk.X, pady=(0, 4))
-        self._log_pre_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(sf, text='Log10 pre-transform',
-                        variable=self._log_pre_var).pack(**_RB)
-        ttk.Separator(sf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=3)
-        self._scale_var = tk.StringVar(value='pareto')
-        for lbl, val in [
-            ('None',           'none'),
-            ('UV (unit var.)', 'UV'),
-            ('Pareto',         'pareto'),
-            ('Cube root',      'cbrt'),
-            ('Median center',  'median'),
-        ]:
-            ttk.Radiobutton(sf, text=lbl, variable=self._scale_var,
-                            value=val).pack(**_RB)
+        self._build_scaling_frame(parent, _SEC, _RB)
 
         # ── Filters ───────────────────────────────────────────────────────────
         ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
@@ -258,6 +243,29 @@ class StatisticsStage:
         self._filter_status_lbl = ttk.Label(
             ff, text='', font=('Arial', 7), foreground='#666')
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    def _build_scaling_frame(self, parent, _SEC, _RB):
+        """Scaling/normalization controls. Shared by Statistics and Pathway
+        panels so the same preprocessing applies in both modes; the vars persist
+        across mode toggles (guarded by hasattr)."""
+        sf = ttk.LabelFrame(parent, text='Scaling', **_SEC)
+        sf.pack(fill=tk.X, pady=(0, 4))
+        if not hasattr(self, '_log_pre_var'):
+            self._log_pre_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sf, text='Log10 pre-transform',
+                        variable=self._log_pre_var).pack(**_RB)
+        ttk.Separator(sf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=3)
+        if not hasattr(self, '_scale_var'):
+            self._scale_var = tk.StringVar(value='pareto')
+        for lbl, val in [
+            ('None',           'none'),
+            ('UV (unit var.)', 'UV'),
+            ('Pareto',         'pareto'),
+            ('Cube root',      'cbrt'),
+            ('Median center',  'median'),
+        ]:
+            ttk.Radiobutton(sf, text=lbl, variable=self._scale_var,
+                            value=val).pack(**_RB)
 
     # ── Pathway mode left panel ──────────────────────────────────────────────
 
@@ -366,6 +374,10 @@ class StatisticsStage:
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
         self._update_filter_status()
 
+        # Same scaling/normalization controls as Statistics — values persist and
+        # are applied to the per-metabolite significance test below.
+        self._build_scaling_frame(parent, _SEC, _RB)
+
         ttk.Label(parent,
                   text='ORA (Fisher) on metabolites significant\n'
                        'between Group A and B (t-test / Mann-Whitney).\n'
@@ -406,7 +418,7 @@ class StatisticsStage:
                         textvariable=self._n_comp_var, width=4
                         ).grid(row=0, column=1, sticky=tk.W, padx=4)
             self._cv_var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self._opt_frame, text='Show CV R²/Q²',
+            ttk.Checkbutton(self._opt_frame, text='Show Q² (cross-validated)',
                             variable=self._cv_var
                             ).grid(row=1, column=0, columnspan=2, sticky=tk.W)
             self._ellipse_var = tk.BooleanVar(value=True)
@@ -478,9 +490,25 @@ class StatisticsStage:
             ttk.Checkbutton(self._opt_frame, text='Significant only (FDR<0.05)',
                             variable=self._corr_sig_var
                             ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
-            ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\nneeds exactly 2 groups.',
+            # Differential panel: pick the two groups to contrast.
+            _cg = sorted(set(s.get('label', s.get('group', 'Unknown'))
+                             for s in getattr(self.app, 'samples_info', [])
+                             if str(s.get('label', s.get('group', ''))).upper() != 'BLK'))
+            ttk.Label(self._opt_frame, text='Diff. Group A:',
+                      font=('Arial', 8)).grid(row=4, column=0, sticky=tk.W, pady=(4, 0))
+            self._corr_g1_var = tk.StringVar(value=_cg[0] if _cg else '')
+            self._corr_cb1 = ttk.Combobox(self._opt_frame, textvariable=self._corr_g1_var,
+                                          values=_cg, width=10, state='readonly')
+            self._corr_cb1.grid(row=4, column=1, sticky=tk.W, padx=4, pady=(4, 0))
+            ttk.Label(self._opt_frame, text='Diff. Group B:',
+                      font=('Arial', 8)).grid(row=5, column=0, sticky=tk.W)
+            self._corr_g2_var = tk.StringVar(value=_cg[1] if len(_cg) > 1 else '')
+            self._corr_cb2 = ttk.Combobox(self._opt_frame, textvariable=self._corr_g2_var,
+                                          values=_cg, width=10, state='readonly')
+            self._corr_cb2.grid(row=5, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\ncontrasts the two groups above.',
                       font=('Arial', 7), foreground='#666'
-                      ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
+                      ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
 
         elif method == 'VIP Score':
             ttk.Label(self._opt_frame, text='Top N features:',
@@ -491,10 +519,18 @@ class StatisticsStage:
                         ).grid(row=0, column=1, sticky=tk.W, padx=4)
             ttk.Label(self._opt_frame, text='VIP threshold:',
                       font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._vip_thr_var = tk.DoubleVar(value=1.0)
+            self._vip_thr_var = tk.DoubleVar(value=1.5)
             ttk.Spinbox(self._opt_frame, from_=0.5, to=3.0, increment=0.1,
                         textvariable=self._vip_thr_var, width=5, format='%.1f'
                         ).grid(row=1, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Class color map:',
+                      font=('Arial', 8)).grid(row=2, column=0, sticky=tk.W)
+            self._vip_cmap_var = tk.StringVar(value='RdBu_r')
+            ttk.Combobox(self._opt_frame, textvariable=self._vip_cmap_var,
+                         values=['RdBu_r', 'RdYlBu_r', 'seismic', 'coolwarm',
+                                 'viridis', 'plasma'],
+                         width=10, state='readonly'
+                         ).grid(row=2, column=1, sticky=tk.W, padx=4)
 
         elif method == 'Volcano':
             ttk.Label(self._opt_frame, text='Group A:',
@@ -1567,6 +1603,13 @@ class StatisticsStage:
                 parent=self.frame)
             return
 
+        # Apply the same normalization/scaling as Statistics for the significance
+        # test, but keep the raw matrix for fold-change direction (scaling
+        # mean-centres the data → ratios on centred values are meaningless).
+        X_raw = X.copy()
+        X = self._scale(X)
+        self._pw_X_raw = X_raw
+
         # ── Build membership (cached; fetch in background thread) ─────────────
         quant_results = self._pathway_quant_results(feature_labels)
         n_with_id = sum(1 for r in quant_results
@@ -1583,7 +1626,8 @@ class StatisticsStage:
         if (cached is not None and cached.get('key') == cache_key
                 and cached.get('use_api') == use_api):
             self._finish_pathway(cached['table'], cached['skipped'],
-                                 X, feature_labels, group_labels, ga, gb)
+                                 X, feature_labels, group_labels, ga, gb,
+                                 X_fc=X_raw)
             return
 
         self._pathway_status('Fetching pathway membership…')
@@ -1603,7 +1647,8 @@ class StatisticsStage:
                 'key': cache_key, 'use_api': use_api,
                 'table': table, 'skipped': skipped}
             self.frame.after(0, lambda: self._finish_pathway(
-                table, skipped, X, feature_labels, group_labels, ga, gb))
+                table, skipped, X, feature_labels, group_labels, ga, gb,
+                X_fc=X_raw))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1621,8 +1666,11 @@ class StatisticsStage:
                 for f in feature_labels]
 
     def _finish_pathway(self, pathway_table, skipped, X, feature_labels,
-                        group_labels, ga, gb):
-        """Compute ORA and render the selected pathway plot (main thread)."""
+                        group_labels, ga, gb, X_fc=None):
+        """Compute ORA and render the selected pathway plot (main thread).
+
+        X is the scaled matrix used for the significance test; X_fc (raw) is used
+        for fold-change direction so scaling's mean-centring does not corrupt it."""
         from data import pathway_membership as pwm
         from processing import pathway_enrichment as pwe
 
@@ -1634,7 +1682,8 @@ class StatisticsStage:
                 'Try Category = all.')
             return
 
-        test_res = pwe.per_metabolite_test(X, group_labels, ga, gb, feature_labels)
+        test_res = pwe.per_metabolite_test(X, group_labels, ga, gb, feature_labels,
+                                           X_fc=X_fc)
         p_thr = float(self._pw_p_thr_var.get())
         hits = pwe.select_hits(test_res, p_thr)
         if not hits:
@@ -2112,7 +2161,7 @@ class StatisticsStage:
                     cv=StratifiedKFold(n_splits=min(5, X.shape[0])),
                     scoring='r2')
                 r2cv = cv_scores.mean()
-                ax.set_title(f'{title}  —  CV R²={r2cv:.3f}', fontsize=10)
+                ax.set_title(f'{title}  —  Q²={r2cv:.3f}', fontsize=10)
             except Exception:
                 ax.set_title(title, fontsize=10)
         else:
@@ -2385,19 +2434,30 @@ class StatisticsStage:
             sig_o = sig[np.ix_(order, order)]
             Ro = np.ma.masked_where(~sig_o & ~np.eye(n_feat, dtype=bool), Ro)
 
-        # Two groups (excluding BLK) → differential panel.
+        # Differential panel: contrast the two user-selected groups (falls back
+        # to the first two present when no/invalid selection).
         groups = [g for g in dict.fromkeys(group_labels)
                   if str(g).upper() != 'BLK']
         rows_by_g = {g: [i for i, gl in enumerate(group_labels) if gl == g]
                      for g in groups}
-        do_diff = (len(groups) == 2
-                   and all(len(rows_by_g[g]) >= 3 for g in groups))
+        sel1 = getattr(self, '_corr_g1_var', None)
+        sel2 = getattr(self, '_corr_g2_var', None)
+        sel1 = sel1.get() if sel1 else ''
+        sel2 = sel2.get() if sel2 else ''
+        if sel1 in rows_by_g and sel2 in rows_by_g and sel1 != sel2:
+            g1, g2 = sel1, sel2
+        elif len(groups) == 2:
+            g1, g2 = groups
+        else:
+            g1 = g2 = None
+        do_diff = (g1 is not None
+                   and all(len(rows_by_g[g]) >= 3 for g in (g1, g2)))
 
         if do_diff:
-            g1, g2 = groups
             R1, _ = _corr(X[rows_by_g[g1], :])
             R2, _ = _corr(X[rows_by_g[g2], :])
             D  = (R1 - R2)[np.ix_(order, order)]
+            D  = np.nan_to_num(D, nan=0.0, posinf=0.0, neginf=0.0)
             axA = self._fig.add_subplot(1, 2, 1)
             axC = self._fig.add_subplot(1, 2, 2)
         else:
@@ -2420,7 +2480,10 @@ class StatisticsStage:
 
         # ── Panel C: differential correlation ─────────────────────────────────
         if axC is not None:
-            vmax = float(min(2.0, np.nanmax(np.abs(D)) or 1.0))
+            _absD = np.abs(D)
+            _finite = _absD[np.isfinite(_absD)]
+            _peak = float(_finite.max()) if _finite.size else 0.0
+            vmax = float(min(2.0, _peak)) if _peak > 0 else 1.0
             imC = axC.imshow(D, cmap='PRGn', vmin=-vmax, vmax=vmax, aspect='auto')
             axC.set_xticks(range(n_feat)); axC.set_yticks(range(n_feat))
             axC.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
@@ -2428,9 +2491,11 @@ class StatisticsStage:
             axC.set_title(f'C · Differential ({g1} − {g2})',
                           fontsize=10, fontweight='bold')
             self._fig.colorbar(imC, ax=axC, fraction=0.046, pad=0.04, label='Δρ')
-        elif len(groups) != 2:
-            axA.text(0.5, -0.18,
-                     f'Differential panel needs exactly 2 groups (have {len(groups)})',
+        else:
+            _msg = ('Differential panel needs 2 distinct groups with ≥3 samples each'
+                    if len(groups) >= 2
+                    else f'Differential panel needs 2 groups (have {len(groups)})')
+            axA.text(0.5, -0.18, _msg,
                      transform=axA.transAxes, ha='center', va='top',
                      fontsize=7, color='#666')
 
@@ -2450,7 +2515,7 @@ class StatisticsStage:
         top_n  = getattr(self, '_top_n_var',  None)
         top_n  = top_n.get()  if top_n  else 20
         vip_thr = getattr(self, '_vip_thr_var', None)
-        vip_thr = vip_thr.get() if vip_thr else 1.0
+        vip_thr = vip_thr.get() if vip_thr else 1.5
 
         vips = self._vip_scores(X, Y, n_comp)
         self._last_vip_scores = vips
@@ -2458,18 +2523,55 @@ class StatisticsStage:
         vips_top  = vips[order]
         feats_top = [feature_labels[i] for i in order]
 
-        ax = self._fig.add_subplot(111)
+        # Per-group mean on the (already autoscaled) X for the class-direction
+        # squares: >0 → above grand mean (high, red), <0 → low (blue). Mirrors
+        # the coloured class strip on the right of a MetaboAnalyst VIP plot.
+        gmeans = np.zeros((len(order), len(unique)))
+        for gi in range(len(unique)):
+            rows = np.where(y_int == gi)[0]
+            if rows.size:
+                gmeans[:, gi] = np.mean(X[np.ix_(rows, order)], axis=0)
+
+        # Layout: VIP bars (left) + class-mean squares (right), aligned rows.
+        gs = self._fig.add_gridspec(
+            1, 2, width_ratios=[5, max(1.0, 0.45 * len(unique))], wspace=0.04)
+        ax  = self._fig.add_subplot(gs[0, 0])
+        axh = self._fig.add_subplot(gs[0, 1], sharey=ax)
+
         colors = ['#c62828' if v >= vip_thr else '#1565c0' for v in vips_top]
         ax.barh(range(len(feats_top)), vips_top[::-1], color=colors[::-1],
                 edgecolor='white', linewidth=0.5)
         ax.set_yticks(range(len(feats_top)))
         ax.set_yticklabels(feats_top[::-1], fontsize=7)
+        ax.set_ylim(-0.5, len(feats_top) - 0.5)
         ax.axvline(vip_thr, color='#c62828', lw=1.0, ls='--',
                    label=f'VIP = {vip_thr:.1f}')
         ax.set_xlabel('VIP Score', fontsize=9)
         ax.set_title(f'VIP Scores (PLS-DA, top {top_n})', fontsize=10)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, loc='lower right')
         ax.set_facecolor('#f9f9f9')
+
+        # Right strip: one coloured square per group, rows reversed to match bars.
+        _vip_cmap = getattr(self, '_vip_cmap_var', None)
+        _vip_cmap = _vip_cmap.get() if _vip_cmap else 'RdBu_r'
+        _vmax = float(np.nanmax(np.abs(gmeans))) or 1.0
+        im = axh.imshow(gmeans[::-1, :], aspect='auto', cmap=_vip_cmap,
+                        vmin=-_vmax, vmax=_vmax, origin='lower',
+                        extent=(-0.5, len(unique) - 0.5,
+                                -0.5, len(feats_top) - 0.5))
+        axh.set_xticks(range(len(unique)))
+        axh.set_xticklabels([str(g) for g in unique], rotation=90, fontsize=7)
+        axh.tick_params(left=False, labelleft=False)
+        # White separators → discrete-square look.
+        axh.set_xticks(np.arange(-0.5, len(unique), 1), minor=True)
+        axh.set_yticks(np.arange(-0.5, len(feats_top), 1), minor=True)
+        axh.grid(which='minor', color='white', linewidth=1.5)
+        axh.set_title('Class', fontsize=8)
+        # Half-height colorbar, vertically centred on the class strip.
+        cb = self._fig.colorbar(im, ax=axh, fraction=0.25, pad=0.06,
+                                shrink=0.5, anchor=(0.0, 0.5),
+                                ticks=[-_vmax, _vmax])
+        cb.ax.set_yticklabels(['Low', 'High'], fontsize=7)
 
     def _ensure_volcano_style(self):
         """Lazily create the persistent volcano style dict with defaults."""

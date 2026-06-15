@@ -223,6 +223,29 @@ class _QuantCompMixin:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
 
+        # ── Water-suppression exclusion ───────────────────────────────────────
+        # Mirror the annotation-stage 'Exclude water region' option in
+        # quantification: when active, anything whose ppm falls inside the
+        # residual-water zone is ignored, so solvent-suppression artefacts never
+        # enter a quantified area (CLAUDE.md: never fabricate data).
+        _ann_for_water = getattr(self, 'annotation_stage', None)
+
+        def _in_water_zone(ppm_val):
+            try:
+                if not bool(_ann_for_water.exclude_water_var.get()):
+                    return False
+                _wlo = float(_ann_for_water.water_lo_var.get())
+                _whi = float(_ann_for_water.water_hi_var.get())
+            except Exception:
+                return False
+            if _wlo > _whi:
+                _wlo, _whi = _whi, _wlo
+            try:
+                return _wlo <= float(ppm_val) <= _whi
+            except (TypeError, ValueError):
+                return False
+        self._in_water_zone = _in_water_zone
+
         # Build a fallback protons lookup from the DB so that annotation results
         # from before the protons column was added still get the correct nH.
         # Key: (hmdb_id_or_bmrb_id, ppm_rounded_3dp) → protons (int)
@@ -461,6 +484,18 @@ class _QuantCompMixin:
                     _s_dj_map[(_mid_sdj, _pr_sdj)] = float(_mp_sdj.get('_s_dj', 0) or 0)
         except Exception:
             _s_dj_map = {}
+
+        # Drop any annotation hit whose peak sits in the water-exclusion zone.
+        if results:
+            _n_before_w = len(results)
+            results = [r for r in results
+                       if not _in_water_zone(
+                           r.get('peak_ppm', r.get('ppm', r.get('db_ppm'))))]
+            _n_water = _n_before_w - len(results)
+            if _n_water:
+                print(f'[Quant] water exclusion: dropped {_n_water} hit(s) inside '
+                      f'water zone')
+                _dbg(_dbg_f, f'water exclusion: dropped {_n_water} hit(s)')
 
         by_peak = {}
         for r in results:
@@ -892,6 +927,8 @@ class _QuantCompMixin:
         _mcr_overridden_peaks = set()
         _all_mcr_peaks = list(self.peak_stage.peaks or []) + list(_fs_regions)
         for pk in _all_mcr_peaks:
+            if _in_water_zone(pk.get('ppm')):
+                continue
             mcr_ann   = pk.get('mcr_annotation')
             if not mcr_ann:
                 continue
@@ -1505,7 +1542,13 @@ class _QuantCompMixin:
                 _ls_mode = _ls.get('mode')
                 _ls_sf   = float(_ls.get('scale_factor', 1.0))
                 _line_sel_applied = False
-                if use_j_resolve and _ls_mode == 'skip':
+                # Skip-zeroing only applies to single-line integration (Area/
+                # Lorentz), where a fully contaminated multiplet has no clean line
+                # to integrate. In Multiplet mode the whole window is integrated
+                # with per-line J-Resolve fractions already folded into a_vec
+                # (jr_pointwise), so hard-zeroing here would discard a valid area —
+                # the contamination is still surfaced as a warning downstream.
+                if use_j_resolve and _ls_mode == 'skip' and not use_multiplet:
                     a_vec = np.zeros(n_s)
                     hit['_line_sel_skip'] = True
                 elif (_ls_mode in ('nnls', 'ratio') and _ls_sf > 1.0
