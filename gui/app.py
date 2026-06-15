@@ -38,9 +38,31 @@ from app_paths import APP_VERSION
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin):
+    def _set_app_icon(self, win):
+        """Apply the app icon (utils/nmrpipe.ico — same as the .exe/installer)
+        to *win*. Using iconbitmap(default=...) makes it the icon for the root
+        AND every Toplevel/dialog opened afterwards, so the whole app is
+        consistent. Falls back to the PNG via iconphoto on non-Windows."""
+        from app_paths import asset_path
+        try:
+            ico = asset_path('utils', 'nmrpipe.ico')
+            if os.path.isfile(ico):
+                win.iconbitmap(default=ico)
+                return
+        except Exception:
+            pass
+        try:
+            from PIL import Image, ImageTk
+            png = asset_path('utils', 'Logo_nMRPipe.png')
+            self._app_icon_img = ImageTk.PhotoImage(Image.open(png))
+            win.iconphoto(True, self._app_icon_img)
+        except Exception:
+            pass
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_VERSION)
+        self._set_app_icon(self.root)
         self.screen_width  = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
         self.root.withdraw()

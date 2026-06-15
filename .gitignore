@@ -20,6 +20,13 @@ _local/
 logs/
 *.log
 
+# ── Build / distribution artifacts (rebuilt locally, never committed) ───────
+build/
+dist/
+Output/
+*.exe
+*.zip
+
 # ── Database backups / superseded versions (keep only the active *.db) ──────
 databases/backup_*/
 databases/*.bak*
