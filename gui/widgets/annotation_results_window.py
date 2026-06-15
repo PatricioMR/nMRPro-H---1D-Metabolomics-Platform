@@ -3683,7 +3683,6 @@ class AnnotationResultsWindow:
                     region_idx, child_idx = ctrl.add_peak(
                         peak, target_ppm=peak['ppm'])
                     app.switch_stage('peak_detection')
-                    stage.btn_open_deconv.config(state='normal')
                     dw = DeconvWindow(app.root, ctrl, stage)
                     dw.select_region(region_idx, child_idx)
                 except Exception as e:

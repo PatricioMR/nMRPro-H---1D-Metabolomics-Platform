@@ -175,10 +175,17 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # on identifying which single line was detected. Area/Lorentz integrate a
         # single line with a fractional nH and are opt-in.
         self.integ_var = tk.StringVar(value='Multiplet')
+        # 'Area' (single-line trapz) is temporarily disabled — under development.
+        # Hovering the disabled option shows a tooltip explaining why.
+        _DISABLED_INTEG = {'Area'}
         for v, lbl in [('Multiplet', 'Multiplet (whole)'),
-                       ('Area', 'Area (trapz)'), ('Lorentz', 'Lorentz Fit')]:
-            ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
-                            value=v, command=self._on_integ_change).pack(side=tk.LEFT, padx=4)
+                       ('Area', 'Single-Line Area'), ('Lorentz', 'Lorentz Fit')]:
+            _rb = ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
+                                  value=v, command=self._on_integ_change)
+            _rb.pack(side=tk.LEFT, padx=4)
+            if v in _DISABLED_INTEG:
+                _rb.configure(state='disabled')
+                self._attach_dev_tooltip(_rb, 'Single-Line Area: em desenvolvimento.')
 
         pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
         self.proton_corr_var = tk.BooleanVar(value=True)
@@ -739,6 +746,40 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             self._populate_tree()
 
     # ── Integration mode change ───────────────────────────────────────────────
+
+    def _attach_dev_tooltip(self, widget, text):
+        """Show a small 'under development' tooltip when hovering a widget.
+
+        Used for integration methods that are temporarily disabled — a disabled
+        ttk widget gives the user no feedback otherwise, so the tooltip explains
+        why the option cannot be selected. <Enter>/<Leave> still fire on disabled
+        ttk widgets (only activation is blocked)."""
+        def _show(_e=None):
+            self._hide_dev_tooltip()
+            try:
+                tw = tk.Toplevel(widget)
+                tw.wm_overrideredirect(True)
+                x = widget.winfo_rootx() + 10
+                y = widget.winfo_rooty() + widget.winfo_height() + 2
+                tw.wm_geometry(f'+{x}+{y}')
+                tk.Label(tw, text=text, justify=tk.LEFT,
+                         background='#ffffe0', relief=tk.SOLID, borderwidth=1,
+                         font=('Arial', 8), padx=4, pady=2).pack()
+                self._dev_tooltip_win = tw
+            except Exception:
+                self._dev_tooltip_win = None
+
+        widget.bind('<Enter>', _show)
+        widget.bind('<Leave>', self._hide_dev_tooltip)
+
+    def _hide_dev_tooltip(self, _e=None):
+        tw = getattr(self, '_dev_tooltip_win', None)
+        if tw is not None:
+            try:
+                tw.destroy()
+            except Exception:
+                pass
+            self._dev_tooltip_win = None
 
     def _on_integ_change(self, *_):
         pass   # MCR-ALS checkbox removed; nothing to disable

@@ -266,6 +266,56 @@ def _effective_nh(hit, detected_ppm, spectrometer_mhz=600.0):
     return nH
 
 
+def jr_pointwise_multiplet_area(x_window, seg_matrix, line_ppms, line_fracs):
+    """Per-sample multiplet area with per-line J-Resolve fractions.
+
+    A multiplet spans several lines that NNLS (J-Resolve) may resolve
+    differently — one leg of a doublet can be clean while the other is shared.
+    Integrating the whole window and scaling by a single (anchor) fraction loses
+    that per-leg reality. Here every spectral point of the window is weighted by
+    the fraction of the predicted line NEAREST to it, so each leg contributes its
+    own share, then the weighted curve is integrated.
+
+    Reduces EXACTLY to ``fraction × whole_window_area`` when all line fractions
+    are equal (and to the plain area when all are 1.0), so multiplets that were
+    not resolved per-line are unchanged.
+
+    Parameters
+    ----------
+    x_window : (m,) ppm of the integration window.
+    seg_matrix : (m,) or (m, n_s) intensities (already baseline-handled).
+    line_ppms : (L,) predicted line positions (ppm).
+    line_fracs : list length L; each entry a scalar in [0, 1] or an (n_s,) array.
+
+    Returns
+    -------
+    (n_s,) integrated area per sample (absolute value, like the trapz path).
+    """
+    x   = np.asarray(x_window, dtype=float)
+    seg = np.asarray(seg_matrix, dtype=float)
+    if seg.ndim == 1:
+        seg = seg[:, None]
+    m, n_s = seg.shape
+    lp = np.asarray(line_ppms, dtype=float)
+    if lp.size == 0 or m < 2:
+        return np.array([abs(float(_trapz(seg[:, s], x))) for s in range(n_s)])
+
+    # Normalise each line fraction to an (n_s,) vector, clipped to [0, 1].
+    fr = []
+    for f in line_fracs:
+        fa = np.asarray(f, dtype=float)
+        fa = np.full(n_s, float(fa)) if fa.ndim == 0 else fa
+        fr.append(np.clip(fa, 0.0, 1.0))
+
+    nearest = np.argmin(np.abs(x[:, None] - lp[None, :]), axis=1)   # (m,)
+    weight  = np.empty((m, n_s), dtype=float)
+    for k in range(m):
+        weight[k, :] = fr[nearest[k]]
+
+    weighted = seg * weight
+    return np.array([abs(float(_trapz(weighted[:, s], x))) for s in range(n_s)])
+
+
 def _effective_nh_source(hit, detected_ppm, spectrometer_mhz=600.0):
     """Same logic as _effective_nh but returns (nH, source_description)."""
     import re as _re

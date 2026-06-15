@@ -8,6 +8,7 @@ import tkinter as tk
 from tkinter import ttk, colorchooser
 import numpy as np
 from .base_stage import BaseStage
+from app_paths import APP_VERSION
 
 SAMPLE_TYPES = ['Sample', 'IS', 'BLK']
 
@@ -64,7 +65,7 @@ class VisualizationStage(BaseStage):
         self.app.btn_clear_all.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
         # ── TOP: title + file ──────────────────────────────────────────────────
-        ttk.Label(self.frame, text="nMRPipe v0.1 Pre-Alpha",
+        ttk.Label(self.frame, text=APP_VERSION,
                   font=("Arial", 11, "bold")).pack(side=tk.TOP, pady=(8, 2))
         ttk.Separator(self.frame, orient='horizontal').pack(
             side=tk.TOP, fill=tk.X, padx=5, pady=2)
@@ -83,7 +84,8 @@ class VisualizationStage(BaseStage):
             side=tk.TOP, fill=tk.X, padx=5, pady=2)
 
         # ── MIDDLE: Samples — expands to fill remaining space ────────────────
-        sf = ttk.LabelFrame(self.frame, text="Samples", padding=0)
+        self._samples_lf = ttk.LabelFrame(self.frame, text="Samples", padding=0)
+        sf = self._samples_lf
         sf.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=5, pady=2)
 
         # Header row — columns: ✓ | Color | Sample | Group
@@ -156,10 +158,14 @@ class VisualizationStage(BaseStage):
             w.destroy()
         self.sample_vars = []
         self._color_btns = []
+        # Em COSY: alinhamento = calibração TSP/DSS (faz sentido); baseline e
+        # qualidade são específicos de 1D e ficam desactivados.
+        _is_2d = getattr(self.app, 'cosy_data', None) is not None
+        _proc_state = 'disabled' if _is_2d else 'normal'
         try:
-            self.btn_alignment.config(state='normal')
-            self.btn_baseline.config(state='normal')
-            self.btn_quality.config(state='normal')
+            self.btn_alignment.config(state='normal')   # calibração também em COSY
+            self.btn_baseline.config(state=_proc_state)
+            self.btn_quality.config(state=_proc_state)
             if self.app.all_intensities is not None:
                 self._original_intensities = self.app.all_intensities.copy()
             self.btn_revert.config(state='disabled')
@@ -296,8 +302,81 @@ class VisualizationStage(BaseStage):
 
     # ── Alignment dialog ──────────────────────────────────────────────────────
 
+    def _open_cosy_calibration_dialog(self):
+        """Calibração dos eixos COSY: referenciar TSP/DSS-d4 a 0 ppm."""
+        from tkinter import messagebox
+        cd = self.app.cosy_data
+        if cd is None:
+            return
+
+        dlg = tk.Toplevel(self.app.root)
+        dlg.title('COSY Calibration (TSP/DSS → 0 ppm)')
+        dlg.transient(self.app.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        ttk.Label(dlg, text='Reference axes to internal standard',
+                  font=('Arial', 10, 'bold')).pack(padx=16, pady=(12, 2))
+        ttk.Label(dlg,
+                  text='TSP / DSS-d4 is a singlet → diagonal peak at (0,0).\n'
+                       'Auto-detects the reference peak and shifts F2 and F1.',
+                  font=('Arial', 8), foreground='gray',
+                  justify=tk.LEFT).pack(padx=16, pady=(0, 8))
+
+        frm = ttk.Frame(dlg); frm.pack(padx=16, pady=2)
+        ttk.Label(frm, text='Reference (ppm):', width=16).grid(
+            row=0, column=0, sticky=tk.W, pady=2)
+        ref_var = tk.DoubleVar(value=0.00)
+        ttk.Entry(frm, textvariable=ref_var, width=8).grid(row=0, column=1, pady=2)
+        ttk.Label(frm, text='Search window ±:', width=16).grid(
+            row=1, column=0, sticky=tk.W, pady=2)
+        win_var = tk.DoubleVar(value=0.10)
+        ttk.Entry(frm, textvariable=win_var, width=8).grid(row=1, column=1, pady=2)
+
+        status = ttk.Label(dlg, text='', font=('Arial', 8),
+                           foreground='blue', wraplength=320)
+        status.pack(padx=16, pady=6)
+
+        from processing.cosy_calibration import calibrate_cosy
+
+        def _apply():
+            try:
+                ref = float(ref_var.get()); win = float(win_var.get())
+            except (tk.TclError, ValueError):
+                status.config(text='Invalid values.', foreground='red'); return
+            cal = calibrate_cosy(cd['f2_ppm'], cd['f1_ppm'], cd['data'],
+                                 ref=ref, window=win)
+            if cal is None:
+                status.config(
+                    text='Reference peak not found in window. '
+                         'Widen the search window.', foreground='red')
+                return
+            cd['f2_ppm'] = cal['f2_ppm']
+            cd['f1_ppm'] = cal['f1_ppm']
+            self.app._draw_2d_spectrum(preserve_view=False)
+            status.config(
+                text=(f"Applied. TSP at F2={cal['f2_obs']:.3f}, "
+                      f"F1={cal['f1_obs']:.3f} → 0.\n"
+                      f"Shift ΔF2={cal['df2']*1000:.1f}, "
+                      f"ΔF1={cal['df1']*1000:.1f} mppm."),
+                foreground='green')
+            dlg.after(1400, dlg.destroy)
+
+        bf = ttk.Frame(dlg); bf.pack(pady=(2, 12))
+        ttk.Button(bf, text='Auto-detect & Apply', command=_apply).pack(
+            side=tk.LEFT, padx=4)
+        ttk.Button(bf, text='Cancel', command=dlg.destroy).pack(
+            side=tk.LEFT, padx=4)
+
     def _open_alignment_dialog(self):
-        """Controls (left) | interactive plot (right)."""
+        """Controls (left) | interactive plot (right).
+
+        Em COSY abre a calibração de eixos (TSP/DSS → 0 ppm) em vez do
+        alinhamento 1D multi-amostra.
+        """
+        if getattr(self.app, 'cosy_data', None) is not None:
+            self._open_cosy_calibration_dialog()
+            return
         if self.app.ppm is None or self.app.all_intensities is None:
             return
 
@@ -956,6 +1035,12 @@ class VisualizationStage(BaseStage):
     def on_deactivate(self):
         if self.frame:
             self.frame.pack_forget()
+        # Sair da visualização → restaurar canvas 1D se o viewer 2D estava activo
+        if getattr(self.app, '_2d_canvas', None) is not None:
+            try:
+                self.app._hide_2d_viewer()
+            except Exception:
+                pass
 
     def select_all_samples(self):
         for v in self.sample_vars:
@@ -973,6 +1058,19 @@ class VisualizationStage(BaseStage):
         """Compute FWHM + Asymmetry per sample and open the quality window."""
         if self.app.ppm is None or self.app.all_intensities is None:
             return
+
+        # Single-instance: re-focus the existing window instead of reopening.
+        existing = getattr(self, '_quality_win', None)
+        if existing is not None:
+            try:
+                if existing.win.winfo_exists():
+                    existing.win.deiconify()
+                    existing.win.lift()
+                    existing.win.focus_set()
+                    return
+            except tk.TclError:
+                pass
+            self._quality_win = None
 
         # Resolve spectrometer frequency: Bruker sets app.spectrometer_mhz;
         # CSV imports may have it in the annotation stage's spectrometer_var.
@@ -994,4 +1092,7 @@ class VisualizationStage(BaseStage):
         )
 
         from gui.widgets.spectral_quality_window import SpectralQualityWindow
-        SpectralQualityWindow(self.app.root, results, spectrometer_mhz=mhz)
+        self._quality_win = SpectralQualityWindow(
+            self.app.root, results, spectrometer_mhz=mhz,
+            ppm=self.app.ppm, intensities_2d=self.app.all_intensities,
+        )

@@ -29,15 +29,18 @@ from gui.stages.annotation_stage import AnnotationStage
 from gui.stages.quantification_stage import QuantificationStage
 from gui.stages.fullspectrum_mcr_stage import FullSpectrumMCRStage
 from gui.stages.j_resolve_stage import JResolveStage
+from gui.stages.cosy_annotation_stage import CosyAnnotationStage
+from gui.stages.cosy_quantification_stage import CosyQuantificationStage
 from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
+from app_paths import APP_VERSION
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin):
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("nMRPipe v0.1 Pre-Alpha")
+        self.root.title(APP_VERSION)
         self.screen_width  = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
         self.root.withdraw()
@@ -74,6 +77,25 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             'x_label': 'δ (ppm)', 'y_label': 'Intensity',
             'x_lim': None, 'y_lim': None
         }
+
+        self.cosy_data      = None   # dict com f2_ppm, f1_ppm, data, meta (2D)
+        self._2d_params     = {      # controlos de contorno — editáveis pelo left panel
+            'base_mult': 5.0,        # múltiplo do nível de ruído para o 1º contorno
+            'n_levels':  12,         # número de contornos positivos
+            'show_neg':  False,      # contornos negativos (ruído) — off por omissão
+            'show_diag': True,       # diagonal (experimentos HH)
+            'show_proj': True,       # projeções 1D nas margens
+        }
+        self._2d_bg     = None       # background cache p/ blitting do crosshair
+        self._2d_fig    = None       # figura dedicada do visualizador 2D
+        self._2d_canvas = None       # FigureCanvasTkAgg do visualizador 2D
+        self._2d_ax     = None       # eixo principal (contour)
+        self._2d_ax_top = None       # projeção F2 (topo)
+        self._2d_ax_left = None      # projeção F1 (esquerda)
+        self._2d_ax_read = None      # canto: leitura de ppm
+        self._2d_cids   = []         # matplotlib event connection IDs (modo 2D)
+        self._2d_drag   = None       # estado do drag activo (zoom/pan)
+        self._2d_cross  = None       # (vline, hline) do crosshair
 
         self.plot_manager   = None
         self._peak_list_win = None
@@ -122,7 +144,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                      bg='black', borderwidth=0).pack()
 
         tk.Label(splash,
-                 text="nMRPipe v0.1 Pre-Alpha",
+                 text=APP_VERSION,
                  font=('Segoe UI', 13, 'bold'),
                  bg='black', fg='white').pack(pady=(8, 0))
 
@@ -189,6 +211,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self.left_panel, self,
             annotation_stage=self.stages['annotation'])
 
+        self.stages['cosy_annotation'] = CosyAnnotationStage(
+            self.left_panel, self)
+
+        self.stages['cosy_quantification'] = CosyQuantificationStage(
+            self.left_panel, self)
+
         self.stages['statistics'] = StatisticsStage(self.left_panel, self)
 
         # Activate visualization by default
@@ -251,12 +279,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         # ── Edit ─────────────────────────────────────────────────────────────
         edit_menu = _menu(mb_frame)
 
-        groups_menu = _menu(edit_menu)
-        groups_menu.add_command(label="Edit Groups and Colors...",
-                                command=self.open_group_editor)
-        groups_menu.add_command(label="Edit Samples...",
-                                command=self._open_sample_editor)
-        edit_menu.add_cascade(label="Groups", menu=groups_menu)
+        edit_menu.add_command(label="Groups and Samples…",
+                              command=self._open_sample_editor)
 
         edit_menu.add_separator()
         edit_menu.add_command(label="⚙ Annotation Parameters…",
@@ -360,8 +384,36 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         )
         self.btn_statistics.pack(side=tk.LEFT, padx=2)
 
+    @property
+    def is_cosy(self):
+        """True quando há um espectro 2D COSY/homonuclear carregado."""
+        cd = getattr(self, 'cosy_data', None)
+        if cd is None:
+            return False
+        return cd.get('meta', {}).get('exp_type', '') in (
+            'COSY', 'TOCSY', 'NOESY', 'ROESY', '2D')
+
     def switch_stage(self, stage_name):
-        """Switch between analysis stages."""
+        """Switch between analysis stages.
+
+        Em modo COSY: Peak Detection e JG-Deconv (MCR) ficam bloqueados, e o
+        botão Annotation roteia para a stage de anotação COSY.
+        """
+        # Bloqueios em modo COSY
+        if self.is_cosy and stage_name in ('peak_detection', 'j_resolve'):
+            return
+        # Routing consoante o tipo de dados (COSY usa stages dedicadas)
+        if self.is_cosy:
+            if stage_name == 'annotation':
+                stage_name = 'cosy_annotation'
+            elif stage_name == 'quantification':
+                stage_name = 'cosy_quantification'
+        else:
+            if stage_name == 'cosy_annotation':
+                stage_name = 'annotation'
+            elif stage_name == 'cosy_quantification':
+                stage_name = 'quantification'
+
         if self.active_stage == stage_name:
             return
 
@@ -369,6 +421,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         if self.active_stage and self.active_stage in self.stages:
             self.stages[self.active_stage].on_deactivate()
 
+        # Os botões da toolbar mapeiam para as stages 1D e COSY equivalentes
+        annot_active = stage_name in ('annotation', 'cosy_annotation')
+        quant_active = stage_name in ('quantification', 'cosy_quantification')
         for name, btn in {
             'visualization':   self.btn_visualization,
             'peak_detection':  self.btn_peak_detection,
@@ -377,13 +432,25 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             'quantification':  self.btn_quantification,
             'statistics':      self.btn_statistics,
         }.items():
+            is_active = (name == stage_name or
+                         (name == 'annotation' and annot_active) or
+                         (name == 'quantification' and quant_active))
             btn.configure(
-                style='ActiveStage.TButton'
-                if name == stage_name else 'Stage.TButton')
+                style='ActiveStage.TButton' if is_active else 'Stage.TButton')
 
         # Activate new stage
         self.active_stage = stage_name
         self.stages[stage_name].on_activate()
+
+    def _update_stage_availability(self):
+        """Activa/desactiva botões de stage conforme 1D vs COSY."""
+        cosy = self.is_cosy
+        # Peak Detection e JG-Deconv não se aplicam a COSY
+        for btn in (self.btn_peak_detection, self.btn_mcr_analysis):
+            try:
+                btn.configure(state='disabled' if cosy else 'normal')
+            except Exception:
+                pass
 
     # ---------- Main Layout ----------
     def create_main_layout(self):
@@ -478,7 +545,46 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
     # ---------- Data Import ----------
     def import_data(self):
-        """Import NMR spectrum data from CSV file."""
+        """Choose import format, then load CSV/TXT or Bruker NMR data."""
+        choice = self._ask_import_format()
+        if choice == 'csv':
+            self._import_csv()
+        elif choice == 'bruker':
+            self.import_bruker()
+
+    def _ask_import_format(self):
+        """Show a small format-chooser dialog. Returns 'csv', 'bruker', or None."""
+        import tkinter as tk
+        result = [None]
+        dlg = tk.Toplevel(self.root)
+        dlg.title('Import Data')
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+        from tkinter import ttk
+        ttk.Label(dlg, text='Select import format:',
+                  font=('Arial', 10, 'bold')).pack(padx=20, pady=(16, 8))
+        btn_frame = ttk.Frame(dlg)
+        btn_frame.pack(padx=20, pady=(0, 16))
+
+        def _pick(fmt):
+            result[0] = fmt
+            dlg.destroy()
+
+        ttk.Button(btn_frame, text='📄  CSV / TXT file',
+                   width=22, command=lambda: _pick('csv')).pack(side='left', padx=6)
+        ttk.Button(btn_frame, text='📁  Bruker NMR folder',
+                   width=22, command=lambda: _pick('bruker')).pack(side='left', padx=6)
+        dlg.bind('<Escape>', lambda e: dlg.destroy())
+        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        dlg.update_idletasks()
+        w, h = dlg.winfo_width(), dlg.winfo_height()
+        dlg.geometry(f'+{(sw-w)//2}+{(sh-h)//2}')
+        self.root.wait_window(dlg)
+        return result[0]
+
+    def _import_csv(self):
+        """Import NMR spectrum data from CSV/TXT file."""
         filepath = filedialog.askopenfilename(
             title="Select spectrum file",
             filetypes=[("CSV files", "*.csv"), ("Text files", "*.txt"), ("All files", "*.*")]
@@ -491,6 +597,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             # Update status
             self.status_label.config(text="Loading file...", foreground="blue")
             self.root.update()
+
+            self.cosy_data = None   # CSV é sempre 1D
+            self._update_stage_availability()
 
             # Load all samples using the robust loader
             self.ppm, self.all_intensities, sample_names, sample_labels = load_all_samples(filepath)
@@ -544,7 +653,11 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             traceback.print_exc()
 
     def import_bruker(self):
-        """Import raw Bruker NMR data from a folder hierarchy."""
+        """Import raw Bruker NMR data from a folder hierarchy.
+
+        Detecta automaticamente se o experimento é 1D ou 2D a partir do
+        PULPROG e da presença do ficheiro 2rr — o visualizador adapta-se.
+        """
         root_folder = filedialog.askdirectory(
             title="Select Bruker dataset folder (contains one sub-folder per sample)"
         )
@@ -559,46 +672,94 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self.status_label.config(text="Loading Bruker data…", foreground="blue")
             self.root.update()
 
-            self.ppm, self.all_intensities, sample_names, sample_labels = \
-                load_bruker_dataset(
-                    root_folder,
-                    ppm_min=opts['ppm_min'],
-                    ppm_max=opts['ppm_max'],
-                    n_points=opts['n_points'],
-                    expno=opts['expno'],
-                    procno=opts['procno'],
-                )
+            from data.bruker_loader import detect_experiment_type, load_bruker_2d
+            exp_info = detect_experiment_type(
+                root_folder, opts['expno'], opts['procno'])
 
-            self.samples_info = []
-            for i, (name, label) in enumerate(zip(sample_names, sample_labels)):
-                _type = 'BLK' if str(label).upper() in ('BLK', 'BLANK') else 'Sample'
-                self.samples_info.append({
-                    'index': i,
-                    'name': name,
-                    'label': label,
-                    'type': _type,
-                    'correction_factor': 1.0,
-                    'display': f"{name} ({label})"
-                })
+            if exp_info['ndim'] == 2:
+                # ── Caminho 2D ────────────────────────────────────────────────
+                f2_ppm, f1_ppm, data_2d, meta = load_bruker_2d(
+                    exp_info['expno_dir'], opts['procno'])
 
-            self._assign_group_colors()
+                self.cosy_data = {
+                    'f2_ppm': f2_ppm, 'f1_ppm': f1_ppm,
+                    'data': data_2d, 'meta': meta,
+                }
+                # Limpar dados 1D para que update_plot saiba que estamos em 2D
+                self.ppm             = None
+                self.all_intensities = None
 
-            if 'visualization' in self.stages:
-                self.stages['visualization'].refresh_sample_list()
-                if hasattr(self.stages['visualization'], 'sample_vars'):
-                    self.btn_select_all.config(state="normal")
-                    self.btn_clear_all.config(state="normal")
-                    self.btn_update.config(state="normal")
+                # Lista de amostras: uma entrada para o experimento 2D
+                name = os.path.basename(root_folder.rstrip('/\\'))
+                self.samples_info = [{
+                    'index': 0, 'name': name, 'label': 'Sample',
+                    'type': 'Sample', 'correction_factor': 1.0,
+                    'display': f"{name} ({meta['exp_type']})",
+                }]
+                self._assign_group_colors()
 
-            self.current_file = root_folder
-            if self.file_label:
-                self.file_label.config(text=os.path.basename(root_folder))
+                self.current_file = root_folder
+                if self.file_label:
+                    self.file_label.config(
+                        text=f"{os.path.basename(root_folder)} [{meta['exp_type']}]")
 
-            self.update_plot()
-            self.status_label.config(text="Bruker data loaded", foreground="green")
-            self.samples_count_label.config(text=f"{len(self.samples_info)} samples")
+                self._update_stage_availability()
+                if self.active_stage != 'visualization':
+                    self.switch_stage('visualization')
+                else:
+                    self.stages['visualization'].refresh_sample_list()
+                self.update_plot()
 
-            self._open_sample_editor()
+                self.status_label.config(
+                    text=(f"2D {meta['exp_type']} carregado  "
+                          f"({data_2d.shape[0]}×{data_2d.shape[1]})"),
+                    foreground="green")
+                self.samples_count_label.config(
+                    text=f"2D · {meta['exp_type']}")
+
+            else:
+                # ── Caminho 1D (comportamento original) ───────────────────────
+                self.cosy_data = None   # garantir que 2D anterior não persiste
+                self._update_stage_availability()
+
+                self.ppm, self.all_intensities, sample_names, sample_labels = \
+                    load_bruker_dataset(
+                        root_folder,
+                        ppm_min=opts['ppm_min'],
+                        ppm_max=opts['ppm_max'],
+                        n_points=opts['n_points'],
+                        expno=opts['expno'],
+                        procno=opts['procno'],
+                    )
+
+                self.samples_info = []
+                for i, (name, label) in enumerate(zip(sample_names, sample_labels)):
+                    _type = 'BLK' if str(label).upper() in ('BLK', 'BLANK') else 'Sample'
+                    self.samples_info.append({
+                        'index': i, 'name': name, 'label': label,
+                        'type': _type, 'correction_factor': 1.0,
+                        'display': f"{name} ({label})"
+                    })
+
+                self._assign_group_colors()
+
+                if 'visualization' in self.stages:
+                    self.stages['visualization'].refresh_sample_list()
+                    if hasattr(self.stages['visualization'], 'sample_vars'):
+                        self.btn_select_all.config(state="normal")
+                        self.btn_clear_all.config(state="normal")
+                        self.btn_update.config(state="normal")
+
+                self.current_file = root_folder
+                if self.file_label:
+                    self.file_label.config(text=os.path.basename(root_folder))
+
+                self.update_plot()
+                self.status_label.config(text="Bruker data loaded", foreground="green")
+                self.samples_count_label.config(
+                    text=f"{len(self.samples_info)} samples")
+
+                self._open_sample_editor()
 
         except Exception as e:
             self.status_label.config(text="Error loading Bruker data", foreground="red")
@@ -624,6 +785,14 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
     # ---------- Plot Update ----------
     def update_plot(self):
         """Update plot based on current stage and settings."""
+        # Dados 2D têm precedência quando estamos na visualização
+        if self.cosy_data is not None and self.active_stage == 'visualization':
+            self._show_2d_viewer()
+            return
+
+        # Saímos do modo 2D (1D activo) → restaurar canvas principal
+        self._hide_2d_viewer()
+
         if self.ppm is None or self.all_intensities is None:
             return
 
@@ -679,6 +848,482 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.apply_axes_settings()
         self.status_label.config(text=f"Showing data")
         self.canvas.draw()
+
+    # ── Visualizador 2D dedicado (estilo TopSpin) ─────────────────────────────
+    # Canvas próprio sobreposto à área direita (padrão do j_resolve_stage):
+    #   • contour central multi-cor
+    #   • projeção F2 no topo, projeção F1 à esquerda
+    #   • crosshair com leitura de ppm
+    #   • scroll = threshold | left-drag = zoom | right-drag = pan | dblclick = reset
+
+    def _show_2d_viewer(self):
+        """Constrói (se preciso) e mostra o visualizador 2D, escondendo o 1D."""
+        self._build_2d_canvas()
+        # Esconder canvas/toolbar principais
+        try:
+            self.toolbar.pack_forget()
+        except Exception:
+            pass
+        try:
+            self.canvas.get_tk_widget().pack_forget()
+        except Exception:
+            pass
+        self._2d_canvas.get_tk_widget().pack(
+            side=tk.TOP, fill=tk.BOTH, expand=True)
+        self._draw_2d_spectrum(preserve_view=False)
+
+    def _hide_2d_viewer(self):
+        """Esconde o visualizador 2D e restaura o canvas principal."""
+        if self._2d_canvas is None:
+            return
+        try:
+            self._2d_canvas.get_tk_widget().pack_forget()
+        except Exception:
+            pass
+        # Re-packing na ordem correcta (BOTTOM antes de TOP)
+        try:
+            self.toolbar.pack_forget()
+            self.canvas.get_tk_widget().pack_forget()
+            self.toolbar.pack(side=tk.BOTTOM, fill=tk.X)
+            self.canvas.get_tk_widget().pack(
+                side=tk.TOP, fill=tk.BOTH, expand=True)
+        except Exception:
+            pass
+
+    def _build_2d_canvas(self):
+        """Cria a figura/eixos do visualizador 2D uma única vez."""
+        if self._2d_fig is not None:
+            return
+        from matplotlib.gridspec import GridSpec
+        from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+        self._2d_fig = plt.Figure(facecolor='#fafafa')
+        gs = GridSpec(2, 2, figure=self._2d_fig,
+                      width_ratios=[1, 8], height_ratios=[1, 8],
+                      wspace=0.03, hspace=0.03,
+                      left=0.11, right=0.98, top=0.94, bottom=0.08)
+        self._2d_ax      = self._2d_fig.add_subplot(gs[1, 1])
+        self._2d_ax_top  = self._2d_fig.add_subplot(gs[0, 1], sharex=self._2d_ax)
+        self._2d_ax_left = self._2d_fig.add_subplot(gs[1, 0], sharey=self._2d_ax)
+        self._2d_ax_read = self._2d_fig.add_subplot(gs[0, 0])
+        self._2d_ax_read.axis('off')
+
+        self._2d_canvas = FigureCanvasTkAgg(
+            self._2d_fig, master=self.right_panel)
+        self._bind_2d_events()
+
+    def _draw_2d_spectrum(self, preserve_view=False):
+        """Desenha o contour 2D + projeções no visualizador dedicado."""
+        if self._2d_fig is None:
+            self._build_2d_canvas()
+
+        cd      = self.cosy_data
+        f2_ppm  = cd['f2_ppm']
+        f1_ppm  = cd['f1_ppm']
+        data    = cd['data']
+        meta    = cd['meta']
+
+        p         = self._2d_params
+        base_mult = float(p.get('base_mult', 3.0))
+        n_lev     = max(4, int(p.get('n_levels', 12)))
+        show_neg  = bool(p.get('show_neg',  True))
+        show_diag = bool(p.get('show_diag', True))
+        show_proj = bool(p.get('show_proj', True))
+
+        ax   = self._2d_ax
+        axt  = self._2d_ax_top
+        axl  = self._2d_ax_left
+
+        _cur_xlim = ax.get_xlim() if preserve_view else None
+        _cur_ylim = ax.get_ylim() if preserve_view else None
+        # Preservar também o zoom de intensidade das projeções
+        _cur_top_ylim  = axt.get_ylim() if preserve_view else None
+        _cur_left_xlim = axl.get_xlim() if preserve_view else None
+
+        ax.clear(); axt.clear(); axl.clear()
+        self._2d_cross = None   # crosshair invalidado pelo clear
+        ax.set_facecolor(self.plot_settings['background'])
+
+        dmax = float(np.percentile(np.abs(data), 99.9))
+        if dmax < 1e-10:
+            ax.text(0.5, 0.5, 'Espectro 2D vazio', transform=ax.transAxes,
+                    ha='center', va='center', color='gray', fontsize=11)
+            self._2d_canvas.draw()
+            return
+
+        # Ruído robusto via mediana de |data| (maioria dos pontos = ruído)
+        noise = float(np.median(np.abs(data)))
+        if noise < dmax * 1e-4:
+            noise = dmax * 1e-4
+        base = noise * base_mult
+        if base >= dmax:
+            base = dmax * 0.05
+        factor = (dmax / base) ** (1.0 / (n_lev - 1))
+        levels = [base * (factor ** i) for i in range(n_lev)]
+
+        # ── Contour multi-cor (gradiente low→high) ────────────────────────────
+        from matplotlib.colors import LogNorm
+        try:
+            ax.contour(f2_ppm, f1_ppm, data,
+                       levels=levels, cmap='jet',
+                       norm=LogNorm(vmin=levels[0], vmax=levels[-1]),
+                       linewidths=0.6, alpha=0.95)
+            if show_neg:
+                ax.contour(f2_ppm, f1_ppm, data,
+                           levels=[-v for v in reversed(levels)],
+                           colors='#9e9e9e', linewidths=0.5,
+                           linestyles='--', alpha=0.6)
+        except Exception as e:
+            ax.text(0.5, 0.5, f'Erro no contour:\n{e}', transform=ax.transAxes,
+                    ha='center', va='center', color='red', fontsize=9)
+            self._2d_canvas.draw()
+            return
+
+        # ── Projeções 1D (skyline = máximo) ───────────────────────────────────
+        if show_proj:
+            proj_f2 = data.max(axis=0)   # sobre F1 → perfil em F2 (topo)
+            proj_f1 = data.max(axis=1)   # sobre F2 → perfil em F1 (esquerda)
+            axt.plot(f2_ppm, proj_f2, color='#1a5276', lw=0.6)
+            axt.fill_between(f2_ppm, proj_f2, 0, color='#1a5276', alpha=0.12)
+            axl.plot(proj_f1, f1_ppm, color='#1a5276', lw=0.6)
+            axl.fill_betweenx(f1_ppm, proj_f1, 0, color='#1a5276', alpha=0.12)
+            axt.set_visible(True); axl.set_visible(True)
+        else:
+            axt.set_visible(False); axl.set_visible(False)
+
+        # ── Limites (convenção NMR: ppm alto à esquerda/topo) ────────────────
+        if preserve_view and _cur_xlim is not None:
+            ax.set_xlim(_cur_xlim); ax.set_ylim(_cur_ylim)
+        else:
+            ax.set_xlim(float(f2_ppm[0]),  float(f2_ppm[-1]))
+            ax.set_ylim(float(f1_ppm[-1]), float(f1_ppm[0]))
+
+        # Projeção F1 (esquerda): intensidade cresce para fora (esquerda)
+        axl.set_xlim(axl.get_xlim()[::-1])
+
+        # Restaurar zoom de intensidade das projeções (não resetar no redraw)
+        if preserve_view and show_proj:
+            if _cur_top_ylim is not None:
+                axt.set_ylim(_cur_top_ylim)
+            if _cur_left_xlim is not None:
+                axl.set_xlim(_cur_left_xlim)
+
+        # ── Diagonal (homonuclear HH) ─────────────────────────────────────────
+        exp_type = meta.get('exp_type', '')
+        if show_diag and exp_type in ('COSY', 'TOCSY', 'NOESY', 'ROESY', '2D'):
+            ppm_hi = min(float(f2_ppm[0]),  float(f1_ppm[0]))
+            ppm_lo = max(float(f2_ppm[-1]), float(f1_ppm[-1]))
+            ax.plot([ppm_hi, ppm_lo], [ppm_hi, ppm_lo],
+                    color='#888888', lw=0.6, ls='--', alpha=0.35, zorder=0)
+
+        fs = self.plot_settings['font_size']
+        ax.set_xlabel('δ F2 (ppm)', fontsize=fs)
+        ax.set_ylabel('')                       # escala F1 vai para a projeção
+        # Main: ticks F2 em baixo; sem labels de F1 (ficam na projeção esquerda)
+        ax.tick_params(labelsize=max(7, fs - 2), labelleft=False, left=False)
+
+        # Projeção topo (F2): sem ticks/labels
+        axt.tick_params(labelbottom=False, labelleft=False,
+                        bottom=False, left=False, top=False, right=False)
+        for sp in axt.spines.values():
+            sp.set_visible(False)
+
+        # Projeção esquerda (F1): mantém a escala ppm de F1 no lado de fora
+        axl.tick_params(labelbottom=False, bottom=False, top=False, right=False,
+                        labelleft=True, left=True, labelsize=max(7, fs - 2))
+        axl.set_ylabel('δ F1 (ppm)', fontsize=fs)
+        for side in ('top', 'right', 'bottom'):
+            axl.spines[side].set_visible(False)
+        axl.spines['left'].set_visible(True)
+
+        axt.set_title(meta.get('pulprog', ''), fontsize=max(7, fs - 1),
+                      color='#555')
+
+        # ── Canto superior esquerdo: sequência + núcleos ─────────────────────
+        self._2d_ax_read.clear()
+        self._2d_ax_read.axis('off')
+        self._2d_ax_read.text(
+            0.5, 0.95,
+            f"{meta.get('exp_type', '2D')}\n"
+            f"F2: {meta.get('nuc_f2', '1H')}\n"
+            f"F1: {meta.get('nuc_f1', '1H')}",
+            transform=self._2d_ax_read.transAxes,
+            ha='center', va='top', fontsize=9, color='#222',
+            family='monospace', linespacing=1.6)
+
+        # Coordenadas do cursor — dentro do gráfico central, canto sup. esquerdo
+        self._2d_coord_txt = ax.text(
+            0.012, 0.985, '', transform=ax.transAxes,
+            ha='left', va='top', fontsize=8, color='#e91e63',
+            family='monospace', linespacing=1.5, animated=True, zorder=11,
+            bbox=dict(boxstyle='round,pad=0.25', facecolor='white',
+                      edgecolor='none', alpha=0.7))
+
+        if self.plot_settings['grid_style'] != 'none':
+            ax.grid(True, linestyle=self.plot_settings['grid_style'],
+                    alpha=0.3, linewidth=0.4)
+
+        # Crosshair como artistas 'animated' (excluídos do draw normal → blitting)
+        self._2d_cross = (
+            ax.axvline(ax.get_xlim()[0], color='#e91e63', lw=0.6,
+                       alpha=0.8, animated=True, visible=False, zorder=9),
+            ax.axhline(ax.get_ylim()[0], color='#e91e63', lw=0.6,
+                       alpha=0.8, animated=True, visible=False, zorder=9),
+        )
+
+        self._2d_bg = None       # invalidar cache; recapturado no draw_event
+        self._2d_canvas.draw()
+
+    # ── Interacção 2D estilo TopSpin ──────────────────────────────────────────
+
+    def _bind_2d_events(self):
+        """Liga os handlers de rato ao canvas 2D (idempotente)."""
+        if self._2d_cids or self._2d_canvas is None:
+            return
+        c = self._2d_canvas
+        self._2d_cids = [
+            c.mpl_connect('scroll_event',         self._on_2d_scroll),
+            c.mpl_connect('button_press_event',   self._on_2d_press),
+            c.mpl_connect('motion_notify_event',  self._on_2d_motion),
+            c.mpl_connect('button_release_event', self._on_2d_release),
+            c.mpl_connect('draw_event',           self._on_2d_draw),
+        ]
+
+    def _on_2d_draw(self, event):
+        """Captura o background após cada draw completo (para blitting)."""
+        try:
+            self._2d_bg = self._2d_canvas.copy_from_bbox(self._2d_fig.bbox)
+        except Exception:
+            self._2d_bg = None
+
+    def _unbind_2d_events(self):
+        """Remove os handlers do canvas 2D."""
+        if self._2d_canvas is not None:
+            for cid in self._2d_cids:
+                try:
+                    self._2d_canvas.mpl_disconnect(cid)
+                except Exception:
+                    pass
+        self._2d_cids = []
+        self._2d_drag = None
+
+    def _on_2d_scroll(self, event):
+        """Scroll: threshold no contour; intensidade nas projeções."""
+        # up → amplificar (picos mais altos); down → reduzir
+        factor = 0.8 if event.button == 'up' else 1.25
+
+        if event.inaxes is self._2d_ax_top:
+            # Projeção F2: intensidade no eixo Y (base ancorada em 0)
+            _, y1 = self._2d_ax_top.get_ylim()
+            self._2d_ax_top.set_ylim(0, y1 * factor)
+            self._2d_canvas.draw_idle()
+            return
+
+        if event.inaxes is self._2d_ax_left:
+            # Projeção F1: intensidade no eixo X (invertido → cresce p/ esquerda;
+            # base ancorada em 0)
+            x0, _ = self._2d_ax_left.get_xlim()
+            self._2d_ax_left.set_xlim(x0 * factor, 0)
+            self._2d_canvas.draw_idle()
+            return
+
+        if event.inaxes != self._2d_ax:
+            return
+        mult = float(self._2d_params.get('base_mult', 3.0))
+        mult = mult * 1.3 if event.button == 'up' else mult / 1.3
+        mult = max(0.5, min(200.0, mult))
+        self._2d_params['base_mult'] = mult
+        self._draw_2d_spectrum(preserve_view=True)
+        self.status_label.config(
+            text=f"Contour threshold ×{mult:.2f} noise", foreground="blue")
+
+    def _on_2d_press(self, event):
+        """Zoom 2D (main) / zoom só F2 (projeção topo) / zoom só F1 (projeção
+        esquerda) / pan (right) / double-click reset."""
+        inax = event.inaxes
+        if inax not in (self._2d_ax, self._2d_ax_top, self._2d_ax_left):
+            return
+
+        cd = self.cosy_data
+        f2_ppm, f1_ppm = cd['f2_ppm'], cd['f1_ppm']
+
+        # ── Double-click → reset (total no main, por-eixo nas projeções) ──────
+        if event.dblclick and event.button == 1:
+            self._2d_drag = None
+            if inax is self._2d_ax_top:
+                self._2d_ax.set_xlim(float(f2_ppm[0]), float(f2_ppm[-1]))
+                self._2d_canvas.draw_idle()
+                self.status_label.config(text="F2 full", foreground="gray")
+            elif inax is self._2d_ax_left:
+                self._2d_ax.set_ylim(float(f1_ppm[-1]), float(f1_ppm[0]))
+                self._2d_canvas.draw_idle()
+                self.status_label.config(text="F1 full", foreground="gray")
+            else:
+                self._draw_2d_spectrum(preserve_view=False)
+                self.status_label.config(text="Full view", foreground="gray")
+            return
+
+        if event.button == 1 and event.xdata is not None \
+                and event.ydata is not None:
+            import matplotlib.patches as _patches
+            from matplotlib.transforms import blended_transform_factory
+
+            if inax is self._2d_ax:
+                # Zoom rectângulo 2D
+                rect = _patches.Rectangle(
+                    (event.xdata, event.ydata), 0, 0,
+                    fill=True, facecolor='#2196F3', edgecolor='#1565C0',
+                    alpha=0.18, lw=0.8, zorder=10)
+                self._2d_ax.add_patch(rect)
+                self._2d_drag = {'mode': 'zoom', 'x0': event.xdata,
+                                 'y0': event.ydata, 'rect': rect}
+
+            elif inax is self._2d_ax_top:
+                # Zoom só F2 (arrasto horizontal na projeção do topo)
+                trans = blended_transform_factory(
+                    self._2d_ax_top.transData, self._2d_ax_top.transAxes)
+                rect = _patches.Rectangle(
+                    (event.xdata, 0), 0, 1, transform=trans,
+                    fill=True, facecolor='#2196F3', edgecolor='#1565C0',
+                    alpha=0.18, lw=0.8, zorder=10)
+                self._2d_ax_top.add_patch(rect)
+                self._2d_drag = {'mode': 'zoomx', 'x0': event.xdata,
+                                 'rect': rect}
+
+            elif inax is self._2d_ax_left:
+                # Zoom só F1 (arrasto vertical na projeção da esquerda)
+                trans = blended_transform_factory(
+                    self._2d_ax_left.transAxes, self._2d_ax_left.transData)
+                rect = _patches.Rectangle(
+                    (0, event.ydata), 1, 0, transform=trans,
+                    fill=True, facecolor='#2196F3', edgecolor='#1565C0',
+                    alpha=0.18, lw=0.8, zorder=10)
+                self._2d_ax_left.add_patch(rect)
+                self._2d_drag = {'mode': 'zoomy', 'y0': event.ydata,
+                                 'rect': rect}
+
+        elif event.button == 3 and inax is self._2d_ax:
+            self._2d_drag = {
+                'mode': 'pan',
+                'xlim0': self._2d_ax.get_xlim(),
+                'ylim0': self._2d_ax.get_ylim(),
+                'x0px': event.x, 'y0px': event.y}
+
+    def _on_2d_motion(self, event):
+        """Crosshair + leitura ppm; actualiza zoom rect ou pan se activo."""
+        drag = self._2d_drag
+
+        if drag and drag['mode'] == 'zoom':
+            if event.xdata is None or event.ydata is None:
+                return
+            x0, y0 = drag['x0'], drag['y0']
+            rect = drag['rect']
+            rect.set_x(min(x0, event.xdata)); rect.set_y(min(y0, event.ydata))
+            rect.set_width(abs(event.xdata - x0))
+            rect.set_height(abs(event.ydata - y0))
+            self._2d_canvas.draw_idle()
+            return
+
+        if drag and drag['mode'] == 'zoomx':
+            if event.xdata is None:
+                return
+            x0 = drag['x0']
+            rect = drag['rect']
+            rect.set_x(min(x0, event.xdata))
+            rect.set_width(abs(event.xdata - x0))
+            self._2d_canvas.draw_idle()
+            return
+
+        if drag and drag['mode'] == 'zoomy':
+            if event.ydata is None:
+                return
+            y0 = drag['y0']
+            rect = drag['rect']
+            rect.set_y(min(y0, event.ydata))
+            rect.set_height(abs(event.ydata - y0))
+            self._2d_canvas.draw_idle()
+            return
+
+        if drag and drag['mode'] == 'pan':
+            if event.x is None or event.y is None:
+                return
+            bbox = self._2d_ax.get_window_extent()
+            if bbox.width == 0 or bbox.height == 0:
+                return
+            xlim0, ylim0 = drag['xlim0'], drag['ylim0']
+            dx = (event.x - drag['x0px']) * (xlim0[1] - xlim0[0]) / bbox.width
+            dy = (event.y - drag['y0px']) * (ylim0[1] - ylim0[0]) / bbox.height
+            self._2d_ax.set_xlim(xlim0[0] - dx, xlim0[1] - dx)
+            self._2d_ax.set_ylim(ylim0[0] - dy, ylim0[1] - dy)
+            self._2d_canvas.draw_idle()
+            return
+
+        # Sem drag → crosshair via blitting (rápido) + readout na status bar
+        if event.inaxes != self._2d_ax or event.xdata is None:
+            return
+        if self._2d_cross is None or self._2d_bg is None:
+            return   # background ainda não capturado; próximo draw resolve
+        vline, hline = self._2d_cross
+        vline.set_xdata([event.xdata, event.xdata]); vline.set_visible(True)
+        hline.set_ydata([event.ydata, event.ydata]); hline.set_visible(True)
+        self._2d_coord_txt.set_text(
+            f"F2: {event.xdata:.3f}\nF1: {event.ydata:.3f}")
+        self._2d_canvas.restore_region(self._2d_bg)
+        self._2d_ax.draw_artist(vline)
+        self._2d_ax.draw_artist(hline)
+        self._2d_ax.draw_artist(self._2d_coord_txt)
+        self._2d_canvas.blit(self._2d_fig.bbox)
+        self.status_label.config(
+            text=f"F2: {event.xdata:.3f} ppm    F1: {event.ydata:.3f} ppm",
+            foreground="#333")
+
+    def _on_2d_release(self, event):
+        """Conclui o zoom rectângulo; termina o pan."""
+        drag = self._2d_drag
+        self._2d_drag = None
+        if not drag:
+            return
+
+        try:
+            drag['rect'].remove()
+        except Exception:
+            pass
+
+        mode = drag['mode']
+        if mode == 'zoom':
+            if event.xdata is None or event.ydata is None:
+                self._2d_canvas.draw_idle()
+                return
+            x0, y0 = drag['x0'], drag['y0']
+            x1, y1 = event.xdata, event.ydata
+            if abs(x1 - x0) < 1e-3 or abs(y1 - y0) < 1e-3:
+                self._2d_canvas.draw_idle()
+                return
+            self._2d_ax.set_xlim(max(x0, x1), min(x0, x1))
+            self._2d_ax.set_ylim(min(y0, y1), max(y0, y1))
+            self._2d_canvas.draw_idle()
+
+        elif mode == 'zoomx':
+            if event.xdata is None:
+                self._2d_canvas.draw_idle()
+                return
+            x0, x1 = drag['x0'], event.xdata
+            if abs(x1 - x0) < 1e-3:
+                self._2d_canvas.draw_idle()
+                return
+            self._2d_ax.set_xlim(max(x0, x1), min(x0, x1))
+            self._2d_canvas.draw_idle()
+
+        elif mode == 'zoomy':
+            if event.ydata is None:
+                self._2d_canvas.draw_idle()
+                return
+            y0, y1 = drag['y0'], event.ydata
+            if abs(y1 - y0) < 1e-3:
+                self._2d_canvas.draw_idle()
+                return
+            self._2d_ax.set_ylim(min(y0, y1), max(y0, y1))
+            self._2d_canvas.draw_idle()
 
     def open_peak_debugger(self):
         """Open the peak flow debugger for the current stage."""
@@ -903,20 +1548,30 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self._deconv_win = MCRDeconvWindow(
                 self.root, _source_peaks, self, ann_stage=_source_stage)
         else:
-            # Legacy peak-detection deconvolution tool
-            if self._deconv_win is not None:
-                try:
-                    w = self._deconv_win.window
-                    if w.winfo_exists():
-                        w.deiconify(); w.lift(); w.focus_force()
-                        return
-                except Exception:
-                    pass
-            if pk_stage:
-                pk_stage.open_deconv_tool()
+            # Per-peak resolve deconvolution: reopen the aggregate window only if
+            # the user has already resolved at least one peak (controller exists).
+            ctrl = getattr(pk_stage, '_deconv_controller', None) if pk_stage else None
+            if ctrl is not None and getattr(ctrl, 'peaks', None):
+                from gui.notation.deconvolution import DeconvWindow
+                DeconvWindow(self.root, ctrl, pk_stage)
+            else:
+                from tkinter import messagebox
+                messagebox.showinfo(
+                    'Deconvolution',
+                    'No deconvolution available.\n\n'
+                    'Resolve a peak first from the Peak List '
+                    '(right-click a peak → Resolve).')
 
     def open_annot_shortcut(self):
-        """Open Annotation Results — singleton."""
+        """Open Annotation Results — singleton.
+
+        Em modo COSY abre a janela de resultados COSY (cross-peaks + analitos),
+        não a janela de anotação 1D.
+        """
+        if self.is_cosy:
+            self._open_cosy_results()
+            return
+
         # Reutilizar janela existente
         if self._annot_win is not None:
             try:
@@ -988,6 +1643,28 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self._annot_win.win.protocol(
                 'WM_DELETE_WINDOW',
                 lambda: self._annot_win.win.withdraw())
+
+    def _open_cosy_results(self):
+        """Abre/reutiliza a janela de resultados COSY após a anotação."""
+        stage = self.stages.get('cosy_annotation')
+        # Reutilizar janela existente
+        win = getattr(stage, '_results_win', None)
+        if win is not None and getattr(win, 'win', None) is not None:
+            try:
+                if win.win.winfo_exists():
+                    win.win.deiconify(); win.win.lift(); win.win.focus_force()
+                    return
+            except Exception:
+                pass
+        # Reconstruir a partir dos dados guardados
+        ca = getattr(self, 'cosy_annotation', None)
+        if not ca:
+            messagebox.showinfo(
+                'COSY', 'Run COSY annotation first (Annotation stage).')
+            return
+        from gui.widgets.cosy_results_window import CosyResultsWindow
+        stage._results_win = CosyResultsWindow(
+            self, self.cosy_data, ca['crosspeaks'], ca['results'])
 
     def _on_closing(self):
         """Clean shutdown — prompt on unsaved changes, then tear down so the

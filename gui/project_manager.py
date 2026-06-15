@@ -19,6 +19,8 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+from app_paths import APP_VERSION
+
 PROJECT_EXT   = '.nmrproj'
 AUTOSAVE_SECS = 300  # 5 minutes
 
@@ -57,9 +59,9 @@ class ProjectManager:
     @project_path.setter
     def project_path(self, value):
         self._project_path = value
-        title = 'nMRPipe v0.1 Pre-Alpha'
+        title = APP_VERSION
         if value:
-            title = f'nMRPipe v0.1 Pre-Alpha — {os.path.basename(value)}'
+            title = f'{APP_VERSION} — {os.path.basename(value)}'
         try:
             self.app.root.title(title)
         except Exception:
@@ -354,14 +356,9 @@ class ProjectManager:
                     pd.peaks_count_label.config(text=f'Found {len(pd.peaks)} peaks')
                     pd.step2_status.config(
                         text=f'✅ {len(pd.peaks)} peaks detected', foreground='green')
-                    pd.btn_search_overlaps.config(state='normal')
                     try: app.btn_peak_list.config(state='normal')
                     except Exception: pass
                 if pd._overlaps:
-                    pd.btn_open_deconv.config(state='normal')
-                    pd.deconv_status.config(
-                        text=f'{len(pd._overlaps)} peak(s) queued for deconvolution',
-                        foreground='orange')
                     try: app.btn_deconv_shortcut.config(state='normal')
                     except Exception: pass
             except Exception as _e:
@@ -643,6 +640,7 @@ class ProjectManager:
         except Exception:
             pass
 
+
     # ── File operations ───────────────────────────────────────────────────────
 
     def save_project(self, path=None):
@@ -679,11 +677,18 @@ class ProjectManager:
     def open_project(self, path=None):
         """Open a project file, restoring full state."""
         if self._dirty:
-            if not messagebox.askyesno(
-                    'Unsaved Changes',
-                    'Current session has unsaved changes.\n'
-                    'Open a new project anyway?'):
+            resp = messagebox.askyesnocancel(
+                'Alterações não guardadas',
+                'O projeto atual tem alterações não guardadas.\n'
+                'Deseja guardar antes de abrir outro projeto?\n\n'
+                '  Sim      → Guardar e continuar\n'
+                '  Não      → Abrir sem guardar (as alterações serão perdidas)\n'
+                '  Cancelar → Voltar sem abrir')
+            if resp is None:        # Cancelar → abortar
                 return False
+            if resp:                # Sim → guardar; abortar se falhar
+                if not self.save_or_saveas():
+                    return False
 
         if path is None:
             path = filedialog.askopenfilename(

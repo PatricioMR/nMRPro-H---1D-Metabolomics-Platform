@@ -1,7 +1,6 @@
 """Tests for peak-identification improvements in processing.peak_detection.
 
 Covers the audit fixes:
-  A  shoulder / overlapped-line detection via the second derivative
   D  close multiplet legs are kept as separate apexes (not merged)
   B  robust noise estimation (quiet segment, not blind edges)
   C  detection threshold scaled to the detection spectrum
@@ -14,33 +13,11 @@ from processing.peak_detection import (
     detect_peaks,
     estimate_noise_minimum_segment,
     estimate_noise_region,
-    _second_derivative_candidates,
 )
 
 
 def _gauss(x, c, a, w):
     return a * np.exp(-((x - c) ** 2) / (2.0 * w ** 2))
-
-
-def test_shoulder_without_local_maximum_is_detected():
-    """Two heavily overlapped peaks where the smaller is only a shoulder
-    (no local maximum). find_peaks alone would report one peak; the second-
-    derivative pass must recover the hidden second apex."""
-    ppm = np.linspace(0.0, 1.0, 2000)
-    main     = _gauss(ppm, 0.500, 1.00, 0.010)
-    shoulder = _gauss(ppm, 0.525, 0.45, 0.010)  # buried on the flank
-    signal = main + shoulder
-
-    result = detect_peaks(
-        ppm, signal,
-        noise_std=0.01, min_snr=3.0,
-        baseline_correct=False, global_align=False,
-        detect_shoulders=True,
-    )
-    centers = sorted(p['ppm'] for p in result)
-    assert len(centers) >= 2, f"shoulder not detected: {centers}"
-    assert any(abs(c - 0.500) < 0.01 for c in centers)
-    assert any(abs(c - 0.525) < 0.012 for c in centers)
 
 
 def test_close_doublet_legs_are_not_merged():
@@ -54,7 +31,6 @@ def test_close_doublet_legs_are_not_merged():
         ppm, d,
         noise_std=0.01, min_snr=3.0, min_distance=0.005,
         baseline_correct=False, global_align=False,
-        detect_shoulders=True,
     )
     centers = sorted(p['ppm'] for p in result)
     assert len(centers) >= 2, f"doublet merged into one: {centers}"
@@ -121,12 +97,3 @@ def test_single_point_spike_is_rejected():
     )
     assert all(abs(p['ppm'] - 0.5) > 0.005 for p in result), \
         "single-point spike was detected as a peak"
-
-
-def test_second_derivative_candidates_basic():
-    ppm = np.linspace(0.0, 1.0, 2000)
-    sig = _gauss(ppm, 0.40, 1.0, 0.01) + _gauss(ppm, 0.60, 1.0, 0.01)
-    idx = _second_derivative_candidates(sig, min_height=0.1, smooth_win=11)
-    found = sorted(ppm[i] for i in idx)
-    assert any(abs(c - 0.40) < 0.01 for c in found)
-    assert any(abs(c - 0.60) < 0.01 for c in found)

@@ -517,16 +517,13 @@ class PeakListWindow:
         pk['overlapping']        = True
         pk['from_overlap_search'] = False
         ctrl.add_peak(pk, target_ppm=peak['ppm'])
-        # Enable deconv shortcut & button
+        # Enable the menu deconvolution shortcut so the user can reopen the
+        # aggregate window after resolving peaks.
         stage._overlaps = list(ctrl.regions)  # now reflects the added peak
         try:
-            stage.btn_open_deconv.config(state='normal')
             self.app.btn_deconv_shortcut.config(state='normal')
         except Exception:
             pass
-        stage.deconv_status.config(
-            text=f"{len(ctrl.peaks)} region(s) queued for deconvolution",
-            foreground='orange')
 
     def _dequeue_deconv(self, peak):
         """Remove a peak's region from the deconv queue when marked Good."""
@@ -708,13 +705,9 @@ class PeakListWindow:
         p['overlapping']         = True
         region_idx, child_idx = ctrl.add_peak(p, target_ppm=peak['ppm'])
 
-        # Actualizar estado do botão
+        # Enable the menu deconvolution shortcut
         try:
-            stage.btn_open_deconv.config(state='normal')
             stage._overlaps = list(ctrl.regions)
-            stage.deconv_status.config(
-                text=f'{len(ctrl.peaks)} peak(s) queued — click Open Deconv Tool',
-                foreground='orange')
             self.app.btn_deconv_shortcut.config(state='normal')
         except Exception:
             pass

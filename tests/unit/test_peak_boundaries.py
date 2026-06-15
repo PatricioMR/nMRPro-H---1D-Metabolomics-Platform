@@ -39,19 +39,42 @@ def test_neighbour_does_not_skew_isolated_baseline():
     assert abs(ys - ye) < 0.05 * float(y.max())
 
 
-def test_shoulder_survives_with_low_local_height():
-    """An opt-in shoulder (cluster member) is kept even though its height above
-    the local linear baseline is ~0 — it is real signal on a peak flank."""
+def test_isolated_feet_land_at_5pct_height():
+    """Free-flank boundary rule: start/end sit where the flank drops to 5 % of
+    the apex height above the local baseline."""
     ppm = np.linspace(0.0, 1.0, 2000)
-    y = _g(ppm, 0.500, 1.0, 0.010) + _g(ppm, 0.525, 0.45, 0.010)
-    res = detect_peaks(ppm, y, noise_std=0.01, min_snr=3.0,
-                       baseline_correct=False, global_align=False,
-                       detect_shoulders=True)
-    centers = sorted(p['ppm'] for p in res)
-    assert any(abs(c - 0.525) < 0.012 for c in centers), centers
-    # the shoulder is flagged as part of a 2-peak cluster
-    sh = min(res, key=lambda p: abs(p['ppm'] - 0.525))
-    assert sh['n_cluster_peaks'] >= 2
+    y = _g(ppm, 0.5, 1.0, 0.01)
+    p = separate_overlapping_peaks(y, [1000], ppm, noise_std=0.005,
+                                   baseline_level=0.0)[0]
+    apex = float(y[p['index']])
+    for idx in (p['start_idx'], p['end_idx']):
+        # at (not far below) the 5 % level — discrete sampling lands just above
+        assert 0.04 * apex <= float(y[idx]) <= 0.08 * apex, float(y[idx])
+
+
+def test_5pct_uses_local_baseline_on_pedestal():
+    """On a raised pedestal the 5 % is measured ABOVE the local baseline, not
+    the absolute zero — feet land near base + 0.05·(apex − base)."""
+    ppm = np.linspace(0.0, 1.0, 2000)
+    base = 0.30
+    y = base + _g(ppm, 0.5, 0.70, 0.01)
+    p = separate_overlapping_peaks(y, [1000], ppm, noise_std=0.005,
+                                   baseline_level=base)[0]
+    expected = base + 0.05 * 0.70
+    assert abs(float(y[p['start_idx']]) - expected) < 0.03, float(y[p['start_idx']])
+
+
+def test_overlap_boundary_stays_at_valley():
+    """When a valley is reached before the 5 % level (overlap), the shared inner
+    boundary is the valley min — the 5 % rule does not push it past the dip."""
+    ppm = np.linspace(0.0, 1.0, 2000)
+    y = _g(ppm, 0.500, 1.0, 0.006) + _g(ppm, 0.530, 1.0, 0.006)
+    seps = separate_overlapping_peaks(y, [1000, 1060], ppm, noise_std=0.005,
+                                      baseline_level=0.0)
+    left, right = sorted(seps, key=lambda p: p['ppm'])
+    # the shared boundary sits at the 0.515 valley between the two apices
+    assert 0.508 < left['end_ppm'] < 0.522
+    assert abs(left['end_ppm'] - right['start_ppm']) < 1e-9
 
 
 def test_isolated_peak_grounds_at_baseline():

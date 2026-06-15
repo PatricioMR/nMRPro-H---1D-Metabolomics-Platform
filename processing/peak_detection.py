@@ -284,6 +284,27 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
     #   peak on its left side and of the left-hand peak on its right side.
     separated_peaks = []
 
+    # Outer (free-flank) boundary rule — user-defined: the lateral limit is the
+    # point where the flank, descending from the apex, drops to 5 % of the peak
+    # height ABOVE the local baseline (the value at the cluster's baseline foot
+    # on that side). If a valley/baseline foot is reached before the 5 % level
+    # (overlap), the foot wins — the valley is the boundary. This is a relative,
+    # scale-aware window that behaves consistently across tall/short peaks and a
+    # sloped baseline, unlike an absolute σ threshold.
+    FOOT_FRACTION = 0.05
+
+    def _foot_5pct(apex, foot_idx, step):
+        """Index where the flank from ``apex`` toward ``foot_idx`` first reaches
+        baseline + 5 % of the apex height; capped at ``foot_idx`` (valley)."""
+        base = float(intensity[foot_idx])
+        thr5 = base + FOOT_FRACTION * (float(intensity[apex]) - base)
+        j = apex
+        while j != foot_idx:
+            if float(intensity[j]) <= thr5:
+                return j
+            j += step
+        return foot_idx
+
     for cl in clusters:
         apices   = sorted(cl['apices'])
         c_lo     = cl['lo']
@@ -293,8 +314,9 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
         for rank, apex in enumerate(apices):
 
             # ── Left boundary ─────────────────────────────────────────────────
+            # Outer (free) flank → 5 %-height crossing; inner → valley.
             if rank == 0:
-                left_idx      = c_lo
+                left_idx      = _foot_5pct(apex, c_lo, -1)
                 left_grounded = lg_map[apex]
             else:
                 prev      = apices[rank - 1]
@@ -304,7 +326,7 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
 
             # ── Right boundary ────────────────────────────────────────────────
             if rank == n_ap - 1:
-                right_idx      = c_hi
+                right_idx      = _foot_5pct(apex, c_hi, +1)
                 right_grounded = rg_map[apex]
             else:
                 nxt        = apices[rank + 1]
@@ -313,24 +335,12 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                 right_grounded = float(intensity[right_idx]) <= thr
 
             if n_ap == 1:
-                # ── Isolated peak → symmetric feet ────────────────────────────
-                # Make start/end land at the same intensity (Y_start ≈ Y_end):
-                # raise the LOWER foot to the HIGHER one and trim that side inward
-                # to where the flank crosses that level. Horizontal integration
-                # baseline so a neighbour on one side cannot skew the area.
+                # ── Isolated peak → both feet at the 5 %-height level ──────────
+                # Free flanks on both sides → the two crossings land at the same
+                # height, giving a horizontal integration baseline naturally.
                 left_val  = float(intensity[left_idx])
                 right_val = float(intensity[right_idx])
                 foot_level = max(left_val, right_val)
-                if left_val < foot_level:
-                    j = left_idx
-                    while j < apex and float(intensity[j]) < foot_level:
-                        j += 1
-                    left_idx = j
-                elif right_val < foot_level:
-                    j = right_idx
-                    while j > apex and float(intensity[j]) < foot_level:
-                        j -= 1
-                    right_idx = j
                 start_idx = min(left_idx, apex)
                 end_idx   = max(right_idx, apex)
                 height = float(intensity[apex]) - foot_level
@@ -507,56 +517,6 @@ def estimate_noise_minimum_segment(intensity, n_segments=32):
     return sigma
 
 
-def _second_derivative_candidates(spectrum, min_height, smooth_win):
-    """Apex indices for peaks AND shoulders, via the second derivative.
-
-    ``find_peaks`` only locates local maxima, so a shoulder — or a partially
-    overlapped multiplet line with no maximum of its own — is invisible. A peak
-    is a minimum (most-negative curvature) of d²/dx², so detecting minima of the
-    second derivative recovers those hidden apexes. Candidates are gated by:
-      • spectrum value ≥ ``min_height`` (must sit on real signal), and
-      • curvature prominence ≥ 3·MAD(d²) (significant inflection, not noise).
-
-    Returns a list of integer indices (may be empty).
-    """
-    from scipy.signal import savgol_filter, find_peaks as _fp
-    n = len(spectrum)
-    win = int(smooth_win)
-    if win % 2 == 0:
-        win += 1
-    win = max(5, win)
-    if win > n:
-        win = n if n % 2 == 1 else n - 1
-    if win < 5:
-        return []
-    try:
-        d2 = savgol_filter(np.asarray(spectrum, dtype=float),
-                           window_length=win, polyorder=2, deriv=2)
-    except Exception:
-        return []
-    d2_mad = float(np.median(np.abs(d2 - np.median(d2)))) * 1.4826
-    prom = max(3.0 * d2_mad, 1e-12)
-    idx, _ = _fp(-d2, prominence=prom)        # peaks/shoulders = maxima of -d²
-    spectrum = np.asarray(spectrum, dtype=float)
-    out = []
-    for i in idx:
-        if spectrum[i] < min_height:
-            continue
-        # Reject single-point spikes: a real apex/shoulder spans ≥2 points above
-        # half of its own height; a lone spike has only itself.
-        half = 0.5 * spectrum[i]
-        w = 1
-        j = i - 1
-        while j >= 0 and spectrum[j] >= half:
-            w += 1; j -= 1
-        j = i + 1
-        while j < n and spectrum[j] >= half:
-            w += 1; j += 1
-        if w >= 2:
-            out.append(int(i))
-    return out
-
-
 def fit_peak_quality(ppm_region, intensity_region):
     """
     Assess peak quality from shape fit and symmetry.
@@ -698,16 +658,13 @@ def check_foot_at_baseline(intensity, foot_idx, noise_std,
     return float(intensity[foot_idx]) <= threshold_factor * float(noise_std)
 
 
-def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
-                   detect_shoulders=False, smooth_win=None):
-    """Apex indices in ONE spectrum (find_peaks + optional hidden-shoulder pass).
+def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points):
+    """Apex indices in ONE spectrum via find_peaks.
 
     Shared by the consolidated path and per-sample detection. Returns a sorted
     list of int apex indices (boundaries/clusters are computed later by
     separate_overlapping_peaks on the chosen reference).
     """
-    if smooth_win is None:
-        smooth_win = max(5, 2 * distance_in_points + 1)
     idx_primary, _ = find_peaks(
         spectrum,
         height=min_height,
@@ -715,18 +672,7 @@ def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
         prominence=eff_noise * min_snr * 0.5,
         width=2,                                 # reject 1-point noise spikes
     )
-    idx_primary = sorted(int(i) for i in idx_primary)
-    kept_shoulders = []
-    if detect_shoulders:
-        prim = np.asarray(idx_primary, dtype=int)
-        for si in _second_derivative_candidates(spectrum, min_height, smooth_win):
-            if prim.size and np.min(np.abs(prim - si)) <= distance_in_points:
-                continue                                 # near a real apex
-            if kept_shoulders and min(abs(si - k) for k in kept_shoulders) \
-                    <= distance_in_points:
-                continue                                 # near another shoulder
-            kept_shoulders.append(int(si))
-    return sorted(idx_primary + kept_shoulders)
+    return sorted(int(i) for i in idx_primary)
 
 
 def _consensus_apices(per_sample_idx, n_points, merge_tol_pts):
@@ -786,7 +732,7 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                  global_align=True, global_align_max_shift_ppm=0.03,
                  samples_info=None, progress_callback=None,
                  return_details=False, per_peak_align=True,
-                 per_peak_max_shift_ppm=0.02, detect_shoulders=False,
+                 per_peak_max_shift_ppm=0.02,
                  per_sample_detection=False):
     """
     Detect peaks with SNR > min_snr - WITH BASELINE CORRECTION.
@@ -997,14 +943,12 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         print(f"   distance: {min_distance} ppm = {distance_in_points} points")
         print(f"   min_height: {min_height:.6f} (baseline + SNR={min_snr} * eff_sigma={_eff_noise:.6f})")
 
-        # STEP 8+9: find apexes (find_peaks + conservative second-derivative)
-        # then separate. Wrapped so it can be re-run on a peak-aligned reference.
-        _smooth_win = max(5, 2 * distance_in_points + 1)
-
+        # STEP 8+9: find apexes (find_peaks) then separate. Wrapped so it can be
+        # re-run on a peak-aligned reference.
         def _detect_and_separate(ref):
             idx = np.asarray(_detect_single(
-                ref, _eff_noise, min_height, min_snr, distance_in_points,
-                detect_shoulders, _smooth_win), dtype=int)
+                ref, _eff_noise, min_height, min_snr, distance_in_points),
+                dtype=int)
             if len(idx) == 0:
                 return []
             # Boundary geometry uses the REAL noise spread (det_noise), not the
@@ -1035,8 +979,7 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 med_s, sig_s = _quiet_segment_stats(col)
                 mh_s = med_s + sig_s * min_snr
                 per_sample_idx.append(_detect_single(
-                    col, sig_s, mh_s, min_snr, distance_in_points,
-                    detect_shoulders, _smooth_win))
+                    col, sig_s, mh_s, min_snr, distance_in_points))
             # Merge tolerance only absorbs cross-sample alignment jitter of the
             # SAME line — it must stay well below distance_in_points (the minimum
             # spacing between distinct apices), or separate multiplet lines /

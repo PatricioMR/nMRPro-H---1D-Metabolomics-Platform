@@ -6,7 +6,7 @@
 ; install folder (Program Files) can stay read-only.
 
 #define AppName    "nMRPipe"
-#define AppVersion "0.1"
+#define AppVersion "0.2"
 #define AppExe     "nMRPipe.exe"
 
 [Setup]

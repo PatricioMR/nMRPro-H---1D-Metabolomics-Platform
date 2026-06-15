@@ -52,7 +52,7 @@ _UNICODE_FONT      = 'DejaVuSans'      if _HAS_DEJAVU else 'Helvetica'
 _UNICODE_FONT_BOLD = 'DejaVuSans-Bold' if _HAS_DEJAVU else 'Helvetica-Bold'
 
 # ── Constantes ───────────────────────────────────────────────────────────────
-APP_VERSION  = 'nMRPipe v0.1 Pre-Alpha'
+from app_paths import APP_VERSION
 PAGE_W, PAGE_H = A4
 MARGIN = 1.5 * cm
 
@@ -233,24 +233,18 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     y_peak_max = -np.inf
     all_ys     = []
 
-    if _show_deconv:
-        # Raw full peak in grey (context for the reader)
-        _y_raw_mean = (np.mean(all_int[i_lo:i_hi+1, :], axis=1)
-                       if all_int.ndim > 1 else all_int[i_lo:i_hi+1])
-        ax.plot(x, _y_raw_mean, color='#aaaaaa', lw=0.9, alpha=0.45,
-                ls='--', zorder=1, label='Raw (shared peak)')
-
-    # Single fill colour for the integrated area (no per-group colouring): the
-    # mean spectrum is drawn once; for NNLS-resolved analytes the curve and fill
-    # are scaled by this analyte's contribution fraction, so the painted area is
-    # exactly the portion of the (shared) peak integrated for THIS analyte.
-    _INTEG_COL = '#2e6da4'
+    # Outline is ALWAYS the total observed peak — the same crop the user sees in
+    # the J-Resolve visualizer. For an NNLS-resolved analyte the fill below paints
+    # only THIS analyte's resolved fraction of that shared peak (blue outline =
+    # full peak, green fill = the analyte), mirroring the visualizer's stacked
+    # contribution fill. A non-deconv analyte fills its own whole peak in blue.
+    _INTEG_COL    = '#2e6da4'   # blue — peak outline / standard fill
+    _ANALYTE_FILL = '#43a047'   # green — this analyte's resolved portion
     _y_mean_full = (all_int[i_lo:i_hi+1] if all_int.ndim == 1
                     else np.mean(all_int[i_lo:i_hi+1, :], axis=1))
-    _y_plot = _y_mean_full * float(_jr_frac) if _show_deconv else _y_mean_full
-    ax.plot(x, _y_plot, color=_INTEG_COL, lw=1.5, zorder=3)
-    y_peak_max = float(np.max(_y_plot))
-    all_ys.append(_y_plot)
+    ax.plot(x, _y_mean_full, color=_INTEG_COL, lw=1.5, zorder=3)
+    y_peak_max = float(np.max(_y_mean_full))
+    all_ys.append(_y_mean_full)
 
     # Integration window indices
     _mw = result.get('_multiplet_window')
@@ -269,10 +263,20 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         xf = ppm_f[lo_f:hi_f + 1]
         yf = (np.mean(all_int[lo_f:hi_f + 1, :], axis=1)
               if all_int.ndim > 1 else all_int[lo_f:hi_f + 1])
-        if _show_deconv:
+        _line_fracs = result.get('_jr_line_fracs') if _show_deconv else None
+        if _show_deconv and _line_fracs:
+            # Per-line fractions: paint each point by the fraction of its nearest
+            # predicted line, so legs that NNLS resolved differently show their own
+            # share — the same per-leg reality folded into the quantified area.
+            _lps = np.asarray([p for p, _ in _line_fracs], dtype=float)
+            _lfs = np.asarray([f for _, f in _line_fracs], dtype=float)
+            _near = np.argmin(np.abs(xf[:, None] - _lps[None, :]), axis=1)
+            yf = yf * _lfs[_near]
+        elif _show_deconv:
             yf = yf * float(_jr_frac)
+        _fill_col = _ANALYTE_FILL if _show_deconv else _INTEG_COL
         ax.fill_between(xf, 0, np.maximum(yf, 0),
-                        alpha=0.30, color=_INTEG_COL, linewidth=0, zorder=2)
+                        alpha=0.35, color=_fill_col, linewidth=0, zorder=2)
 
     # Média global para Lorentz overlay
     y_mean = (np.mean(all_int[i_lo:i_hi+1, :], axis=1)

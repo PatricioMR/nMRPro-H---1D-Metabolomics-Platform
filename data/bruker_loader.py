@@ -188,6 +188,192 @@ def _load_spectrum(proc_dir):
     return ppm, data
 
 
+# ── Detecção e carregamento de experimentos 2D ───────────────────────────────
+
+_PULPROG_TYPES = {
+    'cosy': 'COSY', 'dqfcosy': 'COSY', 'cosydf': 'COSY', 'cosygp': 'COSY',
+    'jres': 'JRES', 'jresgp': 'JRES',
+    'tocsy': 'TOCSY', 'mlev': 'TOCSY', 'dipsi': 'TOCSY',
+    'hsqc': 'HSQC', 'hsqcph': 'HSQC', 'hsqcetgp': 'HSQC',
+    'hmbc': 'HMBC', 'hmbcgp': 'HMBC',
+    'noesy': 'NOESY', 'roesy': 'ROESY',
+}
+
+
+def _classify_pulprog(pulprog):
+    pp = pulprog.lower().strip('<> ')
+    for kw, etype in _PULPROG_TYPES.items():
+        if kw in pp:
+            return etype
+    return '2D'
+
+
+def _find_expno_dir(root_folder, expno=1):
+    """Devolve o caminho para a pasta expno (onde está acqus), ou None."""
+    expno_str = str(expno)
+
+    if os.path.isfile(os.path.join(root_folder, 'acqus')):
+        return root_folder
+
+    cand = os.path.join(root_folder, expno_str)
+    if os.path.isfile(os.path.join(cand, 'acqus')):
+        return cand
+
+    try:
+        for entry in sorted(os.listdir(root_folder)):
+            d = os.path.join(root_folder, entry)
+            if not os.path.isdir(d):
+                continue
+            cand = os.path.join(d, expno_str)
+            if os.path.isfile(os.path.join(cand, 'acqus')):
+                return cand
+    except OSError:
+        pass
+
+    return None
+
+
+def detect_experiment_type(root_folder, expno=1, procno=1):
+    """
+    Detecta se a pasta Bruker contém um experimento 1D ou 2D.
+
+    Devolve dict:
+        ndim     : 1 ou 2
+        pulprog  : str  (valor bruto de PULPROG)
+        exp_type : '1D' | 'COSY' | 'JRES' | 'TOCSY' | 'HSQC' | 'HMBC' | '2D'
+        expno_dir: str | None
+        proc_dir : str | None
+    """
+    expno_dir = _find_expno_dir(root_folder, expno)
+    if expno_dir is None:
+        return {'ndim': 1, 'pulprog': 'unknown', 'exp_type': '1D',
+                'expno_dir': None, 'proc_dir': None}
+
+    acqus    = _read_jcamp(os.path.join(expno_dir, 'acqus'))
+    pulprog  = str(acqus.get('PULPROG', '')).strip('<> ')
+    proc_dir = os.path.join(expno_dir, 'pdata', str(procno))
+
+    has_acqu2s = os.path.isfile(os.path.join(expno_dir, 'acqu2s'))
+    has_2rr    = os.path.isfile(os.path.join(proc_dir,  '2rr'))
+
+    if has_acqu2s and has_2rr:
+        return {'ndim': 2, 'pulprog': pulprog,
+                'exp_type': _classify_pulprog(pulprog),
+                'expno_dir': expno_dir, 'proc_dir': proc_dir}
+
+    return {'ndim': 1, 'pulprog': pulprog, 'exp_type': '1D',
+            'expno_dir': expno_dir, 'proc_dir': proc_dir}
+
+
+def _detile_2d(flat, si_f1, si_f2, xdim_f1, xdim_f2):
+    """
+    Reconstrói a matriz 2D a partir do formato de submatrizes Bruker.
+
+    O ficheiro 2rr não é guardado linha-a-linha — é dividido em blocos
+    (submatrizes) de XDIM_F1 linhas × XDIM_F2 colunas, ordenados em row-major.
+    Sem este de-tiling o espectro aparece embaralhado em bandas.
+
+    Se XDIM == SI em ambas as dimensões (sem tiling), reduz-se a um reshape.
+    """
+    expected = si_f1 * si_f2
+    if len(flat) < expected:
+        flat = np.concatenate([flat, np.zeros(expected - len(flat))])
+    else:
+        flat = flat[:expected]
+
+    # Sem submatrizes → reshape directo
+    if xdim_f1 >= si_f1 and xdim_f2 >= si_f2:
+        return flat.reshape(si_f1, si_f2)
+
+    n_tiles_f2 = si_f2 // xdim_f2
+    n_tiles_f1 = si_f1 // xdim_f1
+    tile_size  = xdim_f1 * xdim_f2
+
+    out = np.empty((si_f1, si_f2), dtype=flat.dtype)
+    idx = 0
+    for tr in range(n_tiles_f1):          # blocos ao longo de F1 (linhas)
+        r0 = tr * xdim_f1
+        for tc in range(n_tiles_f2):      # blocos ao longo de F2 (colunas)
+            c0 = tc * xdim_f2
+            tile = flat[idx:idx + tile_size].reshape(xdim_f1, xdim_f2)
+            out[r0:r0 + xdim_f1, c0:c0 + xdim_f2] = tile
+            idx += tile_size
+    return out
+
+
+def load_bruker_2d(expno_dir, procno=1):
+    """
+    Carrega o espectro 2D processado Bruker (ficheiro 2rr).
+
+    Devolve:
+        f2_ppm  : np.ndarray (SI_F2,)  — dimensão directa  (eixo horizontal)
+        f1_ppm  : np.ndarray (SI_F1,)  — dimensão indirecta (eixo vertical)
+        data_2d : np.ndarray (SI_F1, SI_F2)
+        meta    : dict com pulprog, exp_type, sf_f2, sf_f1, sw_ppm_f2, sw_ppm_f1
+    """
+    proc_dir = os.path.join(expno_dir, 'pdata', str(procno))
+    procs    = _read_jcamp(os.path.join(proc_dir, 'procs'))
+    proc2s   = _read_jcamp(os.path.join(proc_dir, 'proc2s'))
+
+    # F2 — dimensão directa (horizontal)
+    si_f2     = int(procs.get('SI',      1024))
+    xdim_f2   = int(procs.get('XDIM',    si_f2))   # dim. da submatriz em F2
+    sw_p_f2   = float(procs.get('SW_p',  5000.0))
+    offset_f2 = float(procs.get('OFFSET', 12.0))
+    sf_f2     = float(procs.get('SF',    600.0))
+    bytord    = int(procs.get('BYTORDP', 0))
+    nc_proc   = int(procs.get('NC_proc', 0))
+
+    # F1 — dimensão indirecta (vertical)
+    si_f1     = int(proc2s.get('SI',      1024))
+    xdim_f1   = int(proc2s.get('XDIM',    si_f1))  # dim. da submatriz em F1
+    sw_p_f1   = float(proc2s.get('SW_p',  5000.0))
+    offset_f1 = float(proc2s.get('OFFSET', 12.0))
+    sf_f1     = float(proc2s.get('SF',    600.0))
+
+    sw_ppm_f2 = sw_p_f2 / sf_f2
+    sw_ppm_f1 = sw_p_f1 / sf_f1
+
+    f2_ppm = np.linspace(offset_f2, offset_f2 - sw_ppm_f2, si_f2)
+    f1_ppm = np.linspace(offset_f1, offset_f1 - sw_ppm_f1, si_f1)
+
+    endian   = '<' if bytord == 0 else '>'
+    rr_path  = os.path.join(proc_dir, '2rr')
+    filesize = os.path.getsize(rr_path)
+    n_pts    = filesize // 4
+
+    with open(rr_path, 'rb') as fh:
+        raw = fh.read(n_pts * 4)
+
+    data = np.frombuffer(raw, dtype=f'{endian}i4').astype(np.float64)
+    data *= 2.0 ** nc_proc
+
+    # Dados 2rr Bruker estão em formato de submatrizes (tiles) de
+    # XDIM_F1 × XDIM_F2 — é preciso de-tile para reconstruir a matriz real.
+    data = _detile_2d(data, si_f1, si_f2, xdim_f1, xdim_f2)
+
+    acqus   = _read_jcamp(os.path.join(expno_dir, 'acqus'))
+    acqu2s  = _read_jcamp(os.path.join(expno_dir, 'acqu2s'))
+    pulprog = str(acqus.get('PULPROG', '')).strip('<> ')
+
+    # Núcleos: F2 (directa) = NUC1 do acqus; F1 (indirecta) = NUC1 do acqu2s
+    nuc_f2 = str(acqus.get('NUC1', '1H')).strip('<> ') or '1H'
+    nuc_f1 = str(acqu2s.get('NUC1',
+                  acqus.get('NUC2', '1H'))).strip('<> ') or '1H'
+
+    meta = {
+        'pulprog'  : pulprog,
+        'exp_type' : _classify_pulprog(pulprog),
+        'nuc_f2'   : nuc_f2,
+        'nuc_f1'   : nuc_f1,
+        'sf_f2'    : sf_f2,
+        'sf_f1'    : sf_f1,
+        'sw_ppm_f2': sw_ppm_f2,
+        'sw_ppm_f1': sw_ppm_f1,
+    }
+    return f2_ppm, f1_ppm, data, meta
+
+
 # ── Loader principal ──────────────────────────────────────────────────────────
 
 def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,

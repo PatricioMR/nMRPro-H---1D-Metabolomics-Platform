@@ -71,6 +71,7 @@ from ._quant_helpers import (
     _fit_lorentz_sample, _fit_multi_lorentz,
     _align_sample_center, _lorentz_amplitude, _lorentz_shape,
     bootstrap_fraction_ci as _bootstrap_fraction_ci,
+    jr_pointwise_multiplet_area,
 )
 from processing.multiplet_line_selector import select_clean_lines
 
@@ -99,6 +100,7 @@ class _QuantCompMixin:
         self._pqn_factor             = 1.0
         self._last_groups            = {}
         self._last_blk_indices       = []
+        self._warn_no_sdj            = False
         # UI setup (run_status + placeholder) is done by _safe_run() before
         # this thread starts — nothing to do here.
 
@@ -127,6 +129,17 @@ class _QuantCompMixin:
             is_lipidomics_mode = False
 
         _integ        = self.integ_var.get()
+        # 'Area' (single-line trapz) is temporarily disabled (under development).
+        # The UI radiobutton is greyed out, but a loaded project could still carry
+        # 'Area' — block it here and fall back to Multiplet so no run uses it.
+        if _integ == 'Area':
+            messagebox.showinfo(
+                'Single-Line Area em desenvolvimento',
+                'O método "Single-Line Area" está em desenvolvimento e foi '
+                'temporariamente desativado.\n\n'
+                'A quantificação vai usar "Multiplet (whole)".')
+            self.integ_var.set('Multiplet')
+            _integ = 'Multiplet'
         use_area      = (_integ == 'Area')
         use_lorentz   = (_integ == 'Lorentz')
         use_multiplet = (_integ == 'Multiplet')
@@ -403,6 +416,52 @@ class _QuantCompMixin:
             traceback.print_exc()
             good_met_ids = set()
 
+        # ── Exclude NNLS-rejected analytes ────────────────────────────────────
+        # J-Resolve's solver rejects analytes that fail its quality filters
+        # (coverage / concentration floor). That rejection is a hard gate, not a
+        # confidence note: a rejected analyte's area is unreliable and must NOT be
+        # quantified. _nnls_rejected is only populated while J-Resolve is active
+        # (cleared otherwise), so gating on use_j_resolve avoids acting on a stale
+        # set. A manual Good mark is explicit user intent and overrides the auto
+        # rejection — every exclusion (and override) is logged so it stays visible.
+        if use_j_resolve:
+            _jr_st = (getattr(getattr(self, 'app', None), 'stages', {}) or {}).get(
+                'j_resolve')
+            _nnls_rej = {str(x) for x in (getattr(_jr_st, '_nnls_rejected', set())
+                                          or set())}
+            if _nnls_rej:
+                _manual_good = {str(k[0]) for (k, v) in quality_marks.items()
+                                if v == 'good'}
+                _drop = {m for m in good_met_ids
+                         if str(m) in _nnls_rej and str(m) not in _manual_good}
+                _kept = {m for m in good_met_ids
+                         if str(m) in _nnls_rej and str(m) in _manual_good}
+                if _drop:
+                    good_met_ids -= _drop
+                    print(f'[Quant] excluded {len(_drop)} NNLS-rejected analytes '
+                          f'from quantification: {sorted(_drop)}')
+                if _kept:
+                    print(f'[Quant] {len(_kept)} NNLS-rejected analytes kept by '
+                          f'manual Good mark: {sorted(_kept)}')
+
+        # ── Propagate s_dj (J quality) from post-processed _metabolites ───────
+        # s_dj is computed in annotation_results_window and stored on the
+        # matched_peak as '_s_dj'. The flat `results` hits don't carry it, so
+        # the competition key below maps it back by (mid, peak_rank). Singlets
+        # default to s_dj=1.0 in the scorer, so the multiplet/singlet tier split
+        # must additionally check multiplicity — never s_dj alone.
+        _s_dj_map: dict = {}
+        try:
+            for _met_sdj in (getattr(self.annotation_stage, '_metabolites', []) or []):
+                _mid_sdj = str(_met_sdj.get('id', ''))
+                for _mp_sdj in _met_sdj.get('matched_peaks', []):
+                    _pr_sdj = _mp_sdj.get('peak_rank')
+                    if _pr_sdj is None or '_s_dj' not in _mp_sdj:
+                        continue
+                    _s_dj_map[(_mid_sdj, _pr_sdj)] = float(_mp_sdj.get('_s_dj', 0) or 0)
+        except Exception:
+            _s_dj_map = {}
+
         by_peak = {}
         for r in results:
             mid = r.get('hmdb_id') or r.get('bmrb_id') or r.get('id', r.get('name', 'unknown'))
@@ -596,12 +655,58 @@ class _QuantCompMixin:
                 met_map.setdefault(mid, {'name': h.get('name', mid), 'hits': []})
                 met_map[mid]['hits'].append(h)
         else:
-            # ── Greedy peak assignment: one winner per peak_rank ─────────────
+            # ── Greedy peak assignment: one winner per multiplicity ──────────
             # Candidates: all non-bad (good + yellow/undef) hits for Good mets.
-            # Sort: good quality first, then by _hit_sort_key (anchor, score, …).
-            # Greedy: first unassigned (metabolite, peak_rank) pair wins.
-            # A metabolite that loses its preferred peak falls to its next non-bad
-            # peak automatically — no rescue block needed without J-Resolve.
+            # Each hit is one metabolite's multiplicity at a peak_rank, carrying
+            # delta_j_hz (|J_obs − J_db|) and ppm_diff (|centre − db_ppm|).
+            #
+            # Winner per contested region = lowest delta_j_hz within the ppm
+            # threshold (already guaranteed: search drops ppm_diff > tolerance);
+            # ties break on lowest ppm_diff. A valid multiplet (non-singlet with
+            # confirmed J, s_dj >= 1.0) always outranks singlets / weak-J hits.
+            # Anchor / NNLS purity / contamination only break ties when both
+            # delta_j_hz and ppm_diff are equal.
+            #
+            # Greedy: first unassigned (metabolite, multiplicity-peaks) pair wins
+            # and claims every peak_rank inside its predicted-line window, so
+            # those peaks cannot be reused by another metabolite. A metabolite
+            # that loses a multiplicity falls to its next candidate automatically;
+            # one that wins nothing is discarded (never enters met_map).
+            def _compete_key(h, mid_str):
+                _mult = (h.get('multiplicity') or '').strip().lower()
+                _is_singlet = _mult in _SINGLET_MULTS
+                _s_dj_v = _s_dj_map.get(
+                    (mid_str, h.get('peak_rank')), h.get('s_dj', 0))
+                _s_dj_v = float(_s_dj_v or 0)
+                # Tier 0: confirmed multiplet. Singlets default to s_dj=1.0 in the
+                # scorer, so the multiplicity check is what keeps them in tier 1.
+                _is_valid_mult = (not _is_singlet) and _s_dj_v >= 1.0
+                _tier = 0 if _is_valid_mult else 1
+                _dj = h.get('delta_j_hz')
+                _dj_key = float(_dj) if (_tier == 0 and _dj is not None) else 0.0
+                _ppm_diff = float(h.get('ppm_diff', h.get('ppm_error', 999)) or 999)
+                _h_q = _effective_quality(h)
+                _q_rank = 0 if _h_q == 'good' else 1
+                return (_tier, _dj_key, _ppm_diff, _q_rank,
+                        _hit_sort_key(h, mid_str))
+
+            # s_dj drives the multiplet/singlet tier in _compete_key. When it is
+            # missing (e.g. a project loaded before scores were computed, or the
+            # Annotation Results window never post-processed _metabolites), every
+            # hit collapses to tier 1 and the multiplet-over-singlet priority is
+            # silently lost. Surface this instead of hiding it (CLAUDE.md: never
+            # silence data warnings) — the run still proceeds with ppm ordering.
+            if not _s_dj_map and any(
+                    str(_h.get('_mid', '')) in good_met_ids
+                    and _effective_quality(_h) != 'bad'
+                    and (_h.get('multiplicity') or '').strip().lower()
+                        not in _SINGLET_MULTS
+                    for _h in results):
+                self._warn_no_sdj = True
+                print('[Quant] WARNING: s_dj (J-quality) unavailable — '
+                      'multiplet/singlet tier priority disabled; competition '
+                      'ordered by ppm only.')
+
             _all_non_bad = []
             for _h in results:
                 _h_mid = str(_h.get('_mid', ''))
@@ -610,12 +715,11 @@ class _QuantCompMixin:
                 _h_q = _effective_quality(_h)
                 if _h_q == 'bad':
                     continue
-                _q_rank = 0 if _h_q == 'good' else 1  # good before yellow
-                _all_non_bad.append((_q_rank, _hit_sort_key(_h, _h_mid), _h_mid, _h))
-            _all_non_bad.sort(key=lambda x: (x[0], x[1]))
+                _all_non_bad.append((_compete_key(_h, _h_mid), _h_mid, _h))
+            _all_non_bad.sort(key=lambda x: x[0])
 
             _assigned_mets = set()
-            for _q_rank, _sk, _h_mid, _h in _all_non_bad:
+            for _sk, _h_mid, _h in _all_non_bad:
                 if _h_mid in _assigned_mets:
                     continue
                 _pr = _h.get('peak_rank')
@@ -991,6 +1095,8 @@ class _QuantCompMixin:
             _hit_has_anchor = False
             _met_synthetic_db = False   # quantified from DB window (no detected peak)
             _j_frac_this_met = None
+            _jr_multiplet_applied = False   # per-line JG frac already folded into a_vec
+            _jr_line_fracs_store  = None    # [(line_ppm, frac)] for PDF per-line paint
             for hit in info['hits']:
                 # Prefer rank-based lookup: annotation peak_rank maps directly to
                 # the detected peak used during annotation, bypassing ppm proximity
@@ -1120,15 +1226,57 @@ class _QuantCompMixin:
                         _fb_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
                         hit['_multiplet_window'] = (_fb_lo, _fb_hi)
                     _x_mult = ppm_arr[_sm_mult]
-                    _a_list_m = []
-                    for s in range(n_s):
-                        seg = all_int[_sm_mult, s].copy()
-                        if local_baseline and len(seg) >= 2:
-                            bl = np.linspace(max(float(seg[0]), 0.0),
-                                             max(float(seg[-1]), 0.0), len(seg))
-                            seg = seg - bl
-                        _a_list_m.append(abs(float(_trapz(seg, _x_mult))))
-                    a_vec = np.array(_a_list_m)
+                    _seg_m  = all_int[_sm_mult, :].astype(float).copy()   # (m, n_s)
+                    if local_baseline and _seg_m.shape[0] >= 2:
+                        _bl_m = np.linspace(np.maximum(_seg_m[0, :], 0.0),
+                                            np.maximum(_seg_m[-1, :], 0.0),
+                                            _seg_m.shape[0])
+                        _seg_m = _seg_m - _bl_m
+
+                    # Per-line J-Resolve fractions: a multiplet's legs can be
+                    # resolved differently by NNLS. Weight each window point by the
+                    # fraction of its nearest predicted line so the integrated area
+                    # reflects that per-leg reality (matches the JG visualizer).
+                    # With a single/uniform fraction this is identical to the plain
+                    # whole-window integral, so non-resolved multiplets are unchanged.
+                    if use_j_resolve and len(_pl_ppms) >= 2:
+                        _line_fr = []
+                        for _lp in _pl_ppms:
+                            _lr_q, _lr_d = None, _margin * 1.5
+                            for _cpr, _cpk in _pk_by_rank.items():
+                                _dd = abs(float(_cpk.get('ppm', 1e9)) - _lp)
+                                if _dd < _lr_d:
+                                    _lr_q, _lr_d = _cpr, _dd
+                            _fval = 1.0   # line not NNLS-resolved → fully this analyte
+                            if _lr_q is not None:
+                                _fa_ps = _j_resolve_contribs_ps.get(_lr_q, {}).get(mid)
+                                if _fa_ps is not None and len(_fa_ps) == n_s:
+                                    _fval = np.clip(np.asarray(_fa_ps, float), 0.0, 1.0)
+                                else:
+                                    _fs = _j_resolve_contribs.get(_lr_q, {}).get(mid)
+                                    if _fs is not None and 0.0 < float(_fs) <= 1.0:
+                                        _fval = float(_fs)
+                            _line_fr.append(_fval)
+                        a_vec = jr_pointwise_multiplet_area(
+                            _x_mult, _seg_m, _pl_ppms, _line_fr)
+                        _jr_multiplet_applied = True
+                        # Reported multiplet fraction = the one actually applied to
+                        # the area: area-weighted blend of the leg fractions, i.e.
+                        # weighted_area / plain_area. (A simple mean of the leg
+                        # fractions would not match when the legs differ in area.)
+                        _plain_area = np.array(
+                            [abs(float(_trapz(_seg_m[:, s], _x_mult)))
+                             for s in range(n_s)])
+                        _ratio = np.divide(
+                            a_vec, _plain_area,
+                            out=np.ones_like(a_vec), where=_plain_area > 0)
+                        _j_frac_this_met = float(np.mean(_ratio))
+                        _jr_line_fracs_store = [
+                            (float(_lp), float(np.mean(np.asarray(f))))
+                            for _lp, f in zip(_pl_ppms, _line_fr)]
+                    else:
+                        a_vec = np.array([abs(float(_trapz(_seg_m[:, s], _x_mult)))
+                                          for s in range(n_s)])
                 elif use_lorentz and (hi_i - lo_i) >= 1:
                     x_r      = ppm_arr[lo_i:hi_i + 1]
                     y_mean_r = np.mean(all_int[lo_i:hi_i+1, :], axis=1)
@@ -1386,8 +1534,10 @@ class _QuantCompMixin:
                 # For non-IS modes: only divide if user enabled proton_corr.
                 if norm_mode in ('IS', 'IS+PQN') or proton_corr:
                     a_vec = a_vec / nh
-                # J-Resolve fractional area correction
-                if use_j_resolve and p is not None:
+                # J-Resolve fractional area correction.
+                # Skip when the multiplet path already folded per-line fractions
+                # into a_vec (avoids double-applying the fraction).
+                if use_j_resolve and p is not None and not _jr_multiplet_applied:
                     _peak_rank = p.get('rank')
                     # Prefer per-sample fraction vector (achado A): preserves
                     # group differences in overlapped regions.  Falls back to the
@@ -1502,6 +1652,7 @@ class _QuantCompMixin:
                                   '_align_shifts': _align_shifts.get(mid),
                                   '_multiplet_window': _mult_win,
                                   '_multiplet_ppm':   _mult_ppm,
+                                  '_jr_line_fracs':   _jr_line_fracs_store,
                                   '_synthetic_db':    _met_synthetic_db}
 
             if not found:
@@ -1804,6 +1955,7 @@ class _QuantCompMixin:
                 '_peak_rank':        _peak_rank_val,
                 '_used_j_resolve':   _used_jr,
                 '_j_resolve_frac':   m.get('_j_resolve_frac'),
+                '_jr_line_fracs':    m.get('_jr_line_fracs'),
                 '_n_eligible':       _n_elig,
                 '_peak_align_shifts': m.get('_align_shifts'),
                 '_hits':             m.get('hits', []),
@@ -2466,6 +2618,19 @@ class _QuantCompMixin:
                 pass
             self._status_ok(f'Quantification: {len(self._quant_results)} metabolites')
 
+            self._update_peak_list_labels()
+
+            if getattr(self, '_warn_no_sdj', False):
+                messagebox.showwarning(
+                    'J-quality scores unavailable',
+                    'Multiplet J-quality scores (s_dj) were not available for this '
+                    'run.\n\n'
+                    'Quantification could NOT prioritise confirmed multiplets over '
+                    'singlets when two analytes competed for the same peak — '
+                    'candidates were ranked by ppm proximity only.\n\n'
+                    'Open Annotation Results once (so scores are computed) and '
+                    're-run Quantification for the full multiplet-aware selection.')
+
             self._close_progress_dialog()
             self._show_right_panel()
             if self._tree:
@@ -2479,6 +2644,73 @@ class _QuantCompMixin:
                         pass
 
         self.app.root.after(0, _finish_ui)
+
+    # ── Peak List labels ─────────────────────────────────────────────────────
+
+    def _update_peak_list_labels(self):
+        """After quantification, relabel each quantified peak in the Peak List
+        with the metabolite that actually won it for integration.
+
+        Annotation Results is intentionally NOT touched — it keeps its own
+        score-based ownership (_assignment_sort_key). Only the Peak List follows
+        the quantification winner, written as 'assigned_metabolite' (the highest
+        priority field in PeakListWindow._populate). The '_quant_assigned' marker
+        lets a later run clear only the labels this method set, never an
+        annotation- or user-provided assignment.
+
+        Must run on the main thread (called from _finish_ui) because it refreshes
+        a tkinter window.
+        """
+        try:
+            peaks = (self.peak_stage.peaks or []) if self.peak_stage else []
+            if not peaks:
+                return
+            pk_by_rank = {p['rank']: p for p in peaks if p.get('rank') is not None}
+
+            # Clear labels written by a previous quantification run only.
+            for p in peaks:
+                if p.pop('_quant_assigned', False):
+                    p.pop('assigned_metabolite', None)
+
+            rank_to_name = {}
+            for r in (self._quant_results or []):
+                if r.get('_is_is'):
+                    continue
+                name = r.get('metabolite')
+                if not name:
+                    continue
+                pr = r.get('_peak_rank')
+                if pr is not None and pr in pk_by_rank:
+                    rank_to_name[pr] = name
+                # Multiplet member peaks: every detected peak inside the winning
+                # hit's predicted-line window belongs to the same metabolite,
+                # mirroring the greedy claim in _run so the Peak List shows the
+                # full multiplet under one analyte.
+                for h in r.get('_hits', []):
+                    _pls = [float(l['ppm']) for l in (h.get('predicted_lines') or [])
+                            if 'ppm' in l]
+                    if len(_pls) < 2:
+                        continue
+                    _pk = pk_by_rank.get(pr, {})
+                    _w = float(_pk.get('width_ppm', _pk.get('width_at_half', 0.008)) or 0.008)
+                    _mar = max(_w * 0.7, 0.010)
+                    _lo, _hi = min(_pls) - _mar, max(_pls) + _mar
+                    for _orank, _op in pk_by_rank.items():
+                        if _lo <= float(_op.get('ppm', -999)) <= _hi:
+                            rank_to_name.setdefault(_orank, name)
+
+            for _orank, _nm in rank_to_name.items():
+                _p = pk_by_rank.get(_orank)
+                if _p is not None:
+                    _p['assigned_metabolite'] = _nm
+                    _p['_quant_assigned'] = True
+
+            plw = getattr(self.app, '_peak_list_win', None)
+            if plw is not None and plw.win.winfo_exists():
+                plw.peaks = self.peak_stage.peaks
+                plw._populate()
+        except Exception as _pll_err:
+            print(f'[Quant] peak-list relabel skipped: {_pll_err}')
 
     # ── VIP scores ───────────────────────────────────────────────────────────
 
