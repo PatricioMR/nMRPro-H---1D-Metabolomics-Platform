@@ -1,0 +1,12 @@
+# nMRPipe runtime dependencies (Python 3.11+; tkinter ships with CPython).
+# Pinned to the versions used for the v0.2 build. Build tooling (pyinstaller,
+# pillow upgrade) is installed separately by build_windows.bat.
+numpy==2.4.3
+scipy==1.17.1
+scikit-learn==1.8.0
+matplotlib==3.10.8
+pandas==3.0.1
+networkx==3.6.1
+reportlab==4.5.1
+pillow==12.1.1
+requests==2.32.5
