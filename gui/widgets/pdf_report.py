@@ -341,7 +341,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
 
     # Clip ao intervalo da janela — impede linhas de sair do plot
     ax.set_xlim(float(x.max()), float(x.min()))   # ppm invertido
-    ax.set_xlabel('ppm', fontsize=7)
+    ax.set_xlabel('δ (ppm)', fontsize=7)
     ax.tick_params(labelsize=6)
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -644,7 +644,7 @@ def generate_pdf(output_path: str, quant_stage, app,
     si      = getattr(app, 'samples_info', None) or []
     gc      = getattr(app, 'group_colors', {}) or {}
     results = [r for r in (quant_stage._quant_results or [])
-               if not r.get('_is_is')]
+               if not r.get('_is_is') and not r.get('_not_quantified')]
 
     if ppm is None or all_int is None:
         raise ValueError('Dados espectrais nao disponiveis.')

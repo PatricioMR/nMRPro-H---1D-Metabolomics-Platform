@@ -17,6 +17,34 @@ def _trapz(y, x):
         return np.trapz(y, x=x)
 
 
+# ── Não-quantificados ────────────────────────────────────────────────────────
+# Um metabolito é "não quantificado" quando não há sinal mensurável que lhe possa
+# ser atribuído: ou perdeu a competição por todos os picos atribuídos (todos
+# ficaram com metabolitos de maior score), ou a sua concentração média é 0/NaN
+# em todas as amostras (integrou apenas ruído). Estes nunca entram em exports
+# nem nas estatísticas — apenas aparecem a cinzento na lista, com a razão — para
+# não fabricar dados (CLAUDE.md: nunca reportar ruído como sinal).
+NQ_REASON_LOST_COMPETITION = (
+    'Não quantificado: perdeu a competição de picos — todos os picos atribuídos '
+    'foram quantificados para metabolitos de maior score.')
+NQ_REASON_ZERO_NAN = (
+    'Não quantificado: concentração 0/NaN em todas as amostras — sem sinal acima '
+    'do limite de deteção.')
+
+
+def is_unquantified_conc(conc_mm):
+    """True when a metabolite's mean concentration carries no measurable signal.
+
+    NaN (no finite positive sample anywhere) or a non-positive mean both mean
+    nothing was quantified — such an analyte must be excluded from exports and
+    statistics, never reported as a real value."""
+    try:
+        c = float(conc_mm)
+    except (TypeError, ValueError):
+        return True
+    return (not np.isfinite(c)) or c <= 0.0
+
+
 # ── Robust / non-parametric statistics for J-Resolve ─────────────────────────
 # qNMR fundamental: every peak of a compound yields the same concentration
 # (area ∝ nH·conc).  Per-peak concentration probes should therefore agree.  CV

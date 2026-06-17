@@ -34,7 +34,7 @@ class ResultsDisplay:
         tree = ttk.Treeview(main_frame, columns=columns, show='headings', height=10)
 
         tree.heading('#', text='#')
-        tree.heading('ppm', text='PPM')
+        tree.heading('ppm', text='δ (ppm)')
         tree.heading('height', text='Height')
         tree.heading('width', text='Width')
         tree.heading('snr', text='SNR')

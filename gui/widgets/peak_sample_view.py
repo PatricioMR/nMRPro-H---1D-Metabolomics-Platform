@@ -36,7 +36,7 @@ COLS = [
     ('intensity', 'Intensity',  90, tk.CENTER),
     ('area',      'Area',       95, tk.CENTER),
     ('metabolite','Metabolite',140, tk.W),
-    ('ppm',       'PPM',        75, tk.CENTER),
+    ('ppm',       'δ (ppm)',    75, tk.CENTER),
     ('start',     'Start',      75, tk.CENTER),
     ('end',       'End',        75, tk.CENTER),
     ('status',    'Status',     70, tk.CENTER),
@@ -358,7 +358,7 @@ class PeakSampleView:
 
         # Peak identity
         _row('Rank',    f"#{p.get('rank', '?')}")
-        _row('PPM',     f"{p['ppm']:.4f}")
+        _row('δ (ppm)', f"{p['ppm']:.4f}")
         _row('Width',   f"{p.get('width_ppm', p.get('width', 0)):.4f} ppm")
         _row('Status',  p.get('status') or '—')
         _sep()

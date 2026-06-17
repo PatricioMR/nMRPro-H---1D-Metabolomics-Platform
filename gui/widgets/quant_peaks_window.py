@@ -264,17 +264,41 @@ class QuantPeaksWindow:
                     _mp = _mp_by_dp.get(_dp_ppm_r)
                     if _mp is None:
                         continue
-                    pr = _mp.get('peak_rank')
-                    if pr is None or pr in sc_ranks or pr in seen_pr:
-                        continue
-                    peak = peaks_by_rank.get(pr)
-                    if peak is None:
-                        continue
-                    seen_pr.add(pr)
-                    c = _make_candidate(peak, dict(_mp), pr, _dp)
-                    c['_rel_intensity'] = float(_mp.get('rel_intensity', 1.0) or 1.0)
-                    candidates.append(c)
-                    sc_ranks.add(pr)
+                    # Members of the multiplet = the predicted-line peaks (what the
+                    # Annotation tree shows), NOT the matched_peak anchor, which for
+                    # a multiplet is the CENTRE and can be a stray peak between the
+                    # real lines (e.g. 461 between Alanine's doublet 49/51).
+                    _line_ppms = [float(l['ppm'])
+                                  for l in (_mp.get('predicted_lines') or [])
+                                  if 'ppm' in l]
+                    _line_ranks = []
+                    if _line_ppms:
+                        _used_ln = set()
+                        for _lp in _line_ppms:
+                            _best, _bd = None, 0.015
+                            for _pk in (self.qs.peak_stage.peaks or []):
+                                _rk = _pk.get('rank')
+                                if _rk is None or _rk in _used_ln:
+                                    continue
+                                _d = abs(float(_pk.get('ppm', 1e9)) - _lp)
+                                if _d < _bd:
+                                    _bd, _best = _d, _rk
+                            if _best is not None:
+                                _line_ranks.append(_best)
+                                _used_ln.add(_best)
+                    if not _line_ranks:
+                        _line_ranks = [_mp.get('peak_rank')]
+                    for pr in _line_ranks:
+                        if pr is None or pr in sc_ranks or pr in seen_pr:
+                            continue
+                        peak = peaks_by_rank.get(pr)
+                        if peak is None:
+                            continue
+                        seen_pr.add(pr)
+                        c = _make_candidate(peak, dict(_mp), pr, _dp)
+                        c['_rel_intensity'] = float(_mp.get('rel_intensity', 1.0) or 1.0)
+                        candidates.append(c)
+                        sc_ranks.add(pr)
 
         # ── Last-resort fallback: flat results hits ────────────────────────────
         # Only when ann._metabolites also has no data (very old saves).
@@ -387,7 +411,7 @@ class QuantPeaksWindow:
         self._tree = ttk.Treeview(frm, columns=col_ids, show='tree headings',
                                   selectmode='browse', height=12)
         self._tree.column('#0', width=160, minwidth=120, anchor='w', stretch=False)
-        self._tree.heading('#0', text='Multiplet')
+        self._tree.heading('#0', text='Signal')
         for cid, hdr_txt, w, anc in all_cols:
             self._tree.heading(cid, text=hdr_txt)
             self._tree.column(cid, width=w, minwidth=w, anchor=anc, stretch=False)

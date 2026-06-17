@@ -45,8 +45,11 @@ class _QuantVisMixin:
                         qpw.load_result(r)
                 except Exception:
                     pass
-            # Navigate PeakListWindow to this metabolite's peak
-            peak_rank = (r.get('_peak') or {}).get('rank') or r.get('_peak_rank')
+            # Navigate PeakListWindow to the peak inside the integrated multiplet
+            # window (matches Quant Peaks), not the bare competition anchor.
+            peak_rank = (r.get('_display_peak_rank')
+                         or (r.get('_peak') or {}).get('rank')
+                         or r.get('_peak_rank'))
             if peak_rank is not None:
                 try:
                     pl_win = getattr(self.app, '_peak_list_win', None)
@@ -471,7 +474,7 @@ class _QuantVisMixin:
         g_names    = [g for g in groups if g in concs_g]
         if 'BLK' in concs_g and 'BLK' not in g_names:
             g_names = g_names + ['BLK']
-        y_label    = ('Conc (mM)'  if norm_mode == 'IS'
+        y_label    = ('Conc (mM)'  if norm_mode in ('IS', 'IS+PQN')
                       else 'Area %' if norm_mode == 'Total'
                       else 'Area (a.u.)')
         if g_names:
@@ -536,7 +539,7 @@ class _QuantVisMixin:
             _ppm_label = 'Region'
             _ppm_value = f"{_c_lo:.4f}–{_c_hi:.4f}"
         else:
-            _ppm_label = 'PPM'
+            _ppm_label = 'δ (ppm)'
             _ppm_value = f"{p['ppm']:.4f}" if p else '?'
         top_card = [
             ('Metabolite',   r['metabolite'],                                    '#333'),
@@ -566,7 +569,7 @@ class _QuantVisMixin:
             top_card.append(('R²',    f'{r2:.4f}'   if np.isfinite(r2)  else 'N/A', r2_col))
             top_card.append(('Iters', str(ni),                                       '#555'))
         if np.isfinite(conc):
-            if norm_mode == 'IS':
+            if norm_mode in ('IS', 'IS+PQN'):
                 top_card.append(('Conc (mM)', f'{conc:.4f}', '#1a1a2e'))
             elif norm_mode == 'Total':
                 top_card.append(('Area %',    f'{conc:.4f}', '#1a1a2e'))
@@ -575,7 +578,7 @@ class _QuantVisMixin:
 
         _CARD_TIPS = {
             'Metabolite':   'Name from the annotation database (HMDB/BMRB).',
-            'PPM':          'Chemical shift of the detected peak centre (ppm).',
+            'δ (ppm)':      'Chemical shift of the detected signal centre (ppm).',
             'Region':       'Multiplet integration window [lo–hi] ppm.\n'
                             'Area is integrated across this entire region,\n'
                             'covering all predicted multiplet lines.',
@@ -626,7 +629,7 @@ class _QuantVisMixin:
         ax4.set_facecolor(bg)
         ax4.set_title('Groups', fontsize=7.5, fontweight='bold', pad=2)
 
-        _conc_col_hdr = 'Conc (mM)' if norm_mode == 'IS' else ('Area %' if norm_mode == 'Total' else 'Area')
+        _conc_col_hdr = 'Conc (mM)' if norm_mode in ('IS', 'IS+PQN') else ('Area %' if norm_mode == 'Total' else 'Area')
         hdr_cols = ['Group', _conc_col_hdr, 'CV%', 'SNR', 'Quality']
         hdr_x    = [0.01, 0.22, 0.50, 0.65, 0.80]
         for hx, ht in zip(hdr_x, hdr_cols):
@@ -678,7 +681,7 @@ class _QuantVisMixin:
             g_stat_col = ('#1a7a1a' if g_stat == 'Good'
                           else '#856404' if g_stat == 'Warn' else '#9a0000')
             g_col = _app_colors.get(g, '#333')
-            if norm_mode == 'IS':
+            if norm_mode in ('IS', 'IS+PQN'):
                 conc_str = f'{g_mean:.4f}'
             elif norm_mode == 'Total':
                 conc_str = f'{g_mean:.4f}'

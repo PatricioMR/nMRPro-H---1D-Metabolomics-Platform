@@ -24,12 +24,14 @@ _DEFAULT_COLORS = [
 
 # (key, header, col_width_px, kind)  kind: 'text'|'float'|'combo'
 _COLS = [
+    ('name',  'Sample',       170, 'text'),
     ('group', 'Group',        120, 'text'),
     ('corr',  'Corr. Factor', 110, 'float'),
     ('type',  'Type',          80, 'combo'),
 ]
 _N_EDIT    = len(_COLS)
-_SAMPLE_W  = 170
+_KEY_COL   = {k: i for i, (k, _, _, _) in enumerate(_COLS)}
+_GROUP_COL = _KEY_COL['group']
 
 _BG_DEFAULT = '#ffffff'
 _BG_SELECT  = '#cce8ff'
@@ -38,6 +40,7 @@ _BG_HDR     = '#e0e0e0'
 _BG_RDONLY  = '#f5f5f5'
 
 _HEADER_MAP = {
+    'sample': 'name', 'name': 'name', 'amostra': 'name',
     'group': 'group', 'grupo': 'group',
     'corr': 'corr', 'corr.': 'corr', 'corrfactor': 'corr',
     'correctionfactor': 'corr', 'correction': 'corr',
@@ -148,20 +151,16 @@ class SampleEditorDialog:
         pad = {'padx': 1, 'pady': 1}
 
         # Header row
-        tk.Label(p, text='Sample', bg=_BG_HDR, font=('Arial', 9, 'bold'),
-                 width=_SAMPLE_W // 8, anchor='w',
-                 relief='groove').grid(row=0, column=0, sticky='nsew', **pad)
-
         for c, (key, hdr, w_px, _) in enumerate(_COLS):
+            anchor = 'w' if key == 'name' else 'center'
             lbl = tk.Label(p, text=hdr, bg=_BG_HDR, font=('Arial', 9, 'bold'),
-                           width=w_px // 8, anchor='center',
+                           width=w_px // 8, anchor=anchor,
                            relief='groove', cursor='hand2')
-            lbl.grid(row=0, column=c + 1, sticky='nsew', **pad)
+            lbl.grid(row=0, column=c, sticky='nsew', **pad)
             lbl.bind('<Button-1>', lambda e, c=c: self._select_column(c))
 
-        p.columnconfigure(0, minsize=_SAMPLE_W)
         for c, (_, _, w_px, _) in enumerate(_COLS):
-            p.columnconfigure(c + 1, minsize=w_px)
+            p.columnconfigure(c, minsize=w_px)
 
         # Data rows
         for r, sample in enumerate(self.samples_info):
@@ -173,17 +172,14 @@ class SampleEditorDialog:
 
             row_bg = _lighten(self.group_colors.get(grp, '#cccccc'), 0.65)
 
-            # Sample name (read-only label)
-            tk.Label(p, text=sample.get('name', ''), bg=_BG_RDONLY,
-                     anchor='w', relief='flat', padx=4
-                     ).grid(row=r + 1, column=0, sticky='nsew', **pad)
-
             row_vars    = []
             row_widgets = []
 
             for c, (key, _, w_px, kind) in enumerate(_COLS):
                 var = tk.StringVar()
-                if key == 'group':
+                if key == 'name':
+                    var.set(sample.get('name', ''))
+                elif key == 'group':
                     var.set(grp)
                 elif key == 'corr':
                     var.set(str(sample.get('correction_factor', 1.0)))
@@ -207,7 +203,7 @@ class SampleEditorDialog:
                                  highlightbackground='#cccccc',
                                  highlightcolor='#66b3ff')
 
-                w.grid(row=r + 1, column=c + 1, sticky='nsew', **pad)
+                w.grid(row=r + 1, column=c, sticky='nsew', **pad)
 
                 # Selection bindings — do NOT return 'break' on plain click
                 w.bind('<Button-1>',
@@ -304,7 +300,7 @@ class SampleEditorDialog:
                     pass
 
     def _get_row_bg(self, row: int) -> str:
-        grp = self._vars[row][0].get()
+        grp = self._vars[row][_GROUP_COL].get()
         return _lighten(self.group_colors.get(grp, '#cccccc'), 0.65)
 
     def _update_row_bg(self, row: int):
@@ -437,19 +433,18 @@ class SampleEditorDialog:
 
         self._refresh_selection()
 
-        msg = f'Pasted {applied} row(s).'
-        if start_row + len(data_rows) > self._n_rows:
-            msg += '\nMore clipboard rows than remaining samples — extra ignored.'
+        # Surface parse errors only — successful pastes apply silently.
         if errors:
-            msg += '\n\nWarnings:\n' + '\n'.join(errors[:10])
-        messagebox.showinfo('Paste', msg, parent=self._dlg)
+            messagebox.showwarning(
+                'Paste', 'Warnings:\n' + '\n'.join(errors[:10]),
+                parent=self._dlg)
 
     # ── Color editor ──────────────────────────────────────────────────────────
 
     def _open_color_editor(self):
         groups, seen = [], set()
         for row_vars in self._vars:
-            g = row_vars[0].get().strip()
+            g = row_vars[_GROUP_COL].get().strip()
             if g and g not in seen:
                 groups.append(g)
                 seen.add(g)
@@ -490,26 +485,28 @@ class SampleEditorDialog:
     def _save(self, dlg):
         group_type = {}
         for row_vars in self._vars:
-            grp = row_vars[0].get().strip()
-            typ = row_vars[2].get().strip()
+            grp = row_vars[_GROUP_COL].get().strip()
+            typ = row_vars[_KEY_COL['type']].get().strip()
             if typ not in _TYPE_SET:
                 typ = 'Sample'
             group_type[grp] = typ
 
         for r, sample in enumerate(self.samples_info):
             row_vars = self._vars[r]
-            grp = row_vars[0].get().strip() or sample.get('label', '')
+            name = row_vars[_KEY_COL['name']].get().strip() or sample.get('name', '')
+            grp = row_vars[_GROUP_COL].get().strip() or sample.get('label', '')
             try:
-                corr = float(row_vars[1].get().replace(',', '.'))
+                corr = float(row_vars[_KEY_COL['corr']].get().replace(',', '.'))
                 if corr <= 0:
                     corr = 1.0
             except ValueError:
                 corr = 1.0
 
+            sample['name']              = name
             sample['label']             = grp
             sample['type']              = group_type.get(grp, 'Sample')
             sample['correction_factor'] = corr
-            sample['display']           = f"{sample['name']} ({grp})"
+            sample['display']           = f"{name} ({grp})"
 
             if grp and grp not in self.group_colors:
                 self.group_colors[grp] = _DEFAULT_COLORS[

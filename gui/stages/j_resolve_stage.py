@@ -2177,7 +2177,7 @@ class JResolveStage(BaseStage):
                          if mp.get('annotation_quality') == 'good')
             if n_good == 0 and not self._auto_anchored:
                 self._anchor_lbl.config(
-                    text='⚠ No anchors — mark peaks Good in Annotation Results')
+                    text='⚠ No anchors — mark signals Good in Annotation Results')
             else:
                 self._anchor_lbl.config(
                     text=f'{n_good} Good + {len(self._auto_anchored)} auto-anchored')
@@ -2951,7 +2951,7 @@ class NNLSDeconvolutionDialog:
                                    command=self._tree_cands.yview)
         self._tree_cands.configure(yscrollcommand=_vsb_tree.set)
 
-        self._tree_cands.heading('#0',   text='Metabolite / Peak', anchor='w')
+        self._tree_cands.heading('#0',   text='Metabolite / Signal', anchor='w')
         self._tree_cands.heading('src',  text='Source',   anchor='center')
         self._tree_cands.heading('cb',   text='☑',        anchor='center')
         self._tree_cands.heading('j',    text='J',         anchor='center')

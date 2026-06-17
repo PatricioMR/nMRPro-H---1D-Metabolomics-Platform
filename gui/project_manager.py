@@ -110,8 +110,10 @@ class ProjectManager:
                 'noise_end_var':   _safe_var(pd, 'noise_end_var'),
                 'min_snr_var':     _safe_var(pd, 'min_snr_var'),
                 'min_width_var':   _safe_var(pd, 'min_width_var'),
-                'prominence_var':  _safe_var(pd, 'prominence_var'),
                 'per_sample_detection': bool(_safe_var(pd, 'per_sample_var') or False),
+                'detect_shoulders': bool(_safe_var(pd, 'detect_shoulders_var') if _safe_var(pd, 'detect_shoulders_var') is not None else True),
+                'shoulder_k_var':  _safe_var(pd, 'shoulder_k_var'),
+                'min_group_presence_var': _safe_var(pd, 'min_group_presence_var'),
             }
             ctrl = getattr(pd, '_deconv_controller', None)
             if ctrl:
@@ -254,6 +256,8 @@ class ProjectManager:
                     'cmap':     _safe_var(st, '_pw_cmap_var'),
                     'group_a':  _safe_var(st, '_grp_a_var'),
                     'group_b':  _safe_var(st, '_grp_b_var'),
+                    'group_ca': _safe_var(st, '_grp_ca_var'),
+                    'group_cb': _safe_var(st, '_grp_cb_var'),
                 },
             }
 
@@ -330,8 +334,10 @@ class ProjectManager:
             _set_var(pd, 'noise_end_var',   pd_state.get('noise_end_var'))
             _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
             _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
-            _set_var(pd, 'prominence_var',  pd_state.get('prominence_var'))
             _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', False))
+            _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', True))
+            _set_var(pd, 'shoulder_k_var',  pd_state.get('shoulder_k_var'))
+            _set_var(pd, 'min_group_presence_var', pd_state.get('min_group_presence_var'))
 
             if pd.processor and app.ppm is not None:
                 try:

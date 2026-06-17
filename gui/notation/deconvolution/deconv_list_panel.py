@@ -103,7 +103,7 @@ class DeconvListPanel:
 
         for cid, hd, w in [
             ('num',    '#',      48),
-            ('ppm',    'PPM',    82),
+            ('ppm',    'δ (ppm)', 82),
             ('start',  'Start',  82),
             ('end',    'End',    82),
             ('snr',    'SNR',    58),
@@ -537,7 +537,7 @@ class DeconvListPanel:
             self._sort_rev = False
 
         # Update heading arrows
-        col_names = {'#0': 'Region', 'num': '#', 'ppm': 'PPM',
+        col_names = {'#0': 'Region', 'num': '#', 'ppm': 'δ (ppm)',
                      'start': 'Start', 'end': 'End', 'snr': 'SNR',
                      'width': 'W', 'status': 'Status'}
         arrow = ' ▲' if not self._sort_rev else ' ▼'

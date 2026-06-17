@@ -9,7 +9,7 @@ Features:
   - Individual peak integration
 """
 import numpy as np
-from scipy.signal import find_peaks
+from scipy.signal import find_peaks, savgol_filter
 from scipy.ndimage import gaussian_filter1d
 import traceback
 
@@ -147,6 +147,73 @@ def find_valley_points(intensity, peak_idx, left_bound, right_bound):
             right_valley = right_search_start + np.argmin(right_region)
 
     return left_valley, right_valley
+
+
+# ── 3-tier peak quality scoring ────────────────────────────────────────────────
+# Weights (sum = 1): lineshape dominates "is it a peak", curvature drives the
+# red (straight-line) verdict, baseline flatness separates green from yellow
+# (overlap), symmetry is a refinement.
+_PQ_W_SHAPE = 0.35
+_PQ_W_CURV  = 0.30
+_PQ_W_BASE  = 0.20
+_PQ_W_SYM   = 0.15
+# Tier thresholds on the composite score (green ≥, yellow ≥, else red).
+_PQ_GREEN  = 0.80
+_PQ_YELLOW = 0.45
+
+
+def _classify_peak_quality(intensity, start_idx, end_idx, left_idx, right_idx,
+                           height, shape_r2, sym_score, n_cluster):
+    """Return (tier, score) where tier ∈ {'green','yellow','red'}.
+
+    green  — good peak parameters (peak-shaped, symmetric, flat baseline).
+    yellow — peak-like but tilted/crooked baseline → possibly overlapping
+             (all cluster members land here, never green).
+    red    — essentially a straight line: little second-derivative variation
+             (low non-linearity) or an overall poor score.
+    """
+    y = np.asarray(intensity[start_idx:end_idx + 1], dtype=float)
+    n = y.size
+
+    # S_curv — non-linearity from a straight-line fit R² (a line → R²≈1 → 0).
+    if n >= 3:
+        x = np.arange(n, dtype=float)
+        A = np.vstack([x, np.ones_like(x)]).T
+        coef, *_ = np.linalg.lstsq(A, y, rcond=None)
+        yfit = A @ coef
+        tss = float(np.sum((y - y.mean()) ** 2))
+        lin_r2 = float(1.0 - np.sum((y - yfit) ** 2) / tss) if tss > 1e-30 else 0.0
+        s_curv = float(np.clip(1.0 - max(0.0, lin_r2), 0.0, 1.0))
+    else:
+        s_curv = 0.0
+
+    # S_base — baseline flatness from foot-to-foot tilt relative to peak height.
+    lv = float(intensity[left_idx]); rv = float(intensity[right_idx])
+    amp = max(float(height), 1e-12)
+    tilt = abs(lv - rv) / amp
+    s_base = float(np.clip(1.0 - tilt, 0.0, 1.0))
+
+    s_shape = float(np.clip(shape_r2, 0.0, 1.0))
+    s_sym   = float(np.clip(sym_score, 0.0, 1.0))
+
+    score = (_PQ_W_SHAPE * s_shape + _PQ_W_CURV * s_curv
+             + _PQ_W_BASE * s_base + _PQ_W_SYM * s_sym)
+
+    # Tier is a direct, intuitive function of the score: higher score → greener.
+    # A crooked baseline already lowers the score (via S_base), so it naturally
+    # tends toward yellow without a separate gate. The only hard override is a
+    # near-straight line (almost no second-derivative variation) → always red.
+    # Cluster membership is NOT penalised: a well-resolved multiplet line is a
+    # high-quality peak and should be green.
+    if s_curv < 0.10:
+        tier = 'red'
+    elif score >= _PQ_GREEN:
+        tier = 'green'
+    elif score >= _PQ_YELLOW:
+        tier = 'yellow'
+    else:
+        tier = 'red'
+    return tier, score
 
 
 def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
@@ -399,6 +466,15 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
             else:
                 gauss_qual = 'overlap'
 
+            # ── 3-tier peak quality (green / yellow / red) ────────────────────
+            # Weighted score over: lineshape fit (is it peak-shaped), curvature
+            # /non-linearity (a straight line has ~0 second-derivative variation),
+            # baseline flatness (a tilted foot-to-foot baseline signals overlap),
+            # and symmetry. See classify weights below.
+            pq, pq_score = _classify_peak_quality(
+                intensity, start_idx, end_idx, left_idx, right_idx,
+                float(height), gauss_r2, sym_score, n_ap)
+
             separated_peaks.append({
                 # Core
                 'index':    int(apex),
@@ -419,6 +495,8 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                 'gaussian_r2':       float(gauss_r2),
                 'symmetry_score':    float(sym_score),
                 'gaussian_quality':  gauss_qual,
+                'peak_quality':       pq,                 # 'green'/'yellow'/'red'
+                'peak_quality_score': float(pq_score),
                 'left_grounded':     bool(left_grounded),
                 'right_grounded':    bool(right_grounded),
                 'baseline_grounded': bool(left_grounded and right_grounded),
@@ -658,12 +736,58 @@ def check_foot_at_baseline(intensity, foot_idx, noise_std,
     return float(intensity[foot_idx]) <= threshold_factor * float(noise_std)
 
 
-def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points):
-    """Apex indices in ONE spectrum via find_peaks.
+def _second_derivative_shoulders(spectrum, distance_in_points, min_height,
+                                 curvature_k=3.0):
+    """Curvature-based candidates that recover overlapping shoulders.
+
+    A shoulder on the flank of a larger peak has NO local maximum in the
+    intensity, so ``find_peaks`` (apex search) misses it — yet it is a local
+    maximum of the negative second derivative (a concave-down inflection).
+    Picking maxima of −d²I/dδ² therefore surfaces the overlapping lines/shoulders
+    that the apex search drops, which are real peaks the annotation needs.
+
+    The raw 2nd derivative amplifies noise, so the spectrum is smoothed with a
+    Savitzky–Golay filter (window ≈ peak width) and candidates are gated by a
+    curvature signal-to-noise threshold (k·σ of the curvature, robust MAD) plus
+    the same intensity floor used for apices — noise blips never pass both.
+
+    Returns a sorted list of int candidate indices.
+    """
+    n = len(spectrum)
+    spectrum = np.asarray(spectrum, dtype=float)
+    # SG window ≈ peak width (odd, ≥ polyorder+2), capped so genuinely broad
+    # features are not over-smoothed into nothing.
+    win = int(distance_in_points) | 1
+    win = max(5, min(win, 31))
+    if win >= n:
+        return []
+    try:
+        d2 = savgol_filter(spectrum, win, polyorder=3, deriv=2)
+    except Exception:
+        return []
+    neg = -d2                       # concave-down (peak tops / shoulders) → > 0
+    sigma = float(np.median(np.abs(neg - np.median(neg)))) * 1.4826
+    if sigma <= 0:
+        return []
+    cand, _ = find_peaks(
+        neg,
+        height=curvature_k * sigma,
+        distance=max(2, int(distance_in_points) // 2),   # finer than apex spacing
+    )
+    return [int(i) for i in cand if spectrum[i] >= min_height]
+
+
+def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
+                   detect_shoulders=True, shoulder_curvature_k=3.0):
+    """Apex indices in ONE spectrum via find_peaks, augmented with shoulders.
 
     Shared by the consolidated path and per-sample detection. Returns a sorted
     list of int apex indices (boundaries/clusters are computed later by
     separate_overlapping_peaks on the chosen reference).
+
+    When ``detect_shoulders`` is set, overlapping lines that have no intensity
+    maximum (shoulders) are recovered from the second derivative and merged in,
+    so crowded multiplets/clusters do not silently drop analytes.
     """
     idx_primary, _ = find_peaks(
         spectrum,
@@ -672,7 +796,20 @@ def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points)
         prominence=eff_noise * min_snr * 0.5,
         width=2,                                 # reject 1-point noise spikes
     )
-    return sorted(int(i) for i in idx_primary)
+    apices = [int(i) for i in idx_primary]
+    if detect_shoulders:
+        # Merge shoulder candidates, but never duplicate an apex already found:
+        # a curvature maximum coincident with an intensity maximum is the same
+        # line. The dedupe gap is finer than the apex spacing so genuinely close
+        # shoulders are still added.
+        dedupe_gap = max(2, int(distance_in_points) // 3)
+        existing = sorted(apices)
+        for c in _second_derivative_shoulders(
+                spectrum, distance_in_points, min_height, shoulder_curvature_k):
+            if all(abs(c - a) > dedupe_gap for a in existing):
+                apices.append(c)
+                existing = sorted(apices)
+    return sorted(set(apices))
 
 
 def _consensus_apices(per_sample_idx, n_points, merge_tol_pts):
@@ -733,7 +870,9 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                  samples_info=None, progress_callback=None,
                  return_details=False, per_peak_align=True,
                  per_peak_max_shift_ppm=0.02,
-                 per_sample_detection=False):
+                 per_sample_detection=False,
+                 detect_shoulders=True, shoulder_curvature_k=3.0,
+                 min_group_presence=1):
     """
     Detect peaks with SNR > min_snr - WITH BASELINE CORRECTION.
 
@@ -947,7 +1086,9 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         # re-run on a peak-aligned reference.
         def _detect_and_separate(ref):
             idx = np.asarray(_detect_single(
-                ref, _eff_noise, min_height, min_snr, distance_in_points),
+                ref, _eff_noise, min_height, min_snr, distance_in_points,
+                detect_shoulders=detect_shoulders,
+                shoulder_curvature_k=shoulder_curvature_k),
                 dtype=int)
             if len(idx) == 0:
                 return []
@@ -979,7 +1120,9 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 med_s, sig_s = _quiet_segment_stats(col)
                 mh_s = med_s + sig_s * min_snr
                 per_sample_idx.append(_detect_single(
-                    col, sig_s, mh_s, min_snr, distance_in_points))
+                    col, sig_s, mh_s, min_snr, distance_in_points,
+                    detect_shoulders=detect_shoulders,
+                    shoulder_curvature_k=shoulder_curvature_k))
             # Merge tolerance only absorbs cross-sample alignment jitter of the
             # SAME line — it must stay well below distance_in_points (the minimum
             # spacing between distinct apices), or separate multiplet lines /
@@ -1114,6 +1257,50 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 pres = _presence_full.get(peak['index'])
                 if pres is not None:
                     peak['aligned_per_sample'] = list(pres)
+
+        # ── Group-presence filter ─────────────────────────────────────────────
+        # A real analyte peak should be detected in several replicates of a
+        # group, not in a single sample. Drop peaks not present in at least
+        # ``min_group_presence`` samples of ANY one group — this removes the
+        # spurious peaks that per-sample detection picks up in a lone sample
+        # (e.g. a noise apex next to a real multiplet that then gets annotated).
+        # A group smaller than the threshold needs all its samples (min(thr,n)).
+        if (min_group_presence and min_group_presence > 1 and n_samples > 1
+                and samples_info):
+            from collections import Counter
+            _grp_of = {}
+            for i in range(n_samples):
+                _info = samples_info[i] if i < len(samples_info) else {}
+                if (str(_info.get('type', 'Sample')).upper() == 'BLK'
+                        or _info.get('excluded', False)):
+                    continue
+                _grp_of[i] = _info.get('label', _info.get('group', 'Unknown'))
+            _grp_size = Counter(_grp_of.values())
+            # Per-sample presence threshold from each sample's own quiet region —
+            # signal-based and deterministic (independent of how the peak was
+            # detected/merged), so it is reliable for the filter.
+            _thr_s = {}
+            for i in _grp_of:
+                _m_i, _s_i = _quiet_segment_stats(corrected_2d[:, i])
+                _thr_s[i] = _m_i + _s_i * min_snr
+
+            def _passes_presence(peak):
+                idx = int(peak.get('index', 0))
+                if idx < 0 or idx >= corrected_2d.shape[0]:
+                    return True
+                cnt = {}
+                for _i, _g in _grp_of.items():
+                    if float(corrected_2d[idx, _i]) >= _thr_s[_i]:
+                        cnt[_g] = cnt.get(_g, 0) + 1
+                for _g, _sz in _grp_size.items():
+                    if cnt.get(_g, 0) >= min(int(min_group_presence), _sz):
+                        return True
+                return False
+
+            _n_before = len(separated_peaks)
+            separated_peaks = [p for p in separated_peaks if _passes_presence(p)]
+            print(f"   [presence filter] kept {len(separated_peaks)}/{_n_before} "
+                  f"peaks (>={min_group_presence} samples in some group)")
 
         # Mark the apex at the top of the DISPLAYED (mean) spectrum, not the
         # per-sample-MAX reference used for detection — the max apex can sit a

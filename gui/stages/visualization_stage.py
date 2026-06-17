@@ -43,6 +43,10 @@ class VisualizationStage(BaseStage):
             proc, text="📊 Spectral Quality",
             command=self._open_quality_window, state="disabled")
         self.btn_quality.pack(fill=tk.X, pady=1)
+        self.btn_digital_shim = ttk.Button(
+            proc, text="🧲 Digital Shim",
+            command=self._open_digital_shim_dialog, state="disabled")
+        self.btn_digital_shim.pack(fill=tk.X, pady=1)
         self.btn_revert = ttk.Button(
             proc, text="↩ Revert Processing",
             command=self._revert_processing, state="disabled")
@@ -166,6 +170,7 @@ class VisualizationStage(BaseStage):
             self.btn_alignment.config(state='normal')   # calibração também em COSY
             self.btn_baseline.config(state=_proc_state)
             self.btn_quality.config(state=_proc_state)
+            self.btn_digital_shim.config(state=_proc_state)  # 1D only
             if self.app.all_intensities is not None:
                 self._original_intensities = self.app.all_intensities.copy()
             self.btn_revert.config(state='disabled')
@@ -297,6 +302,206 @@ class VisualizationStage(BaseStage):
                 self.btn_revert.config(state='disabled')
             except Exception:
                 pass
+
+    # ── Reference deconvolution (FIDDLE / digital shim) ───────────────────────
+
+    def _open_digital_shim_dialog(self):
+        """Reference deconvolution: remove the common instrumental lineshape
+        distortion (imperfect shim) using an isolated reference signal.
+        Non-destructive — Apply backs onto all_intensities and the existing
+        'Revert Processing' button restores the original."""
+        import tkinter as tk
+        from tkinter import ttk, messagebox
+        import numpy as np
+        import matplotlib.pyplot as plt
+        from matplotlib.backends.backend_tkagg import (
+            FigureCanvasTkAgg, NavigationToolbar2Tk)
+
+        if self.app.ppm is None or self.app.all_intensities is None:
+            return
+        ppm = np.asarray(self.app.ppm, dtype=float)
+
+        try:
+            spec_mhz = float(self.app.stages['annotation'].spectrometer_var.get())
+        except Exception:
+            spec_mhz = 600.0
+
+        dlg = tk.Toplevel(self.app.root)
+        dlg.title("Digital Shim")
+        dlg.transient(self.app.root)
+        self._set_app_icon_safe(dlg)
+
+        left = ttk.Frame(dlg, padding=8); left.pack(side=tk.LEFT, fill=tk.Y)
+        right = ttk.Frame(dlg); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        ttk.Label(left, text="Removes the lineshape distortion common to all\n"
+                            "peaks (imperfect shim) using one clean reference\n"
+                            "signal. Areas are conserved.",
+                  font=("Arial", 8), foreground="gray", justify=tk.LEFT
+                  ).pack(anchor=tk.W, pady=(0, 6))
+
+        rf = ttk.LabelFrame(left, text="Reference signal (ppm)", padding=6)
+        rf.pack(fill=tk.X, pady=4)
+        ttk.Label(rf, text="One sharp isolated peak (TSP/DSS 0.00, formate 8.46).",
+                  font=("Arial", 8), foreground="gray", wraplength=210).pack(anchor=tk.W)
+        r1 = ttk.Frame(rf); r1.pack(fill=tk.X, pady=2)
+        ttk.Label(r1, text="Center (ppm):", width=14).pack(side=tk.LEFT)
+        center_var = tk.StringVar(value="0.00")
+        ttk.Entry(r1, textvariable=center_var, width=8).pack(side=tk.LEFT, padx=4)
+        r2 = ttk.Frame(rf); r2.pack(fill=tk.X, pady=2)
+        ttk.Label(r2, text="Window ± (ppm):", width=14).pack(side=tk.LEFT)
+        window_var = tk.StringVar(value="0.05")
+        ttk.Entry(r2, textvariable=window_var, width=8).pack(side=tk.LEFT, padx=4)
+
+        tf = ttk.LabelFrame(left, text="Target lineshape", padding=6)
+        tf.pack(fill=tk.X, pady=4)
+        mode_var = tk.StringVar(value="symmetrise")
+        ttk.Radiobutton(tf, text="Symmetrise only (keep width — safe)",
+                        variable=mode_var, value="symmetrise").pack(anchor=tk.W)
+        sharp_row = ttk.Frame(tf); sharp_row.pack(fill=tk.X)
+        ttk.Radiobutton(sharp_row, text="Sharpen to FWHM (Hz):",
+                        variable=mode_var, value="sharpen").pack(side=tk.LEFT)
+        fwhm_var = tk.StringVar(value="1.0")
+        ttk.Entry(sharp_row, textvariable=fwhm_var, width=6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(tf, text="Sharpening amplifies noise — use a value near the\n"
+                          "true natural linewidth.", font=("Arial", 7),
+                  foreground="#a06000", wraplength=210).pack(anchor=tk.W)
+
+        status = ttk.Label(left, text="", font=("Arial", 8),
+                           foreground="blue", wraplength=210)
+        status.pack(anchor=tk.W, pady=4)
+
+        # View window (ppm) — so the user inspects a region instead of the whole
+        # spectrum (where a tall TSP squashes everything).
+        vf = ttk.LabelFrame(left, text="Preview view (ppm)", padding=6)
+        vf.pack(fill=tk.X, pady=4)
+        vr = ttk.Frame(vf); vr.pack(fill=tk.X)
+        ttk.Label(vr, text="From:").pack(side=tk.LEFT)
+        view_hi_var = tk.StringVar(value="")   # high ppm (left)
+        ttk.Entry(vr, textvariable=view_hi_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(vr, text="To:").pack(side=tk.LEFT)
+        view_lo_var = tk.StringVar(value="")   # low ppm (right)
+        ttk.Entry(vr, textvariable=view_lo_var, width=6).pack(side=tk.LEFT, padx=2)
+        ttk.Label(vf, text="Blank = full. Zoom/pan also via the toolbar below.",
+                  font=("Arial", 7), foreground="gray", wraplength=210).pack(anchor=tk.W)
+
+        fig = plt.Figure(dpi=90, facecolor='#f8f8f8', tight_layout=True)
+        axp = fig.add_subplot(111)
+        axp.text(0.5, 0.5, 'Click Preview →', transform=axp.transAxes,
+                 ha='center', va='center', color='gray')
+        canvas = FigureCanvasTkAgg(fig, master=right)
+        _tb = NavigationToolbar2Tk(canvas, right)
+        _tb.update()
+        _tb.pack(side=tk.BOTTOM, fill=tk.X)
+        canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        _last = {'mean': None, 'corr': None}
+
+        def _apply_view():
+            """Set x-limits from the view boxes (or full) and autoscale Y to the
+            visible window so a tall peak elsewhere does not flatten the rest."""
+            m = _last['mean']
+            if m is None:
+                return
+            try:
+                hi = float(view_hi_var.get()) if view_hi_var.get().strip() else ppm.max()
+            except ValueError:
+                hi = ppm.max()
+            try:
+                lo = float(view_lo_var.get()) if view_lo_var.get().strip() else ppm.min()
+            except ValueError:
+                lo = ppm.min()
+            lo, hi = min(lo, hi), max(lo, hi)
+            axp.set_xlim(hi, lo)
+            vis = (ppm >= lo) & (ppm <= hi)
+            if vis.any():
+                _top = max(float(np.max(m[vis])),
+                           float(np.max(_last['corr'][vis])))
+                if _top > 0:
+                    axp.set_ylim(0, _top * 1.1)
+            canvas.draw_idle()
+
+        def _params():
+            c = float(center_var.get()); w = float(window_var.get())
+            tgt = (float(fwhm_var.get()) if mode_var.get() == "sharpen" else None)
+            return c, w, tgt
+
+        def _preview():
+            from processing.digital_shim import digital_shim
+            try:
+                c, w, tgt = _params()
+            except ValueError:
+                status.config(text="Invalid numbers.", foreground="red"); return
+            mean = np.mean(self.app.all_intensities, axis=1)
+            try:
+                corr, info = digital_shim(
+                    ppm, mean, c - w, c + w, target_fwhm_hz=tgt,
+                    spectrometer_mhz=spec_mhz)
+            except Exception as e:
+                status.config(text=f"Error: {e}", foreground="red"); return
+            axp.clear()
+            axp.plot(ppm, mean, color='#888', lw=0.8, label='before')
+            axp.plot(ppm, corr, color='#1565c0', lw=0.8, label='after')
+            axp.set_xlabel('δ (ppm)'); axp.set_ylabel('Intensity')
+            axp.legend(fontsize=8)
+            axp.set_title(f"area conserved: {info['area_ratio']*100:.1f}%  ·  "
+                          f"ref FWHM {info['ref_fwhm_ppm']*spec_mhz:.2f} Hz  ·  "
+                          "applied to the whole spectrum",
+                          fontsize=9)
+            _last['mean'], _last['corr'] = mean, corr
+            # Default view: zoom to a window beside the reference so the effect on
+            # real peaks is visible (not dominated by the reference itself).
+            if not view_hi_var.get().strip() and not view_lo_var.get().strip():
+                _c, _w, _ = _params()
+                view_hi_var.set(f"{_c + 1.0:.2f}")
+                view_lo_var.set(f"{_c + 0.2:.2f}")
+            _apply_view()
+            status.config(text=f"Preview OK. Area ratio {info['area_ratio']:.3f}",
+                          foreground="green")
+
+        def _apply():
+            from processing.digital_shim import digital_shim_2d
+            try:
+                c, w, tgt = _params()
+            except ValueError:
+                status.config(text="Invalid numbers.", foreground="red"); return
+            status.config(text="Applying to all samples…", foreground="blue")
+            dlg.update_idletasks()
+            try:
+                corr2d, infos = digital_shim_2d(
+                    ppm, self.app.all_intensities, c - w, c + w,
+                    target_fwhm_hz=tgt, spectrometer_mhz=spec_mhz)
+            except Exception as e:
+                status.config(text=f"Error: {e}", foreground="red"); return
+            if self._original_intensities is None:
+                self._original_intensities = self.app.all_intensities.copy()
+            self.app.all_intensities = corr2d
+            self.app.update_plot()
+            try:
+                self.btn_revert.config(state='normal')
+            except Exception:
+                pass
+            _ar = float(np.mean([i['area_ratio'] for i in infos]))
+            messagebox.showinfo(
+                "Digital Shim",
+                f"Applied to {len(infos)} sample(s).\n"
+                f"Mean area conservation: {_ar*100:.1f}%\n\n"
+                "Use 'Revert Processing' to undo.", parent=dlg)
+            dlg.destroy()
+
+        ttk.Button(vf, text="↻ Update view", command=_apply_view).pack(
+            anchor=tk.W, pady=(4, 0))
+
+        bf = ttk.Frame(left); bf.pack(fill=tk.X, pady=8)
+        ttk.Button(bf, text="👁 Preview", command=_preview).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="✓ Apply", command=_apply).pack(side=tk.LEFT, padx=2)
+        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(side=tk.LEFT, padx=2)
+
+    def _set_app_icon_safe(self, win):
+        try:
+            self.app._set_app_icon(win)
+        except Exception:
+            pass
 
     # ── Smooth dialog ─────────────────────────────────────────────────────────
 
@@ -449,7 +654,7 @@ class VisualizationStage(BaseStage):
                         variable=mode_var, value='icoshift',
                         command=_toggle_mode).pack(anchor=tk.W)
         ttk.Label(mode_frame,
-                  text="icoshift corrects non-uniform PPM drift across the spectrum.",
+                  text="icoshift corrects non-uniform δ (ppm) drift across the spectrum.",
                   font=("Arial", 8), foreground="gray", wraplength=210).pack(anchor=tk.W)
 
         rf = ttk.LabelFrame(sf_l, text="Reference Region (ppm)", padding=6)

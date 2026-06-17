@@ -92,15 +92,15 @@ class AnnotationMCRWindow:
     # ── Left panel — Undef peak list ─────────────────────────────────────────
 
     def _build_left(self, parent):
-        ttk.Label(parent, text="Annotation Undef Peaks",
+        ttk.Label(parent, text="Unannotated Signals",
                   font=("Arial", 9, "bold")).pack(anchor=tk.W, pady=(0, 2))
 
         cols = ('met', 'ppm', 'score', 'status')
         self.tree = ttk.Treeview(parent, columns=cols,
                                   show='tree headings', selectmode='browse')
-        self.tree.heading('#0',     text='Peak #')
+        self.tree.heading('#0',     text='Signal #')
         self.tree.heading('met',    text='Metabolite')
-        self.tree.heading('ppm',    text='ppm')
+        self.tree.heading('ppm',    text='δ (ppm)')
         self.tree.heading('score',  text='Score')
         self.tree.heading('status', text='Status')
 
@@ -197,7 +197,7 @@ class AnnotationMCRWindow:
                     format='%.2f').pack(side=tk.LEFT, padx=(2, 12))
 
         self._status_lbl = ttk.Label(
-            tb, text='Select a peak and click Deconvolute.',
+            tb, text='Select a signal and click Deconvolute.',
             foreground='gray', font=("Arial", 8))
         self._status_lbl.pack(side=tk.LEFT)
 
@@ -415,7 +415,7 @@ class AnnotationMCRWindow:
             self._fig.clear()
             ax = self._fig.add_subplot(111)
             ax.text(0.5, 0.5,
-                    f'Peak #{peak.get("rank","?")}  '
+                    f'Signal #{peak.get("rank","?")}  '
                     f'{peak.get("ppm", 0):.4f} ppm\n'
                     f'Metabolite: {met.get("name","?")}  '
                     f'(score={mp.get("composite_score",0):.2f})\n\n'
@@ -625,9 +625,9 @@ class AnnotationMCRWindow:
 
         ax1.tick_params(labelsize=7)
         ax1.set_ylabel('Intensity', fontsize=7)
-        ax1.set_xlabel('ppm', fontsize=8)
+        ax1.set_xlabel('δ (ppm)', fontsize=8)
         ax1.set_title(
-            f'Peak #{peak.get("rank","?")}  '
+            f'Signal #{peak.get("rank","?")}  '
             f'{peak.get("ppm", 0):.4f} ppm  K={K}  '
             f'R²={"—" if np.isnan(r2) else f"{r2:.3f}"}',
             fontsize=8, pad=3)

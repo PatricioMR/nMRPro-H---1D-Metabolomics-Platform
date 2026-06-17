@@ -33,6 +33,10 @@ def _get_quantification_matrix(app):
         feature_labels = []
         X_cols = []
         for met in quant_results:
+            # Não-quantificados (perderam competição ou 0/NaN): sem sinal
+            # mensurável — excluídos da matriz estatística.
+            if met.get('_not_quantified'):
+                continue
             concs = met.get('_concs_per_sample') or []
             if not concs:
                 continue
@@ -298,11 +302,12 @@ class StatisticsStage:
         # ── Plot type ────────────────────────────────────────────────────────
         pf = ttk.LabelFrame(parent, text='Plot', **_SEC)
         pf.pack(fill=tk.X, pady=(0, 4))
-        for m in ['Overview enrichment', 'Network', 'Dot plot', 'Lollipop']:
+        for m in ['Overview enrichment', 'Network', 'Dot plot', 'Lollipop',
+                  'Dumbbell']:
             ttk.Radiobutton(pf, text=m, variable=self._pw_plot_var,
-                            value=m).pack(**_RB)
+                            value=m, command=self._on_pw_plot_change).pack(**_RB)
 
-        # ── Groups (A vs B) ──────────────────────────────────────────────────
+        # ── Groups (A vs B; + Control row, shown only for Dumbbell) ──────────
         gf = ttk.LabelFrame(parent, text='Comparison', **_SEC)
         gf.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(gf, text='Group A:', font=('Arial', 8)
@@ -319,7 +324,24 @@ class StatisticsStage:
         self._cb_b = ttk.Combobox(gf, textvariable=self._grp_b_var,
                                   width=14, state='readonly')
         self._cb_b.grid(row=1, column=1, sticky=tk.W, padx=4, pady=1)
+        # Control rows — one per treatment; gridded/removed by
+        # _on_pw_plot_change (Dumbbell only). A vs Control-A, B vs Control-B.
+        self._pw_ctrla_lbl = ttk.Label(gf, text='Control A:', font=('Arial', 8))
+        if not hasattr(self, '_grp_ca_var'):
+            self._grp_ca_var = tk.StringVar(value=_sv.get('group_ca')
+                                            or _sv.get('group_c') or '')
+        self._cb_ca = ttk.Combobox(gf, textvariable=self._grp_ca_var,
+                                   width=14, state='readonly')
+        self._pw_ctrlb_lbl = ttk.Label(gf, text='Control B:', font=('Arial', 8))
+        if not hasattr(self, '_grp_cb_var'):
+            self._grp_cb_var = tk.StringVar(value=_sv.get('group_cb') or '')
+        self._cb_cb = ttk.Combobox(gf, textvariable=self._grp_cb_var,
+                                   width=14, state='readonly')
+        self._pw_ctrl_hint = ttk.Label(
+            gf, text='(Dumbbell: A vs Control-A, B vs Control-B)',
+            font=('Arial', 7), foreground='#666')
         self._refresh_groups()
+        self._on_pw_plot_change()
 
         # ── Options ──────────────────────────────────────────────────────────
         of = ttk.LabelFrame(parent, text='Options', **_SEC)
@@ -643,6 +665,268 @@ class StatisticsStage:
                        command=self._open_box_style_dialog
                        ).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
 
+    def _on_pw_plot_change(self):
+        """Show the two Control rows only for the Dumbbell plot; hide otherwise."""
+        is_db = (getattr(self, '_pw_plot_var', None)
+                 and self._pw_plot_var.get() == 'Dumbbell')
+        for w, r, c, kw in (
+            (getattr(self, '_pw_ctrla_lbl', None), 2, 0, dict(sticky=tk.W)),
+            (getattr(self, '_cb_ca', None),        2, 1, dict(sticky=tk.W, padx=4, pady=1)),
+            (getattr(self, '_pw_ctrlb_lbl', None), 3, 0, dict(sticky=tk.W)),
+            (getattr(self, '_cb_cb', None),        3, 1, dict(sticky=tk.W, padx=4, pady=1)),
+            (getattr(self, '_pw_ctrl_hint', None), 4, 0,
+             dict(columnspan=2, sticky=tk.W)),
+        ):
+            if w is None:
+                continue
+            try:
+                if is_db:
+                    w.grid(row=r, column=c, **kw)
+                else:
+                    w.grid_remove()
+            except Exception:
+                pass
+
+    def _dumbbell_pathway_map(self, feature_labels, category, min_mets=2):
+        """metabolite name → representative pathway name (within ``category``).
+        Each metabolite is assigned to the pathway it shares with the most other
+        analytes; pathways with fewer than ``min_mets`` of our metabolites
+        collapse to 'Other'."""
+        import os, sqlite3
+        from collections import Counter
+        from app_paths import databases_dir
+        try:
+            qr = self._pathway_quant_results(feature_labels)
+            id_by_name = {r['metabolite']: str(r.get('hmdb_id') or '') for r in qr}
+        except Exception:
+            id_by_name = {}
+        pw_of = {n: [] for n in feature_labels}
+        cat = str(category).lower()
+        try:
+            conn = sqlite3.connect(os.path.join(databases_dir(), 'hmdb_pathways.db'))
+            cur = conn.cursor()
+            for name in feature_labels:
+                hid = id_by_name.get(name, '')
+                if not hid.upper().startswith('HMDB'):
+                    continue
+                if cat in ('', 'all'):
+                    q = ('SELECT p.name FROM metabolite_pathways mp '
+                         'JOIN pathways p ON p.id = mp.pathway_id '
+                         'WHERE mp.hmdb_id = ?')
+                    args = (hid,)
+                else:
+                    q = ('SELECT p.name FROM metabolite_pathways mp '
+                         'JOIN pathways p ON p.id = mp.pathway_id '
+                         'WHERE mp.hmdb_id = ? AND p.category = ?')
+                    args = (hid, cat)
+                pw_of[name] = [r[0] for r in cur.execute(q, args).fetchall() if r[0]]
+            conn.close()
+        except Exception:
+            pass
+        freq = Counter()
+        for ps in pw_of.values():
+            for p in set(ps):
+                freq[p] += 1
+        assign = {}
+        for name, ps in pw_of.items():
+            best, bf = None, 0
+            for p in ps:
+                if freq[p] > bf or (freq[p] == bf and (best is None or p < best)):
+                    bf, best = freq[p], p
+            assign[name] = (best if (best is not None
+                                     and freq[best] >= max(1, int(min_mets)))
+                            else 'Other')
+        return assign
+
+    def _dumbbell_category_map(self, feature_labels):
+        """metabolite name → pathway category (Metabolic/Disease/Drug/Other)."""
+        import os, sqlite3
+        from app_paths import databases_dir
+        try:
+            qr = self._pathway_quant_results(feature_labels)
+            id_by_name = {r['metabolite']: str(r.get('hmdb_id') or '') for r in qr}
+        except Exception:
+            id_by_name = {}
+        cat = {n: 'Other' for n in feature_labels}
+        try:
+            conn = sqlite3.connect(os.path.join(databases_dir(), 'hmdb_pathways.db'))
+            cur = conn.cursor()
+            for name in feature_labels:
+                hid = id_by_name.get(name, '')
+                if hid.upper().startswith('HMDB'):
+                    row = cur.execute(
+                        'SELECT p.category, COUNT(*) c FROM metabolite_pathways mp '
+                        'JOIN pathways p ON p.id = mp.pathway_id '
+                        'WHERE mp.hmdb_id = ? GROUP BY p.category '
+                        'ORDER BY c DESC LIMIT 1', (hid,)).fetchone()
+                    if row and row[0]:
+                        cat[name] = str(row[0]).capitalize()
+            conn.close()
+        except Exception:
+            pass
+        return cat
+
+    def _plot_dumbbell(self, X, feature_labels, group_labels,
+                       ctrl_a, ctrl_b, ga, gb, p_thr=0.05, category='all'):
+        """Dumbbell plot: log2 FC of treatment A vs Control-A and B vs Control-B
+        per metabolite, joined by a line; filled ▲ = significant (p<thr vs its
+        own control). Restricted to one pathway ``category`` (or 'all')."""
+        from scipy import stats as spstats
+        if not ga or not gb or not ctrl_a or not ctrl_b:
+            raise ValueError('Pick Group A, Group B and a Control for each.')
+        if ga == gb:
+            raise ValueError('Group A and Group B must differ.')
+
+        # Treatment colours from the Options colormap (low end = A, high = B).
+        try:
+            import matplotlib as _mpl
+            _cm = _mpl.colormaps[self._pw_cmap_var.get()]
+            col_a, col_b = _cm(0.15), _cm(0.85)
+        except Exception:
+            col_a, col_b = '#d1495b', '#1565c0'
+
+        gl = list(group_labels)
+        idx_ca = [i for i, g in enumerate(gl) if g == ctrl_a]
+        idx_cb = [i for i, g in enumerate(gl) if g == ctrl_b]
+        idx_a = [i for i, g in enumerate(gl) if g == ga]
+        idx_b = [i for i, g in enumerate(gl) if g == gb]
+        if min(len(idx_ca), len(idx_cb), len(idx_a), len(idx_b)) < 2:
+            raise ValueError('Each of A / B / Control-A / Control-B needs ≥2 samples.')
+
+        # Group metabolites by PATHWAY (within the chosen category); a band needs
+        # ≥ Min mets (Options) metabolites, else they go to 'Other'.
+        try:
+            _min_mets = int(self._pw_minmets_var.get())
+        except Exception:
+            _min_mets = 2
+        pmap = self._dumbbell_pathway_map(feature_labels, category, _min_mets)
+        keep = list(range(len(feature_labels)))
+        if category and str(category).lower() != 'all':
+            keep = [j for j, n in enumerate(feature_labels)
+                    if pmap.get(n, 'Other') != 'Other']
+            if not keep:
+                raise ValueError(f'No metabolites with a "{category}" pathway.')
+
+        def _fc_p(treat_idx, ctrl_idx, j):
+            c = X[ctrl_idx, j]; t = X[treat_idx, j]
+            c = c[np.isfinite(c)]; t = t[np.isfinite(t)]
+            if c.size < 2 or t.size < 2:
+                return 0.0, 1.0
+            mc, mt = float(np.mean(c)), float(np.mean(t))
+            l2 = float(np.log2(mt / mc)) if (mc > 0 and mt > 0) else 0.0
+            try:
+                if c.size >= 3 and t.size >= 3:
+                    _, p = spstats.ttest_ind(t, c, equal_var=False)
+                else:
+                    _, p = spstats.mannwhitneyu(t, c, alternative='two-sided')
+                p = float(p)
+                if not np.isfinite(p):
+                    p = 1.0
+            except Exception:
+                p = 1.0
+            return l2, p
+
+        rows = []   # (name, pathway, l2a, pa, l2b, pb)
+        for j in keep:
+            name = feature_labels[j]
+            l2a, pa = _fc_p(idx_a, idx_ca, j)
+            l2b, pb = _fc_p(idx_b, idx_cb, j)
+            rows.append([name, pmap.get(name, 'Other'), l2a, pa, l2b, pb])
+        if not rows:
+            raise ValueError('No metabolites to plot.')
+
+        # Cap (Options → Top N) keeping the strongest by |log2FC|.
+        try:
+            MAXN = int(self._pw_topn_var.get())
+        except Exception:
+            MAXN = 45
+        MAXN = max(3, MAXN)
+        if len(rows) > MAXN:
+            rows = sorted(rows, key=lambda r: -max(abs(r[2]), abs(r[4])))[:MAXN]
+
+        # Order: pathway bands ('Other' last); within a band by mean log2FC.
+        from collections import Counter
+        from itertools import groupby
+        _bsize = Counter(r[1] for r in rows)
+        def _band_key(pw):
+            return (pw == 'Other', -_bsize[pw], pw)
+        rows.sort(key=lambda r: (_band_key(r[1]), -((r[2] + r[4]) / 2.0)))
+
+        # One stacked panel (facet) per pathway, small gap between them.
+        bands = [(pw, list(grp)) for pw, grp in groupby(rows, key=lambda r: r[1])]
+        nb = len(bands)
+
+        # Figure height scales with content so panels/labels are not squashed
+        # (the viewer scrolls). Width follows the container.
+        _tot = sum(len(b[1]) for b in bands)
+        self._dumbbell_export_figsize = (
+            9.5, max(6.0, _tot * 0.34 + nb * 0.55 + 1.2))
+        all_l2 = [v for r in rows for v in (r[2], r[4])]
+        xlo, xhi = (min(all_l2 + [0.0]), max(all_l2 + [0.0]))
+        pad = max((xhi - xlo) * 0.12, 0.05)
+        xlo, xhi = xlo - pad, xhi + pad
+
+        gs = self._fig.add_gridspec(
+            nb, 1, hspace=0.45,
+            height_ratios=[len(b[1]) + 0.7 for b in bands])
+        self._fig.suptitle(
+            f'{ga} (A) vs {ctrl_a}   ·   {gb} (B) vs {ctrl_b}',
+            fontsize=10, fontweight='bold')
+
+        from matplotlib.lines import Line2D
+        ax0 = None
+        for k, (pw, brows) in enumerate(bands):
+            axk = self._fig.add_subplot(gs[k, 0])
+            if ax0 is None:
+                ax0 = axk
+            ny = len(brows)
+            yp = list(range(ny))[::-1]
+            for y, r in zip(yp, brows):
+                _, _, l2a, pa, l2b, pb = r
+                axk.plot([l2a, l2b], [y, y], color='#bbbbbb', lw=1.2, zorder=2)
+                for l2, p, col in ((l2a, pa, col_a), (l2b, pb, col_b)):
+                    if p < p_thr:
+                        axk.scatter(l2, y, marker='^', s=50, color=col,
+                                    edgecolors=col, zorder=3)
+                    else:
+                        axk.scatter(l2, y, marker='o', s=38, facecolors='white',
+                                    edgecolors=col, linewidths=1.3, zorder=3)
+            axk.axvline(0.0, color='#888', ls='--', lw=1.0, zorder=0)
+            axk.set_xlim(xlo, xhi)
+            axk.set_ylim(-0.6, ny - 0.4)
+            axk.set_yticks(yp)
+            axk.set_yticklabels([r[0] for r in brows], fontsize=7)
+            axk.set_title(pw, loc='left', fontsize=8, fontweight='bold',
+                          color='#1a1a2e', pad=2)
+            axk.tick_params(labelsize=7, labelbottom=True)   # x scale on every panel
+
+        # Single shared x-axis label at the figure bottom (always visible).
+        self._fig.supxlabel('log2 Fold Change vs Control', fontsize=9)
+
+        # Legends once, close to the top-right of the figure.
+        sig_leg = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                   markeredgecolor='#555', markersize=8, label='ns'),
+            Line2D([0], [0], marker='^', color='w', markerfacecolor='#555',
+                   markeredgecolor='#555', markersize=9, label=f'p < {p_thr:g}'),
+        ]
+        trt_leg = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor=col_a,
+                   markersize=9, label=f'A: {ga}'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor=col_b,
+                   markersize=9, label=f'B: {gb}'),
+        ]
+        if ax0 is not None:
+            leg1 = ax0.legend(handles=sig_leg, title='Significance', fontsize=7,
+                              title_fontsize=8, loc='upper left',
+                              bbox_to_anchor=(1.005, 1.0), borderaxespad=0.0,
+                              framealpha=0.9)
+            ax0.add_artist(leg1)
+            ax0.legend(handles=trt_leg, title='Treatment', fontsize=7,
+                       title_fontsize=8, loc='upper left',
+                       bbox_to_anchor=(1.005, 0.4), borderaxespad=0.0,
+                       framealpha=0.9)
+
     def _open_pie_style_dialog(self):
         from tkinter import colorchooser
         st = self._pie_style
@@ -839,7 +1123,8 @@ class StatisticsStage:
     def _refresh_groups(self):
         si = getattr(self.app, 'samples_info', [])
         groups = sorted(set(s.get('label', s.get('group', 'Unknown')) for s in si))
-        for cb in (getattr(self, '_cb_a', None), getattr(self, '_cb_b', None)):
+        for cb in (getattr(self, '_cb_a', None), getattr(self, '_cb_b', None),
+                   getattr(self, '_cb_ca', None), getattr(self, '_cb_cb', None)):
             if cb is not None:
                 try:
                     if cb.winfo_exists():
@@ -851,6 +1136,11 @@ class StatisticsStage:
                 self._grp_a_var.set(groups[0])
             if hasattr(self, '_grp_b_var') and not self._grp_b_var.get():
                 self._grp_b_var.set(groups[-1] if len(groups) > 1 else groups[0])
+            if hasattr(self, '_grp_ca_var') and not self._grp_ca_var.get():
+                self._grp_ca_var.set(groups[1] if len(groups) > 2 else groups[0])
+            if hasattr(self, '_grp_cb_var') and not self._grp_cb_var.get():
+                self._grp_cb_var.set(groups[2] if len(groups) > 3 else
+                                     (groups[1] if len(groups) > 1 else groups[0]))
 
     def _update_filter_status(self):
         parts = []
@@ -1358,7 +1648,16 @@ class StatisticsStage:
             self._scroll_canvas.after(80, self._render_and_display)
             return
         dpi = self._fig.dpi
-        self._fig.set_size_inches(w_px / dpi, h_px / dpi)
+        # Dumbbell (Pathway) renders at a content-scaled height so its stacked
+        # facets are readable (the canvas scrolls); other plots fill the panel.
+        _db = (getattr(self, '_mode_var', None) and self._mode_var.get() == 'pathway'
+               and getattr(self, '_pw_plot_var', None)
+               and self._pw_plot_var.get() == 'Dumbbell'
+               and getattr(self, '_dumbbell_export_figsize', None))
+        if _db:
+            self._fig.set_size_inches(max(w_px / dpi, _db[0]), _db[1])
+        else:
+            self._fig.set_size_inches(w_px / dpi, h_px / dpi)
         buf = io.BytesIO()
         self._fig.savefig(buf, format='png', dpi=dpi,
                           bbox_inches='tight', facecolor='white')
@@ -1597,6 +1896,25 @@ class StatisticsStage:
                 'Not enough valid metabolites after filtering.', parent=self.frame)
             return
 
+        # ── Dumbbell: A vs Control-A and B vs Control-B, RAW data (no ORA) ────
+        if self._pw_plot_var.get() == 'Dumbbell':
+            _ctrl_a = self._grp_ca_var.get()
+            _ctrl_b = self._grp_cb_var.get()
+            self._zoom_level = 1.0; self._base_image = None
+            self._fig.set_layout_engine('constrained'); self._fig.clear()
+            try:
+                self._plot_dumbbell(
+                    X, feature_labels, group_labels, _ctrl_a, _ctrl_b, ga, gb,
+                    p_thr=float(self._pw_p_thr_var.get()),
+                    category=self._pw_cat_var.get())
+            except Exception as _e:
+                _ax = self._fig.add_subplot(111)
+                _ax.text(0.5, 0.5, f'Error:\n{_e}', transform=_ax.transAxes,
+                         ha='center', va='center', color='#c0392b')
+                _ax.axis('off')
+            self._render_and_display()
+            return
+
         if ga not in group_labels or gb not in group_labels:
             messagebox.showwarning('Pathway',
                 'Selected groups are not present in the (filtered) samples.',
@@ -1659,6 +1977,8 @@ class StatisticsStage:
         raw = getattr(quant_stage, '_quant_results', None) or []
         id_map = {}
         for r in raw:
+            if r.get('_not_quantified'):
+                continue
             nm = r.get('metabolite') or r.get('name')
             if nm:
                 id_map[nm] = r.get('hmdb_id') or r.get('id') or ''
@@ -2471,8 +2791,12 @@ class StatisticsStage:
         imA = axA.imshow(Ro, cmap=_cmapA, vmin=-1, vmax=1, aspect='auto')
         axA.set_xticks(range(n_feat)); axA.set_yticks(range(n_feat))
         _fs = max(4, min(8, int(420 / max(n_feat, 1))))
-        axA.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
-        axA.set_yticklabels(feats_o, fontsize=_fs)
+        # Truncate long names (same as heatmap) so 45°-rotated labels don't pile
+        # onto each other; full name stays in the y-axis order / tooltip.
+        _MAX = 20
+        feats_t = [f'{l[:_MAX]}…' if len(l) > _MAX else l for l in feats_o]
+        axA.set_xticklabels(feats_t, rotation=45, ha='right', fontsize=_fs)
+        axA.set_yticklabels(feats_t, fontsize=_fs)
         axA.set_title(f'A · Clustered correlation ({cmethod.title()})',
                       fontsize=10, fontweight='bold')
         self._fig.colorbar(imA, ax=axA, fraction=0.046, pad=0.04,
@@ -2486,8 +2810,8 @@ class StatisticsStage:
             vmax = float(min(2.0, _peak)) if _peak > 0 else 1.0
             imC = axC.imshow(D, cmap='PRGn', vmin=-vmax, vmax=vmax, aspect='auto')
             axC.set_xticks(range(n_feat)); axC.set_yticks(range(n_feat))
-            axC.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
-            axC.set_yticklabels(feats_o, fontsize=_fs)
+            axC.set_xticklabels(feats_t, rotation=45, ha='right', fontsize=_fs)
+            axC.set_yticklabels(feats_t, fontsize=_fs)
             axC.set_title(f'C · Differential ({g1} − {g2})',
                           fontsize=10, fontweight='bold')
             self._fig.colorbar(imC, ax=axC, fraction=0.046, pad=0.04, label='Δρ')
@@ -2498,6 +2822,12 @@ class StatisticsStage:
             axA.text(0.5, -0.18, _msg,
                      transform=axA.transAxes, ha='center', va='top',
                      fontsize=7, color='#666')
+
+        # Spacing: wide wspace so the two panels' rotated labels don't collide,
+        # and a bottom margin so the x labels clear the axes (bbox_inches='tight'
+        # in _render_and_display then crops the outer whitespace).
+        self._fig.subplots_adjust(left=0.13, right=0.95, top=0.92,
+                                  bottom=0.28, wspace=0.55)
 
     def _plot_vip(self, X, sample_names, feature_labels, group_labels):
         y_int, unique = _group_to_int(group_labels)
@@ -2966,7 +3296,7 @@ class StatisticsStage:
                 ax.legend(wedges, legend_labels,
                           loc='center left',
                           bbox_to_anchor=(1.02, 0.5),
-                          fontsize=6.5, frameon=False)
+                          fontsize=7.8, frameon=False)
 
         _st = self._pie_style
         self._fig.suptitle(
@@ -3294,21 +3624,27 @@ class StatisticsStage:
             # save, then restore the original canvas size so the window isn't affected.
             _orig_size = self._fig.get_size_inches()
             _method    = self._method_var.get()
-            _is_pie    = (_method == 'Metabolic Profile' and
-                          getattr(self, '_pie_export_figsize', None) is not None)
+            # Metabolic Profile (donut) is NOT resized on export: it must match what
+            # the user sees on screen (the figure is already sized to the canvas in
+            # _render_and_display). Forcing _pie_export_figsize made the figure
+            # larger than the canvas, so the point-sized legend shrank relative to
+            # the donut. Export at the on-screen size keeps legend/donut proportion.
             _is_box    = (_method in ('Boxplot', 'Violin') and
                           getattr(self, '_box_export_figsize', None) is not None)
-            if _is_pie:
-                self._fig.set_size_inches(self._pie_export_figsize)
-                _st = self._pie_style
-                self._fig.tight_layout(pad=_st.get('tight_pad', 1.0), rect=[0, 0, 1, 0.95])
-            elif _is_box:
+            _is_db     = (getattr(self, '_mode_var', None)
+                          and self._mode_var.get() == 'pathway'
+                          and getattr(self, '_pw_plot_var', None)
+                          and self._pw_plot_var.get() == 'Dumbbell'
+                          and getattr(self, '_dumbbell_export_figsize', None) is not None)
+            if _is_box:
                 self._fig.set_size_inches(self._box_export_figsize)
                 _st = self._box_style
                 self._fig.tight_layout(pad=_st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
+            elif _is_db:
+                self._fig.set_size_inches(self._dumbbell_export_figsize)
             self._fig.savefig(fn, dpi=dpi, format=fmt,
                               bbox_inches='tight', facecolor='white')
-            if _is_pie or _is_box:
+            if _is_box or _is_db:
                 self._fig.set_size_inches(_orig_size)
                 self._render_and_display()
             messagebox.showinfo('Saved', f'Figure saved to:\n{fn}', parent=self.frame)

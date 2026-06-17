@@ -118,7 +118,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         cb.bind('<<ComboboxSelected>>', self._on_std_select)
 
         r2 = ttk.Frame(s1); r2.pack(fill=tk.X, pady=1)
-        ttk.Label(r2, text='Peak Ref (ppm):', width=20).pack(side=tk.LEFT)
+        ttk.Label(r2, text='Signal δ (ppm):', width=20).pack(side=tk.LEFT)
         self.ref_ppm_var = tk.StringVar(value='0.0')
         ttk.Entry(r2, textvariable=self.ref_ppm_var, width=7).pack(
             side=tk.LEFT, padx=2)
@@ -126,7 +126,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                   foreground='gray').pack(side=tk.LEFT)
 
         r1 = ttk.Frame(s1); r1.pack(fill=tk.X, pady=1)
-        ttk.Label(r1, text='— or Peak #:', width=20).pack(side=tk.LEFT)
+        ttk.Label(r1, text='— or Signal #:', width=20).pack(side=tk.LEFT)
         self.ref_rank_var = tk.StringVar(value='')
         ttk.Entry(r1, textvariable=self.ref_rank_var, width=6).pack(
             side=tk.LEFT, padx=2)
@@ -178,7 +178,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # 'Area' (single-line trapz) is temporarily disabled — under development.
         # Hovering the disabled option shows a tooltip explaining why.
         _DISABLED_INTEG = {'Area'}
-        for v, lbl in [('Multiplet', 'Multiplet (whole)'),
+        for v, lbl in [('Multiplet', 'Multiplicity'),
                        ('Area', 'Single-Line Area'), ('Lorentz', 'Lorentz Fit')]:
             _rb = ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
                                   value=v, command=self._on_integ_change)
@@ -211,7 +211,8 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         ttk.Label(s2,
                   text='Lorentz Fit: fits Lorentzian per sample (BATMAN-style).\n'
-                       'Multiplet (whole): integrates full DB multiplet span; uses total nH.\n'
+                       'Multiplicity: integrates the union of the multiplet peaks\' '
+                       'Peak-List boundaries; uses total nH.\n'
                        'Local baseline: subtracts linear baseline at window edges before integration.\n'
                        'JG-Deconv: applies fractional areas from Overlap Resolving Method.\n'
                        'Run JG-Deconv (step 4) and click "✓ Apply" before enabling.',
@@ -503,6 +504,8 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._tree.tag_configure('conf3', background='#c8f7c5', foreground='#155724')
         self._tree.tag_configure('conf2', background='#fef9c3', foreground='#856404')
         self._tree.tag_configure('conf1', background='#ffd6d6', foreground='#721c24')
+        # Não-quantificados: cinzento, sem destaque. Razão no tooltip da coluna Conf.
+        self._tree.tag_configure('nq', background='#eeeeee', foreground='#9a9a9a')
 
         vsb = ttk.Scrollbar(top, orient=tk.VERTICAL,
                              command=self._tree.yview)
@@ -634,7 +637,11 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             snr  = r.get('snr', 0)
             stat   = r.get('status', '●○○')
             _conf  = r.get('_confidence', 1)
-            conf_tag = f'conf{_conf}'
+            if r.get('_not_quantified'):
+                conf_tag = 'nq'
+                conc_s   = 'n.q.'
+            else:
+                conf_tag = f'conf{_conf}'
             peak_rank = r.get('_peak', {})
             peak_rank = peak_rank.get('rank', '–') if peak_rank else '–'
             vip = r.get('vip_score', float('nan'))
@@ -681,7 +688,10 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         if r is None:
             return
         menu = tk.Menu(tree, tearoff=0)
-        peak_rank = r.get('_peak_rank')
+        # Navigate to the peak inside the integrated multiplet window (matches
+        # Quant Peaks and the boundaries actually integrated), not the bare
+        # competition anchor.
+        peak_rank = r.get('_display_peak_rank') or r.get('_peak_rank')
         menu.add_command(
             label='Quant Peaks',
             command=lambda: self._open_quant_peaks_window(r))

@@ -1198,11 +1198,11 @@ class AnnotationResultsWindow:
         tf.grid_rowconfigure(0, weight=1)
         tf.grid_columnconfigure(0, weight=1)
 
-        self.tree.heading('#0',      text='Peak #',
+        self.tree.heading('#0',      text='Signal #',
                           command=lambda: self._sort_by('ppm'))
         self.tree.heading('name',    text='Metabolite',
                           command=lambda: self._sort_by('name'))
-        self.tree.heading('ppm',     text='PPM',
+        self.tree.heading('ppm',     text='δ (ppm)',
                           command=lambda: self._sort_by('ppm'))
         self.tree.heading('start',   text='Start')
         self.tree.heading('end',     text='End')
