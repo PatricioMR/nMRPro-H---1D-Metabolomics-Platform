@@ -85,7 +85,7 @@ class TestImports:
         assert callable(score_multiplet_match)
 
     def test_quantification_math_imports(self):
-        from gui.stages.quantification_stage import _trapz, _cv, _pqn
+        from gui.stages._quant_helpers import _trapz, _cv, _pqn
         assert callable(_trapz)
         assert callable(_cv)
 
@@ -94,11 +94,11 @@ class TestImports:
         assert ProjectManager is not None
 
     def test_annotation_stage_imports(self):
-        from gui.stages.annotation_stage import _ppm_score, _mult_compat_check
+        from gui.stages._annotation_helpers import _ppm_score, _mult_compat_check
         assert callable(_ppm_score)
 
     def test_db_pick_function_imports(self):
-        from gui.stages.annotation_stage import _pick_database
+        from gui.stages._annotation_helpers import _pick_database
         assert callable(_pick_database)
 
 
@@ -106,7 +106,7 @@ class TestPureFunctions:
     """Verify key pure functions work without any UI."""
 
     def test_ppm_score_boundaries(self):
-        from gui.stages.annotation_stage import _ppm_score
+        from gui.stages._annotation_helpers import _ppm_score
         assert _ppm_score(1.0, 1.0, 0.05) == pytest.approx(1.0)
         assert _ppm_score(1.0, 2.0, 0.05) < 0.01
 
@@ -116,10 +116,10 @@ class TestPureFunctions:
 
     def test_cv_nan_on_empty(self):
         import numpy as np
-        from gui.stages.quantification_stage import _cv
+        from gui.stages._quant_helpers import _cv
         assert np.isnan(_cv([]))
 
     def test_trapz_zero_for_zeros(self):
         import numpy as np
-        from gui.stages.quantification_stage import _trapz
+        from gui.stages._quant_helpers import _trapz
         assert _trapz(np.zeros(10), np.linspace(0, 1, 10)) == pytest.approx(0.0)

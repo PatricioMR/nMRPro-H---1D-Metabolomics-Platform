@@ -1,0 +1,1 @@
+{"source_hilevel": ["Food", "Plant", "Animal", "Synthetic", "Endogenous"], "role_drug": false, "role_toxic": false, "role_industrial": false, "is_endogenous": true, "is_exogenous": false, "is_food": true, "is_microbial": false, "is_synthetic": true, "keep_mammalian": true, "exclude_reason": "", "primary_origin": "endogenous", "hmdb_id": "HMDB0000168", "name": "L-Asparagine"}

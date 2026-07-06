@@ -130,9 +130,15 @@ class SampleEditorDialog:
             scrollregion=self._canvas.bbox('all')))
         self._canvas.bind('<Configure>', lambda e: self._canvas.itemconfig(
             self._cwin, width=e.width))
-        self._canvas.bind_all(
-            '<MouseWheel>',
-            lambda e: self._canvas.yview_scroll(-1 * (e.delta // 120), 'units'))
+        def _on_wheel(e):
+            # bind_all is global; the binding outlives this dialog, so guard
+            # against the canvas already being destroyed (TclError spam).
+            if self._canvas.winfo_exists():
+                self._canvas.yview_scroll(-1 * (e.delta // 120), 'units')
+
+        self._canvas.bind_all('<MouseWheel>', _on_wheel)
+        dlg.bind('<Destroy>', lambda e: self._canvas.unbind_all('<MouseWheel>'),
+                 add='+')
 
         btn = ttk.Frame(dlg)
         btn.pack(fill=tk.X, padx=10, pady=8)

@@ -104,6 +104,7 @@ class StatisticsStage:
         self._right_widget = None   # widget inside app.right_panel
         self._current_method = None
         self._last_plot_fig  = None   # for export
+        self._plot_export    = None   # {'method','headers','rows'} for CSV export
         self._cb_a         = None
         self._cb_b         = None
         self._excluded_samples     = set()
@@ -194,17 +195,30 @@ class StatisticsStage:
             _mode_style = 'Toolbutton'
         mode_bar = ttk.Frame(parent, relief='groove', borderwidth=1)
         mode_bar.pack(fill=tk.X, pady=(0, 6))
+        # In lipidomics projects metabolic pathways do not apply to lipid
+        # classes, so the third mode becomes "FA ratios" instead of "Pathway".
+        _fa = self._is_lipidomics_project()
         ttk.Radiobutton(mode_bar, text='Statistics', value='statistics',
                         variable=self._mode_var, command=self._on_mode_change,
                         style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
-        ttk.Radiobutton(mode_bar, text='Pathway', value='pathway',
+        ttk.Radiobutton(mode_bar, text=('FA ratios' if _fa else 'Pathway'),
+                        value='pathway',
                         variable=self._mode_var, command=self._on_mode_change,
                         style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
 
         if self._mode_var.get() == 'pathway':
-            self._build_left_pathway(parent)
+            if _fa:
+                self._build_left_fa_ratios(parent)
+            else:
+                self._build_left_pathway(parent)
         else:
             self._build_left_statistics(parent)
+
+    def _is_lipidomics_project(self):
+        """True when the active annotation run used the Lipidomics library."""
+        ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        args = getattr(ann, '_last_results_args', None) or {}
+        return str(args.get('internal_library_mode', '')) == 'Lipidomics'
 
     def _on_mode_change(self):
         self._build_left(self._left_inner)
@@ -557,13 +571,18 @@ class StatisticsStage:
         elif method == 'Volcano':
             ttk.Label(self._opt_frame, text='Group A:',
                       font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._grp_a_var = tk.StringVar()
+            # Reuse an existing var so the user's group choice survives an options
+            # rebuild (recreating it empty would silently reset both groups to
+            # the defaults → every Run compares the same pair).
+            if not hasattr(self, '_grp_a_var'):
+                self._grp_a_var = tk.StringVar()
             self._cb_a = ttk.Combobox(self._opt_frame, textvariable=self._grp_a_var,
                                        width=12, state='readonly')
             self._cb_a.grid(row=0, column=1, sticky=tk.W, padx=4)
             ttk.Label(self._opt_frame, text='Group B:',
                       font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._grp_b_var = tk.StringVar()
+            if not hasattr(self, '_grp_b_var'):
+                self._grp_b_var = tk.StringVar()
             self._cb_b = ttk.Combobox(self._opt_frame, textvariable=self._grp_b_var,
                                        width=12, state='readonly')
             self._cb_b.grid(row=1, column=1, sticky=tk.W, padx=4)
@@ -790,8 +809,19 @@ class StatisticsStage:
         idx_cb = [i for i, g in enumerate(gl) if g == ctrl_b]
         idx_a = [i for i, g in enumerate(gl) if g == ga]
         idx_b = [i for i, g in enumerate(gl) if g == gb]
-        if min(len(idx_ca), len(idx_cb), len(idx_a), len(idx_b)) < 2:
-            raise ValueError('Each of A / B / Control-A / Control-B needs ≥2 samples.')
+        # Name exactly which role is short (and its count) — the usual cause is a
+        # sample exclusion that dropped a group below 2, which the generic message
+        # hid. A count of 0 also flags a stale selection no longer in the data.
+        _short = [f'{role}="{name}": {len(idx)} sample(s)'
+                  for role, name, idx in (('Group A', ga, idx_a),
+                                          ('Group B', gb, idx_b),
+                                          ('Control A', ctrl_a, idx_ca),
+                                          ('Control B', ctrl_b, idx_cb))
+                  if len(idx) < 2]
+        if _short:
+            raise ValueError(
+                'Each of Group A / B / Control A / Control B needs ≥2 samples.\n'
+                'Too few after sample exclusion:\n  ' + '\n  '.join(_short))
 
         # Group metabolites by PATHWAY (within the chosen category); a band needs
         # ≥ Min mets (Options) metabolites, else they go to 'Other'.
@@ -843,6 +873,16 @@ class StatisticsStage:
         MAXN = max(3, MAXN)
         if len(rows) > MAXN:
             rows = sorted(rows, key=lambda r: -max(abs(r[2]), abs(r[4])))[:MAXN]
+
+        # CSV result: per-metabolite log2 fold change + p vs each control.
+        self._plot_export = {
+            'method': 'Dumbbell',
+            'headers': ['metabolite', 'pathway',
+                        f'log2fc_{ga}_vs_{ctrl_a}', f'p_{ga}',
+                        f'log2fc_{gb}_vs_{ctrl_b}', f'p_{gb}'],
+            'rows': [[r[0], r[1], float(r[2]), float(r[3]),
+                      float(r[4]), float(r[5])] for r in rows],
+        }
 
         # Order: pathway bands ('Other' last); within a band by mean log2FC.
         from collections import Counter
@@ -1272,12 +1312,18 @@ class StatisticsStage:
         ttk.Button(bottom, text='Cancel', command=dlg.destroy    ).pack(side=tk.RIGHT)
 
     def _open_normality_popup(self):
-        """Per-sample normality + Grubbs outlier detection within each group.
+        """Per-sample profile QC + Grubbs outlier detection within each group.
 
-        Shapiro-Wilk on each sample's log-transformed analyte profile.
-        Grubbs' G on Euclidean distance from group centroid (log+z-score space)
-        — detects samples with anomalous metabolite profiles regardless of
-        overall concentration magnitude.
+        Shapiro-Wilk on each sample's log-transformed analyte profile is a
+        whole-sample QC metric (is this sample's overall distribution as
+        expected?), NOT a parametric-vs-nonparametric gate — the group tests
+        choose by sample size, not by this flag.
+
+        Grubbs' G on the Euclidean distance from the group centroid (log+z-score
+        space) flags samples with anomalous metabolite profiles regardless of
+        overall concentration magnitude. Because distances are non-negative,
+        the test is one-sided (upper tail) and iterative — see
+        processing/outlier_detection.
         """
         from scipy import stats as spstats
         import csv
@@ -1358,12 +1404,12 @@ class StatisticsStage:
                 diff = X_z[i, :] - centroid
                 sample_dist[i] = float(np.sqrt(np.nansum(diff ** 2)))
 
-        def _grubbs_critical(n, alpha=0.05):
-            if n < 3:
-                return float('nan')
-            t_crit = spstats.t.ppf(1.0 - alpha / (2.0 * n), df=n - 2)
-            return ((n - 1) / np.sqrt(n)) * np.sqrt(
-                t_crit ** 2 / (n - 2 + t_crit ** 2))
+        # Grubbs on distance-to-centroid: distances are non-negative, so only the
+        # UPPER tail (far from centroid) is an outlier — a one-sided test avoids
+        # flagging samples that are unusually CLOSE to the centroid. Iterative
+        # removal prevents a single outlier from masking itself by inflating the
+        # group SD. See processing/outlier_detection.
+        from processing.outlier_detection import grubbs_outliers
 
         grubbs_g    = [float('nan')] * n_samples
         grubbs_crit = [float('nan')] * n_samples
@@ -1373,15 +1419,12 @@ class StatisticsStage:
             idx_g = [i for i, g in enumerate(all_groups) if g == grp]
             if len(idx_g) < 3:
                 continue
-            vals   = sample_dist[idx_g]
-            mu_g   = float(np.mean(vals))
-            s_g    = float(np.std(vals, ddof=1))
-            g_crit = _grubbs_critical(len(idx_g))
-            for i in idx_g:
-                g_val = abs(sample_dist[i] - mu_g) / s_g if s_g > 0 else 0.0
-                grubbs_g[i]    = round(g_val, 4)
-                grubbs_crit[i] = round(g_crit, 4)
-                grubbs_flag[i] = g_val > g_crit
+            flags_g, gstat_g, gcrit_g = grubbs_outliers(
+                sample_dist[idx_g], alpha=0.05, side='upper')
+            for k, i in enumerate(idx_g):
+                grubbs_g[i]    = float(gstat_g[k])
+                grubbs_crit[i] = float(gcrit_g[k])
+                grubbs_flag[i] = bool(flags_g[k])
 
         # ── Build results rows ────────────────────────────────────────────────
         rows = []
@@ -1415,7 +1458,7 @@ class StatisticsStage:
         cols   = ('sample', 'group', 'n', 'sw_stat', 'sw_p',
                   'parametric', 'dist', 'g_stat', 'g_crit', 'outlier')
         hdrs   = ('Sample', 'Group', 'n', 'SW stat', 'SW p (log)',
-                  'Parametric?', 'Profile dist.', 'G stat', 'G critical', 'Outlier?')
+                  'Profile normal?', 'Profile dist.', 'G stat', 'G critical', 'Outlier?')
         widths = (150, 90, 42, 78, 85, 88, 95, 78, 88, 78)
 
         frm = ttk.Frame(dlg)
@@ -1477,9 +1520,10 @@ class StatisticsStage:
         ttk.Label(
             bot,
             text=(f'{n_samples} samples · {n_analytes} analytes · '
-                  'SW on log-profile (p<0.05 → non-parametric) · '
+                  'Profile normal? = Shapiro-Wilk on each sample log-profile '
+                  '(QC of the sample as a whole; group test choice is by size) · '
                   'Profile dist. = Euclidean distance to group centroid (log+z-score) · '
-                  'G > G_crit (α=0.05) → possible outlier'),
+                  'Grubbs one-sided upper, iterative (α=0.05) → possible outlier'),
             font=('Arial', 7), foreground='#555'
         ).pack(side=tk.LEFT, padx=8)
 
@@ -1591,6 +1635,8 @@ class StatisticsStage:
                      width=6, state='readonly').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(eb, text='💾 Save figure', command=self._export
                    ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(eb, text='📄 CSV result', command=self._export_csv_result
+                   ).pack(side=tk.LEFT, padx=4)
 
         # Scrollable display canvas
         plot_outer = ttk.Frame(self._right_widget)
@@ -1654,13 +1700,48 @@ class StatisticsStage:
                and getattr(self, '_pw_plot_var', None)
                and self._pw_plot_var.get() == 'Dumbbell'
                and getattr(self, '_dumbbell_export_figsize', None))
+        # Compact Volcano is a portrait plot (taller than wide) — fill the height
+        # and make the width ~0.72× of it, instead of filling the wide canvas.
+        _vol_compact = (
+            getattr(self, '_method_var', None) is not None
+            and self._method_var.get() == 'Volcano'
+            and getattr(self, '_volcano_style', None)
+            and self._volcano_style.get('theme') == 'Compact')
         if _db:
             self._fig.set_size_inches(max(w_px / dpi, _db[0]), _db[1])
+        elif _vol_compact:
+            _h = h_px / dpi
+            self._fig.set_size_inches(min(_h * 0.72, w_px / dpi), _h)
         else:
             self._fig.set_size_inches(w_px / dpi, h_px / dpi)
         buf = io.BytesIO()
-        self._fig.savefig(buf, format='png', dpi=dpi,
-                          bbox_inches='tight', facecolor='white')
+        try:
+            self._fig.savefig(buf, format='png', dpi=dpi,
+                              bbox_inches='tight', facecolor='white')
+        except Exception:
+            # Tight bbox + constrained_layout can fail hard: a non-finite size
+            # from a stray artist, or "axes collapsed to zero" when the layout
+            # solver can't fit legend/labels. If we let this propagate the panel
+            # keeps showing the PREVIOUS plot (looks like swapping groups does
+            # nothing). Retry with the plain box and no layout engine, and fall
+            # back to an error placeholder so the image ALWAYS refreshes.
+            try:
+                self._fig.set_layout_engine('none')
+            except Exception:
+                pass
+            buf.seek(0); buf.truncate(0)
+            try:
+                self._fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
+            except Exception as _re:
+                import traceback; traceback.print_exc()
+                self._fig.clear()
+                _ax = self._fig.add_subplot(111)
+                _ax.text(0.5, 0.5, f'Render failed:\n{_re}',
+                         transform=_ax.transAxes, ha='center', va='center',
+                         color='red', fontsize=9, wrap=True)
+                _ax.set_axis_off()
+                buf.seek(0); buf.truncate(0)
+                self._fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
         buf.seek(0)
         self._base_image = _PILImage.open(buf).copy()
         buf.close()
@@ -1767,7 +1848,10 @@ class StatisticsStage:
                                  parent=self.frame)
             return
         if getattr(self, '_mode_var', None) and self._mode_var.get() == 'pathway':
-            self._run_pathway()
+            if self._is_lipidomics_project():
+                self._run_fa_ratios()
+            else:
+                self._run_pathway()
             return
         method = self._method_var.get()
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
@@ -1816,6 +1900,8 @@ class StatisticsStage:
         self._base_image = None
         self._fig.set_layout_engine('constrained')
         self._fig.clear()
+        # Reset per-plot export data; each _plot_* sets it with the values shown.
+        self._plot_export = None
         try:
             if method == 'PCA':
                 self._plot_pca(X_scaled, sample_names, feature_labels, group_labels)
@@ -1847,6 +1933,117 @@ class StatisticsStage:
 
         self._render_and_display()
 
+    # ── FA ratios mode (lipidomics) ──────────────────────────────────────────
+
+    def _build_left_fa_ratios(self, parent):
+        _SEC = dict(padding=(6, 4, 6, 4), relief='groove')
+        info = ttk.LabelFrame(parent, text='FA ratios', **_SEC)
+        info.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            info,
+            text=('Fatty-acid composition ratios derived from the\n'
+                  'Box 1 indices (Li et al. 2017) — CDCl3 lipid\n'
+                  'extracts only. Box plots compare groups per ratio.'),
+            font=('Arial', 8), foreground='#444', justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=4, pady=2)
+        ttk.Label(
+            info, text='n-3 index is ALA-only (EPA/DHA not resolved).',
+            font=('Arial', 7, 'italic'), foreground='#a60',
+            justify=tk.LEFT, wraplength=210,
+        ).pack(anchor=tk.W, padx=4, pady=(0, 2))
+        ttk.Label(
+            info, text='Press Run to draw the box plots.',
+            font=('Arial', 8, 'italic'), foreground='#666',
+        ).pack(anchor=tk.W, padx=4, pady=(2, 2))
+
+        # Sample filter is shared/honoured by the FA-ratios run.
+        ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
+        ff.pack(fill=tk.X, pady=(0, 4))
+        self._filter_samples_btn = ttk.Button(
+            ff, text='Samples', command=self._open_sample_selector)
+        self._filter_samples_btn.pack(fill=tk.X, padx=4, pady=2)
+        self._filter_status_lbl = ttk.Label(
+            ff, text='', font=('Arial', 7), foreground='#666')
+        self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    def _run_fa_ratios(self):
+        from processing import lipidomics as _lp
+        import matplotlib.pyplot as plt
+
+        quant = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        results = getattr(quant, '_quant_results', None) or []
+        ratios = _lp.fa_ratio_series(results)
+        if not ratios:
+            self._pathway_status(
+                'No FA composition ratios available.\n\n'
+                'FA ratios are built from the Box 1 indices, computed only for '
+                'CDCl3 (Li) lipidomics runs. Run Quantification in Lipidomics '
+                'mode with the CDCl3 solvent first.')
+            return
+
+        si = getattr(self.app, 'samples_info', []) or []
+        sample_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
+        group_labels = [s.get('label', s.get('group', 'Unknown')) for s in si]
+        keep = [i for i, n in enumerate(sample_names)
+                if n not in self._excluded_samples]
+        groups = {}
+        for i in keep:
+            groups.setdefault(group_labels[i], []).append(i)
+        if not groups:
+            self._pathway_status('No samples remain after filtering.')
+            return
+        order = list(groups.keys())
+
+        _app_colors = getattr(self.app, 'group_colors', {})
+        cmap = plt.cm.get_cmap('tab10', max(len(order), 1))
+        gcol = {g: (_app_colors.get(g) or cmap(i)) for i, g in enumerate(order)}
+
+        self._zoom_level = 1.0
+        self._base_image = None
+        self._fig.set_layout_engine('constrained')
+        self._fig.clear()
+
+        names = list(ratios.keys())
+        ncol = 3
+        nrow = int(np.ceil(len(names) / ncol))
+        for k, name in enumerate(names):
+            ax = self._fig.add_subplot(nrow, ncol, k + 1)
+            arr = ratios[name]
+            data = []
+            for g in order:
+                vals = [float(arr[i]) for i in groups[g]
+                        if i < len(arr) and np.isfinite(arr[i])]
+                data.append(vals)
+            if not any(data):
+                ax.text(0.5, 0.5, 'no data', transform=ax.transAxes,
+                        ha='center', va='center', color='#999', fontsize=8)
+                ax.set_title(name, fontsize=9)
+                ax.set_axis_off()
+                continue
+            try:
+                bp = ax.boxplot(data, tick_labels=order, patch_artist=True,
+                                showfliers=False)
+            except TypeError:                      # matplotlib < 3.9
+                bp = ax.boxplot(data, labels=order, patch_artist=True,
+                                showfliers=False)
+            for patch, g in zip(bp['boxes'], order):
+                patch.set_facecolor(gcol[g])
+                patch.set_alpha(0.6)
+            rng = np.random.RandomState(0)
+            for xi, (g, vals) in enumerate(zip(order, data), start=1):
+                if vals:
+                    jit = (rng.rand(len(vals)) - 0.5) * 0.15
+                    ax.scatter(np.full(len(vals), xi) + jit, vals, s=12,
+                               color=gcol[g], edgecolor='k',
+                               linewidths=0.3, zorder=3)
+            ax.set_title(name, fontsize=9)
+            ax.tick_params(labelsize=7)
+            ax.set_ylabel('%' if name.endswith('(%)') else 'ratio', fontsize=7)
+
+        self._fig.suptitle(
+            'Fatty-acid composition ratios (Box 1, Li et al. 2017)', fontsize=10)
+        self._render_and_display()
+
     # ── Pathway mode run ─────────────────────────────────────────────────────
 
     def _pathway_status(self, msg):
@@ -1861,6 +2058,9 @@ class StatisticsStage:
         self._render_and_display()
 
     def _run_pathway(self):
+        # Reset so a run that aborts early (status message) cannot export the
+        # previous plot's stale table; each successful path sets it again.
+        self._plot_export = None
         ga = self._grp_a_var.get() if hasattr(self, '_grp_a_var') else ''
         gb = self._grp_b_var.get() if hasattr(self, '_grp_b_var') else ''
         if not ga or not gb or ga == gb:
@@ -2044,6 +2244,19 @@ class StatisticsStage:
         self._pw_last_rows = rows
         self._pw_skipped   = skipped
 
+        # CSV result: the ORA table behind the overview/dot/lollipop/network plot.
+        self._plot_export = {
+            'method': 'Pathway',
+            'headers': ['pathway', 'hits_k', 'pathway_size_K', 'sig_total_n',
+                        'enrichment_ratio', 'p_value', 'fdr_bh', 'smpdb_id',
+                        'hit_metabolites'],
+            'rows': [[r['name'], r['k'], r['K'], r['n'],
+                      float(r['enrichment_ratio']), float(r['p']),
+                      float(r.get('fdr', float('nan'))), r.get('smpdb', ''),
+                      '; '.join(r.get('mets', []))]
+                     for r in rows],
+        }
+
         self._zoom_level = 1.0
         self._base_image = None
         self._fig.set_layout_engine('constrained')
@@ -2082,10 +2295,30 @@ class StatisticsStage:
         return vals, norm, cmap, label
 
     def _pathway_colorbar(self, mappable, label):
+        from matplotlib.ticker import FuncFormatter
         cb = self._fig.colorbar(mappable, ax=self._fig.axes,
                                 fraction=0.046, pad=0.04, shrink=0.5)
         cb.set_label(label, fontsize=8)
         cb.ax.tick_params(labelsize=7)
+
+        # The p-value / FDR scale is LogNorm; matplotlib's default log ticks are
+        # scientific notation (1e-2, …). Show plain decimals at the familiar
+        # significance thresholds instead (0.05, 0.01, …) for readability.
+        try:
+            vmin = float(getattr(mappable.norm, 'vmin', None) or 1e-3)
+        except (TypeError, ValueError):
+            vmin = 1e-3
+        ticks = [t for t in (1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 1e-4, 1e-5)
+                 if t >= vmin * 0.999]
+        if ticks:
+            cb.set_ticks(ticks)
+        cb.minorticks_off()                          # drop sci-notation minor labels
+
+        def _decimal(v, _pos):
+            if v <= 0:
+                return ''
+            return f'{v:.10f}'.rstrip('0').rstrip('.')
+        cb.ax.yaxis.set_major_formatter(FuncFormatter(_decimal))
 
     def _plot_pathway_overview(self, rows, ga, gb):
         import numpy as np
@@ -2100,7 +2333,7 @@ class StatisticsStage:
         y = np.arange(len(rows))
         ax.barh(y, ratios, color=colors, edgecolor='#888', linewidth=0.4)
         ax.set_yticks(y)
-        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5)
+        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5, fontweight='bold')
         ax.set_xlabel('Enrichment Ratio', fontsize=8)
         ax.set_title(f'Overview of Enriched Metabolite Sets\n{ga} vs {gb}',
                      fontsize=10, fontweight='bold')
@@ -2343,6 +2576,16 @@ class StatisticsStage:
         scores = pca.fit_transform(X)
         ev     = pca.explained_variance_ratio_ * 100
 
+        # CSV export: PCA scores per sample (explained variance in the header).
+        self._plot_export = {
+            'method': 'PCA',
+            'headers': (['sample', 'group']
+                        + ['PC%d (%.1f%%)' % (c + 1, ev[c]) for c in range(n_comp)]),
+            'rows': [([sample_names[i], str(group_labels[i])]
+                      + [float(scores[i, c]) for c in range(n_comp)])
+                     for i in range(scores.shape[0])],
+        }
+
         y, unique = _group_to_int(group_labels)
         gcols = self._group_colors(unique)
 
@@ -2410,7 +2653,6 @@ class StatisticsStage:
     def _plot_plsda(self, X, sample_names, feature_labels, group_labels, opls=False):
         from sklearn.cross_decomposition import PLSRegression
         from sklearn.preprocessing import label_binarize
-        from sklearn.model_selection import cross_val_score
 
         y_int, unique = _group_to_int(group_labels)
         n_classes = len(unique)
@@ -2426,32 +2668,39 @@ class StatisticsStage:
         n_comp = n_comp.get() if n_comp else 2
         n_comp = min(n_comp, X.shape[0]-1, X.shape[1])
 
-        pls = PLSRegression(n_components=n_comp, scale=False)
-        pls.fit(X, Y)
-        scores = pls.transform(X)
-        if scores.ndim == 1:
-            scores = scores.reshape(-1, 1)
+        from processing.multivariate import opls_da, pls_r2x_per_component
 
-        total_var_X = np.sum(np.var(X, axis=0))  # sum of per-feature variances
-        ev_x = [np.var(scores[:, k]) / total_var_X * 100 for k in range(min(2, scores.shape[1]))]
         gcols   = self._group_colors(unique)
         ellipse = getattr(self, '_ellipse_var', None)
         ellipse = ellipse.get() if ellipse else True
 
         if opls:
-            # OPLS-DA approximation: orthogonal correction
-            # Regress out the variance orthogonal to Y from T[:,0]
-            t1 = scores[:, 0]
-            t_orth = scores[:, 1] if scores.shape[1] > 1 else np.zeros_like(t1)
-            proj = np.dot(t_orth, t1) / (np.dot(t1, t1) + 1e-12)
-            t_orth_corr = t_orth - proj * t1
-            plot_x, plot_y = t1, t_orth_corr
-            ev_pred  = np.var(t1)          / total_var_X * 100
-            ev_orth  = np.var(t_orth_corr) / total_var_X * 100
-            xlabel = f'T score (predictive, {ev_pred:.1f}% X var.)'
-            ylabel = f'T orthogonal ({ev_orth:.1f}% X var.)'
-            title = 'OPLS-DA Score Plot'
+            # Real OPLS-DA (Trygg & Wold, J. Chemometrics 2002): one predictive
+            # component vs Y-orthogonal components. Defined for two classes — the
+            # previous "OPLS" merely Gram-Schmidt'd two already-orthogonal PLS
+            # scores (a no-op that produced a mislabeled PLS-DA plot).
+            if n_classes > 2:
+                raise ValueError(
+                    'OPLS-DA is defined for two classes only.\n'
+                    'Use PLS-DA for more than two groups.')
+            res = opls_da(X, y_int.astype(float), n_ortho=max(1, n_comp - 1))
+            plot_x = res['t_pred']
+            t_o    = res['t_ortho']
+            plot_y = t_o[:, 0] if t_o.shape[1] else np.zeros_like(plot_x)
+            ev_pred = res['r2x_pred']
+            ev_orth = float(res['r2x_ortho'][0]) if res['r2x_ortho'].size else 0.0
+            xlabel = f'Predictive t  (R²X = {ev_pred:.1f}%)'
+            ylabel = f'Orthogonal t  (R²X = {ev_orth:.1f}%)'
+            title  = 'OPLS-DA Score Plot'
         else:
+            pls = PLSRegression(n_components=n_comp, scale=False)
+            pls.fit(X, Y)
+            scores = pls.transform(X)
+            if scores.ndim == 1:
+                scores = scores.reshape(-1, 1)
+            # Correct %X variance per LV: R2X_k = ||t_k||²·||p_k||² / ||X||²
+            # (the dropped loading-norm factor under-reported the explained var).
+            ev_x = pls_r2x_per_component(scores, pls.x_loadings_, X)
             plot_x = scores[:, 0]
             plot_y = scores[:, 1] if scores.shape[1] > 1 else np.zeros_like(plot_x)
             xlabel = f'LV1 ({ev_x[0]:.1f}% X var.)'
@@ -2471,33 +2720,31 @@ class StatisticsStage:
                         fontsize=5.5, ha='center', va='bottom',
                         xytext=(0, 4), textcoords='offset points', color='#444')
 
+        # Validation fits the SAME binarized Y as the plotted model (ordinal
+        # y_int would impose a false class ordering for ≥3 groups). Folds are
+        # stratified and n_comp is clamped per fold (see plsda_cv_q2), so no fold
+        # collapses to a constant Y — that was the "y residual is constant" warning.
+        from processing.multivariate import plsda_cv_q2, plsda_permutation_p
+        _min_class = int(np.min(np.bincount(y_int))) if len(y_int) else 0
+        _n_splits  = max(2, min(5, _min_class))
+
         cv = getattr(self, '_cv_var', None)
-        if cv and cv.get():
+        if cv and cv.get() and _min_class >= 2:
             try:
-                from sklearn.model_selection import StratifiedKFold
-                cv_scores = cross_val_score(
-                    PLSRegression(n_components=n_comp, scale=False),
-                    X, y_int.astype(float),
-                    cv=StratifiedKFold(n_splits=min(5, X.shape[0])),
-                    scoring='r2')
-                r2cv = cv_scores.mean()
+                r2cv = plsda_cv_q2(X, y_int, n_comp, _n_splits)
                 ax.set_title(f'{title}  —  Q²={r2cv:.3f}', fontsize=10)
             except Exception:
                 ax.set_title(title, fontsize=10)
         else:
             ax.set_title(title, fontsize=10)
 
-        # Permutation test
+        # Permutation test (stratified CV, label shuffling — preserves class sizes
+        # so every permuted fit stays non-degenerate).
         n_perm = getattr(self, '_n_perm_var', None)
         n_perm = n_perm.get() if n_perm else 0
-        if n_perm > 0:
+        if n_perm > 0 and _min_class >= 2:
             try:
-                from sklearn.model_selection import permutation_test_score
-                _, _, pval = permutation_test_score(
-                    PLSRegression(n_components=n_comp, scale=False),
-                    X, y_int.astype(float),
-                    n_permutations=n_perm, scoring='r2',
-                    cv=min(5, X.shape[0]), n_jobs=1)
+                _, pval = plsda_permutation_p(X, y_int, n_comp, _n_splits, n_perm)
                 ax.text(0.02, 0.02, f'Permutation p={pval:.3f}',
                         transform=ax.transAxes, fontsize=7.5,
                         color='#555', va='bottom')
@@ -2566,8 +2813,11 @@ class StatisticsStage:
         gcols = self._group_colors(unique)
         import matplotlib.colors as mcolors
 
-        # Disable all layout engines — use manual subplots_adjust only
-        self._fig.set_layout_engine('none')
+        # Remove any layout engine — use manual subplots_adjust only. Must pass
+        # None (not the string 'none'): switching from the 'constrained' engine
+        # set in _run() to 'none' leaves an adjust-incompatible placeholder that
+        # makes subplots_adjust warn and no-op; None clears it cleanly.
+        self._fig.set_layout_engine(None)
 
         # GridSpec: 2 rows × 2 cols  (colorbar/legend placed manually)
         #   row 0: [blank | col_dendrogram]
@@ -2754,6 +3004,16 @@ class StatisticsStage:
             sig_o = sig[np.ix_(order, order)]
             Ro = np.ma.masked_where(~sig_o & ~np.eye(n_feat, dtype=bool), Ro)
 
+        # CSV export: clustered metabolite × metabolite correlation matrix.
+        _Rf = (np.ma.filled(Ro, np.nan) if np.ma.isMaskedArray(Ro)
+               else np.asarray(Ro))
+        self._plot_export = {
+            'method': 'Correlation',
+            'headers': ['metabolite'] + list(feats_o),
+            'rows': [[feats_o[i]] + [float(_Rf[i, j]) for j in range(n_feat)]
+                     for i in range(n_feat)],
+        }
+
         # Differential panel: contrast the two user-selected groups (falls back
         # to the first two present when no/invalid selection).
         groups = [g for g in dict.fromkeys(group_labels)
@@ -2862,6 +3122,17 @@ class StatisticsStage:
             if rows.size:
                 gmeans[:, gi] = np.mean(X[np.ix_(rows, order)], axis=0)
 
+        # CSV export: VIP score per metabolite + per-group mean (autoscaled).
+        self._plot_export = {
+            'method': 'VIP Score',
+            'headers': (['metabolite', 'vip_score', 'above_threshold']
+                        + ['mean_' + str(unique[gi]) for gi in range(len(unique))]),
+            'rows': [([feats_top[r], float(vips_top[r]),
+                       bool(vips_top[r] >= vip_thr)]
+                      + [float(gmeans[r, gi]) for gi in range(len(unique))])
+                     for r in range(len(feats_top))],
+        }
+
         # Layout: VIP bars (left) + class-mean squares (right), aligned rows.
         gs = self._fig.add_gridspec(
             1, 2, width_ratios=[5, max(1.0, 0.45 * len(unique))], wspace=0.04)
@@ -2907,6 +3178,7 @@ class StatisticsStage:
         """Lazily create the persistent volcano style dict with defaults."""
         if not hasattr(self, '_volcano_style') or not self._volcano_style:
             self._volcano_style = {
+                'theme':          'Classic',   # 'Classic' | 'Compact'
                 'n_labels':       10,
                 'color_up':       '#c62828',
                 'color_down':     '#1565c0',
@@ -2932,6 +3204,7 @@ class StatisticsStage:
         frm = ttk.Frame(dlg, padding=10)
         frm.pack(fill=tk.BOTH, expand=True)
 
+        theme_var = tk.StringVar(value=str(st.get('theme', 'Classic')))
         n_var    = tk.IntVar(value=int(st['n_labels']))
         size_var = tk.DoubleVar(value=float(st['label_fontsize']))
         dot_var  = tk.IntVar(value=int(st['dot_size']))
@@ -2941,6 +3214,14 @@ class StatisticsStage:
                     'color_ns': st['color_ns']}
 
         r = 0
+        ttk.Label(frm, text='Theme:').grid(row=r, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(frm, textvariable=theme_var, state='readonly', width=12,
+                     values=['Classic', 'Compact']).grid(
+            row=r, column=1, sticky=tk.W, padx=6)
+        ttk.Label(frm, text='(Compact: clean axes, no labels)',
+                  font=('Arial', 7), foreground='#666').grid(
+            row=r, column=2, sticky=tk.W)
+        r += 1
         ttk.Label(frm, text='Labels shown (top significant):').grid(
             row=r, column=0, sticky=tk.W, pady=2)
         ttk.Spinbox(frm, from_=0, to=100, increment=1, width=6,
@@ -2984,6 +3265,7 @@ class StatisticsStage:
             r += 1
 
         def _apply():
+            st['theme']          = str(theme_var.get())
             st['n_labels']       = int(n_var.get())
             st['label_fontsize'] = float(size_var.get())
             st['dot_size']       = int(dot_var.get())
@@ -3009,58 +3291,123 @@ class StatisticsStage:
         dlg.geometry(f'+{(sw_ - w_) // 2}+{(sh_ - h_) // 2}')
 
     def _repel_labels(self, ax, xy, labels, fontsize, bold, leader, leader_color):
-        """Place point labels with greedy overlap removal + optional leader lines.
+        """Place point labels, fanned outward, with bounded vertical de-overlap.
 
-        No external dependency (adjustText). Operates in display space: starts
-        each label at a small offset from its point, then iteratively pushes
-        overlapping label boxes apart. When a label ends up far from its point,
-        an arrowless leader line connects them so the mapping stays unambiguous.
+        Each label starts just beside its dot, fanning OUTWARD from the plot
+        centre (left-half points label left, right-half right) so names never
+        cross the busy middle of the volcano. Overlapping labels are then pushed
+        apart VERTICALLY ONLY, in display (pixel) space, for a fixed number of
+        passes — deterministic and impossible to hang. Unlike the old iterative
+        repel (which mixed point/pixel units, drifted labels off-axes and tangled
+        leader lines), labels never move horizontally and stay in their dot's
+        column, so an optional leader is a short, near-vertical connector — no
+        crossing tangle. Final positions are clamped to the axes so nothing is
+        pushed outside the plotting area.
         """
         if not labels:
             return
-        fig = ax.figure
         weight = 'bold' if bold else 'normal'
-        arrow = (dict(arrowstyle='-', color=leader_color, lw=0.4,
-                      shrinkA=0, shrinkB=2) if leader else None)
-        anns = []
+        xs = [p[0] for p in xy]
+        x_mid = (min(xs) + max(xs)) / 2.0 if xs else 0.0
+
+        fig   = ax.figure
+        trans = ax.transData
+        inv   = trans.inverted()
+
+        # Freeze the data limits before adding labels. Annotations placed in data
+        # coords otherwise enlarge the axes on the next draw (autoscale), shifting
+        # transData and invalidating the pixel-space de-overlap below. With limits
+        # locked, the geometry we measure stays valid through the final draw.
+        ax.set_xlim(ax.get_xlim())
+        ax.set_ylim(ax.get_ylim())
+
+        # Place every label beside its dot, fanned to the outward side.
+        anns = []                                    # (annotation, (dot_x, dot_y), ha)
         for (x, y), lab in zip(xy, labels):
-            anns.append(ax.annotate(
-                lab, xy=(x, y), xytext=(7, 5), textcoords='offset points',
+            dpx, dpy = trans.transform((x, y))
+            if x < x_mid:
+                ha, ox = 'right', -5.0
+            else:
+                ha, ox = 'left', 5.0
+            tx, ty = inv.transform((dpx + ox, dpy))
+            ann = ax.annotate(
+                lab, xy=(x, y), xytext=(tx, ty), textcoords='data',
                 fontsize=fontsize, weight=weight, color='#222',
-                zorder=6, ha='left', va='bottom',
-                arrowprops=arrow))
+                zorder=6, ha=ha, va='center')
+            anns.append((ann, (x, y), ha))
 
-        # One draw to obtain a usable renderer; extents recompute without redraw.
+        # De-overlap using REAL text boxes from the renderer — estimating text
+        # width under-detects collisions. Labels move VERTICALLY ONLY; a fixed
+        # pass cap keeps it deterministic and hang-proof. If no renderer exists
+        # yet, the base placement above is kept (never worse than before).
         try:
-            fig.canvas.draw()
-            renderer = fig.canvas.get_renderer()
+            fig.canvas.draw()                        # realize axes geometry
+            renderer = fig.canvas.get_renderer()      # (limits frozen → no shift)
         except Exception:
-            return
+            renderer = None
 
-        def _extent(a):
-            return a.get_window_extent(renderer)
+        if renderer is not None:
+            # The draw above can move the axes; transData.inverted() is a snapshot,
+            # so refresh it (and use it freshly) to map pixels back to data with
+            # the FINAL geometry — a stale inverse drops labels off the axes.
+            inv = trans.inverted()
 
-        for _ in range(120):
-            moved = False
-            boxes = [_extent(a) for a in anns]
-            for i in range(len(anns)):
-                for j in range(i + 1, len(anns)):
-                    bi, bj = boxes[i], boxes[j]
-                    if not bi.overlaps(bj):
-                        continue
-                    moved = True
-                    # Push apart mostly vertically (labels read in stacked rows).
-                    ci = (bi.y0 + bi.y1) / 2
-                    cj = (bj.y0 + bj.y1) / 2
-                    step = max(1.0, (bi.height + bj.height) / 4)
-                    up, down = (i, j) if ci >= cj else (j, i)
-                    for idx, dy in ((up, +step), (down, -step)):
-                        ox, oy = anns[idx].get_position()
-                        anns[idx].set_position((ox, oy + dy))
-                    boxes[i] = _extent(anns[i])
-                    boxes[j] = _extent(anns[j])
-            if not moved:
-                break
+            def _set_center_y(ann, cpy):
+                px, _ = trans.transform(ann.get_position())
+                ann.set_position(inv.transform((px, cpy)))
+
+            try:
+                ab = ax.get_window_extent(renderer)
+                ax_y0, ax_y1 = ab.y0, ab.y1
+            except Exception:
+                ax_y0, ax_y1 = None, None
+
+            gap = 2.0
+            # Each fan side is an independent vertical column. Greedy single-pass
+            # stacking (top→down) guarantees a non-overlapping column without the
+            # compounding pairwise pushes that previously exploded the spacing.
+            for side in ('right', 'left'):
+                grp = [a for a in anns if a[2] == side]
+                if not grp:
+                    continue
+                recs = []
+                for ann, (dx, dy0), _ in grp:
+                    apy = trans.transform((dx, dy0))[1]    # dot anchor (px)
+                    h   = ann.get_window_extent(renderer).height
+                    recs.append([ann, apy, h, apy])        # last = target centre
+                recs.sort(key=lambda r: -r[1])             # top (high px) first
+                prev_bottom = None
+                for r in recs:
+                    c = r[1]
+                    if prev_bottom is not None and c + r[2] / 2.0 > prev_bottom - gap:
+                        c = prev_bottom - gap - r[2] / 2.0
+                    r[3] = c
+                    prev_bottom = c - r[2] / 2.0
+
+                # Rigid-translate the whole column to fit the axes (preserves the
+                # spacing). A column taller than the axes is top-aligned — overflow
+                # is then unavoidable without shrinking the font.
+                if ax_y1 is not None:
+                    blk_top = max(r[3] + r[2] / 2.0 for r in recs)
+                    blk_bot = min(r[3] - r[2] / 2.0 for r in recs)
+                    dy = 0.0
+                    if blk_top > ax_y1:
+                        dy = ax_y1 - blk_top
+                    if blk_bot + dy < ax_y0:
+                        dy += ax_y0 - (blk_bot + dy)
+                else:
+                    dy = 0.0
+                for ann, _, _, c in recs:
+                    _set_center_y(ann, c + dy)
+
+            # Short connector from dot to a label that ended up displaced.
+            if leader:
+                for ann, (dx, dy0), _ in anns:
+                    tx2, ty2 = ann.get_position()
+                    if abs(trans.transform((tx2, ty2))[1]
+                           - trans.transform((dx, dy0))[1]) > fontsize:
+                        ax.plot([dx, tx2], [dy0, ty2], color=leader_color,
+                                lw=0.5, alpha=0.7, zorder=5)
 
     def _plot_volcano(self, X_raw, sample_names, feature_labels, group_labels):
         from scipy import stats
@@ -3090,9 +3437,33 @@ class StatisticsStage:
         fc  = (Xb.mean(axis=0) + eps) / (Xa.mean(axis=0) + eps)
         log2fc = np.log2(fc)
 
+        # Drop features whose fold change is non-finite — happens when a group
+        # mean is zero/negative (e.g. after baseline/normalization), giving
+        # fc <= 0 → log2(fc) = nan/-inf. Plotting those points (or annotating
+        # them) makes the tight-bbox export compute an infinite figure size,
+        # which RendererAgg rejects and the whole plot fails to render. We never
+        # interpolate the value — the feature is excluded and the user warned.
+        finite = np.isfinite(log2fc)
+        n_dropped = int((~finite).sum())
+        if not finite.any():
+            raise ValueError(
+                'No features with a finite fold change between the two groups.\n'
+                'Check that concentrations are positive (Volcano needs raw, '
+                'non-normalized values).')
+        if n_dropped:
+            messagebox.showwarning(
+                'Volcano',
+                f'{n_dropped} feature(s) excluded: group mean ≤ 0 gives a '
+                'non-finite fold change. They are not plotted.',
+                parent=self.frame)
+            Xa = Xa[:, finite]
+            Xb = Xb[:, finite]
+            log2fc = log2fc[finite]
+            feature_labels = [l for l, ok in zip(feature_labels, finite) if ok]
+
         pvals = np.array([stats.ttest_ind(Xa[:, j], Xb[:, j],
                                           equal_var=False).pvalue
-                          for j in range(X_raw.shape[1])])
+                          for j in range(Xa.shape[1])])
         pvals = np.nan_to_num(pvals, nan=1.0)
 
         if p_adj:
@@ -3124,39 +3495,81 @@ class StatisticsStage:
         sig_down = (log2fc < -np.log2(fc_thr)) & (pvals_plot < p_thr)
         ns       = ~(sig_up | sig_down)
 
-        ax.scatter(log2fc[ns],       neg_log_p[ns],       color=c_ns, s=dot_s * 0.7,
-                   alpha=0.5, label='NS', edgecolors='none')
-        ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color=c_up, s=dot_s,
-                   alpha=0.85, label=f'Up in {gb}', edgecolors='white', lw=0.4)
-        ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down, s=dot_s,
-                   alpha=0.85, label=f'Up in {ga}', edgecolors='white', lw=0.4)
+        # Capture ONLY the significant features (sig_up or sig_down) for CSV
+        # export — those past the FC and p thresholds, i.e. the hits the user
+        # wants to replot. fc is recomputed from the (filtered) log2fc so it
+        # aligns with feature_labels after non-finite features were dropped.
+        _fc_used = np.power(2.0, log2fc)
+        self._plot_export = {
+            'method': 'Volcano',
+            'headers': ['metabolite', 'mean_' + ga, 'mean_' + gb,
+                        'log2_fold_change', 'fold_change', 'p_value',
+                        'p_value_adjusted' if p_adj else 'p_value_raw',
+                        'neg_log10_p', 'direction'],
+            'rows': [[feature_labels[j],
+                      float(Xa[:, j].mean()), float(Xb[:, j].mean()),
+                      float(log2fc[j]), float(_fc_used[j]),
+                      float(pvals[j]), float(pvals_plot[j]),
+                      float(neg_log_p[j]),
+                      'up in ' + gb if sig_up[j] else 'down in ' + gb]
+                     for j in range(len(feature_labels))
+                     if sig_up[j] or sig_down[j]],
+        }
 
-        # Label the top-N significant features. Names are de-overlapped and, when
-        # crowded, tethered to their dot by a leader line (see _repel_labels).
-        n_lab = int(style['n_labels'])
-        if n_lab > 0:
-            sig_mask = pvals_plot < p_thr
-            cand = [i for i in np.argsort(neg_log_p)[::-1] if sig_mask[i]][:n_lab]
-            self._repel_labels(
-                ax,
-                xy=[(log2fc[i], neg_log_p[i]) for i in cand],
-                labels=[feature_labels[i] for i in cand],
-                fontsize=float(style['label_fontsize']),
-                bold=bool(style['label_bold']),
-                leader=bool(style['leader_lines']),
-                leader_color='#555')
+        if str(style.get('theme', 'Classic')) == 'Compact':
+            # Compact/clean publication theme: light (Negative) / dark (Positive) /
+            # grey (Insignificant) classes, minimal axes (no top/right spines, white
+            # background, no threshold guides), simple legend, no per-feature labels.
+            h_ns = ax.scatter(log2fc[ns], neg_log_p[ns], color=c_ns,
+                              s=dot_s * 0.8, alpha=0.9, edgecolors='none')
+            h_dn = ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down,
+                              s=dot_s, alpha=0.95, edgecolors='none')
+            h_up = ax.scatter(log2fc[sig_up], neg_log_p[sig_up], color=c_up,
+                              s=dot_s, alpha=0.95, edgecolors='none')
+            for _sp in ('top', 'right'):
+                ax.spines[_sp].set_visible(False)
+            ax.set_facecolor('white')
+            ax.set_xlabel('Fold change (log₂)', fontsize=11)
+            ax.set_ylabel('−log₁₀ (P-value)', fontsize=11)
+            ax.legend([h_dn, h_up, h_ns], ['Negative', 'Positive', 'Insignificant'],
+                      fontsize=9, loc='upper right', frameon=True,
+                      framealpha=1.0, edgecolor='#333', handletextpad=0.4)
+            ax.set_title(f'{ga} vs {gb}', fontsize=12, loc='left', fontweight='bold')
+        else:
+            ax.scatter(log2fc[ns],       neg_log_p[ns],       color=c_ns, s=dot_s * 0.7,
+                       alpha=0.5, label='NS', edgecolors='none')
+            ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color=c_up, s=dot_s,
+                       alpha=0.85, label=f'Up in {gb}', edgecolors='white', lw=0.4)
+            ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down, s=dot_s,
+                       alpha=0.85, label=f'Up in {ga}', edgecolors='white', lw=0.4)
 
-        ax.axhline(-np.log10(p_thr), color='#555', lw=0.8, ls='--',
-                   label=f'p={p_thr}')
-        ax.axvline( np.log2(fc_thr), color='#999', lw=0.6, ls=':')
-        ax.axvline(-np.log2(fc_thr), color='#999', lw=0.6, ls=':')
-        ax.set_xlabel(f'log₂ FC ({gb} / {ga})', fontsize=9)
-        p_label = 'FDR-adjusted p' if p_adj else 'p-value'
-        ax.set_ylabel(f'−log₁₀({p_label})', fontsize=9)
-        ax.set_title(f'Volcano: {ga} vs {gb}  '
-                     f'({sig_up.sum()} up, {sig_down.sum()} down)', fontsize=10)
-        ax.legend(fontsize=7.5, loc='best', framealpha=0.85)
-        ax.set_facecolor('#f9f9f9')
+            ax.axhline(-np.log10(p_thr), color='#555', lw=0.8, ls='--',
+                       label=f'p={p_thr}')
+            ax.axvline( np.log2(fc_thr), color='#999', lw=0.6, ls=':')
+            ax.axvline(-np.log2(fc_thr), color='#999', lw=0.6, ls=':')
+            ax.set_xlabel(f'log₂ FC ({gb} / {ga})', fontsize=9)
+            p_label = 'FDR-adjusted p' if p_adj else 'p-value'
+            ax.set_ylabel(f'−log₁₀({p_label})', fontsize=9)
+            ax.set_title(f'Volcano: {ga} vs {gb}  '
+                         f'({sig_up.sum()} up, {sig_down.sum()} down)', fontsize=10)
+            ax.legend(fontsize=7.5, loc='best', framealpha=0.85)
+            ax.set_facecolor('#f9f9f9')
+
+            # Labels LAST — after axes/legend/title fix the final geometry — so
+            # the renderer-based de-overlap (see _repel_labels) measures the true
+            # text positions. Top-N significant features, capped for readability.
+            n_lab = min(int(style['n_labels']), 40)
+            if n_lab > 0:
+                sig_mask = pvals_plot < p_thr
+                cand = [i for i in np.argsort(neg_log_p)[::-1] if sig_mask[i]][:n_lab]
+                self._repel_labels(
+                    ax,
+                    xy=[(log2fc[i], neg_log_p[i]) for i in cand],
+                    labels=[feature_labels[i] for i in cand],
+                    fontsize=float(style['label_fontsize']),
+                    bold=bool(style['label_bold']),
+                    leader=bool(style['leader_lines']),
+                    leader_color='#555')
 
     # ── Export ────────────────────────────────────────────────────────────────
 
@@ -3303,6 +3716,9 @@ class StatisticsStage:
             _st.get('title', 'Metabolic Profile by Group'),
             fontsize=_st.get('title_size', 11),
             fontweight='bold' if _st.get('title_bold', True) else 'normal')
+        # Clear the 'constrained' engine set in _run() before tight_layout, else
+        # matplotlib warns about the engine switch (None clears it cleanly).
+        self._fig.set_layout_engine(None)
         self._fig.tight_layout(pad=_st.get('tight_pad', 1.0), rect=[0, 0, 1, 0.95])
 
     # ── Box / Violin style dialog ─────────────────────────────────────────────
@@ -3604,6 +4020,44 @@ class StatisticsStage:
         self._fig.suptitle(st.get('title', 'Distribution by Group'),
                            fontsize=st.get('title_size', 11), fontweight=title_w)
         self._fig.tight_layout(pad=st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
+
+    def _export_csv_result(self):
+        """Export the underlying values of the currently displayed plot as CSV
+        so they can be replotted in another tool (e.g. Volcano: log2FC, p, padj)."""
+        exp    = getattr(self, '_plot_export', None)
+        # Prefer the method the export itself records (in pathway mode _method_var
+        # still holds the Statistics method, which would mislabel the file).
+        method = (exp.get('method') if exp else None) or (
+            self._method_var.get() if hasattr(self, '_method_var') else '')
+        if not exp or not exp.get('rows'):
+            messagebox.showinfo(
+                'CSV result',
+                f'No exportable values for "{method}".\n'
+                'Render the plot first. CSV export is available for the plots '
+                'that produce tabular values (e.g. Volcano, VIP, Correlation, PCA, '
+                'Pathway, Dumbbell).',
+                parent=self.frame)
+            return
+        fn = filedialog.asksaveasfilename(
+            title='Save CSV result',
+            defaultextension='.csv',
+            filetypes=[('CSV', '*.csv'), ('All', '*.*')],
+            initialfile=f'statistics_{method.replace(" ", "_")}_data.csv',
+            parent=self.frame)
+        if not fn:
+            return
+        try:
+            import csv as _csv
+            with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
+                w = _csv.writer(f)
+                w.writerow(exp['headers'])
+                w.writerows(exp['rows'])
+            messagebox.showinfo(
+                'CSV result',
+                f'Saved {len(exp["rows"])} row(s) to:\n{fn}', parent=self.frame)
+        except Exception as e:
+            messagebox.showerror('CSV result',
+                                 f'Failed to save CSV:\n{e}', parent=self.frame)
 
     def _export(self):
         fmt  = getattr(self, '_fmt_var', None)

@@ -40,6 +40,9 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self.peak_stage       = peak_stage
         self.annotation_stage = annotation_stage
         self._quant_results   = []
+        # User multiplet overrides (hmdb_id → anchor peak_rank). Persist across
+        # re-runs (cleared only when annotation is re-run); never reset in _run().
+        self._quant_peak_overrides = {}
         self._pqn_factor      = 1.0
         self._right_widget    = None
         self._detail_fig      = None
@@ -50,6 +53,62 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._placeholder     = None  # set in _build_right_panel
         self._tree            = None  # set in _build_right_panel
         self.create_widgets()
+
+    def _is_lipidomics_mode(self):
+        """True when the active annotation run used the Lipidomics library."""
+        args = getattr(self.annotation_stage, '_last_results_args', None) or {}
+        return str(args.get('internal_library_mode', '')) == 'Lipidomics'
+
+    _LIPID_DISABLED_MSG = (
+        'Desativado em modo Lipidomica:\n'
+        'integração por região (trapz), semi-quantitativa — sem deteção de\n'
+        'picos, deconvolução, ajuste de multipleto ou correção de protões.')
+
+    def _attach_lipid_tooltip(self, widget):
+        """Tooltip that appears only while the widget is disabled, explaining the
+        lipidomics restriction (a disabled ttk widget gives no feedback)."""
+        def _show(_e=None):
+            try:
+                if str(widget.cget('state')) != 'disabled':
+                    return
+            except Exception:
+                return
+            self._hide_dev_tooltip()
+            try:
+                tw = tk.Toplevel(widget)
+                tw.wm_overrideredirect(True)
+                x = widget.winfo_rootx() + 10
+                y = widget.winfo_rooty() + widget.winfo_height() + 2
+                tw.wm_geometry(f'+{x}+{y}')
+                tk.Label(tw, text=self._LIPID_DISABLED_MSG, justify=tk.LEFT,
+                         background='#ffffe0', relief=tk.SOLID, borderwidth=1,
+                         font=('Arial', 8), padx=4, pady=2).pack()
+                self._dev_tooltip_win = tw
+            except Exception:
+                self._dev_tooltip_win = None
+        widget.bind('<Enter>', _show, add='+')
+        widget.bind('<Leave>', self._hide_dev_tooltip, add='+')
+
+    def _apply_lipidomics_ui_state(self):
+        """Disable options that do not apply to lipidomics region integration
+        (multiplet integration, proton correction, JG-Deconv overlap)."""
+        is_lipid = self._is_lipidomics_mode()
+        targets = [self._integ_rbs.get('Multiplet'),
+                   getattr(self, '_proton_corr_cb', None),
+                   getattr(self, '_j_resolve_cb', None)]
+        if not getattr(self, '_lipid_tips_attached', False):
+            for w in targets:
+                if w is not None:
+                    self._attach_lipid_tooltip(w)
+            self._lipid_tips_attached = True
+        for w in targets:
+            if w is None:
+                continue
+            w.configure(state='disabled' if is_lipid else 'normal')
+        # In lipidomics the integration mode is forced to region area; point the
+        # selector at a sane value so the disabled multiplet radio is not active.
+        if is_lipid and self.integ_var.get() == 'Multiplet':
+            self.integ_var.set('Area')
 
     # ── Status helpers ────────────────────────────────────────────────────────
 
@@ -172,29 +231,33 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf = ttk.Frame(s2); mf.pack(fill=tk.X, pady=1)
         ttk.Label(mf, text='Signal:').pack(side=tk.LEFT)
         # Default = whole multiplet ÷ total protons (robust qNMR): no dependence
-        # on identifying which single line was detected. Area/Lorentz integrate a
-        # single line with a fractional nH and are opt-in.
+        # on identifying which single line was detected. Single-Line Area
+        # integrates a single line with a fractional nH and is opt-in.
         self.integ_var = tk.StringVar(value='Multiplet')
         # 'Area' (single-line trapz) is temporarily disabled — under development.
         # Hovering the disabled option shows a tooltip explaining why.
         _DISABLED_INTEG = {'Area'}
+        self._integ_rbs = {}
         for v, lbl in [('Multiplet', 'Multiplicity'),
-                       ('Area', 'Single-Line Area'), ('Lorentz', 'Lorentz Fit')]:
+                       ('Area', 'Single-Line Area')]:
             _rb = ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
                                   value=v, command=self._on_integ_change)
             _rb.pack(side=tk.LEFT, padx=4)
+            self._integ_rbs[v] = _rb
             if v in _DISABLED_INTEG:
                 _rb.configure(state='disabled')
                 self._attach_dev_tooltip(_rb, 'Single-Line Area: em desenvolvimento.')
 
         pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
         self.proton_corr_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(pf, text='Proton correction (÷ nH)',
-                        variable=self.proton_corr_var).pack(side=tk.LEFT)
+        self._proton_corr_cb = ttk.Checkbutton(
+            pf, text='Proton correction (÷ nH)',
+            variable=self.proton_corr_var)
+        self._proton_corr_cb.pack(side=tk.LEFT)
 
         blf = ttk.Frame(s2); blf.pack(fill=tk.X, pady=1)
         self.local_baseline_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(blf, text='Local baseline correction (linear, per integration window)',
+        ttk.Checkbutton(blf, text='Local baseline correction (linear, per window) — fallback only',
                         variable=self.local_baseline_var).pack(side=tk.LEFT)
 
         mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
@@ -210,10 +273,11 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             mf2, text='(not applied)', font=('Arial', 7), foreground='gray')
         self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         ttk.Label(s2,
-                  text='Lorentz Fit: fits Lorentzian per sample (BATMAN-style).\n'
-                       'Multiplicity: integrates the union of the multiplet peaks\' '
+                  text='Multiplicity: integrates the union of the multiplet peaks\' '
                        'Peak-List boundaries; uses total nH.\n'
-                       'Local baseline: subtracts linear baseline at window edges before integration.\n'
+                       'Baseline: a global arPLS baseline (Baek 2015) is applied per sample '
+                       'before integration (skipped if already corrected in Visualization).\n'
+                       'Local baseline: inferior linear fallback — ignored when arPLS is active.\n'
                        'JG-Deconv: applies fractional areas from Overlap Resolving Method.\n'
                        'Run JG-Deconv (step 4) and click "✓ Apply" before enabling.',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
@@ -257,46 +321,9 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # Run
         ttk.Separator(sf, orient='horizontal').pack(
             fill=tk.X, padx=5, pady=6)
-        def _safe_run():
-            import threading
-            # askyesno must run on main thread — it needs a user answer before
-            # the computation thread starts.
-            if self.ext_is_var.get() and self._ext_is_indices:
-                if not messagebox.askyesno(
-                        'External IS — Confirm',
-                        'External IS mode is active.\n\n'
-                        'Please confirm that the IS concentration and nH are the same\n'
-                        'for both the External IS samples and the analytical samples.\n\n'
-                        'Proceed with quantification?'):
-                    return
-            self._ext_is_confirmed = True
-            self.btn_run.config(state='disabled')
-            self.run_status.config(text='Running…', foreground='blue')
-            self._show_placeholder()
-            self._build_progress_dialog()
-
-            def _worker():
-                try:
-                    self._run()
-                except Exception as _run_exc:
-                    import traceback
-                    traceback.print_exc()
-                    self.app.root.after(0, lambda e=_run_exc: messagebox.showerror(
-                        'Quantification Error',
-                        f'Unexpected error:\n{type(e).__name__}: {e}\n\n'
-                        f'Check quant_debug.log for details.'))
-                finally:
-                    self._ext_is_confirmed = False
-                    def _cleanup():
-                        self._close_progress_dialog()
-                        self.btn_run.config(state='normal')
-                    self.app.root.after(0, _cleanup)
-
-            threading.Thread(target=_worker, daemon=True).start()
-
         self.btn_run = ttk.Button(
             sf, text='⚗ Run Quantification',
-            command=_safe_run, state='disabled')
+            command=self._safe_run, state='disabled')
         self.btn_run.pack(fill=tk.X, padx=6, pady=2)
         self.run_status = ttk.Label(
             sf, text='Run Annotation first',
@@ -348,6 +375,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._hide_canvas()
         self._show_right_panel()
         self._refresh_j_resolve_label()
+        self._apply_lipidomics_ui_state()
 
     def on_deactivate(self):
         if self.frame:
@@ -597,9 +625,15 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
         _nm = getattr(self, 'norm_var', None)
         _norm = _nm.get() if _nm else 'IS'
-        _conc_hdr = ('Mean Conc (mM)' if _norm in ('IS', 'IS+PQN')
-                     else 'Mean Area %'  if _norm == 'Total'
-                     else 'Mean Area (a.u.)')
+        if self._is_lipidomics_mode():
+            # Lipidomics is semi-quantitative: region areas use nH=1, so even IS
+            # normalisation yields relative (a.u.) values, never absolute mM.
+            _conc_hdr = ('Mean Area %' if _norm == 'Total'
+                         else 'Mean (rel., a.u.)')
+        else:
+            _conc_hdr = ('Mean Conc (mM)' if _norm in ('IS', 'IS+PQN')
+                         else 'Mean Area %'  if _norm == 'Total'
+                         else 'Mean Area (a.u.)')
         labels = {'peak_num': '#', 'metabolite': 'Metabolite', 'ppm': 'PPM',
                   'conc_mm': _conc_hdr, 'raw_area': 'Mean Area',
                   'snr': 'Mean SNR', 'vip_score': 'VIP', 'status': 'Conf'}
@@ -706,6 +740,55 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             menu.tk_popup(event.x_root, event.y_root)
         finally:
             menu.grab_release()
+
+    def _safe_run(self, on_done=None):
+        """Run quantification in a worker thread.
+
+        on_done : optional callable invoked on the main thread after the run
+                  finishes (used by the Quant Peaks window to refresh itself
+                  after a multiplet override re-quantifies all analytes).
+        """
+        import threading
+        # askyesno must run on main thread — it needs a user answer before
+        # the computation thread starts.
+        if self.ext_is_var.get() and self._ext_is_indices:
+            if not messagebox.askyesno(
+                    'External IS — Confirm',
+                    'External IS mode is active.\n\n'
+                    'Please confirm that the IS concentration and nH are the same\n'
+                    'for both the External IS samples and the analytical samples.\n\n'
+                    'Proceed with quantification?'):
+                return
+        self._ext_is_confirmed = True
+        self.btn_run.config(state='disabled')
+        self.run_status.config(text='Running…', foreground='blue')
+        self._show_placeholder()
+        self._build_progress_dialog()
+
+        def _worker():
+            try:
+                self._run()
+            except Exception as _run_exc:
+                import traceback
+                traceback.print_exc()
+                self.app.root.after(0, lambda e=_run_exc: messagebox.showerror(
+                    'Quantification Error',
+                    f'Unexpected error:\n{type(e).__name__}: {e}\n\n'
+                    f'Check quant_debug.log for details.'))
+            finally:
+                self._ext_is_confirmed = False
+                def _cleanup():
+                    self._close_progress_dialog()
+                    self.btn_run.config(state='normal')
+                    if on_done is not None:
+                        try:
+                            on_done()
+                        except Exception:
+                            import traceback
+                            traceback.print_exc()
+                self.app.root.after(0, _cleanup)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def _open_quant_peaks_window(self, result):
         """Open or reuse the Quant Peaks window for an analyte."""

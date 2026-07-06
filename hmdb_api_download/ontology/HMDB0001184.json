@@ -1,0 +1,1 @@
+{"source_hilevel": ["Endogenous"], "role_drug": false, "role_toxic": false, "role_industrial": false, "is_endogenous": true, "is_exogenous": false, "is_food": false, "is_microbial": false, "is_synthetic": false, "keep_mammalian": true, "exclude_reason": "", "primary_origin": "endogenous", "hmdb_id": "HMDB0001184", "name": "Methyl propenyl ketone"}

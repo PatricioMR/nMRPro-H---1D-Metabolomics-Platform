@@ -18,9 +18,9 @@ APP_NAME = "nMRPipe"
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.4"
+__version__   = "0.7"
 RELEASE_STAGE = "Alpha"
-APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"   # "nMRPipe v0.4 Alpha"
+APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"   # "nMRPipe v0.6 Alpha"
 
 
 def _is_frozen():

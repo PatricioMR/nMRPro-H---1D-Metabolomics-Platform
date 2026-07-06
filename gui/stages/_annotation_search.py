@@ -21,7 +21,7 @@ import sqlite3
 import csv
 
 from ._annotation_helpers import (
-    _align_peaks_to_reference, _ppm_score, _multiplet_score,
+    _ppm_score, _multiplet_score,
     _baseline_correct_linear, _fit_r2, _observe_j_hz,
     _mult_compat_check, _adaptive_mcr_mask,
     _ask_search_mode, _pick_database,
@@ -87,22 +87,22 @@ class _AnnotationSearchMixin:
             messagebox.showinfo('Rescue', 'No unassigned Good peaks to rescue.')
             return
 
-        shift_ppm, _align_ok = _align_peaks_to_reference(
-            self.peaks,
-            getattr(self.app, 'ppm', None),
-            getattr(self.app, 'all_intensities', None))
-        if not _align_ok:
+        # Mirror the main search alignment: shift DB entries by the in-app
+        # DSS/TSP calibration delta and keep detected peaks in their raw frame.
+        # Previously this used _align_peaks_to_reference (peak-shifting), which
+        # diverged from the main pass and annotated the same DB at different ppm.
+        _cal = getattr(self.app, '_ppm_calibration', None)
+        _cal_delta = float(_cal['delta_mean']) if _cal else 0.0
+        # Discard stale/corrupt calibration (the in-window logic caps each
+        # anchor at Δ < 0.02 ppm; > ±0.05 indicates accumulated/broken delta).
+        if abs(_cal_delta) > 0.05:
+            _cal_delta = 0.0
+        if _cal is None:
             self._status(
-                '⚠ Reference (DSS/TSP) not found — PPM axis may be '
+                '⚠ No DSS/TSP calibration stored — PPM axis may be '
                 'misaligned. Check spectrum calibration.'
             )
-        aligned_good = []
-        for p in good_peaks:
-            ap = dict(p)
-            ap['ppm'] = p['ppm'] + shift_ppm
-            ap['start_ppm'] = p.get('start_ppm', p['ppm']) + shift_ppm
-            ap['end_ppm'] = p.get('end_ppm', p['ppm']) + shift_ppm
-            aligned_good.append(ap)
+        aligned_good = [dict(p) for p in good_peaks]
         aligned_unassigned = [p for p in aligned_good if int(p.get('rank', -1)) in
                               {int(u.get('rank', -1)) for u in unassigned}]
 
@@ -140,6 +140,12 @@ class _AnnotationSearchMixin:
                            float(peak.get('end_ppm', ppm + relax_tol))) - 0.03
                 p_hi = max(float(peak.get('start_ppm', ppm - relax_tol)),
                            float(peak.get('end_ppm', ppm + relax_tol))) + 0.03
+                # Detected peaks stay raw; query in the DB frame (= peak frame
+                # minus the calibration delta) and shift returned rows by
+                # +_cal_delta so scoring compares both in the peak frame.
+                _dbf = ppm - _cal_delta
+                q_lo = p_lo - _cal_delta
+                q_hi = p_hi - _cal_delta
 
                 rows = []
                 if is_bmrb:
@@ -154,12 +160,12 @@ class _AnnotationSearchMixin:
                         " JOIN metabolites met ON s.bmrb_id = met.bmrb_id"
                         " WHERE s.ppm BETWEEN ? AND ?"
                         " ORDER BY ABS(s.ppm - ?) LIMIT 25",
-                        (ppm, peak['rank'], ppm, p_lo, p_hi, ppm))
+                        (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
                         r['match_type'] = 'shift'
                         r['database'] = 'BMRB'
-                        r['shift_ppm'] = shift_ppm
+                        r['shift_ppm'] = _cal_delta
                 elif is_hmdb:
                     cur.execute("""
                         SELECT m.*, m.j_coupling, met.name,
@@ -169,12 +175,18 @@ class _AnnotationSearchMixin:
                         JOIN metabolites met ON m.hmdb_id = met.hmdb_id
                         WHERE m.ppm_center BETWEEN ? AND ?
                         ORDER BY ABS(m.ppm_center - ?) LIMIT 25
-                    """, (ppm, peak['rank'], ppm, p_lo, p_hi, ppm))
+                    """, (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
                         r['match_type'] = 'multiplet'
                         r['database'] = 'HMDB'
-                        r['shift_ppm'] = shift_ppm
+                        r['shift_ppm'] = _cal_delta
+                # Bring DB ppm into the peak frame for downstream scoring.
+                if _cal_delta:
+                    for r in rows:
+                        for _k in ('ppm_center', 'ppm'):
+                            if r.get(_k) is not None:
+                                r[_k] = float(r[_k]) + _cal_delta
 
                 for r in rows:
                     ps = _ppm_score(r.get('peak_ppm', 0), r.get('ppm_center', r.get('ppm', 0)), relax_tol)
@@ -242,7 +254,7 @@ class _AnnotationSearchMixin:
                         db_profiles.append(prof)
                     if not db_profiles:
                         continue
-                    S, C, mcr_m, K, assignments = mcr_annotation_region(
+                    S, C, mcr_m, K, assignments, *_ = mcr_annotation_region(
                         X_reg, db_profiles, r2_threshold=self.mcr_r2_threshold)
                     orig_peak = next((p for p in self.peak_stage.peaks if int(p.get('rank', -1)) == rk), None)
                     if orig_peak is not None:
@@ -760,7 +772,10 @@ class _AnnotationSearchMixin:
                 y /= y.max()
                 from scipy.signal import find_peaks as _fp
                 min_dist = max(2, int(len(x) * 0.08))
-                pks, _ = _fp(y, height=0.20, prominence=0.12, distance=min_dist)
+                # Conservative thresholds: a noisy shoulder must not split a true
+                # singlet into a 'd' (which would wrongly apply the j_compat=0.3
+                # singlet penalty downstream). Require a prominent secondary line.
+                pks, _ = _fp(y, height=0.25, prominence=0.18, distance=min_dist)
                 n = len(pks)
                 if n <= 1:
                     return 's', None
@@ -768,6 +783,10 @@ class _AnnotationSearchMixin:
                 seps_hz = [abs(ppms_pk[k+1] - ppms_pk[k]) * field_mhz
                            for k in range(len(ppms_pk) - 1)]
                 j_est = float(np.median(seps_hz))
+                # J floor: line separations below ~1.5 Hz are not resolvable
+                # couplings at metabolomics linewidths — treat as a single line.
+                if j_est < 1.5:
+                    return 's', None
                 mult_map = {2: 'd', 3: 't', 4: 'q'}
                 return mult_map.get(n, 'm'), j_est
 
@@ -1124,7 +1143,11 @@ class _AnnotationSearchMixin:
                             fitting_r2, _ = _fit_r2(sim, y_corr)
                             r2_computed = True
 
-                    peaks_matched.add(peak_rank)
+                    # peak_rank is None for spectrum-derived/synthetic peaks;
+                    # excluding them keeps the "X/Y peaks matched" count honest
+                    # (a single None would otherwise collapse all of them to 1).
+                    if peak_rank is not None:
+                        peaks_matched.add(peak_rank)
 
                     if not is_singlet and shifted_sticks:
                         _nearest_stick = min(shifted_sticks,
@@ -1315,14 +1338,17 @@ class _AnnotationSearchMixin:
                         round(float(
                             r.get('ppm_center') or r.get('ppm') or 0),
                             3))
+                    # Dedup/rank by composite_score (single source of truth),
+                    # not fitting_r2 — otherwise the prefilter could drop the
+                    # candidate the window would score best (filter-by-A/sort-by-B).
                     if (key not in seen
-                            or r['fitting_r2']
-                            > seen[key]['fitting_r2']):
+                            or r.get('composite_score', 0)
+                            > seen[key].get('composite_score', 0)):
                         seen[key] = r
                 all_results = list(seen.values())
 
                 all_results.sort(
-                    key=lambda r: r.get('fitting_r2', 0), reverse=True)
+                    key=lambda r: r.get('composite_score', 0), reverse=True)
 
                 if carry_results:
                     all_results = carry_results + all_results
@@ -1367,8 +1393,14 @@ class _AnnotationSearchMixin:
             _ppm_full = getattr(self.app, 'ppm', None)
             if _ppm_full is None or _all_int is None:
                 return
+            # Use the Field Strength entered in the annotation panel, not a
+            # hardcoded 600 MHz — the adaptive mask width is field-dependent.
+            try:
+                mhz = float(self.spectrometer_var.get())
+            except Exception:
+                mhz = 600.0
             mask = _adaptive_mcr_mask(
-                _ppm_full, _all_int, peak, cands, field_mhz=600.0)
+                _ppm_full, _all_int, peak, cands, field_mhz=mhz)
             if mask.sum() < 4:
                 return
             ppm_reg_new = _ppm_full[mask]
@@ -1391,7 +1423,7 @@ class _AnnotationSearchMixin:
                 except Exception:
                     prof = np.zeros(len(ppm_reg_new))
                 db_profiles.append(prof)
-            S, C, mcr_m, K, assignments = mcr_annotation_region(
+            S, C, mcr_m, K, assignments, *_ = mcr_annotation_region(
                 X_reg, db_profiles, r2_threshold=r2_threshold)
             peak['mcr_annotation'].update({
                 'S': S, 'C': C, 'metrics': mcr_m, 'K': K,
@@ -1551,11 +1583,15 @@ class _AnnotationSearchMixin:
             return
 
         from app_paths import asset_path
+        solvent = None
         if mode == 'Lipidomics':
-            lib_name = 'lipidomics_simple_library.csv'
-            lib_label = 'Internal Lipidomics DB'
+            from processing import lipidomics as _lp
+            solvent = self.lipid_solvent() if hasattr(self, 'lipid_solvent') \
+                else _lp.DEFAULT_SOLVENT
+            lib_name = _lp.library_filename(solvent)
+            lib_label = f'Internal Lipidomics DB ({solvent})'
             prog_title = 'Searching Lipidomics Library'
-            prog_text = 'Searching built-in lipidomics library…'
+            prog_text = f'Integrating built-in lipidomics regions ({solvent})…'
         else:
             lib_name = 'nmr_metabolite_library.csv'
             lib_label = 'Internal Library'
@@ -1596,100 +1632,32 @@ class _AnnotationSearchMixin:
                 all_results, peaks_matched = [], set()
                 t0 = time.monotonic()
                 if is_lipidomics:
-                    # Lipidomics mode: match by full region overlap and keep one best
-                    # detected peak per diagnostic region (not per single line).
-                    for _, row in df.iterrows():
-                        r_start = float(row['start_ppm'])
-                        r_end = float(row['end_ppm'])
-                        r_lo = min(r_start, r_end)
-                        r_hi = max(r_start, r_end)
-                        center = (r_start + r_end) / 2.0
-
-                        overlapped = []
-                        for peak in good_peaks:
-                            p_lo = min(peak.get('start_ppm', peak['ppm']),
-                                       peak.get('end_ppm',   peak['ppm'])) - tolerance
-                            p_hi = max(peak.get('start_ppm', peak['ppm']),
-                                       peak.get('end_ppm',   peak['ppm'])) + tolerance
-                            if r_lo <= p_hi and r_hi >= p_lo:
-                                overlapped.append(peak)
-                        if not overlapped:
-                            continue
-
-                        peak = min(overlapped, key=lambda p: abs(float(p.get('ppm', 0)) - center))
-                        mult = str(row.get('multiplicity', '') or '')
-                        signal = str(row.get('signal', '') or '').strip()
-                        note = str(row.get('comment', '') or '').strip()
-                        raw_id = row.get('id', '')
-                        try:
-                            row_id = str(int(raw_id))
-                        except Exception:
-                            row_id = str(raw_id)
-
+                    # Lipidomics is pure region integration: integrate EVERY library
+                    # region, independent of detected peaks (no peak picking, no
+                    # selection). Regions and library are owned by processing/lipidomics.
+                    from processing import lipidomics as _lp
+                    for ridx, reg in enumerate(_lp.build_regions(df)):
                         all_results.append({
-                            'name':          str(row.get('name', 'Unknown')),
-                            'id':            row_id,
-                            'ppm':           center,
-                            'ppm_center':    center,
-                            'start_ppm':     r_start,
-                            'end_ppm':       r_end,
-                            'multiplicity':  mult or 'm',
-                            'match_type':    signal or 'lipid_region',
-                            'type':          signal or 'lipid_region',
+                            'name':          reg['name'],
+                            'id':            reg['id'],
+                            'ppm':           reg['ppm'],
+                            'ppm_center':    reg['ppm'],
+                            'start_ppm':     reg['start_ppm'],
+                            'end_ppm':       reg['end_ppm'],
+                            'multiplicity':  'm',
+                            'match_type':    reg['signal'] or 'lipid_region',
+                            'type':          reg['signal'] or 'lipid_region',
                             'database':      lib_label,
                             'source':        lib_label,
                             'protons':       1,
-                            'peak_ppm':      peak['ppm'],
-                            'peak_rank':     peak['rank'],
+                            'peak_ppm':      reg['ppm'],
+                            'peak_rank':     -(ridx + 1),
                             'composite_score': 0.0,
                             'multiplet_score': 0.0,
-                            'multiplet_detail': note,
+                            'multiplet_detail': reg['comment'],
                             'is_lipidomics': True,
-                            'predicted_lines': [
-                                {'ppm': r_start, 'rel_intensity': 0.5},
-                                {'ppm': r_end, 'rel_intensity': 0.5},
-                            ],
+                            'lipid_solvent': solvent,
                         })
-                        peaks_matched.add(peak['rank'])
-                    if not good_peaks:
-                        # If no detected peaks exist, still keep regions for simple integration.
-                        all_results = []
-                        for idx, row in df.iterrows():
-                            r_start = float(row['start_ppm'])
-                            r_end = float(row['end_ppm'])
-                            center = (r_start + r_end) / 2.0
-                            mult = str(row.get('multiplicity', '') or '')
-                            signal = str(row.get('signal', '') or '').strip()
-                            note = str(row.get('comment', '') or '').strip()
-                            raw_id = row.get('id', '')
-                            try:
-                                row_id = str(int(raw_id))
-                            except Exception:
-                                row_id = str(raw_id)
-                            all_results.append({
-                                'name':          str(row.get('name', 'Unknown')),
-                                'id':            row_id,
-                                'ppm':           center,
-                                'ppm_center':    center,
-                                'start_ppm':     r_start,
-                                'end_ppm':       r_end,
-                                'multiplicity':  mult or 'm',
-                                'match_type':    signal or 'lipid_region',
-                                'type':          signal or 'lipid_region',
-                                'database':      lib_label,
-                                'source':        lib_label,
-                                'protons':       1,
-                                'peak_ppm':      center,
-                                'peak_rank':     -(idx + 1),
-                                'composite_score': 0.0,
-                                'multiplet_score': 0.0,
-                                'multiplet_detail': note,
-                                'is_lipidomics': True,
-                                'predicted_lines': [
-                                    {'ppm': r_start, 'rel_intensity': 0.5},
-                                    {'ppm': r_end, 'rel_intensity': 0.5},
-                                ],
-                            })
                 else:
                     for peak in good_peaks:
                         p_lo = min(peak.get('start_ppm', peak['ppm']),
@@ -1743,6 +1711,7 @@ class _AnnotationSearchMixin:
                     self._open_results_window(all_results, pw, len(good_peaks), None, elapsed)
                     if self._last_results_args is not None:
                         self._last_results_args['internal_library_mode'] = mode
+                        self._last_results_args['lipid_solvent'] = solvent
 
                 self.app.root.after(0, _show)
             except Exception as exc:

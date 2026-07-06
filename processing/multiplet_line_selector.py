@@ -27,6 +27,36 @@ RATIO_MAX_DR_DOWN       = 0.30   # DR < -this → suppressed / contaminated
 POOR_QUALITY_DR_UP      = 0.20   # tighter DR threshold for gaussian_quality='poor'
 MIN_CLEAN_FRACTION      = 0.25   # clean_intensity_fraction below this → skip
 EDGE_PPM_MARGIN         = 0.03   # ppm from spectrum edge → warn but don't reject
+
+# ── Line-match tolerance ──────────────────────────────────────────────────────
+# Half the SMALLEST spacing between a multiplet's predicted lines. The spacing
+# already encodes the coupling (J/MHz), so the tolerance adapts to each multiplet
+# without needing J, protons, or relative intensities — a match window for one
+# line can never reach past the midpoint toward the neighbouring line, which
+# stops a foreign resonance sitting between the legs from being claimed.
+LINE_MATCH_FLOOR = 0.002   # ppm — tightest allowed (unresolved/degenerate lines)
+LINE_MATCH_CAP   = 0.015   # ppm — never looser than the previous fixed tolerance
+LINE_MATCH_FRAC  = 0.5     # fraction of the min line spacing
+
+
+def line_match_tolerance(line_ppms,
+                         floor: float = LINE_MATCH_FLOOR,
+                         cap: float = LINE_MATCH_CAP,
+                         frac: float = LINE_MATCH_FRAC) -> float:
+    """Per-multiplet ppm tolerance for matching a predicted line to a detected peak.
+
+    Returns ``frac × min(adjacent line spacing)``, clamped to [floor, cap]. A
+    singlet-like input (< 2 distinct lines) has no spacing to derive from, so the
+    tight ``floor`` is used. Independent of nH / rel_intensity by design.
+    """
+    ps = sorted(float(p) for p in line_ppms if p is not None)
+    if len(ps) < 2:
+        return floor
+    gaps = [ps[i + 1] - ps[i] for i in range(len(ps) - 1)
+            if ps[i + 1] - ps[i] > 1e-9]
+    if not gaps:
+        return floor
+    return max(floor, min(min(gaps) * frac, cap))
 _SINGLET_RESULT = {
     'mode': 'singlet',
     'clean_ranks': [],
@@ -115,14 +145,16 @@ def _nnls_mode(
             clean_ranks.append(rank)
             clean_rel += rel
             notes.append(f"rank{rank}: own_frac={own_frac:.2f} → clean")
-        elif own_frac >= NNLS_MARGINAL_THRESHOLD:
-            # Marginal: accept but note
-            clean_ranks.append(rank)
-            clean_rel += rel
-            notes.append(f"rank{rank}: own_frac={own_frac:.2f} → marginal (accepted)")
         else:
+            # F3: a line that is < CLEAN_THRESHOLD own injects > (1-threshold)
+            # contamination if integrated as clean. The whole-multiplet rescale
+            # (scale_factor) cannot remove contamination WITHIN an accepted line,
+            # so marginal lines (0.40–0.70) are excluded too — the area is driven
+            # only by genuinely clean (≥0.70 own) lines, bounding contamination.
             contaminated_ranks.append(rank)
-            notes.append(f"rank{rank}: own_frac={own_frac:.2f} → contaminated")
+            tag = ('marginal' if own_frac >= NNLS_MARGINAL_THRESHOLD
+                   else 'contaminated')
+            notes.append(f"rank{rank}: own_frac={own_frac:.2f} → {tag} (excluded)")
 
     return _build_result('nnls', clean_ranks, contaminated_ranks,
                          total_rel, clean_rel, '; '.join(notes))
@@ -247,15 +279,15 @@ def _collect_matched_ranks(hit: dict, pk_by_rank: dict) -> list[int | None]:
     indexed = sorted(enumerate(predicted),
                      key=lambda x: -float(x[1].get('rel_intensity', 1.0)))
 
+    # One tolerance per multiplet, from its own line spacing (J/MHz) — a match
+    # window can never reach past the midpoint toward the neighbouring line.
+    tol = line_match_tolerance([l.get('ppm') for l in predicted])
+
     result: list[int | None] = [None] * len(predicted)
     used: set[int] = set()
 
     for orig_i, line in indexed:
         pred_ppm = float(line.get('ppm', 0.0))
-        rel      = float(line.get('rel_intensity', 1.0))
-        # Tolerance: half a typical J coupling (≈3.5 Hz at 400 MHz → 0.009 ppm);
-        # minimum 0.003 ppm to handle singlet-like lines.
-        tol = max(0.003, rel * 0.015)
 
         best_rank = None
         best_dist = float('inf')
@@ -275,6 +307,18 @@ def _collect_matched_ranks(hit: dict, pk_by_rank: dict) -> list[int | None]:
             used.add(best_rank)
 
     return result
+
+
+def matched_line_ranks(hit: dict, pk_by_rank: dict) -> list[int]:
+    """Public: detected-peak ranks that belong to *hit*'s own predicted lines.
+
+    Wraps :func:`_collect_matched_ranks` and drops the ``None`` placeholders,
+    returning only the ranks that were actually matched to one of this hit's
+    predicted lines (within the J-based tolerance). Used by the quantification
+    greedy assignment to claim ONLY this metabolite's own multiplet legs — never
+    a neighbouring resonance that merely falls inside the ppm window.
+    """
+    return [r for r in _collect_matched_ranks(hit, pk_by_rank) if r is not None]
 
 
 def matched_ranks_mask(matched_ranks: list[int | None]) -> np.ndarray:

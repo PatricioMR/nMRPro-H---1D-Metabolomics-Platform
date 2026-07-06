@@ -1,0 +1,1 @@
+{"source_hilevel": ["Endogenous", "Exogenous"], "role_drug": false, "role_toxic": false, "role_industrial": false, "is_endogenous": true, "is_exogenous": true, "is_food": false, "is_microbial": false, "is_synthetic": false, "keep_mammalian": true, "exclude_reason": "", "primary_origin": "endogenous", "hmdb_id": "HMDB0003355", "name": "5-Aminopentanoic acid"}

@@ -6,6 +6,8 @@ from processing.multiplet_line_selector import (
     _nnls_mode,
     _ratio_mode,
     _collect_matched_ranks,
+    matched_line_ranks,
+    line_match_tolerance,
     _build_result,
     _is_edge_peak,
     NNLS_CLEAN_THRESHOLD,
@@ -14,6 +16,8 @@ from processing.multiplet_line_selector import (
     RATIO_MAX_DR_DOWN,
     MIN_CLEAN_FRACTION,
     EDGE_PPM_MARGIN,
+    LINE_MATCH_FLOOR,
+    LINE_MATCH_CAP,
 )
 
 PPM_LIMITS = (0.0, 10.0)
@@ -185,6 +189,74 @@ class TestMatchLines:
         assert ranks[0] is None
 
 
+# ── Group 2a: line_match_tolerance (adaptive, spacing-derived) ────────────────
+
+class TestLineMatchTolerance:
+    def test_doublet_half_spacing(self):
+        # spacing 0.02 → 0.5 × 0.02 = 0.01
+        assert line_match_tolerance([1.00, 1.02]) == pytest.approx(0.01)
+
+    def test_triplet_uses_min_gap(self):
+        # min gap 0.006 → 0.003
+        assert line_match_tolerance([0.994, 1.000, 1.010]) == pytest.approx(0.003)
+
+    def test_singlet_returns_floor(self):
+        assert line_match_tolerance([1.00]) == LINE_MATCH_FLOOR
+        assert line_match_tolerance([]) == LINE_MATCH_FLOOR
+
+    def test_degenerate_spacing_clamped_to_floor(self):
+        # spacing 0.001 → 0.0005, below floor → floor
+        assert line_match_tolerance([1.000, 1.001]) == LINE_MATCH_FLOOR
+
+    def test_wide_spacing_capped(self):
+        # spacing 0.10 → 0.05, above cap → cap
+        assert line_match_tolerance([1.00, 1.10]) == LINE_MATCH_CAP
+
+    def test_independent_of_order(self):
+        assert line_match_tolerance([1.02, 1.00]) == pytest.approx(0.01)
+
+
+# ── Group 2b: matched_line_ranks (greedy claim of own legs only) ─────────────
+
+class TestMatchedLineRanks:
+    def test_returns_only_own_legs(self):
+        # Doublet at 1.00/1.02 owns ranks 10,11. A neighbour peak at 1.05 (rank 99)
+        # falls outside the J tolerance and must NOT be claimed.
+        predicted = [_line(1.00, 1.0), _line(1.02, 1.0)]
+        pkr = {10: _peak(10, 1.00), 11: _peak(11, 1.02), 99: _peak(99, 1.05)}
+        hit = _hit('d', predicted,
+                   matched_peaks=[{'rank': 10}, {'rank': 11}])
+        assert set(matched_line_ranks(hit, pkr)) == {10, 11}
+
+    def test_drops_unmatched_lines(self):
+        predicted = [_line(1.00, 1.0), _line(1.02, 1.0), _line(1.04, 1.0)]
+        pkr = {10: _peak(10, 1.00), 11: _peak(11, 1.02)}  # no rank for 1.04
+        hit = _hit('t', predicted, matched_peaks=[{'rank': 10}, {'rank': 11}])
+        result = matched_line_ranks(hit, pkr)
+        assert None not in result
+        assert set(result) == {10, 11}
+
+    def test_does_not_steal_neighbour_in_window(self):
+        # Two predicted lines but a foreign peak (rank 50) sits BETWEEN them.
+        # Greedy ppm matching binds 10/11 to the predicted lines; 50 stays free.
+        predicted = [_line(1.00, 1.0), _line(1.06, 1.0)]
+        pkr = {10: _peak(10, 1.00), 11: _peak(11, 1.06), 50: _peak(50, 1.03)}
+        hit = _hit('d', predicted,
+                   matched_peaks=[{'rank': 10}, {'rank': 11}, {'rank': 50}])
+        assert 50 not in matched_line_ranks(hit, pkr)
+
+    def test_tight_tolerance_rejects_near_neighbour(self):
+        # Doublet 1.00/1.02 (spacing 0.02 → tol 0.01). A foreign peak at 1.032
+        # is 0.012 ppm from the 1.02 line: the OLD fixed 0.015 tolerance would
+        # have claimed it (no real peak at 1.02); the spacing-derived tolerance
+        # rejects it, so only the genuine leg (rank 10) is claimed.
+        predicted = [_line(1.00, 1.0), _line(1.02, 1.0)]
+        pkr = {10: _peak(10, 1.00), 99: _peak(99, 1.032)}
+        hit = _hit('d', predicted,
+                   matched_peaks=[{'rank': 10}, {'rank': 99}])
+        assert set(matched_line_ranks(hit, pkr)) == {10}
+
+
 # ── Group 3: dispatch for singlet/m ──────────────────────────────────────────
 
 class TestSingletDispatch:
@@ -245,14 +317,17 @@ class TestNNLSMode:
         assert 10 in r['clean_ranks']
         assert 11 in r['contaminated_ranks']
 
-    def test_marginal_accepted(self):
-        # own_frac = 0.55 → between thresholds → accepted with note
+    def test_marginal_excluded(self):
+        # own_frac = 0.55 (< CLEAN_THRESHOLD 0.70) → excluded as contaminated (F3),
+        # so its >40% contamination is not injected. The genuinely clean line
+        # (0.95) drives the area; scale_factor rescales to the full multiplet.
         predicted = [_line(1.00, 1.0), _line(1.02, 1.0)]
         pkr = {10: _peak(10, 1.00), 11: _peak(11, 1.02)}
         jr = {10: {'MET001': 0.95}, 11: {'MET001': 0.55}}
         r = _nnls_mode(predicted, [10, 11], pkr, jr, 'MET001')
-        assert 11 in r['clean_ranks']
-        assert abs(r['scale_factor'] - 1.0) < 1e-6
+        assert 10 in r['clean_ranks']
+        assert 11 in r['contaminated_ranks']
+        assert abs(r['scale_factor'] - 2.0) < 1e-6
 
     def test_unmatched_line_is_contaminated(self):
         predicted = [_line(1.00, 1.0), _line(1.02, 1.0)]

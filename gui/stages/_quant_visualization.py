@@ -162,7 +162,12 @@ class _QuantVisMixin:
 
     def _draw_detail(self, r):
         ppm_arr = self.app.ppm
-        all_int = self.app.all_intensities
+        # Draw the SAME (baseline-corrected) matrix the integration used, so the
+        # shaded area matches the reported value. Falls back to the raw spectrum
+        # when a quantification has not run yet.
+        all_int = getattr(self, '_quant_int', None)
+        if all_int is None:
+            all_int = self.app.all_intensities
         si      = self.app.samples_info or []
 
         groups = {}
@@ -198,16 +203,18 @@ class _QuantVisMixin:
             lo_i = min(p.get('start_idx', 0), p.get('end_idx', 0))
             hi_i = max(p.get('start_idx', 0), p.get('end_idx', 0))
 
-            # In Multiplet mode expand lo_i/hi_i to the actual integration window
+            # In Multiplet mode use the EXACT integration window. Match it via the
+            # same ppm-membership mask the integrator uses (_sm_mult), not a linear
+            # index approximation — int((ppm_max-mw)/step) truncates and can place
+            # the shaded fill over a slightly different/wider range than what was
+            # integrated, painting baseline outside the signal.
             _mw = r.get('_multiplet_window')
-            if _mw and integ_mode == 'Multiplet':
-                _step = abs(float(ppm_arr[1] - ppm_arr[0])) if len(ppm_arr) > 1 else 0.001
-                _ppm_max = float(ppm_arr.max())
-                _mw_lo_i = max(0, int((_ppm_max - _mw[1]) / _step))
-                _mw_hi_i = min(len(ppm_arr) - 1, int((_ppm_max - _mw[0]) / _step))
-                if _mw_lo_i < _mw_hi_i:
-                    lo_i = _mw_lo_i
-                    hi_i = _mw_hi_i
+            if _mw and integ_mode == 'Multiplet' and _mw[0] is not None and _mw[1] is not None:
+                _mw_lo, _mw_hi = min(_mw), max(_mw)
+                _idx_mw = np.where((ppm_arr >= _mw_lo) & (ppm_arr <= _mw_hi))[0]
+                if _idx_mw.size >= 2:
+                    lo_i = int(_idx_mw.min())
+                    hi_i = int(_idx_mw.max())
 
             pad  = max(8, (hi_i - lo_i))
             lo_e = max(0, lo_i - pad)
@@ -482,7 +489,9 @@ class _QuantVisMixin:
             for g in g_names:
                 vals = [c for c in concs_g[g] if np.isfinite(c) and c > 0]
                 means.append(float(np.mean(vals)) if vals else 0)
-                sds.append(float(np.std(vals))   if len(vals) > 1 else 0)
+                # Sample SD (ddof=1) so the ±SD error bar is consistent with the
+                # CV% reported in the Groups table (which uses sample SD too).
+                sds.append(float(np.std(vals, ddof=1)) if len(vals) > 1 else 0)
                 colors.append(g_colors.get(g, '#888'))
             x_pos  = np.arange(len(g_names))
             hatches = ['///' if g == 'BLK' else '' for g in g_names]

@@ -148,6 +148,8 @@ class ProjectManager:
                 'exclude_water':         _safe_var(ann, 'exclude_water_var'),
                 'water_lo':              _safe_var(ann, 'water_lo_var'),
                 'water_hi':              _safe_var(ann, 'water_hi_var'),
+                'internal_library_mode': _safe_var(ann, 'internal_library_mode_var'),
+                'lipid_solvent':         _safe_var(ann, 'lipid_solvent_var'),
                 'quality_marks':         dict(getattr(ann, '_quality_marks', {})),
                 'child_quality_marks':   dict(getattr(ann, '_child_quality_marks', {})),
                 'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
@@ -190,6 +192,9 @@ class ProjectManager:
             _dil = getattr(qnt, '_last_sample_dil', None)
             state['qnt'] = {
                 'quant_results':    list(getattr(qnt, '_quant_results', [])),
+                'quant_peak_overrides': {
+                    str(k): v for k, v in
+                    (getattr(qnt, '_quant_peak_overrides', {}) or {}).items()},
                 'integ':            _safe_var(qnt, 'integ_var'),
                 'norm':             _safe_var(qnt, 'norm_var'),
                 'proton_corr':      _safe_var(qnt, 'proton_corr_var'),
@@ -403,6 +408,13 @@ class ProjectManager:
                 _set_var(ann, 'exclude_water_var', ann_state.get('exclude_water'))
                 _set_var(ann, 'water_lo_var',      ann_state.get('water_lo'))
                 _set_var(ann, 'water_hi_var',      ann_state.get('water_hi'))
+                _set_var(ann, 'internal_library_mode_var',
+                         ann_state.get('internal_library_mode'))
+                _set_var(ann, 'lipid_solvent_var', ann_state.get('lipid_solvent'))
+                # Reflect lipidomics solvent selector visibility after restore.
+                if hasattr(ann, '_on_lib_mode_change'):
+                    try: ann._on_lib_mode_change()
+                    except Exception: pass
 
                 ann._quality_marks         = ann_state.get('quality_marks', {})
                 ann._child_quality_marks   = ann_state.get('child_quality_marks', {})
@@ -494,7 +506,12 @@ class ProjectManager:
                         qnt.btn_pdf.config(state='normal')
                     except Exception:
                         pass
-                _set_var(qnt, 'integ_var',      qnt_state.get('integ'))
+                qnt._quant_peak_overrides = dict(
+                    qnt_state.get('quant_peak_overrides', {}) or {})
+                _integ_loaded = qnt_state.get('integ')
+                if _integ_loaded == 'Lorentz':
+                    _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed
+                _set_var(qnt, 'integ_var',      _integ_loaded)
                 _set_var(qnt, 'norm_var',        qnt_state.get('norm'))
                 _set_var(qnt, 'proton_corr_var', qnt_state.get('proton_corr'))
                 _set_var(qnt, 'mcr_var',         qnt_state.get('mcr'))

@@ -505,14 +505,14 @@ def _quality_info(r, theoretical):
 # ── Bloco de 1 analito ───────────────────────────────────────────────────────
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
-                   crop_w_cm, crop_h_cm):
+                   crop_w_cm, crop_h_cm, unit='mM'):
     crop_fig, lorentz_r2 = _peak_crop_fig(
         ppm, all_int, r, samples_info, group_colors,
         width_in=crop_w_cm * 0.55, height_in=crop_h_cm * 0.55)
     crop_img = _fig_to_rl_image(crop_fig, crop_w_cm, crop_h_cm, dpi=130)
 
     conc   = r.get('conc_mm', float('nan'))
-    conc_s = f'{conc:.4f} mM' if np.isfinite(conc) else 'N/A'
+    conc_s = f'{conc:.4f} {unit}' if np.isfinite(conc) else 'N/A'
     snr    = r.get('snr', float('nan'))
     snr_s  = f'{snr:.1f}' if snr and np.isfinite(snr) else '—'
 
@@ -539,7 +539,7 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         ci_s = (f'  [CI95 {_lo:.4f}–{_hi:.4f}]'
                 if np.isfinite(_lo) and np.isfinite(_hi) else '')
         conc_lines.append(
-            f'{grp}: {mn:.4f} ± {sd:.4f} mM (n={len(fv)}){ci_s}')
+            f'{grp}: {mn:.4f} ± {sd:.4f} {unit} (n={len(fv)}){ci_s}')
 
     # Desvio teórico
     dev_line = ''
@@ -645,6 +645,12 @@ def generate_pdf(output_path: str, quant_stage, app,
     gc      = getattr(app, 'group_colors', {}) or {}
     results = [r for r in (quant_stage._quant_results or [])
                if not r.get('_is_is') and not r.get('_not_quantified')]
+
+    # Lipidomics is semi-quantitative (nH=1): label values as relative a.u.,
+    # never absolute mM, even when IS-normalised.
+    _lp_args = getattr(annotation_stage, '_last_results_args', None) or {}
+    _is_lipid = str(_lp_args.get('internal_library_mode', '')) == 'Lipidomics'
+    unit = 'a.u. (rel.)' if _is_lipid else 'mM'
 
     if ppm is None or all_int is None:
         raise ValueError('Dados espectrais nao disponiveis.')
@@ -762,7 +768,7 @@ def generate_pdf(output_path: str, quant_stage, app,
         block = _analyte_block(
             r, ppm, all_int, si, gc, theoretical,
             styles, avail_w,
-            crop_w_cm=crop_w_cm, crop_h_cm=crop_h_cm)
+            crop_w_cm=crop_w_cm, crop_h_cm=crop_h_cm, unit=unit)
         spacer = Spacer(1, 0.15 * cm)
         story.append(KeepTogether([block, spacer]))
 
