@@ -38,9 +38,31 @@ from app_paths import APP_VERSION
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin):
+    def _set_app_icon(self, win):
+        """Apply the app icon (utils/nmrpipe.ico — same as the .exe/installer)
+        to *win*. Using iconbitmap(default=...) makes it the icon for the root
+        AND every Toplevel/dialog opened afterwards, so the whole app is
+        consistent. Falls back to the PNG via iconphoto on non-Windows."""
+        from app_paths import asset_path
+        try:
+            ico = asset_path('utils', 'nmrpipe.ico')
+            if os.path.isfile(ico):
+                win.iconbitmap(default=ico)
+                return
+        except Exception:
+            pass
+        try:
+            from PIL import Image, ImageTk
+            png = asset_path('utils', 'Logo_nMRPipe.png')
+            self._app_icon_img = ImageTk.PhotoImage(Image.open(png))
+            win.iconphoto(True, self._app_icon_img)
+        except Exception:
+            pass
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title(APP_VERSION)
+        self._set_app_icon(self.root)
         self.screen_width  = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
         self.root.withdraw()
@@ -393,14 +415,36 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         return cd.get('meta', {}).get('exp_type', '') in (
             'COSY', 'TOCSY', 'NOESY', 'ROESY', '2D')
 
+    @property
+    def is_lipidomics(self):
+        """True quando a anotação está em modo Lipidomics (integração por região)."""
+        ann = (getattr(self, 'stages', {}) or {}).get('annotation')
+        var = getattr(ann, 'internal_library_mode_var', None)
+        try:
+            return var is not None and var.get() == 'Lipidomics'
+        except Exception:
+            return False
+
     def switch_stage(self, stage_name):
         """Switch between analysis stages.
 
         Em modo COSY: Peak Detection e JG-Deconv (MCR) ficam bloqueados, e o
         botão Annotation roteia para a stage de anotação COSY.
+        Em modo Lipidomics: JG-Deconv e Full-Spectrum MCR ficam bloqueados
+        (integração por região não usa deteção de picos nem deconvolução).
         """
         # Bloqueios em modo COSY
         if self.is_cosy and stage_name in ('peak_detection', 'j_resolve'):
+            return
+        # Bloqueios em modo Lipidomics
+        if self.is_lipidomics and stage_name in ('j_resolve', 'fullspectrum_mcr'):
+            from tkinter import messagebox
+            messagebox.showinfo(
+                'Indisponível em Lipidomica',
+                'Esta etapa está desativada em modo Lipidomica.\n\n'
+                'A lipidomica usa integração por região do espectro — não há '
+                'deteção de picos, deconvolução de sobreposição (JG-Deconv) nem '
+                'MCR de espectro completo.')
             return
         # Routing consoante o tipo de dados (COSY usa stages dedicadas)
         if self.is_cosy:
@@ -443,14 +487,64 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.stages[stage_name].on_activate()
 
     def _update_stage_availability(self):
-        """Activa/desactiva botões de stage conforme 1D vs COSY."""
+        """Activa/desactiva botões de stage conforme 1D vs COSY vs Lipidomica."""
         cosy = self.is_cosy
+        lipid = self.is_lipidomics
         # Peak Detection e JG-Deconv não se aplicam a COSY
-        for btn in (self.btn_peak_detection, self.btn_mcr_analysis):
+        try:
+            self.btn_peak_detection.configure(
+                state='disabled' if cosy else 'normal')
+        except Exception:
+            pass
+        # JG-Deconv não se aplica a COSY nem a Lipidomica
+        try:
+            self.btn_mcr_analysis.configure(
+                state='disabled' if (cosy or lipid) else 'normal')
+        except Exception:
+            pass
+        self._ensure_nav_lipid_tooltip()
+
+    def _ensure_nav_lipid_tooltip(self):
+        """Attach a one-time tooltip on the JG-Deconv nav button explaining the
+        disabled state in Lipidomica (shown only while the button is disabled)."""
+        if getattr(self, '_nav_lipid_tip_attached', False):
+            return
+        btn = getattr(self, 'btn_mcr_analysis', None)
+        if btn is None:
+            return
+
+        def _show(_e=None):
             try:
-                btn.configure(state='disabled' if cosy else 'normal')
+                if str(btn.cget('state')) != 'disabled' or not self.is_lipidomics:
+                    return
             except Exception:
-                pass
+                return
+            self._hide_nav_lipid_tooltip()
+            try:
+                tw = tk.Toplevel(btn)
+                tw.wm_overrideredirect(True)
+                tw.wm_geometry(
+                    f'+{btn.winfo_rootx() + 10}'
+                    f'+{btn.winfo_rooty() + btn.winfo_height() + 2}')
+                tk.Label(tw,
+                         text=('Desativado em modo Lipidomica:\n'
+                               'integração por região, sem deconvolução JG.'),
+                         justify=tk.LEFT, background='#ffffe0', relief=tk.SOLID,
+                         borderwidth=1, font=('Arial', 8), padx=4, pady=2).pack()
+                self._nav_lipid_tip_win = tw
+            except Exception:
+                self._nav_lipid_tip_win = None
+
+        btn.bind('<Enter>', _show, add='+')
+        btn.bind('<Leave>', self._hide_nav_lipid_tooltip, add='+')
+        self._nav_lipid_tip_attached = True
+
+    def _hide_nav_lipid_tooltip(self, _e=None):
+        tw = getattr(self, '_nav_lipid_tip_win', None)
+        if tw is not None:
+            try: tw.destroy()
+            except Exception: pass
+            self._nav_lipid_tip_win = None
 
     # ---------- Main Layout ----------
     def create_main_layout(self):

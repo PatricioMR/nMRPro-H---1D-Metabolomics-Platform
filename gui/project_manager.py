@@ -110,8 +110,10 @@ class ProjectManager:
                 'noise_end_var':   _safe_var(pd, 'noise_end_var'),
                 'min_snr_var':     _safe_var(pd, 'min_snr_var'),
                 'min_width_var':   _safe_var(pd, 'min_width_var'),
-                'prominence_var':  _safe_var(pd, 'prominence_var'),
                 'per_sample_detection': bool(_safe_var(pd, 'per_sample_var') or False),
+                'detect_shoulders': bool(_safe_var(pd, 'detect_shoulders_var') if _safe_var(pd, 'detect_shoulders_var') is not None else True),
+                'shoulder_k_var':  _safe_var(pd, 'shoulder_k_var'),
+                'min_group_presence_var': _safe_var(pd, 'min_group_presence_var'),
             }
             ctrl = getattr(pd, '_deconv_controller', None)
             if ctrl:
@@ -146,6 +148,8 @@ class ProjectManager:
                 'exclude_water':         _safe_var(ann, 'exclude_water_var'),
                 'water_lo':              _safe_var(ann, 'water_lo_var'),
                 'water_hi':              _safe_var(ann, 'water_hi_var'),
+                'internal_library_mode': _safe_var(ann, 'internal_library_mode_var'),
+                'lipid_solvent':         _safe_var(ann, 'lipid_solvent_var'),
                 'quality_marks':         dict(getattr(ann, '_quality_marks', {})),
                 'child_quality_marks':   dict(getattr(ann, '_child_quality_marks', {})),
                 'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
@@ -188,6 +192,9 @@ class ProjectManager:
             _dil = getattr(qnt, '_last_sample_dil', None)
             state['qnt'] = {
                 'quant_results':    list(getattr(qnt, '_quant_results', [])),
+                'quant_peak_overrides': {
+                    str(k): v for k, v in
+                    (getattr(qnt, '_quant_peak_overrides', {}) or {}).items()},
                 'integ':            _safe_var(qnt, 'integ_var'),
                 'norm':             _safe_var(qnt, 'norm_var'),
                 'proton_corr':      _safe_var(qnt, 'proton_corr_var'),
@@ -237,10 +244,16 @@ class ProjectManager:
                 'method':              _safe_var(st, '_method_var'),
                 'mode':                _safe_var(st, '_mode_var'),
                 'scale':               _safe_var(st, '_scale_var'),
+                'log_pre':             _safe_var(st, '_log_pre_var'),
+                'corr_method':         _safe_var(st, '_corr_method_var'),
+                'corr_plot':           _safe_var(st, '_corr_plot_var'),
+                'corr_x':              _safe_var(st, '_corr_x_var'),
+                'corr_y':              _safe_var(st, '_corr_y_var'),
                 'excluded_samples':    list(getattr(st, '_excluded_samples', set())),
                 'excluded_metabolites': list(getattr(st, '_excluded_metabolites', set())),
                 'pie_style':           dict(getattr(st, '_pie_style', {})),
                 'box_style':           dict(getattr(st, '_box_style', {})),
+                'box_config':          dict(getattr(st, '_box_config', {})),
                 'volcano_style':       dict(getattr(st, '_volcano_style', {})),
                 'pathway': {
                     'plot':     _safe_var(st, '_pw_plot_var'),
@@ -254,6 +267,8 @@ class ProjectManager:
                     'cmap':     _safe_var(st, '_pw_cmap_var'),
                     'group_a':  _safe_var(st, '_grp_a_var'),
                     'group_b':  _safe_var(st, '_grp_b_var'),
+                    'group_ca': _safe_var(st, '_grp_ca_var'),
+                    'group_cb': _safe_var(st, '_grp_cb_var'),
                 },
             }
 
@@ -330,8 +345,10 @@ class ProjectManager:
             _set_var(pd, 'noise_end_var',   pd_state.get('noise_end_var'))
             _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
             _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
-            _set_var(pd, 'prominence_var',  pd_state.get('prominence_var'))
             _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', False))
+            _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', True))
+            _set_var(pd, 'shoulder_k_var',  pd_state.get('shoulder_k_var'))
+            _set_var(pd, 'min_group_presence_var', pd_state.get('min_group_presence_var'))
 
             if pd.processor and app.ppm is not None:
                 try:
@@ -397,6 +414,13 @@ class ProjectManager:
                 _set_var(ann, 'exclude_water_var', ann_state.get('exclude_water'))
                 _set_var(ann, 'water_lo_var',      ann_state.get('water_lo'))
                 _set_var(ann, 'water_hi_var',      ann_state.get('water_hi'))
+                _set_var(ann, 'internal_library_mode_var',
+                         ann_state.get('internal_library_mode'))
+                _set_var(ann, 'lipid_solvent_var', ann_state.get('lipid_solvent'))
+                # Reflect lipidomics solvent selector visibility after restore.
+                if hasattr(ann, '_on_lib_mode_change'):
+                    try: ann._on_lib_mode_change()
+                    except Exception: pass
 
                 ann._quality_marks         = ann_state.get('quality_marks', {})
                 ann._child_quality_marks   = ann_state.get('child_quality_marks', {})
@@ -488,7 +512,12 @@ class ProjectManager:
                         qnt.btn_pdf.config(state='normal')
                     except Exception:
                         pass
-                _set_var(qnt, 'integ_var',      qnt_state.get('integ'))
+                qnt._quant_peak_overrides = dict(
+                    qnt_state.get('quant_peak_overrides', {}) or {})
+                _integ_loaded = qnt_state.get('integ')
+                if _integ_loaded == 'Lorentz':
+                    _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed
+                _set_var(qnt, 'integ_var',      _integ_loaded)
                 _set_var(qnt, 'norm_var',        qnt_state.get('norm'))
                 _set_var(qnt, 'proton_corr_var', qnt_state.get('proton_corr'))
                 _set_var(qnt, 'mcr_var',         qnt_state.get('mcr'))
@@ -600,6 +629,7 @@ class ProjectManager:
             try:
                 _set_var(st, '_method_var', st_state.get('method'))
                 _set_var(st, '_scale_var',  st_state.get('scale'))
+                _set_var(st, '_log_pre_var', st_state.get('log_pre'))
                 st._excluded_samples    = set(st_state.get('excluded_samples', []))
                 st._excluded_metabolites = set(st_state.get('excluded_metabolites', []))
                 # Pathway-mode params: stash so the lazily-built panel seeds from
@@ -617,6 +647,17 @@ class ProjectManager:
                     st._pie_style.update(st_state['pie_style'])
                 if st_state.get('box_style'):
                     st._box_style.update(st_state['box_style'])
+                if st_state.get('box_config'):
+                    st._box_config.update(st_state['box_config'])
+                    if hasattr(st, '_update_box_cfg_status'):
+                        st._update_box_cfg_status()
+                # Correlation selectors (set after the panel rebuild so the
+                # freshly-created vars are not left at their defaults)
+                for _attr, _key in (('_corr_method_var', 'corr_method'),
+                                    ('_corr_plot_var',   'corr_plot'),
+                                    ('_corr_x_var',      'corr_x'),
+                                    ('_corr_y_var',      'corr_y')):
+                    _set_var(st, _attr, st_state.get(_key))
                 if st_state.get('volcano_style'):
                     try:
                         st._ensure_volcano_style().update(st_state['volcano_style'])

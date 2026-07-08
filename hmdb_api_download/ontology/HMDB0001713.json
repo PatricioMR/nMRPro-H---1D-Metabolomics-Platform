@@ -1,0 +1,1 @@
+{"source_hilevel": ["Endogenous", "Food", "Plant"], "role_drug": false, "role_toxic": false, "role_industrial": false, "is_endogenous": true, "is_exogenous": false, "is_food": true, "is_microbial": false, "is_synthetic": false, "keep_mammalian": true, "exclude_reason": "", "primary_origin": "endogenous", "hmdb_id": "HMDB0001713", "name": "m-Coumaric acid"}

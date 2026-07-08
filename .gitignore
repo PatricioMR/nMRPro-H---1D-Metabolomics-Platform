@@ -20,9 +20,21 @@ _local/
 logs/
 *.log
 
+# ── Build / distribution artifacts (rebuilt locally, never committed) ───────
+build/
+dist/
+Output/
+*.exe
+*.zip
+
 # ── Database backups / superseded versions (keep only the active *.db) ──────
 databases/backup_*/
 databases/*.bak*
+
+# ── Raw reference dumps (re-downloadable build inputs, not source) ───────────
+# ChEBI ontology/structure dumps used only to build the metabolite DBs; large
+# binaries that must not bloat git history.
+hmdb_api_download/chebi/*.gz
 
 # ── Local config / scratch ──────────────────────────────────────────────────
 /settings.json

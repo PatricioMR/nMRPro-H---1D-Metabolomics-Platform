@@ -159,13 +159,13 @@ class FilteredResultsWindow:
         self.tree.heading('name', text='Metabolite')
         self.tree.heading('match_type', text='Type')
         self.tree.heading('level', text='Level')
-        self.tree.heading('ppm', text='PPM')
+        self.tree.heading('ppm', text='δ (ppm)')
         self.tree.heading('protons', text='H')
-        self.tree.heading('type', text='Multiplet')
+        self.tree.heading('type', text='Multiplicity')
         self.tree.heading('interval', text='HMDB Interval')
         self.tree.heading('overlaps', text='Overlaps')
-        self.tree.heading('peak_ppm', text='Peak PPM')
-        self.tree.heading('peak_rank', text='Peak #')
+        self.tree.heading('peak_ppm', text='Signal δ (ppm)')
+        self.tree.heading('peak_rank', text='Signal #')
 
         # Column widths
         self.tree.column('hmdb_id', width=100)

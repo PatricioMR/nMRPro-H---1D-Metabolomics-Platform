@@ -9,7 +9,9 @@ fractions are uniform (so non-resolved multiplets are unchanged).
 import numpy as np
 import pytest
 
-from gui.stages._quant_helpers import jr_pointwise_multiplet_area, _trapz
+from gui.stages._quant_helpers import (
+    jr_pointwise_multiplet_area, jr_analyte_fraction,
+    _anchor_lines_complete, _trapz)
 
 
 def _doublet(x, c1, c2, a1=1.0, a2=1.0, w=0.004):
@@ -82,3 +84,65 @@ def test_degenerate_window_falls_back_to_trapz():
     out = jr_pointwise_multiplet_area(x, y[:, None], [8.45], [0.5])
     # m < 2 → trapz of a single point is 0.
     assert out[0] == pytest.approx(0.0)
+
+
+# ── jr_analyte_fraction: the double-count guard ──────────────────────────────
+
+def test_fraction_peak_not_deconvolved_owns_it():
+    # rank absent from both maps → analyte owns the peak → 1.0.
+    assert jr_analyte_fraction(5, 'A', {}, {}, 3) == 1.0
+    assert jr_analyte_fraction(5, 'A', {7: {'A': 0.6}}, {}, 3) == 1.0
+
+
+def test_fraction_analyte_has_share():
+    assert jr_analyte_fraction(7, 'A', {7: {'A': 0.6, 'B': 0.4}}, {}, 3) == 0.6
+
+
+def test_fraction_analyte_absent_is_zero_not_one():
+    # rank deconvolved (A,B) but C not listed → 0.0, NOT 1.0. This is the bug:
+    # a non-contributor must not claim 100% of an already-split peak.
+    assert jr_analyte_fraction(7, 'C', {7: {'A': 0.6, 'B': 0.4}}, {}, 3) == 0.0
+
+
+def test_fraction_shares_plus_absent_sum_to_resolved_total():
+    contribs = {7: {'A': 0.6, 'B': 0.4}}
+    total = sum(jr_analyte_fraction(7, m, contribs, {}, 3)
+                for m in ('A', 'B', 'C'))
+    assert total == pytest.approx(1.0)   # C contributes 0, not an extra 1.0
+
+
+def test_fraction_per_sample_vector_preferred():
+    ps = {7: {'A': np.array([0.5, 0.8, 0.2])}}
+    out = jr_analyte_fraction(7, 'A', {7: {'A': 0.5}}, ps, 3)
+    assert np.allclose(out, [0.5, 0.8, 0.2])
+
+
+def test_fraction_per_sample_wrong_length_falls_back_to_scalar():
+    ps = {7: {'A': np.array([0.5, 0.8])}}        # length 2 != n_samples 3
+    assert jr_analyte_fraction(7, 'A', {7: {'A': 0.55}}, ps, 3) == 0.55
+
+
+# ── _anchor_lines_complete: incomplete multiplet cannot anchor ───────────────
+
+def test_anchor_singlet_always_complete():
+    assert _anchor_lines_complete({'type': 's'}) is True
+    assert _anchor_lines_complete({'multiplicity': 'singlet'}) is True
+    assert _anchor_lines_complete({}) is True       # missing → treated as singlet
+
+
+def test_anchor_partial_multiplet_is_incomplete():
+    # Butanol sextet with 2 of 3 lines found → cannot anchor.
+    mp = {'type': 'sext', '_n_found_lines': 2, '_n_exp_lines': 3}
+    assert _anchor_lines_complete(mp) is False
+
+
+def test_anchor_full_multiplet_is_complete():
+    mp = {'type': 't', '_n_found_lines': 3, '_n_exp_lines': 3}
+    assert _anchor_lines_complete(mp) is True
+    mp_over = {'type': 'd', '_n_found_lines': 3, '_n_exp_lines': 2}
+    assert _anchor_lines_complete(mp_over) is True
+
+
+def test_anchor_multiplet_without_line_metadata_not_gated():
+    # No counts cached → do not gate here (other gates decide).
+    assert _anchor_lines_complete({'type': 't'}) is True

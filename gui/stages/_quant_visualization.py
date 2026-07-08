@@ -45,8 +45,11 @@ class _QuantVisMixin:
                         qpw.load_result(r)
                 except Exception:
                     pass
-            # Navigate PeakListWindow to this metabolite's peak
-            peak_rank = (r.get('_peak') or {}).get('rank') or r.get('_peak_rank')
+            # Navigate PeakListWindow to the peak inside the integrated multiplet
+            # window (matches Quant Peaks), not the bare competition anchor.
+            peak_rank = (r.get('_display_peak_rank')
+                         or (r.get('_peak') or {}).get('rank')
+                         or r.get('_peak_rank'))
             if peak_rank is not None:
                 try:
                     pl_win = getattr(self.app, '_peak_list_win', None)
@@ -159,7 +162,12 @@ class _QuantVisMixin:
 
     def _draw_detail(self, r):
         ppm_arr = self.app.ppm
-        all_int = self.app.all_intensities
+        # Draw the SAME (baseline-corrected) matrix the integration used, so the
+        # shaded area matches the reported value. Falls back to the raw spectrum
+        # when a quantification has not run yet.
+        all_int = getattr(self, '_quant_int', None)
+        if all_int is None:
+            all_int = self.app.all_intensities
         si      = self.app.samples_info or []
 
         groups = {}
@@ -195,16 +203,18 @@ class _QuantVisMixin:
             lo_i = min(p.get('start_idx', 0), p.get('end_idx', 0))
             hi_i = max(p.get('start_idx', 0), p.get('end_idx', 0))
 
-            # In Multiplet mode expand lo_i/hi_i to the actual integration window
+            # In Multiplet mode use the EXACT integration window. Match it via the
+            # same ppm-membership mask the integrator uses (_sm_mult), not a linear
+            # index approximation — int((ppm_max-mw)/step) truncates and can place
+            # the shaded fill over a slightly different/wider range than what was
+            # integrated, painting baseline outside the signal.
             _mw = r.get('_multiplet_window')
-            if _mw and integ_mode == 'Multiplet':
-                _step = abs(float(ppm_arr[1] - ppm_arr[0])) if len(ppm_arr) > 1 else 0.001
-                _ppm_max = float(ppm_arr.max())
-                _mw_lo_i = max(0, int((_ppm_max - _mw[1]) / _step))
-                _mw_hi_i = min(len(ppm_arr) - 1, int((_ppm_max - _mw[0]) / _step))
-                if _mw_lo_i < _mw_hi_i:
-                    lo_i = _mw_lo_i
-                    hi_i = _mw_hi_i
+            if _mw and integ_mode == 'Multiplet' and _mw[0] is not None and _mw[1] is not None:
+                _mw_lo, _mw_hi = min(_mw), max(_mw)
+                _idx_mw = np.where((ppm_arr >= _mw_lo) & (ppm_arr <= _mw_hi))[0]
+                if _idx_mw.size >= 2:
+                    lo_i = int(_idx_mw.min())
+                    hi_i = int(_idx_mw.max())
 
             pad  = max(8, (hi_i - lo_i))
             lo_e = max(0, lo_i - pad)
@@ -471,7 +481,7 @@ class _QuantVisMixin:
         g_names    = [g for g in groups if g in concs_g]
         if 'BLK' in concs_g and 'BLK' not in g_names:
             g_names = g_names + ['BLK']
-        y_label    = ('Conc (mM)'  if norm_mode == 'IS'
+        y_label    = ('Conc (mM)'  if norm_mode in ('IS', 'IS+PQN')
                       else 'Area %' if norm_mode == 'Total'
                       else 'Area (a.u.)')
         if g_names:
@@ -479,7 +489,9 @@ class _QuantVisMixin:
             for g in g_names:
                 vals = [c for c in concs_g[g] if np.isfinite(c) and c > 0]
                 means.append(float(np.mean(vals)) if vals else 0)
-                sds.append(float(np.std(vals))   if len(vals) > 1 else 0)
+                # Sample SD (ddof=1) so the ±SD error bar is consistent with the
+                # CV% reported in the Groups table (which uses sample SD too).
+                sds.append(float(np.std(vals, ddof=1)) if len(vals) > 1 else 0)
                 colors.append(g_colors.get(g, '#888'))
             x_pos  = np.arange(len(g_names))
             hatches = ['///' if g == 'BLK' else '' for g in g_names]
@@ -536,7 +548,7 @@ class _QuantVisMixin:
             _ppm_label = 'Region'
             _ppm_value = f"{_c_lo:.4f}–{_c_hi:.4f}"
         else:
-            _ppm_label = 'PPM'
+            _ppm_label = 'δ (ppm)'
             _ppm_value = f"{p['ppm']:.4f}" if p else '?'
         top_card = [
             ('Metabolite',   r['metabolite'],                                    '#333'),
@@ -566,7 +578,7 @@ class _QuantVisMixin:
             top_card.append(('R²',    f'{r2:.4f}'   if np.isfinite(r2)  else 'N/A', r2_col))
             top_card.append(('Iters', str(ni),                                       '#555'))
         if np.isfinite(conc):
-            if norm_mode == 'IS':
+            if norm_mode in ('IS', 'IS+PQN'):
                 top_card.append(('Conc (mM)', f'{conc:.4f}', '#1a1a2e'))
             elif norm_mode == 'Total':
                 top_card.append(('Area %',    f'{conc:.4f}', '#1a1a2e'))
@@ -575,7 +587,7 @@ class _QuantVisMixin:
 
         _CARD_TIPS = {
             'Metabolite':   'Name from the annotation database (HMDB/BMRB).',
-            'PPM':          'Chemical shift of the detected peak centre (ppm).',
+            'δ (ppm)':      'Chemical shift of the detected signal centre (ppm).',
             'Region':       'Multiplet integration window [lo–hi] ppm.\n'
                             'Area is integrated across this entire region,\n'
                             'covering all predicted multiplet lines.',
@@ -626,7 +638,7 @@ class _QuantVisMixin:
         ax4.set_facecolor(bg)
         ax4.set_title('Groups', fontsize=7.5, fontweight='bold', pad=2)
 
-        _conc_col_hdr = 'Conc (mM)' if norm_mode == 'IS' else ('Area %' if norm_mode == 'Total' else 'Area')
+        _conc_col_hdr = 'Conc (mM)' if norm_mode in ('IS', 'IS+PQN') else ('Area %' if norm_mode == 'Total' else 'Area')
         hdr_cols = ['Group', _conc_col_hdr, 'CV%', 'SNR', 'Quality']
         hdr_x    = [0.01, 0.22, 0.50, 0.65, 0.80]
         for hx, ht in zip(hdr_x, hdr_cols):
@@ -678,7 +690,7 @@ class _QuantVisMixin:
             g_stat_col = ('#1a7a1a' if g_stat == 'Good'
                           else '#856404' if g_stat == 'Warn' else '#9a0000')
             g_col = _app_colors.get(g, '#333')
-            if norm_mode == 'IS':
+            if norm_mode in ('IS', 'IS+PQN'):
                 conc_str = f'{g_mean:.4f}'
             elif norm_mode == 'Total':
                 conc_str = f'{g_mean:.4f}'

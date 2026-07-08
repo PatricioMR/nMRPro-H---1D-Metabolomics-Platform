@@ -20,15 +20,10 @@ from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from gui.notation.evidence_weighting import (
-    dynamic_composite,
-    _BASE_WEIGHTS_ENRICHMENT_NS,
-    _BASE_WEIGHTS_ENRICHMENT_S,
-)
+from gui.notation.evidence_weighting import dynamic_composite
 from gui.notation.confidence_classifier import (
     classify_annotation,
     CLASS_COLOURS,
-    CLASS_MSI_LEVEL,
 )
 
 
@@ -400,8 +395,8 @@ class AnnotationResultsWindow:
         # ── Annotation parameters (user-editable via ⚙ Parameters dialog) ────
         self._params = {
             # Score thresholds
-            'good_score_thresh':  0.80,   # min score → Good
-            'bad_score_thresh':   0.50,   # max score → Bad (singlets)
+            'good_score_thresh':  0.75,   # ≥ this → Good (green); 0.51–0.74 → yellow
+            'bad_score_thresh':   0.50,   # ≤ this → Bad (red)
             # ΔJ criteria (Hz)
             'dj_gold_hz':         0.20,   # s_dj=1.0 below this; linear decay to dj_bad_hz
             'dj_bad_hz':          0.50,   # gate: ΔJ ≥ this → Bad (non-singlet)
@@ -530,6 +525,7 @@ class AnnotationResultsWindow:
                     self._require_multi_peak_confirmation()
                     self._promote_uncontested_candidates()
                     self._promote_exclusive_singlets()
+                    self._promote_corroborated_singlets()
                     self._promote_anchor_confirmed_peaks()
                     self._propagate_anchor_position()   # re-run: promotions may add anchors
                     # self._nnls_spectral_validation()  # disabled — needs validation
@@ -1098,6 +1094,7 @@ class AnnotationResultsWindow:
         self._require_multi_peak_confirmation()
         self._promote_uncontested_candidates()
         self._promote_exclusive_singlets()
+        self._promote_corroborated_singlets()
         self._promote_anchor_confirmed_peaks()
         self._propagate_anchor_position()
         self._nnls_spectral_validation()
@@ -1198,11 +1195,11 @@ class AnnotationResultsWindow:
         tf.grid_rowconfigure(0, weight=1)
         tf.grid_columnconfigure(0, weight=1)
 
-        self.tree.heading('#0',      text='Peak #',
+        self.tree.heading('#0',      text='Signal #',
                           command=lambda: self._sort_by('ppm'))
         self.tree.heading('name',    text='Metabolite',
                           command=lambda: self._sort_by('name'))
-        self.tree.heading('ppm',     text='PPM',
+        self.tree.heading('ppm',     text='δ (ppm)',
                           command=lambda: self._sort_by('ppm'))
         self.tree.heading('start',   text='Start')
         self.tree.heading('end',     text='End')
@@ -1333,14 +1330,12 @@ class AnnotationResultsWindow:
 
         self._q_labels = {}
         for i, (key, label, hint) in enumerate([
-            ('confidence', 'Confidence', 'MSI annotation level  A=highest · X=rejected'),
-            ('coverage',  'Coverage',    '% DB peaks matched'),
-            ('cosine',    'Similarity',  'Cosine similarity (0–1)'),
-            ('n_matched', 'Matched/RRI', 'peaks found / total · RRI'),
+            ('confidence', 'Confidence', 'Composite score 0–1 (≥0.75 good · ≤0.50 bad) — informative'),
+            ('coverage',  'Coverage',    '% DB peaks matched — informative'),
+            ('cosine',    'Similarity',  'Cosine similarity (0–1) — informative'),
+            ('n_matched', 'Matched',     'peaks found / total — informative'),
             ('j_obs',     'J / ΔJ',      'J obs vs DB (Hz) · right-drag to reselect'),
-            ('mcr',       'MCR',         'R²  Pearson r  cross-sample corr (overlap regions)'),
-            ('stocsy',    'STC-Like',    'Mean pairwise Pearson r between matched peaks across samples'),
-            ('reverse',   'Reverse',     'nH-weighted DB coverage (MS/MS reverse score, 0–1)'),
+            ('mcr',       'MCR',         'R²  Pearson r  cross-sample corr (overlap tiebreaker)'),
         ]):
             ttk.Label(qf, text=f"{label}:",
                       font=("Arial", 8, "bold")).grid(
@@ -1881,14 +1876,20 @@ class AnnotationResultsWindow:
 
     def _compute_scores(self):
         """
-        Compute composite_score for each matched_peak using two formulae:
+        Compute composite_score for each matched_peak with a hierarchical model
+        that mirrors manual spectrum reading (Δppm gate → multiplicity/ΔJ):
 
         Non-singlet (doublet, triplet, quartet, …):
-            score = 0.60 * s_dj  +  0.20 * s_cosine  +  0.10 * s_ppm  +  0.10 * s_found
+            score = dynamic_composite({ppm: s_ppm, j: s_dj})
+            (weights w_ppm_ns / w_dj from _params, renormalised; j excluded when
+             ΔJ unmeasurable via _dj_conf=0)
 
         Singlet / 'm' / unresolvable multiplet:
-            score = 0.45 * s_cosine  +  0.35 * s_ppm  +  0.20 * s_found
-            (s_dj has no contribution — singlets have no J-coupling to validate)
+            score = s_ppm
+            (no J-coupling to validate — only Δppm proximity matters)
+
+        cosine, coverage (s_found), reverse and STOCSY are informative only and
+        do NOT enter the score; MCR is the tiebreaker for overlaps.
 
         Components:
           s_dj     : J quality for this DB multiplet (non-singlets only)
@@ -1949,19 +1950,6 @@ class AnnotationResultsWindow:
                                                       p.get('ppm', 0))), 3)
                                  in matched_db_set)
             s_found = float(n_db_found) / float(n_db_total)
-
-            # ── s_reverse: nH-weighted DB coverage (reverse score, MS/MS style) ──
-            # Fraction of total DB fingerprint intensity found in the experimental spectrum.
-            # Penalises missing intense peaks (high nH) more than missing weak ones (nH=1).
-            # Degrades gracefully to s_found when proton counts are unavailable in DB.
-            _nh_total   = sum(max(int(p.get('protons') or 1), 1)
-                              for p in db_peaks_all)
-            _nh_matched = sum(max(int(p.get('protons') or 1), 1)
-                              for p in db_peaks_all
-                              if round(float(p.get('ppm_center',
-                                                    p.get('ppm', 0))), 3)
-                              in matched_db_set)
-            s_reverse = float(_nh_matched) / float(_nh_total or 1)
 
             # ── cosine at metabolite level ───────────────────────────────────
             s_cosine = float(met.get('cosine', 0) or 0)
@@ -2176,40 +2164,54 @@ class AnnotationResultsWindow:
                         else:
                             s_dj = 0.0
 
-                # Singlets have no J-coupling to validate — use a formula
-                # that only weighs real spectral evidence.  The old formula
-                # gave s_dj=1.0 for free (60% of score), inflating singlet
-                # scores to ~0.82 even when no peaks were found.
+                # Hierarchical score mirroring how the spectrum is read by hand:
+                #   singlet     → only Δppm proximity matters (no J to validate)
+                #   non-singlet → Δppm + ΔJ agreement; s_dj already encodes the
+                #                 multiplicity / line-count check and the
+                #                 dj_gold_hz→dj_bad_hz gating.
+                # cosine, coverage (found), reverse and STOCSY are informative
+                # only — they no longer enter the score. Single source of truth =
+                # Δppm + ΔJ; MCR remains the tiebreaker for overlapping candidates.
                 _is_singlet_sc = mult_sc in ('s', 'singlet', '', 'm', 'multiplet',
                                              'br s', 'brs', 'br. s')
-                # RRI (Relative Intensity Ratio): already computed by _fetch_fingerprints()
-                # as met['rri'] = mean _rri_score across DB peaks.  Defaults to 0 when
-                # DB has no stick intensity data (no penalty in that case).
-                s_rri = float(met.get('rri') or 0)
 
                 if _is_singlet_sc:
-                    score = dynamic_composite(
-                        scores={'cosine': s_cosine, 'ppm': s_ppm,
-                                'found': s_found, 'rri': s_rri, 'rev': s_reverse},
-                        confidences={'cosine': 1.0, 'ppm': 1.0,
-                                     'found': 1.0, 'rri': 1.0, 'rev': 1.0},
-                        base_weights=_BASE_WEIGHTS_ENRICHMENT_S,
-                    )
+                    # A lone singlet is weak evidence — it must NOT reach the Good
+                    # band on Δppm alone. Cap the score in the low band; confirmed
+                    # singlets are lifted afterwards by the anchor rule
+                    # (_promote_exclusive_singlets — sole valid candidate) or the
+                    # ≥3-singlet corroboration rule (_promote_corroborated_singlets).
+                    score = s_ppm * self._params['bad_score_thresh']
                 else:
-                    # _dj_conf=0.0 when J unmeasurable → dj excluded, rest renormalised
+                    # _dj_conf=0.0 when J unmeasurable → j excluded, ppm renormalised
                     score = dynamic_composite(
-                        scores={'dj': s_dj, 'cosine': s_cosine, 'ppm': s_ppm,
-                                'found': s_found, 'rri': s_rri, 'rev': s_reverse},
-                        confidences={'dj': _dj_conf, 'cosine': 1.0, 'ppm': 1.0,
-                                     'found': 1.0, 'rri': 1.0, 'rev': 1.0},
-                        base_weights=_BASE_WEIGHTS_ENRICHMENT_NS,
+                        scores={'ppm': s_ppm, 'j': s_dj},
+                        confidences={'ppm': 1.0, 'j': _dj_conf},
+                        base_weights={'ppm': self._params['w_ppm_ns'],
+                                      'j':   self._params['w_dj']},
                     )
+                    # Confirmation rule (non-singlet): the analyte is CONFIRMED only
+                    # when ALL three agree — every expected line found (a quintet
+                    # needs 5, not 3), ΔJ of the found lines matches the DB within the
+                    # error band (< dj_bad_hz), and Δppm is within the gold standard.
+                    # A confirmed analyte must score high, so floor it at the Good
+                    # threshold (the s_dj gradient still rewards near-perfect ΔJ above
+                    # it). Incomplete line counts never reach here (s_dj is capped at
+                    # 0.5 and the incomplete gate marks them Bad).
+                    _nf_cf = mp.get('_n_found_lines')
+                    _ne_cf = mp.get('_n_exp_lines')
+                    _dj_cf = mp.get('delta_j_hz')
+                    if (_nf_cf is not None and _ne_cf is not None
+                            and int(_nf_cf) >= int(_ne_cf) >= 2
+                            and ppm_diff < self._params['dppm_gold']
+                            and _dj_conf > 0
+                            and _dj_cf is not None
+                            and float(_dj_cf) < self._params['dj_bad_hz']):
+                        score = max(score, self._params['good_score_thresh'])
                 mp['_s_dj']      = s_dj
                 mp['_s_ppm']     = s_ppm
                 mp['_s_found']   = s_found
                 mp['_s_cosine']  = s_cosine
-                mp['_s_rri']     = s_rri
-                mp['_s_reverse'] = s_reverse
 
                 # Gate Rule 0b: no peaks found → score = 0
                 _gate_sc = 0.0 if s_found == 0.0 else 1.0
@@ -2679,15 +2681,25 @@ class AnnotationResultsWindow:
                     mp['below_detection_limit'] = True
                     continue
 
+                _mult_am_g = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
+                _is_sing_g = _mult_am_g in _sing_types_am
+
+                # Singlet signals are weak evidence on their own: never auto-good and
+                # never auto-bad here — leave yellow. Promotion to Good happens only
+                # via the anchor rule (_promote_exclusive_singlets — sole valid
+                # candidate for the signal) or ≥3-singlet corroboration
+                # (_promote_corroborated_singlets); a confirmed multiplet of the same
+                # metabolite can also promote them via anchor propagation.
+                if _is_sing_g:
+                    mp['annotation_quality'] = None
+                    continue
+
                 # Gate: non-singlet with incomplete line count → Bad.
                 # If only some lines of a doublet/triplet/etc. were found,
                 # J coupling cannot be confirmed and the match is unreliable.
-                _mult_am_g = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                _is_sing_g = _mult_am_g in _sing_types_am
                 _nf_am_g = mp.get('_n_found_lines')
                 _ne_am_g = mp.get('_n_exp_lines')
-                if (not _is_sing_g
-                        and _nf_am_g is not None and _ne_am_g is not None
+                if (_nf_am_g is not None and _ne_am_g is not None
                         and int(_ne_am_g) >= 2
                         and int(_nf_am_g) < int(_ne_am_g)):
                     mp['annotation_quality'] = 'bad'
@@ -2848,6 +2860,11 @@ class AnnotationResultsWindow:
                 if _ppm_unc < 0.05:
                     mp_uc['annotation_quality'] = 'good'
                     mp_uc['auto_anchor'] = True
+                    # Uncontested → confirmed → high score (keep number in sync
+                    # with the green mark).
+                    mp_uc['composite_score'] = max(
+                        float(mp_uc.get('composite_score', 0) or 0),
+                        self._params['good_score_thresh'])
                 else:
                     mp_uc.setdefault('_status_reasons', []).append(
                         f'Uncontested-promote blocked: Δppm={_ppm_unc:.4f} ≥ 0.05')
@@ -2915,6 +2932,72 @@ class AnnotationResultsWindow:
                 continue  # outside gold-quality Δppm — not a reliable match
             mp['annotation_quality'] = 'good'
             mp['auto_anchor'] = True
+            # Sole valid candidate for the signal → confirmed → high score.
+            mp['composite_score'] = max(
+                float(mp.get('composite_score', 0) or 0),
+                self._params['good_score_thresh'])
+
+    def _promote_corroborated_singlets(self):
+        """
+        ≥3-singlet corroboration: a metabolite with ≥3 of its singlets matched at
+        DISTINCT DB positions — each at gold-quality Δppm and not heavily contested
+        — is corroborated by multiple independent signals → promote those singlets
+        to 'good' + high score. A lone (or 2-singlet) match stays yellow.
+
+        "Not heavily contested" reuses the overlap map: a singlet rank shared by
+        ≤2 metabolites still counts (mild overlap is normal in crowded spectra);
+        more-contested ranks are skipped from the corroboration count.
+
+        Manual quality marks are always preserved.
+        """
+        ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        _qm = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
+
+        _mhz = 600.0
+        try:
+            if ann_stage:
+                _mhz = float(ann_stage.spectrometer_var.get() or 600.0)
+        except Exception:
+            pass
+        _dppm_gold = float(self._params.get('dppm_gold_hz', 0.50)) / max(_mhz, 1.0)
+        _dppm_gold = min(_dppm_gold, float(self._params.get('dppm_gold', 0.05)))
+
+        _overlap = getattr(self, '_peak_overlap', {}) or {}
+        _MAX_COMPETITORS = 2  # singlet rank shared by ≤2 metabolites still counts
+
+        for met in self.metabolites:
+            valid = {}   # round(db_ppm, 3) -> best-Δppm singlet mp at that position
+            for mp in met['matched_peaks']:
+                if mp.get('below_detection_limit'):
+                    continue
+                if (mp.get('type') or '').lower().strip() not in ('s', 'singlet'):
+                    continue
+                if float(mp.get('ppm_diff', 0) or 0) >= _dppm_gold:
+                    continue  # not gold-quality Δppm
+                rank = mp.get('peak_rank')
+                if (rank is not None
+                        and len(_overlap.get(rank, [])) > _MAX_COMPETITORS):
+                    continue  # heavily contested signal
+                key  = round(float(mp.get('db_ppm', 0) or 0), 3)
+                prev = valid.get(key)
+                if (prev is None
+                        or float(mp.get('ppm_diff', 1e9))
+                        < float(prev.get('ppm_diff', 1e9))):
+                    valid[key] = mp
+
+            if len(valid) < 3:
+                continue  # fewer than 3 distinct corroborating singlets
+
+            for mp in valid.values():
+                if (met.get('id'), mp.get('peak_rank')) in _qm:
+                    continue  # manual mark — preserve
+                mp['annotation_quality'] = 'good'
+                mp['auto_anchor'] = True
+                mp['composite_score'] = max(
+                    float(mp.get('composite_score', 0) or 0),
+                    self._params['good_score_thresh'])
+                mp.setdefault('_status_reasons', []).append(
+                    f'≥3-singlet corroboration ({len(valid)} distinct positions)')
 
     def _promote_anchor_confirmed_peaks(self):
         """
@@ -4033,11 +4116,20 @@ class AnnotationResultsWindow:
             # ── Aggregate quality / score across all matched peaks ─────────────
             score = float(met.get('composite_score', 0) or 0)
 
+            # An anchor only promotes the metabolite to Good when the anchoring
+            # peak is itself quality-'good'. The quality gate already marks an
+            # incomplete multiplet (e.g. 2/3 lines, J unconfirmed) as 'bad', so
+            # requiring 'good' here stops such a peak from forcing "⚓ Good" and
+            # being quantified. anchor_store entries are only written for good +
+            # J-qualified peaks (or manual marks), so that check stays as-is.
             has_anchor = (
                 any(k[0] == met_id for k in anchor_store)
-                or any(mp2.get('anchor_status') == 'clean' and mp2.get('j_met_confirmed')
+                or any(mp2.get('annotation_quality') == 'good'
+                       and mp2.get('anchor_status') == 'clean'
+                       and mp2.get('j_met_confirmed')
                        for mp2 in met['matched_peaks'])
-                or any(mp2.get('auto_anchor') for mp2 in met['matched_peaks'])
+                or any(mp2.get('annotation_quality') == 'good' and mp2.get('auto_anchor')
+                       for mp2 in met['matched_peaks'])
             )
 
             # Overall quality: best quality among matched peaks
@@ -5116,12 +5208,12 @@ class AnnotationResultsWindow:
         self.plot_canvas.draw_idle()
 
         # ── Quality card ──────────────────────────────────────────────────────
-        _cls_z      = met.get('confidence_class', '')
-        _cls_z_bg, _ = CLASS_COLOURS.get(_cls_z, ('#888888', 'white'))
-        _cls_z_msi  = CLASS_MSI_LEVEL.get(_cls_z, '')
-        self._set_q('confidence',
-                    f"{_cls_z}  —  {_cls_z_msi}" if _cls_z else '—',
-                    _cls_z_bg)
+        _sc_z = float((mp_ref.get('composite_score') if mp_ref else None)
+                      or met.get('composite_score', 0) or 0)
+        self._set_q('confidence', f"{_sc_z:.3f}",
+                    '#1a7a1a' if _sc_z >= self._params['good_score_thresh']
+                    else '#9a0000' if _sc_z <= self._params['bad_score_thresh']
+                    else '#7a6000')
         self._set_q('coverage',
                     f"DB: {dp_ppm:.4f} ppm  [{dp_type.upper()}]",
                     '#1a7a1a' if is_matched else '#9a0000')
@@ -5179,38 +5271,6 @@ class AnnotationResultsWindow:
             self._set_q('mcr', f"{_sym_pk}  {' · '.join(_parts_pk)}", _color_pk)
         else:
             self._set_q('mcr', '— not run', '#888888')
-
-        # STC-Like: graph STOCSY inter-peak correlation
-        _stc = mp_ref.get('stocsy_coherence') if mp_ref else None
-        if _stc is None:
-            # Fallback: compute on-the-fly from current peak correlation matrix
-            # (stored value is None when peak detection ran with <3 samples at
-            # annotation time; re-running peak detection refreshes _peak_corr)
-            _stc = self._compute_stocsy_for_met(met)
-        if _stc is None:
-            _pk_stage  = getattr(getattr(self, 'app', None), 'stages', {})
-            _pk_stage  = _pk_stage.get('peak_detection') if isinstance(_pk_stage, dict) else None
-            _n_samp    = getattr(_pk_stage, '_n_samples_pk', 0)
-            if _n_samp < 3:
-                self._set_q('stocsy', f'— n/a (re-run peak detection with ≥3 samples)', '#888888')
-            elif len(met.get('matched_peaks', [])) < 2:
-                self._set_q('stocsy', '— n/a (only 1 peak matched)', '#888888')
-            else:
-                self._set_q('stocsy', '— n/a (no peak pair in matrix)', '#888888')
-        else:
-            _stc_txt   = f"r = {_stc:.3f}"
-            _stc_color = ('#1a7a1a' if _stc >= 0.90
-                          else '#7a6000' if _stc >= 0.70
-                          else '#8B6914' if _stc >= 0.50
-                          else '#9a0000')
-            self._set_q('stocsy', _stc_txt, _stc_color)
-
-        # Reverse score: nH-weighted DB coverage
-        _rev_pk = float((mp_ref.get('_s_reverse') if mp_ref else None) or 0)
-        _rev_col = ('#1a7a1a' if _rev_pk >= 0.80
-                    else '#7a6000' if _rev_pk >= 0.50
-                    else '#9a0000')
-        self._set_q('reverse', f"{_rev_pk:.3f}", _rev_col)
 
         # Modified indicator — compare against the persistent algorithm original.
         _algo_orig = mp_ref.get('_original_predicted_lines') if mp_ref is not None else None
@@ -5345,7 +5405,6 @@ class AnnotationResultsWindow:
         self._orig_pred_lines = None
         self._show_reset_btn(False)
         self._set_q('j_obs',    '— select a DB peak row', '#888888')
-        self._set_q('reverse',  '—', '#888888')
 
         self.ax.clear()
 
@@ -5715,23 +5774,17 @@ class AnnotationResultsWindow:
             if v >= ok:   return '#7a6000'
             return '#9a0000'
 
-        _cls      = met.get('confidence_class', '')
-        _cls_bg, _ = CLASS_COLOURS.get(_cls, ('#888888', 'white'))
-        _cls_msi  = CLASS_MSI_LEVEL.get(_cls, '')
-        self._set_q('confidence',
-                    f"{_cls}  —  {_cls_msi}" if _cls else '—',
-                    _cls_bg)
+        _sc = float(met.get('composite_score', 0) or 0)
+        self._set_q('confidence', f"{_sc:.3f}",
+                    '#1a7a1a' if _sc >= self._params['good_score_thresh']
+                    else '#9a0000' if _sc <= self._params['bad_score_thresh']
+                    else '#7a6000')
         self._set_q('coverage',  f"{cov:.1f}%",
                     _col(cov, 70, 40))
         self._set_q('cosine',    f"{cos:.4f}",
                     _col(cos, 0.80, 0.50))
-        rri = met.get('rri')
-        rri_txt   = f"{rri:.3f}" if rri is not None else 'N/A (singlets)'
-        rri_color = (_col(rri, 0.85, 0.60) if rri is not None
-                     else '#888888')
-        self._set_q('n_matched',
-                    f"{n_mat}/{n_db}  ·  RRI {rri_txt}",
-                    rri_color)
+        self._set_q('n_matched', f"{n_mat}/{n_db} lines",
+                    _col(n_mat / float(n_db or 1), 0.99, 0.50))
 
         # MCR quality at metabolite level: summarise across all matched peaks
         _mcr_mps = [mp2 for mp2 in met['matched_peaks'] if mp2.get('mcr_r2') is not None]
@@ -5751,11 +5804,6 @@ class AnnotationResultsWindow:
             _sym   = '✓' if _conf is True else ('✗' if _conf is False else '?')
             _color = '#1a7a1a' if _conf is True else ('#9a0000' if _conf is False else '#7a6000')
             self._set_q('mcr', f"{_sym}  {' · '.join(_parts)}", _color)
-
-        # Reverse score: nH-weighted DB coverage (mean across matched peaks)
-        _rev_vals = [float(mp2.get('_s_reverse', 0) or 0) for mp2 in met['matched_peaks']]
-        _rev = sum(_rev_vals) / len(_rev_vals) if _rev_vals else 0.0
-        self._set_q('reverse', f"{_rev:.3f}", _col(_rev, 0.80, 0.50))
 
         self.match_info.config(
             text=(f"{met['name']}  ·  {n_mat}/{n_db} DB peaks matched  "
@@ -5924,22 +5972,9 @@ class AnnotationResultsWindow:
         self._set_q('cosine',
                     f"width {db_width:.4f} ppm",
                     '#1a7a1a' if db_width < 0.02 else '#7a6000')
-        # RRI for this specific multiplet
-        exp_region = [(p['ppm'],
-                        float(self.mean_intensity[
-                            int(np.argmin(np.abs(self.ppm - p['ppm'])))]))
-                      for p in self.peaks
-                      if lo <= p['ppm'] <= hi]
-        rri = _rri_score(exp_region, sticks) if len(sticks) > 1 else None
-        rri_txt = f"{rri:.3f}" if rri is not None else 'N/A'
         self._set_q('n_matched',
-                    f"#{mp['peak_rank']}  {mp.get('type','')}  RRI {rri_txt}",
-                    ('#1a7a1a' if rri is not None and rri >= 0.85
-                     else '#7a6000' if rri is not None and rri >= 0.60
-                     else '#9a0000') if rri is not None else '#888888')
-        _rev_pz = float(mp.get('_s_reverse', 0) or 0)
-        self._set_q('reverse', f"{_rev_pz:.3f}",
-                    '#1a7a1a' if _rev_pz >= 0.80 else '#7a6000' if _rev_pz >= 0.50 else '#9a0000')
+                    f"#{mp['peak_rank']}  {mp.get('type','')}",
+                    '#1a7a1a')
         _pl = mp.get('predicted_lines', [])
         if len(_pl) > 1:
             _obs_c  = (_pl[0]['ppm'] + _pl[-1]['ppm']) / 2
@@ -5954,28 +5989,6 @@ class AnnotationResultsWindow:
                 text=(f"{met['name']}  ·  exp {exp_ppm:.4f}  →  "
                       f"db {db_ppm:.4f}  Δ{ppm_diff:.4f} ppm  ·  "
                       f"width {db_width:.4f} ppm"))
-
-    def _compute_stocsy_for_met(self, met) -> 'float | None':
-        """Compute mean pairwise Pearson r for a metabolite's matched peaks.
-
-        Uses the live _peak_corr matrix from peak_detection stage.  Returns None
-        when the matrix is unavailable or fewer than 2 matched peaks have ranks.
-        """
-        _pk_stage = getattr(getattr(self, 'app', None), 'stages', {})
-        if isinstance(_pk_stage, dict):
-            _pk_stage = _pk_stage.get('peak_detection')
-        _pk_corr = getattr(_pk_stage, '_peak_corr', {})
-        if not _pk_corr:
-            return None
-        ranks = [mp.get('peak_rank') for mp in met.get('matched_peaks', [])
-                 if mp.get('peak_rank') is not None]
-        if len(ranks) < 2:
-            return None
-        pairs = [(min(a, b), max(a, b))
-                 for i, a in enumerate(ranks)
-                 for b in ranks[i + 1:]]
-        rs = [_pk_corr[p] for p in pairs if p in _pk_corr]
-        return float(sum(rs) / len(rs)) if rs else None
 
     def _set_q(self, key, text, color):
         if key in self._q_labels:
@@ -6149,6 +6162,7 @@ class AnnotationResultsWindow:
             self._require_multi_peak_confirmation()
             self._promote_uncontested_candidates()
             self._promote_exclusive_singlets()
+            self._promote_corroborated_singlets()
             self._promote_anchor_confirmed_peaks()
             self._propagate_anchor_position()
             self._nnls_spectral_validation()
@@ -6174,6 +6188,7 @@ class AnnotationResultsWindow:
             self._require_multi_peak_confirmation()
             self._promote_uncontested_candidates()
             self._promote_exclusive_singlets()
+            self._promote_corroborated_singlets()
             self._promote_anchor_confirmed_peaks()
             self._propagate_anchor_position()
             self._nnls_spectral_validation()
@@ -6489,7 +6504,7 @@ class AnnotationResultsWindow:
 
         def _reset():
             defaults = {
-                'good_score_thresh': 0.80, 'bad_score_thresh': 0.50,
+                'good_score_thresh': 0.75, 'bad_score_thresh': 0.50,
                 'dj_gold_hz': 0.20, 'dj_bad_hz': 0.50, 'dj_neutral': 0.00,
                 'dppm_gold_hz': 0.50, 'dppm_gold': 0.05,
                 'fp_coverage_pct': 50.0, 'nnls_min_frac': 0.03,

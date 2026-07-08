@@ -40,10 +40,12 @@ class QuantPeaksWindow:
     def __init__(self, parent, quant_stage, result):
         self.qs     = quant_stage
         self.result = result
-        self._selected_rank       = result.get('_peak_rank')
-        self._original_peak_rank  = result.get('_peak_rank')
-        self._preview_original    = None   # saved fields before preview
-        self._has_unsaved_preview = False
+        # The window is visualisation-only at the peak level: quantification
+        # works per multiplicity. The user selects a whole multiplet (header
+        # row) to use for the analyte; applying it re-quantifies every analyte.
+        self._selected_hdr   = None   # iid of the currently selected header
+        self._hdr_members    = {}     # hdr_iid → [candidate, ...]
+        self._original_anchor = self._current_anchor_rank(result)
 
         self.win = tk.Toplevel(parent)
         self.win.title(f"Quant Peaks — {result['metabolite']}")
@@ -57,97 +59,27 @@ class QuantPeaksWindow:
 
     def _do_close(self):
         """Close button and WM_DELETE_WINDOW both route here."""
-        self._cancel_preview()
         cb = getattr(self, '_close_cb', None)
         if cb:
             cb()
         else:
             self.win.destroy()
 
-    # ── Preview / revert ──────────────────────────────────────────────────────
+    # ── Current selection helpers ─────────────────────────────────────────────
 
-    _PREVIEW_FIELDS = ('conc_mm', '_concs_by_group', 'ppm', '_peak',
-                       '_peak_rank', 'snr', 'cv_by_group', '_lorentz')
-
-    def _start_preview(self, peak_rank):
-        """Apply peak_rank to self.result for preview; save original if first time."""
-        import numpy as _np
-        hmdb_id = str(self.result.get('hmdb_id', ''))
-        apq = getattr(self.qs, '_all_peak_quant', {}).get(hmdb_id, {})
-        entry = (apq.get(peak_rank)
-                 or next((v for k, v in apq.items()
-                          if isinstance(k, tuple) and k[0] == peak_rank), None))
-        pk_by_rank = {p['rank']: p
-                      for p in (self.qs.peak_stage.peaks or [])
-                      if p.get('rank') is not None}
-        new_peak = pk_by_rank.get(peak_rank)
-
-        if entry is None and new_peak is None:
-            return  # no data — cannot preview
-
-        # Save original fields only on the first preview (keep until Apply or cancel)
-        if not self._has_unsaved_preview:
-            self._preview_original = {f: self.result.get(f) for f in self._PREVIEW_FIELDS}
-            self._has_unsaved_preview = True
-
-        if entry:
-            self.result['conc_mm']         = entry['conc_mm']
-            self.result['_concs_by_group'] = entry.get('concs_by_group', {})
-            self.result['ppm']             = entry.get('ppm', self.result.get('ppm', 0))
-            self.result['_lorentz']        = entry.get('_lorentz')
-            cbg = entry.get('concs_by_group', {})
-            cv_bg = {}
-            for _g, _vals in cbg.items():
-                if len(_vals) >= 2:
-                    _m = float(_np.mean(_vals))
-                    cv_bg[_g] = float(_np.std(_vals) / _m * 100) if _m > 0 else float('nan')
-                else:
-                    cv_bg[_g] = float('nan')
-            self.result['cv_by_group'] = cv_bg
-        if new_peak:
-            self.result['_peak']      = new_peak
-            self.result['_peak_rank'] = peak_rank
-            self.result['snr']        = float(new_peak.get('snr', self.result.get('snr', 0)))
-
-        self._refresh_quant_display()
-
-    def _cancel_preview(self, refresh=True):
-        """Revert self.result to state before preview.
-
-        refresh=False: restore fields silently (caller will update the display).
-        """
-        if not self._has_unsaved_preview or self._preview_original is None:
-            return
-        for f, v in self._preview_original.items():
-            self.result[f] = v
-        self._has_unsaved_preview = False
-        self._preview_original    = None
-        if refresh:
-            self._refresh_quant_display()
-
-    def _refresh_quant_display(self):
-        """Push self.result state to the quant module tree row and detail panel."""
-        try:
-            if hasattr(self.qs, '_refresh_tree_row'):
-                self.qs._refresh_tree_row(self.result)
-        except Exception:
-            pass
-        try:
-            if hasattr(self.qs, '_draw_detail'):
-                self.qs._draw_detail(self.result)
-        except Exception:
-            pass
+    @staticmethod
+    def _current_anchor_rank(result):
+        """Anchor peak_rank of the multiplet currently quantifying this analyte."""
+        return result.get('_peak_rank')
 
     # ── Live update ───────────────────────────────────────────────────────────
 
     def load_result(self, result):
         """Switch window to a different metabolite result without reopening."""
-        self._cancel_preview(refresh=False)   # revert previous metabolite quietly
-        self.result               = result
-        self._selected_rank       = result.get('_peak_rank')
-        self._original_peak_rank  = result.get('_peak_rank')
-        self._preview_original    = None
-        self._has_unsaved_preview = False
+        self.result          = result
+        self._selected_hdr   = None
+        self._hdr_members    = {}
+        self._original_anchor = self._current_anchor_rank(result)
         self.win.title(f"Quant Peaks — {result['metabolite']}")
         self._candidates     = self._gather_candidates()
         self._populate_tree()
@@ -264,17 +196,41 @@ class QuantPeaksWindow:
                     _mp = _mp_by_dp.get(_dp_ppm_r)
                     if _mp is None:
                         continue
-                    pr = _mp.get('peak_rank')
-                    if pr is None or pr in sc_ranks or pr in seen_pr:
-                        continue
-                    peak = peaks_by_rank.get(pr)
-                    if peak is None:
-                        continue
-                    seen_pr.add(pr)
-                    c = _make_candidate(peak, dict(_mp), pr, _dp)
-                    c['_rel_intensity'] = float(_mp.get('rel_intensity', 1.0) or 1.0)
-                    candidates.append(c)
-                    sc_ranks.add(pr)
+                    # Members of the multiplet = the predicted-line peaks (what the
+                    # Annotation tree shows), NOT the matched_peak anchor, which for
+                    # a multiplet is the CENTRE and can be a stray peak between the
+                    # real lines (e.g. 461 between Alanine's doublet 49/51).
+                    _line_ppms = [float(l['ppm'])
+                                  for l in (_mp.get('predicted_lines') or [])
+                                  if 'ppm' in l]
+                    _line_ranks = []
+                    if _line_ppms:
+                        _used_ln = set()
+                        for _lp in _line_ppms:
+                            _best, _bd = None, 0.015
+                            for _pk in (self.qs.peak_stage.peaks or []):
+                                _rk = _pk.get('rank')
+                                if _rk is None or _rk in _used_ln:
+                                    continue
+                                _d = abs(float(_pk.get('ppm', 1e9)) - _lp)
+                                if _d < _bd:
+                                    _bd, _best = _d, _rk
+                            if _best is not None:
+                                _line_ranks.append(_best)
+                                _used_ln.add(_best)
+                    if not _line_ranks:
+                        _line_ranks = [_mp.get('peak_rank')]
+                    for pr in _line_ranks:
+                        if pr is None or pr in sc_ranks or pr in seen_pr:
+                            continue
+                        peak = peaks_by_rank.get(pr)
+                        if peak is None:
+                            continue
+                        seen_pr.add(pr)
+                        c = _make_candidate(peak, dict(_mp), pr, _dp)
+                        c['_rel_intensity'] = float(_mp.get('rel_intensity', 1.0) or 1.0)
+                        candidates.append(c)
+                        sc_ranks.add(pr)
 
         # ── Last-resort fallback: flat results hits ────────────────────────────
         # Only when ann._metabolites also has no data (very old saves).
@@ -387,7 +343,7 @@ class QuantPeaksWindow:
         self._tree = ttk.Treeview(frm, columns=col_ids, show='tree headings',
                                   selectmode='browse', height=12)
         self._tree.column('#0', width=160, minwidth=120, anchor='w', stretch=False)
-        self._tree.heading('#0', text='Multiplet')
+        self._tree.heading('#0', text='Signal')
         for cid, hdr_txt, w, anc in all_cols:
             self._tree.heading(cid, text=hdr_txt)
             self._tree.column(cid, width=w, minwidth=w, anchor=anc, stretch=False)
@@ -412,13 +368,15 @@ class QuantPeaksWindow:
         btn_frm = ttk.Frame(win)
         btn_frm.pack(fill='x', padx=10, pady=(2, 8))
 
-        self._apply_btn = ttk.Button(btn_frm, text='Apply',
+        self._apply_btn = ttk.Button(btn_frm, text='Use multiplet',
                                      command=self._apply_selected, state='disabled')
         self._apply_btn.pack(side='right', padx=(4, 0))
         ttk.Button(btn_frm, text='Close',
                    command=self._do_close).pack(side='right')
-        self._info_lbl = ttk.Label(btn_frm, text='Select a peak row then click Apply.',
-                                   foreground='#555555')
+        self._info_lbl = ttk.Label(
+            btn_frm,
+            text='Select a multiplet (header row) to quantify this analyte with it.',
+            foreground='#555555')
         self._info_lbl.pack(side='left')
 
         self._tree.bind('<<TreeviewSelect>>', self._on_select)
@@ -454,6 +412,7 @@ class QuantPeaksWindow:
         tree = self._tree
         for row in tree.get_children():
             tree.delete(row)
+        self._hdr_members = {}
 
         comp_count = getattr(self.qs, '_peak_competitor_count', {})
 
@@ -618,6 +577,7 @@ class QuantPeaksWindow:
 
             hdr_iid = f'hdr_{hdr_idx}'
             hdr_tag = 'hdr_current' if has_curr else 'hdr_normal'
+            self._hdr_members[hdr_iid] = members
             tree.insert('', 'end', iid=hdr_iid, text=hdr_text,
                         tags=(hdr_tag,), open=True,
                         values=('', '', '', '', '', '', '', '', '', '', '',
@@ -648,16 +608,14 @@ class QuantPeaksWindow:
         tree.tag_configure('bad_quality',  foreground='#9e9e9e',
                            background='#fafafa')
 
-        # Pre-select current peak
-        cr = self.result.get('_peak_rank')
-        if cr is not None:
-            for hdr_iid in tree.get_children():
-                for iid in tree.get_children(hdr_iid):
-                    if tree.set(iid, 'rank') == str(cr):
-                        tree.selection_set(iid)
-                        tree.focus(iid)
-                        tree.see(iid)
-                        return
+        # Pre-select the multiplet (header) currently quantifying this analyte.
+        for hdr_iid, members in self._hdr_members.items():
+            if any(c['is_current'] for c in members):
+                tree.selection_set(hdr_iid)
+                tree.focus(hdr_iid)
+                tree.see(hdr_iid)
+                self._on_select()
+                return
 
     # ── Interaction ───────────────────────────────────────────────────────────
 
@@ -669,148 +627,176 @@ class QuantPeaksWindow:
         self._hdr_var.set(hdr)
         self._count_var.set(f'{len(self._candidates)} candidate peak(s)')
 
+    @staticmethod
+    def _multiplet_anchor_rank(members):
+        """Anchor peak_rank used to force this multiplet in re-quantification.
+
+        The matched-peak anchor (hit['peak_rank']) is the rank annotation
+        recorded for the multiplet and the one present in the search `results`,
+        so _quant_peak_overrides resolves to the hit carrying THIS multiplet's
+        predicted_lines (not just a single line).
+        """
+        if not members:
+            return None
+        anchor = (members[0].get('hit') or {}).get('peak_rank')
+        if anchor is not None:
+            return anchor
+        for c in members:
+            if c.get('peak_rank') is not None:
+                return c['peak_rank']
+        return None
+
+    def _multiplet_conflicts(self, members):
+        """Names of OTHER metabolites annotated on any peak of this multiplet.
+
+        Authoritative source is _iid_to_subchild (identical to Annotation
+        Results); falls back to annotation_stage._metabolites.matched_peaks
+        when the annotation window is closed (e.g. loaded project).
+        """
+        my_ids = {str(self.result.get('hmdb_id', '') or ''),
+                  str(self.result.get('_mid', '') or ''),
+                  str(self.result.get('bmrb_id', '') or '')}
+        my_ids.discard('')
+        ranks = {c['peak_rank'] for c in members if c.get('peak_rank') is not None}
+        if not ranks:
+            return []
+
+        def _met_id(met):
+            for f in ('id', 'hmdb_id', 'bmrb_id'):
+                v = met.get(f)
+                if v is not None:
+                    return str(v)
+            return ''
+
+        others = {}
+        annot_win  = getattr(getattr(self.qs, 'app', None), '_annot_win', None)
+        iid_to_sc  = getattr(annot_win, '_iid_to_subchild', {}) or {}
+        if iid_to_sc:
+            for sc in iid_to_sc.values():
+                try:
+                    met, _dp, _mp, _ld, _li, npk = sc
+                except (ValueError, TypeError):
+                    continue
+                if npk is None:
+                    continue
+                mid = _met_id(met)
+                if not mid or mid in my_ids:
+                    continue
+                if npk.get('rank') in ranks:
+                    others[mid] = met.get('name', mid)
+        else:
+            ann_stage = getattr(self.qs, 'annotation_stage', None)
+            for met in (getattr(ann_stage, '_metabolites', []) or []):
+                mid = _met_id(met)
+                if not mid or mid in my_ids:
+                    continue
+                for mp in met.get('matched_peaks', []):
+                    if mp.get('peak_rank') in ranks:
+                        others[mid] = met.get('name', mid)
+                        break
+        return sorted(set(others.values()))
+
     def _on_click(self, event):
         iid = self._tree.identify_row(event.y)
-        if iid and not iid.startswith('hdr_'):
+        if iid:
             self._tree.selection_set(iid)
             self._on_select()
 
     def _on_select(self, _event=None):
         sel = self._tree.selection()
         if not sel:
+            self._selected_hdr = None
             self._apply_btn.config(state='disabled')
             return
         iid = sel[0]
-        if not self._tree.parent(iid):
-            self._apply_btn.config(state='disabled')
-            return
-        rank_str = self._tree.set(iid, 'rank')
-        try:
-            pr = int(rank_str)
-        except (ValueError, TypeError):
-            self._apply_btn.config(state='disabled')
-            self._info_lbl.config(text='No detected peak at this line position.')
-            return
-        if pr == self._original_peak_rank:
-            # User re-selected the original peak — cancel any active preview
-            if self._has_unsaved_preview:
-                self._cancel_preview()
-                self._populate_tree()
-            self._apply_btn.config(state='disabled')
-            self._info_lbl.config(text='Already the current peak.')
-            return
-        if self._effective_quality(pr) == 'bad':
-            # Cancel preview if user clicked a bad peak after a valid preview
-            if self._has_unsaved_preview:
-                self._cancel_preview()
-                self._populate_tree()
+        # Child (peak line) rows are view-only — quantification is per multiplet.
+        if iid not in self._hdr_members:
+            self._selected_hdr = None
             self._apply_btn.config(state='disabled')
             self._info_lbl.config(
-                text=f'Peak rank {pr} is marked Bad — rejected for quantification.')
+                text='Individual peaks are view-only — select the multiplet '
+                     '(header row) to quantify this analyte with it.')
             return
-        self._selected_rank = pr
-        self._start_preview(pr)
+
+        self._selected_hdr = iid
+        members = self._hdr_members[iid]
+
+        if any(c['is_current'] for c in members):
+            self._apply_btn.config(state='disabled')
+            self._info_lbl.config(
+                text='This multiplet already quantifies the analyte.')
+            return
+
+        conflicts = self._multiplet_conflicts(members)
+        if conflicts:
+            self._apply_btn.config(state='disabled')
+            self._info_lbl.config(
+                text='Blocked — signal annotated for: ' + ', '.join(conflicts) + '.')
+            return
+
+        if self._multiplet_anchor_rank(members) is None:
+            self._apply_btn.config(state='disabled')
+            self._info_lbl.config(
+                text='No detected anchor peak for this multiplet.')
+            return
+
         self._apply_btn.config(state='normal')
         self._info_lbl.config(
-            text=f'Peak rank {pr} preview — click Apply to save, navigate away to cancel.')
+            text='Apply re-quantifies all analytes using this multiplet.')
 
     def _apply_selected(self):
-        if self._selected_rank is None:
+        iid = self._selected_hdr
+        if iid is None or iid not in self._hdr_members:
             return
-        if self._effective_quality(self._selected_rank) == 'bad':
-            self._info_lbl.config(
-                text=f'Peak rank {self._selected_rank} is marked Bad — cannot apply.')
+        members = self._hdr_members[iid]
+
+        # ── Block: signal annotated for another metabolite ───────────────────
+        conflicts = self._multiplet_conflicts(members)
+        if conflicts:
+            messagebox.showwarning(
+                'Signal shared',
+                'This multiplet is also annotated for:\n  '
+                + '\n  '.join(conflicts)
+                + f'\n\nIt cannot be used to quantify '
+                  f'{self.result.get("metabolite", "")}.')
             self._apply_btn.config(state='disabled')
             return
-        hmdb_id      = str(self.result.get('hmdb_id', ''))
-        applied_rank = self._selected_rank
 
-        # Remember override so a future _run() also uses the correct peak.
-        if not hasattr(self.qs, '_quant_peak_overrides'):
-            self.qs._quant_peak_overrides = {}
-        self.qs._quant_peak_overrides[hmdb_id] = applied_rank
-
-        # ── Instant update — no re-run needed ────────────────────────────────
-        # _all_peak_quant already has pre-computed concentrations for every
-        # candidate peak.  Just swap the displayed values.
-        apq = getattr(self.qs, '_all_peak_quant', {}).get(hmdb_id, {})
-        entry = (apq.get(applied_rank)
-                 or next((v for k, v in apq.items()
-                          if isinstance(k, tuple) and k[0] == applied_rank),
-                         None))
-
-        pk_by_rank = {p['rank']: p
-                      for p in (self.qs.peak_stage.peaks or [])
-                      if p.get('rank') is not None}
-        new_peak = pk_by_rank.get(applied_rank)
-
-        if entry is None and new_peak is None:
-            self._info_lbl.config(text=f'No pre-computed data for rank {applied_rank}.')
+        anchor = self._multiplet_anchor_rank(members)
+        if anchor is None:
+            self._info_lbl.config(text='No detected anchor peak for this multiplet.')
             return
 
-        # Update self.result in place (also updates qs._quant_results entry
-        # because self.result IS a reference to the same dict).
-        if entry:
-            self.result['conc_mm']          = entry['conc_mm']
-            self.result['_concs_by_group']  = entry.get('concs_by_group', {})
-            self.result['ppm']              = entry.get('ppm', self.result.get('ppm', 0))
-            self.result['_lorentz']         = entry.get('_lorentz')
-            # Recompute CV per group from pre-computed concentrations
-            import numpy as _np
-            cv_bg = {}
-            for _g, _vals in entry.get('concs_by_group', {}).items():
-                if len(_vals) >= 2:
-                    _m = float(_np.mean(_vals))
-                    cv_bg[_g] = float(_np.std(_vals) / _m * 100) if _m > 0 else float('nan')
-                else:
-                    cv_bg[_g] = float('nan')
-            self.result['cv_by_group'] = cv_bg
+        if not messagebox.askyesno(
+                'Re-quantify all analytes',
+                'Changing the multiplet for this analyte re-runs quantification '
+                'for EVERY analyte.\n\nContinue?'):
+            return
 
-        if new_peak:
-            self.result['_peak']      = new_peak
-            self.result['_peak_rank'] = applied_rank
-            self.result['snr']        = float(new_peak.get('snr', self.result.get('snr', 0)))
+        hmdb_id = str(self.result.get('hmdb_id', ''))
+        if getattr(self.qs, '_quant_peak_overrides', None) is None:
+            self.qs._quant_peak_overrides = {}
+        self.qs._quant_peak_overrides[hmdb_id] = anchor
 
-        # Recompute line_idx for the new peak: compare its ppm to predicted_lines
-        # so _effective_nh uses the exact DB fractional weight for this line.
-        self.result.pop('anchor_line_idx', None)
-        _pred_lines = self.result.get('predicted_lines', [])
-        if len(_pred_lines) > 1 and new_peak is not None:
-            _new_ppm = float(new_peak.get('ppm', 0))
-            self.result['line_idx'] = min(
-                range(len(_pred_lines)),
-                key=lambda _i: abs(float(_pred_lines[_i].get('ppm', 0)) - _new_ppm))
+        self._apply_btn.config(state='disabled')
+        self._info_lbl.config(text='Re-quantifying all analytes…')
+        # Full re-run (worker thread). Refresh the window when it finishes.
+        self.qs._safe_run(on_done=self._after_requant)
 
-        self._selected_rank       = None
-        # Commit preview — clear saved original, update baseline rank
-        self._has_unsaved_preview = False
-        self._preview_original    = None
-        self._original_peak_rank  = applied_rank
-
-        # Update tree row in QuantificationStage
-        if hasattr(self.qs, '_refresh_tree_row'):
-            try:
-                self.qs._refresh_tree_row(self.result)
-            except Exception:
-                pass
-
-        # Refresh Quant Peaks window in place
+    def _after_requant(self):
+        """Re-acquire this analyte's (rebuilt) result and refresh the window."""
+        try:
+            if not self.win.winfo_exists():
+                return
+        except Exception:
+            return
+        hmdb_id = str(self.result.get('hmdb_id', ''))
+        new = next((r for r in (getattr(self.qs, '_quant_results', []) or [])
+                    if str(r.get('hmdb_id', '')) == hmdb_id), None)
+        if new is not None:
+            self.result          = new
+            self._original_anchor = self._current_anchor_rank(new)
         self._candidates = self._gather_candidates()
         self._refresh_header_vars()
         self._populate_tree()
-        self._apply_btn.config(state='disabled')
-        _mcr_active = (
-            bool(getattr(getattr(self.qs, 'mcr_var', None), 'get', lambda: False)())
-            or getattr(getattr(self.qs, 'integ_var', None), 'get', lambda: '')() == 'MCR'
-        )
-        _mcr_note = ' [MCR mode: value is trapz estimate]' if _mcr_active else ''
-        self._info_lbl.config(
-            text=f'Peak rank {applied_rank} applied.{_mcr_note} Select another to change.'
-        )
-
-        # Redraw Peak Info panel
-        if hasattr(self.qs, '_draw_detail'):
-            try:
-                self.qs._draw_detail(self.result)
-            except Exception:
-                pass
+        self._info_lbl.config(text='Re-quantified with the selected multiplet.')

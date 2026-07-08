@@ -310,22 +310,44 @@ class PeakDetectionStage(BaseStage):
         self.min_snr_var = tk.DoubleVar(value=6.0)
         ttk.Entry(pf1, textvariable=self.min_snr_var,
                   width=6).pack(side=tk.LEFT, padx=2)
-        self.per_sample_var = tk.BooleanVar(value=False)
+        self.per_sample_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             pf1, text="Detect per sample (union)",
             variable=self.per_sample_var).pack(side=tk.LEFT, padx=(10, 2))
+        ttk.Label(pf1, text="Min samples/group:").pack(side=tk.LEFT, padx=(10, 2))
+        self.min_group_presence_var = tk.IntVar(value=3)
+        ttk.Spinbox(pf1, from_=1, to=50, width=4,
+                    textvariable=self.min_group_presence_var).pack(side=tk.LEFT)
+        ttk.Label(pf1, text="(keep peak only if seen in ≥N samples of a group)",
+                  font=('Arial', 7), foreground='#666').pack(side=tk.LEFT, padx=(4, 0))
+
+        # Row 2b: shoulder recovery (2nd-derivative) — recovers overlapping
+        # lines that have no intensity maximum of their own.
+        pf1b = ttk.Frame(s2)
+        pf1b.pack(fill=tk.X, pady=2)
+        self.detect_shoulders_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            pf1b, text="Recover shoulders (2nd-deriv)",
+            variable=self.detect_shoulders_var).pack(side=tk.LEFT, padx=2)
+
+        # Row 2c: shoulder sensitivity on its own line (kept off the crowded row
+        # above so the entry is always visible).
+        pf1c = ttk.Frame(s2)
+        pf1c.pack(fill=tk.X, pady=2)
+        ttk.Label(pf1c, text="Sensitivity (k·σ):").pack(side=tk.LEFT, padx=2)
+        self.shoulder_k_var = tk.DoubleVar(value=3.0)
+        ttk.Entry(pf1c, textvariable=self.shoulder_k_var,
+                  width=5).pack(side=tk.LEFT, padx=2)
+        ttk.Label(pf1c, text="(lower = more sensitive)",
+                  font=('Arial', 7), foreground='#666').pack(side=tk.LEFT)
 
         # Row 3: Min Width + Prominence
         pf2 = ttk.Frame(s2)
         pf2.pack(fill=tk.X, pady=2)
         ttk.Label(pf2, text="Min Width (ppm):").pack(side=tk.LEFT, padx=2)
-        self.min_width_var = tk.DoubleVar(value=0.01)
+        self.min_width_var = tk.DoubleVar(value=0.005)
         ttk.Entry(pf2, textvariable=self.min_width_var,
                   width=6).pack(side=tk.LEFT, padx=2)
-        ttk.Label(pf2, text="Prominence:").pack(side=tk.LEFT, padx=(8, 2))
-        self.prominence_var = tk.DoubleVar(value=2.0)
-        ttk.Entry(pf2, textvariable=self.prominence_var,
-                  width=5).pack(side=tk.LEFT, padx=2)
 
         self.btn_detect = ttk.Button(
             s2, text="🎯 Detect Peaks",
@@ -508,6 +530,9 @@ class PeakDetectionStage(BaseStage):
                     progress_callback=_push_progress,
                     return_details=True,
                     per_sample_detection=bool(self.per_sample_var.get()),
+                    detect_shoulders=bool(self.detect_shoulders_var.get()),
+                    shoulder_curvature_k=float(self.shoulder_k_var.get()),
+                    min_group_presence=int(self.min_group_presence_var.get()),
                 )
                 _result['details'] = details
                 _result['elapsed'] = time.monotonic() - t0
@@ -610,8 +635,12 @@ class PeakDetectionStage(BaseStage):
                     'gaussian_r2':       p.get('gaussian_r2',      float('nan')),
                     'symmetry_score':    p.get('symmetry_score',    float('nan')),
                     'gaussian_quality':  p.get('gaussian_quality',  'unknown'),
-                    'status': {'good': 'Good', 'poor': 'Average', 'overlap': 'Poor'}.get(
-                        p.get('gaussian_quality', ''), None),
+                    # Shape-based 3-tier quality (green/yellow/red + score).
+                    'peak_quality':       p.get('peak_quality', 'yellow'),
+                    'peak_quality_score': p.get('peak_quality_score', float('nan')),
+                    # Manual annotation status starts unset — the user marks
+                    # Good/Average/Poor; it is NOT derived from the shape quality.
+                    'status': None,
                     'left_grounded':     p.get('left_grounded',     False),
                     'right_grounded':    p.get('right_grounded',    False),
                     'baseline_grounded': p.get('baseline_grounded', False),

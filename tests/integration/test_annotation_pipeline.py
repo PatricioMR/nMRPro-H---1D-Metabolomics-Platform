@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from data.loader import load_all_samples, get_sample_info
-from gui.stages.annotation_stage import _ppm_score, _mult_compat_check
+from gui.stages._annotation_helpers import _ppm_score, _mult_compat_check
 from gui.notation.multiplet_scorer import score_multiplet_match
 
 

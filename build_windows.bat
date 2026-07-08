@@ -20,9 +20,12 @@ echo Built: dist\nMRPipe\nMRPipe.exe
 
 echo.
 echo === [3/3] Building installer with Inno Setup (ISCC) ===
+REM Single source of truth for the version: app_paths.__version__
+for /f tokens^=2^ delims^=^" %%v in ('findstr /b "__version__" app_paths.py') do set "APPVER=%%v"
+echo App version: %APPVER%
 where iscc >nul 2>nul
 if %ERRORLEVEL%==0 (
-    iscc installer\nmrpipe.iss || goto :err
+    iscc /DAppVersion=%APPVER% installer\nmrpipe.iss || goto :err
     echo Installer: Output\nMRPipe-Setup.exe
 ) else (
     echo [skip] ISCC not on PATH — install Inno Setup, then run:

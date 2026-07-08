@@ -1,0 +1,4438 @@
+openapi: 3.0.3
+info:
+  title: MII API
+  version: 1.0.0
+  description: API for various database services provided by TMIC.
+paths:
+  /api/foodb/compound/{compound_id}/:
+    get:
+      operationId: foodb_compound_retrieve
+      description: |-
+        Given a compound ID, returns detailed info of that compound.
+
+        FooDB Compound ID needs to be provided directly on the URL, e.g. /foodb/compound/FDB000633/?api-key=...
+
+        If no ID is provided as a search term, then an error will be returned.
+
+        If no compound with matching ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: compound_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Compound'
+          description: ''
+  /api/foodb/compound/page/{page}/:
+    get:
+      operationId: foodb_compound_page_retrieve
+      description: |-
+        Given a page number, return the paginated list of FooDB entries, with 100 compounds per page.
+
+        Page number must be provided within the request url, e.g. /foodb/compounds/1/?api-key=...
+
+        If no page number is provided, or page number is negative integer, or page number is out of bound, an error will be returned.
+      parameters:
+      - in: path
+        name: page
+        schema:
+          type: integer
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompoundPaginatedView'
+          description: ''
+  /api/foodb/compound/search/:
+    post:
+      operationId: foodb_compound_search_create
+      description: |-
+        Given a search term, return the list of all compounds that has a matching name.
+
+        Search term must be provided as a string with the key "search_term" in the request body. For example, {"search_term": "Kaempferol"}.
+
+        Search term must be at least 3 characters long.
+
+        If the search term is too short, an error will be returned.
+
+        If no item matching search term can be found, an error will be returned.
+      tags:
+      - foodb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CompoundSearchViewRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/CompoundSearchViewRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CompoundSearchViewRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompoundSearchView'
+          description: ''
+  /api/foodb/food/{foodb_id}/:
+    get:
+      operationId: foodb_food_retrieve
+      description: |-
+        Given a FooDB ID, returns basic info of the food item with that ID.
+
+        FooDB ID needs to be provided directly on the URL, e.g. /foodb/food/FOOD00001/?api-key=...
+
+        If no FooDB ID is specified, an error will be returned.
+
+        If no food item with that ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: foodb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Food'
+          description: ''
+  /api/foodb/food/{foodb_id}/compounds/:
+    get:
+      operationId: foodb_food_compounds_retrieve
+      description: |-
+        Given the FooDB ID of a food, returns every compounds associated with that food.
+
+        FooDB ID needs to be provided directly on the URL, e.g. /foodb/food/FOOD00001/compounds/?api-key=...
+
+        If no FooDB ID is specified, an error will be returned.
+
+        If no food item with given FooDB ID cannot be found, an error will be returned.
+
+        Due to numbers of compounds associated with each food item, some food items will take longer to process than others.
+      parameters:
+      - in: path
+        name: foodb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodCompoundViewSingle'
+          description: ''
+  /api/foodb/food/{foodb_id}/nutrients/:
+    get:
+      operationId: foodb_food_nutrients_retrieve
+      description: |-
+        Given the FooDB ID of a food, returns the nutrient content associated with that food.
+
+        Some food item may report zero nutrient content. In this case, an empty array will be returned instead.
+
+        FooDB ID needs to be provided directly on the URL, e.g. /foodb/food/FOOD00001/nutrients/?api-key=...
+
+        If no FooDB ID is specified, an error will be returned.
+
+        If no food item with that ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: foodb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodNutrientViewSingle'
+          description: ''
+  /api/foodb/food/page/{page}/:
+    get:
+      operationId: foodb_food_page_retrieve
+      description: |-
+        Given a page number, return the paginated list of FooDB entries, with 25 foods per page.
+
+        Page number must be provided within the request url, e.g. /foodb/foods/1/?api-key=...
+
+        If no page number is provided, or page number is negative integer, or page number is out of bound, an error will be returned.
+      parameters:
+      - in: path
+        name: page
+        schema:
+          type: integer
+        required: true
+      tags:
+      - foodb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodPaginatedView'
+          description: ''
+  /api/foodb/food/search/:
+    post:
+      operationId: foodb_food_search_create
+      description: |-
+        Given a search term, return the list of all food items that matches it.
+
+        Search term must be provided as a string with the key "search_term" in the request body. For example, {"search_term": "Avocado"}.
+
+        Search term must be at least 3 characters long.
+
+        If the search term is too short, an error will be returned.
+
+        If no item matching search term can be found, an error will be returned.
+      tags:
+      - foodb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FoodSearchViewRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/FoodSearchViewRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/FoodSearchViewRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FoodSearchView'
+          description: ''
+  /api/hmdb/lc-ms-spectra/:
+    post:
+      operationId: hmdb_lc_ms_spectra_create
+      description: |-
+        Given an JSON input format with target query mass, adduct type and tolerance range in dalton or ppm,
+
+        return the list of HMDB metabolites with adduct mass that falls within the target query.
+
+        Query mass is provided as list of floats. E.g. "query_mass": [142.0727, 178.09].
+
+        Adduct type is provided as list of strings. E.g. "adduct_type": ['M+H', 'M+Na'].
+
+        Either one of da_tolerance or ppm_tolerance must be provided. Both may be provided if needed. E.g. "da_tolerance": 0.1 or "ppm_tolerance": 10.
+
+        ccs_prediction must be one of 'AllCCS', 'DarkChem', or 'DeepCCS'. E.g. "ccs_prediction": "AllCCS".
+
+        Target result will be organized by query mass. If no metabolite is found, it will be placed under "not_found" list.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LcMsSearchResponse'
+          description: ''
+  /api/hmdb/lc-ms-spectra/ontology/:
+    post:
+      operationId: hmdb_lc_ms_spectra_ontology_create
+      description: |-
+        Given an JSON input format with target query mass, adduct type and tolerance range in dalton or ppm,
+
+        return the list of HMDB metabolites with adduct mass that falls within the target query.
+
+        Input is provided in JSON format; query mass, adduct type, and tolerance range in dalton or ppm must be provided.
+
+        Query mass is provided as list of floats. E.g. "query_mass": [142.0727, 178.09].
+
+        Adduct type is provided as list of strings. E.g. "adduct_type": ['M+H', 'M+Na'].
+
+        Either one of da_tolerance or ppm_tolerance must be provided. Both may be provided if needed. E.g. "da_tolerance": 0.1 or "ppm_tolerance": 10.
+
+        ccs_prediction must be one of 'AllCCS', 'DarkChem', or 'DeepCCS'. E.g. "ccs_prediction": "AllCCS".
+
+        Target result will be organized by query mass. If no metabolite is found, it will be placed under "not_found" list.
+
+        As ontology search is more computationally expensive, result may take significantly longer to return.
+
+        Furthermore, note that this API endpoint uses data from Chemfont database.
+
+        As such, there may be discrepancies between the data available on HMDB and the data given as output by this endpoint.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LcMsSearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LcMsSearchResponse'
+          description: ''
+  /api/hmdb/metabolites/:
+    post:
+      operationId: hmdb_metabolites_create
+      description: |-
+        Parses list of HMDB ID(s) and returns list of metabolites from HMDB that matches the given ID(s).
+
+        If metabolite with matching HMDB ID is found, they are placed under the "found" list.
+
+        If metabolite with matching HMDB ID is not found, they are placed under the "not_found" list.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If no HMDB ID is specified, an error will be returned.
+
+        Input list cannot be longer than 10 HMDB IDs.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIDRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIDRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIDRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaboliteIDResponse'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/:
+    get:
+      operationId: hmdb_metabolites_retrieve
+      description: |-
+        Retrieves info of single metabolite that matches provided HMDB ID.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metabolite'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/concentrations/:
+    get:
+      operationId: hmdb_metabolites_concentrations_retrieve
+      description: |-
+        Given a single HMDB ID, retrieves every concentration values (both normal and abnormal), their source, and related publications.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/concentrations/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConcentrationSerializerSingleResult'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/enzymes/:
+    get:
+      operationId: hmdb_metabolites_enzymes_retrieve
+      description: |-
+        Takes HMDB metabolite ID as an input, and returns all list of enzyme/proteins that metabolite interacts with.
+
+        Some protein may be involved in a reaction - in that case, retrieve the reaction info as well.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/enzymes/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HmdbEnzyme'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/ontology/:
+    get:
+      operationId: hmdb_metabolites_ontology_retrieve
+      description: |-
+        Given a single HMDB ID, retrieves ontology data of the given metabolite.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/ontology/?api-key=...
+
+        To retrieve specific data from the ontology section, modify the URL as follows:
+
+            * Physiological Effects:    /hmdb/metabolites/{hmdb_id}/ontology/effect/?api-key=...
+            * Disposition:              /hmdb/metabolites/{hmdb_id}/ontology/disposition/?api-key=...
+            * Processes:                /hmdb/metabolites/{hmdb_id}/ontology/process/?api-key=...
+            * Roles:                    /hmdb/metabolites/{hmdb_id}/ontology/role/?api-key=...
+
+        Furthermore, each endpoint above may be further modified with additional suffix.
+
+            * Physiological Effects:
+                * Health effects:               /hmdb/metabolites/{hmdb_id}/ontology/effect/health/?api-key=...
+                * Organoleptic effects:         /hmdb/metabolites/{hmdb_id}/ontology/effect/organoleptic/?api-key=...
+
+            * Disposition:
+                * Route of exposure:            /hmdb/metabolites/{hmdb_id}/ontology/disposition/route/?api-key=...
+                * Source:                       /hmdb/metabolites/{hmdb_id}/ontology/disposition/source/?api-key=...
+                * Biological location:          /hmdb/metabolites/{hmdb_id}/ontology/disposition/location/?api-key=...
+
+            * Processes:
+                * Naturally ocurring:           /hmdb/metabolites/{hmdb_id}/ontology/process/natural/?api-key=...
+                * Industrial processes:         /hmdb/metabolites/{hmdb_id}/ontology/process/industrial/?api-key=...
+
+            * Roles:
+                * Environmental roles:          /hmdb/metabolites/{hmdb_id}/ontology/role/environmental/?api-key=...
+                * Biological roles:             /hmdb/metabolites/{hmdb_id}/ontology/role/biological/?api-key=...
+                * Indirect biological roles:    /hmdb/metabolites/{hmdb_id}/ontology/role/indirect/?api-key=...
+                * Industrial applications:      /hmdb/metabolites/{hmdb_id}/ontology/role/industrial/?api-key=...
+                * Biomarkers:                   /hmdb/metabolites/{hmdb_id}/ontology/role/biomarker/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+
+        Note that this API endpoint uses data from Chemfont database, which is more up-to-date than the data available on HMDB.
+
+        As such, there may be discrepancies between the data available on HMDB and the data given as output by this endpoint.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ontology'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/ontology/{category}/:
+    get:
+      operationId: hmdb_metabolites_ontology_retrieve_2
+      description: |-
+        Given a single HMDB ID, retrieves ontology data of the given metabolite.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/ontology/?api-key=...
+
+        To retrieve specific data from the ontology section, modify the URL as follows:
+
+            * Physiological Effects:    /hmdb/metabolites/{hmdb_id}/ontology/effect/?api-key=...
+            * Disposition:              /hmdb/metabolites/{hmdb_id}/ontology/disposition/?api-key=...
+            * Processes:                /hmdb/metabolites/{hmdb_id}/ontology/process/?api-key=...
+            * Roles:                    /hmdb/metabolites/{hmdb_id}/ontology/role/?api-key=...
+
+        Furthermore, each endpoint above may be further modified with additional suffix.
+
+            * Physiological Effects:
+                * Health effects:               /hmdb/metabolites/{hmdb_id}/ontology/effect/health/?api-key=...
+                * Organoleptic effects:         /hmdb/metabolites/{hmdb_id}/ontology/effect/organoleptic/?api-key=...
+
+            * Disposition:
+                * Route of exposure:            /hmdb/metabolites/{hmdb_id}/ontology/disposition/route/?api-key=...
+                * Source:                       /hmdb/metabolites/{hmdb_id}/ontology/disposition/source/?api-key=...
+                * Biological location:          /hmdb/metabolites/{hmdb_id}/ontology/disposition/location/?api-key=...
+
+            * Processes:
+                * Naturally ocurring:           /hmdb/metabolites/{hmdb_id}/ontology/process/natural/?api-key=...
+                * Industrial processes:         /hmdb/metabolites/{hmdb_id}/ontology/process/industrial/?api-key=...
+
+            * Roles:
+                * Environmental roles:          /hmdb/metabolites/{hmdb_id}/ontology/role/environmental/?api-key=...
+                * Biological roles:             /hmdb/metabolites/{hmdb_id}/ontology/role/biological/?api-key=...
+                * Indirect biological roles:    /hmdb/metabolites/{hmdb_id}/ontology/role/indirect/?api-key=...
+                * Industrial applications:      /hmdb/metabolites/{hmdb_id}/ontology/role/industrial/?api-key=...
+                * Biomarkers:                   /hmdb/metabolites/{hmdb_id}/ontology/role/biomarker/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+
+        Note that this API endpoint uses data from Chemfont database, which is more up-to-date than the data available on HMDB.
+
+        As such, there may be discrepancies between the data available on HMDB and the data given as output by this endpoint.
+      parameters:
+      - in: path
+        name: category
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ontology'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/ontology/{category}/{filter}/:
+    get:
+      operationId: hmdb_metabolites_ontology_retrieve_3
+      description: |-
+        Given a single HMDB ID, retrieves ontology data of the given metabolite.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/ontology/?api-key=...
+
+        To retrieve specific data from the ontology section, modify the URL as follows:
+
+            * Physiological Effects:    /hmdb/metabolites/{hmdb_id}/ontology/effect/?api-key=...
+            * Disposition:              /hmdb/metabolites/{hmdb_id}/ontology/disposition/?api-key=...
+            * Processes:                /hmdb/metabolites/{hmdb_id}/ontology/process/?api-key=...
+            * Roles:                    /hmdb/metabolites/{hmdb_id}/ontology/role/?api-key=...
+
+        Furthermore, each endpoint above may be further modified with additional suffix.
+
+            * Physiological Effects:
+                * Health effects:               /hmdb/metabolites/{hmdb_id}/ontology/effect/health/?api-key=...
+                * Organoleptic effects:         /hmdb/metabolites/{hmdb_id}/ontology/effect/organoleptic/?api-key=...
+
+            * Disposition:
+                * Route of exposure:            /hmdb/metabolites/{hmdb_id}/ontology/disposition/route/?api-key=...
+                * Source:                       /hmdb/metabolites/{hmdb_id}/ontology/disposition/source/?api-key=...
+                * Biological location:          /hmdb/metabolites/{hmdb_id}/ontology/disposition/location/?api-key=...
+
+            * Processes:
+                * Naturally ocurring:           /hmdb/metabolites/{hmdb_id}/ontology/process/natural/?api-key=...
+                * Industrial processes:         /hmdb/metabolites/{hmdb_id}/ontology/process/industrial/?api-key=...
+
+            * Roles:
+                * Environmental roles:          /hmdb/metabolites/{hmdb_id}/ontology/role/environmental/?api-key=...
+                * Biological roles:             /hmdb/metabolites/{hmdb_id}/ontology/role/biological/?api-key=...
+                * Indirect biological roles:    /hmdb/metabolites/{hmdb_id}/ontology/role/indirect/?api-key=...
+                * Industrial applications:      /hmdb/metabolites/{hmdb_id}/ontology/role/industrial/?api-key=...
+                * Biomarkers:                   /hmdb/metabolites/{hmdb_id}/ontology/role/biomarker/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+
+        Note that this API endpoint uses data from Chemfont database, which is more up-to-date than the data available on HMDB.
+
+        As such, there may be discrepancies between the data available on HMDB and the data given as output by this endpoint.
+      parameters:
+      - in: path
+        name: category
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: filter
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ontology'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/pathways/:
+    get:
+      operationId: hmdb_metabolites_pathways_list
+      description: |-
+        Given a single HMDB ID, retrieves all pathways that the given metabolite is involved in.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/pathway/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PathwaySerializerSingleResult'
+          description: ''
+  /api/hmdb/metabolites/{hmdb_id}/spectra/:
+    get:
+      operationId: hmdb_metabolites_spectra_retrieve
+      description: |-
+        Given a single HMDB ID, retrieves spectra data of the given metabolite.
+
+        HMDB ID needs to be provided directly on the URL, e.g. /hmdb/metabolites/HMDB0000001/spectra/?api-key=...
+
+        If no HMDB ID is specified, an error will be returned.
+
+        If no metabolite with matching HMDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: hmdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Spectra'
+          description: ''
+  /api/hmdb/metabolites/concentrations/:
+    post:
+      operationId: hmdb_metabolites_concentrations_create
+      description: |-
+        Given a list of HMDB IDs, retrieves every concentration values (both normal and abnormal), their source, and related publications.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If concentration data for metabolites are successfully found, the output will be placed under the "found" list.
+
+        If concentration data cannot be found for given HMDB ID, that ID will be placed under "not_found" list.
+
+        If no HMDB ID is provided, an error will be returned.
+
+        Input list cannot be longer than 10 HMDB IDs.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConcentrationSearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ConcentrationSearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ConcentrationSearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConcentrationSerializerMultiResult'
+          description: ''
+  /api/hmdb/metabolites/enzymes/:
+    post:
+      operationId: hmdb_metabolites_enzymes_create
+      description: |-
+        Takes HMDB metabolite ID as an input, and returns all list of enzyme/proteins that metabolite interacts with.
+
+        Some protein may be involved in a reaction - in that case, retrieve the reaction info as well.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If proteins for metabolites are successfully found, their protein data will be placed under the "found" list.
+
+        If proteins cannot be found for given HMDB ID, that ID will be placed under "not_found" list.
+
+        If no HMDB ID is provided, an error will be returned.
+
+        Input list cannot be longer than 10 HMDB IDs.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnzymeSearchRequestMultipleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/EnzymeSearchRequestMultipleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/EnzymeSearchRequestMultipleRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Protein'
+          description: ''
+  /api/hmdb/metabolites/ion/:
+    post:
+      operationId: hmdb_metabolites_ion_create
+      description: |-
+        Given a chemical formula, find metabolite from HMDB that matches that description.
+
+        Chemical formula(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"formula": ["C6H12O6", "C6H12O4"]}.
+
+        If single formula returns multiple metabolites, they will be ordered by numbers of publications.
+
+        If two metabolites are tied for numbers of publications, then metabolites that are detected and/or quantified will be prioritized.
+
+        If no metabolite with matching formula is found, return error.
+
+        If no chemical formula is provided, return error.
+
+        Input list cannot be longer than 10 elements.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIonRequestMultipleRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIonRequestMultipleRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MetaboliteIonRequestMultipleRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaboliteIonResponseMultiple'
+          description: ''
+  /api/hmdb/metabolites/ion/{formula}/:
+    get:
+      operationId: hmdb_metabolites_ion_retrieve
+      description: |-
+        Given a chemical formula, find metabolite from HMDB that matches that description.
+
+        If single formula returns multiple metabolites, return the one with largest numbers of publications.
+
+        If two metabolites are tied for numbers of publications, then metabolites that are detected and/or quantified will be prioritized.
+
+        Chemical formula needs to be provided directly on the URL, e.g. /hmdb/metabolites/ion/C6H12O6/?api-key=...
+
+        If no chemical formula is specified, an error will be returned.
+
+        If no metabolite with matching chemical formula can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: formula
+        schema:
+          type: string
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetaboliteIonResponse'
+          description: ''
+  /api/hmdb/metabolites/ontology/:
+    post:
+      operationId: hmdb_metabolites_ontology_create
+      description: |-
+        Parses list of HMDB ID(s) and returns list of metabolites from HMDB that matches the given ID(s).
+
+        If metabolite with matching HMDB ID is found, they are placed under the "found" list.
+
+        If metabolite with matching HMDB ID is not found, they are placed under the "not_found" list.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If no HMDB ID is specified, an error will be returned.
+
+        Input list cannot be longer than 10 HMDB IDs.
+
+        Note that this API endpoint uses data from Chemfont database, which is more up-to-date than the data available on HMDB.
+
+        As such, there may be discrepancies between the data available on HMDB and the data given as output by this endpoint.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OntologyRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/OntologyRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/OntologyRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OntologyResponse'
+          description: ''
+  /api/hmdb/metabolites/page/{page}/:
+    get:
+      operationId: hmdb_metabolites_page_retrieve
+      description: |-
+        Retrieves list of metabolites from the HMDB database, ordered by their HMDB IDs.
+
+        Each list is paginated into 100 metabolites per page. The page number can be specified in the URL, e.g. /hmdb/metabolites/1/ will return the first page of metabolites.
+
+        Page number must be specified. If no page number is specified, an error will be returned.
+
+        In addition, having the page number outside the range of the total number of pages will also return an error. The page number range will be shown in the error message.
+      parameters:
+      - in: path
+        name: page
+        schema:
+          type: integer
+        required: true
+      tags:
+      - hmdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimpleMetabolite'
+          description: ''
+  /api/hmdb/metabolites/pathways/:
+    post:
+      operationId: hmdb_metabolites_pathways_create
+      description: |-
+        Given a list of HMDB IDs, retrieves all pathways that the each given metabolite is involved in.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If pathways for metabolites are successfully found, their pathway data will be placed under the "found" list.
+
+        If pathways cannot be found for given HMDB ID, that ID will be placed under "not_found" list.
+
+        If no HMDB ID is specified, an error will be returned.
+
+        Input list cannot be longer than 10 HMDB IDs.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PathwaySearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PathwaySearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PathwaySearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwaySearchResponse'
+          description: ''
+  /api/hmdb/metabolites/search/:
+    post:
+      operationId: hmdb_metabolites_search_create
+      description: |-
+        Given search parameters such as HMDB ID, name, formula, etc., retrieves metabolite data from HMDB.
+
+        Parameters available for search includes:
+
+        * HMDB ID: HMDB ID of the compound.
+        * Name: Common name of the compound, including the synonyms.
+        * InChI: InChI of the compound.
+        * InChI Key: InChI Key of the compound.
+        * Formula: Molecular formula of the compound.
+        * SMILES: SMILES key of the compound.
+        * CAS: CAS number of the compound.
+
+        Search parameters must be provided as a JSON object in the request body. For example, {"hmdb_id": "HMDB0000001"}, or {"cas": "332-80-9"}.
+
+        More than one search parameter may be provided at once. For example, {"hmdb_id": "HMDB0000001", "name": "methyl"}.
+
+        If no search parameters are provided, an error will be returned.
+
+        If no metabolites with matching search parameters can be found, an error will be returned.
+
+        If multiple metabolites with matching search parameters are found, all of them will be returned.
+
+        Note that API may not return any result if search parameters are conflicting - for example, {"hmdb_id": "HMDB0000001", "cas": "7664-41-7"}.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MetaboliteSearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MetaboliteSearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MetaboliteSearchRequestRequest'
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Metabolite'
+          description: ''
+  /api/hmdb/metabolites/spectra/:
+    post:
+      operationId: hmdb_metabolites_spectra_create
+      description: |-
+        Given a list of HMDB IDs, retrieves pathway data for each HMDB ID in that list.
+
+        If metabolite with matching HMDB ID is found, they are placed under the "found" list.
+
+        If metabolite with matching HMDB ID is not found, they are placed under the "not_found" list.
+
+        HMDB ID(s) must be provided as a list with the key "hmdb_id" in the request body. For example, {"hmdb_id": ["HMDB0000001", "HMDB0000002"]}.
+
+        If no HMDB ID is specified, an error will be returned.
+      tags:
+      - hmdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SpectraRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SpectraRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SpectraRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SpectraResponseMultiple'
+          description: ''
+  /api/markerdb/condition/{cid}/:
+    get:
+      operationId: markerdb_condition_retrieve
+      description: |-
+        Given an ID number for MarkerDB condition, retrieve all relevant info of that MarkerDB condition.
+
+        Condition ID needs to be provided directly on the URL, e.g. /markerdb/condition/115/?api-key=...
+
+        ID for condition of interest can be retrieved from endpoint /markerdb/condition/search/ with a search term.
+
+        If no Condition ID is specified, an error will be returned.
+
+        If no entry with matching Condition ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: cid
+        schema:
+          type: integer
+        required: true
+      tags:
+      - markerdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/markerdb/condition/search/:
+    post:
+      operationId: markerdb_condition_search_create
+      description: |-
+        Given a search term, return brief info of corresponding MarkerDB condition and its ID.
+
+        Search term must be longer than 3 characters. If search string is too short, an error will be returned.
+
+        Search term must be provided as a JSON object in the request body, e.g.: {"search_term": "Diabetes"}
+
+        Search term is case-insensitive.
+
+        If no search term is provided, an error will be returned.
+      tags:
+      - markerdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MarkerDBConditionSearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/MarkerDBConditionSearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/MarkerDBConditionSearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkerDBConditionSearchResponse'
+          description: ''
+  /api/markerdb/marker/{mdbid}/:
+    get:
+      operationId: markerdb_marker_retrieve
+      description: |-
+        Given a single MarkerDB ID, retrieves all relevant info of corresponding MarkerDB entry,
+
+        including - if available - diagnostic/prognostic/predictive information and possible exposure routes.
+
+        MarkerDB ID needs to be provided directly on the URL, e.g. /markerdb/marker/MDB00000001/?api-key=...
+
+        If no MarkerDB ID is specified, an error will be returned.
+
+        If no entry with matching MarkerDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: mdbid
+        schema:
+          type: string
+        required: true
+      tags:
+      - markerdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkerDB'
+          description: ''
+  /api/markerdb/marker/cid/{cid}/:
+    get:
+      operationId: markerdb_marker_cid_retrieve
+      description: |-
+        Given a single Condition ID, retrieves all relevant info of corresponding MarkerDB entry,
+
+        including - if available - diagnostic/prognostic/predictive information and possible exposure routes.
+
+        Condition ID needs to be provided directly on the URL, e.g. /markerdb/marker/cid/1/?api-key=...
+
+        If no Condition ID is specified, an error will be returned.
+
+        If no entry with matching Condition ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: cid
+        schema:
+          type: integer
+        required: true
+      tags:
+      - markerdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkerDB'
+          description: ''
+  /api/markerdb/marker/list/{cat}/{page}/:
+    get:
+      operationId: markerdb_marker_list_retrieve
+      description: |-
+        Returns paginated list of all MarkerDB entries, given a category.
+
+        Categories can be:
+
+            * Chemical
+            * Genetic
+            * Protein
+            * Karyotype
+
+        Category and page number should be provided directly on the URL, e.g. /markerdb/marker/list/chemical/1/?api-key=...
+
+        If no category or page number is given, an error will be returned.
+      parameters:
+      - in: path
+        name: cat
+        schema:
+          type: string
+        required: true
+      - in: path
+        name: page
+        schema:
+          type: integer
+        required: true
+      tags:
+      - markerdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkerDBPage'
+          description: ''
+  /api/pathbank/pathway/:
+    post:
+      operationId: pathbank_pathway_create
+      description: |-
+        Given a list of SMPDB IDs, retrieves pathway data for each SMPDB ID in that list.
+
+        If pathway with matching SMPDB ID is found, their data will be placed under the "found" list.
+
+        If no pathway with matching SMPDB ID is found, then that ID will be placed under the "not_found" list.
+
+        The SMPDB ID must be specified in the POST request, via key "smpdb_id". For example, {"smpdb_id": ["SMP0000051", "SMP0000009"]}.
+
+        If no SMPDB ID is provided, then error will be returned.
+      tags:
+      - pathbank
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayDetailViewResponseMultiple'
+          description: ''
+  /api/pathbank/pathway/{smpdb_id}/:
+    get:
+      operationId: pathbank_pathway_retrieve
+      description: |-
+        Given an SMPDB ID, return the corresponding pathways, their associated compound/protein(s), and references.
+
+        SMPDB ID needs to be provided directly on the URL, e.g. /pathbank/pathway/SMP0000051/?api-key=...
+
+        If no SMPDB ID is specified, an error will be returned.
+
+        If no pathway with matching SMPDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: smpdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - pathbank
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayDetailViewSingleResponse'
+          description: ''
+  /api/pathbank/pathway/{smpdb_id}/reaction/:
+    get:
+      operationId: pathbank_pathway_reaction_retrieve
+      description: |-
+        Given a SMPDB ID, return the brief data of corresponding pathway and all associated reactions.
+
+        SMPDB ID needs to be provided directly on the URL, e.g. /pathbank/pathway/SMP0000051/reaction/?api-key=...
+
+        If no SMPDB ID is specified, an error will be returned.
+
+        If no pathway with matching SMPDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: smpdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - pathbank
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayReactionViewResponse'
+          description: ''
+  /api/pathbank/pathway/search/:
+    post:
+      operationId: pathbank_pathway_search_create
+      description: |-
+        Given a search term, return the most relevant pathway(s).
+
+        Search term must be at least 3 characters long, and be provided as a JSON key. For example, {"search_term": "Metabolism", "species": "Homo sapiens", "pathway_type": "Metabolite"}
+
+        If the search term is too short, an error will be returned.
+
+        If no item matching search term can be found, an error will be returned.
+
+        "species" field must be one of the following:
+
+            * Homo sapiens
+            * Bos taurus
+            * Rattus norvegicus
+            * Mus musculus
+            * Drosophila melanogaster
+            * Caenorhapditis elegans
+            * Arabidopsis thaliana
+            * Saccharomyces cerevisiae
+            * Escherichia coli
+            * Pseudomonas aeruginosa
+
+        "pathway_type" field must be one of the following:
+
+            * Metabolite
+            * Protein
+
+        "species" field and "pathway_type" field is optional and may be omitted. In this case, all pathways for any species will be queried.
+      tags:
+      - pathbank
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SMPDBPathwaySearchResponse'
+          description: ''
+  /api/smpdb/pathway/:
+    post:
+      operationId: smpdb_pathway_create
+      description: |-
+        Given a list of SMPDB IDs, retrieves pathway data for each SMPDB ID in that list.
+
+        If pathway with matching SMPDB ID is found, their data will be placed under the "found" list.
+
+        If no pathway with matching SMPDB ID is found, then that ID will be placed under the "not_found" list.
+
+        The SMPDB ID must be specified in the POST request, via key "smpdb_id". For example, {"smpdb_id": ["SMP0000051", "SMP0000009"]}.
+
+        If no SMPDB ID is provided, then error will be returned.
+      tags:
+      - smpdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PathwayDetailViewRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayDetailViewResponseMultiple'
+          description: ''
+  /api/smpdb/pathway/{smpdb_id}/:
+    get:
+      operationId: smpdb_pathway_retrieve
+      description: |-
+        Given an SMPDB ID, return the corresponding pathways, their associated compound/protein(s), and references.
+
+        SMPDB ID needs to be provided directly on the URL, e.g. /smpdb/pathway/SMP0000051/?api-key=...
+
+        If no SMPDB ID is specified, an error will be returned.
+
+        If no pathway with matching SMPDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: smpdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - smpdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayDetailViewSingleResponse'
+          description: ''
+  /api/smpdb/pathway/{smpdb_id}/reaction/:
+    get:
+      operationId: smpdb_pathway_reaction_retrieve
+      description: |-
+        Given an SMPDB ID, return the brief data of corresponding pathway and all associated reactions.
+
+        SMPDB ID needs to be provided directly on the URL, e.g. /smpdb/pathway/SMP0000051/reaction/?api-key=...
+
+        If no SMPDB ID is specified, an error will be returned.
+
+        If no pathway with matching SMPDB ID can be found, an error will be returned.
+      parameters:
+      - in: path
+        name: smpdb_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - smpdb
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PathwayReactionViewResponse'
+          description: ''
+  /api/smpdb/pathway/search/:
+    post:
+      operationId: smpdb_pathway_search_create
+      description: |-
+        Given a search term, return the most relevant pathway(s).
+
+        Search term must be at least 3 characters long, and be provided as a JSON key. For example, {"search_term": "Metabolism"}
+
+        Pathway may be provided as an optional search term. For example, {"search_term": "Metabolism", "pathway_type": "Metabolic"}
+
+        "pathway_type" field must be one of the following:
+
+            * Metabolic
+            * Physiological
+            * Signaling
+            * Drug Metabolism
+            * Drug Action
+            * Disease
+
+        If the search term is too short, an error will be returned.
+
+        If no item matching search term can be found, an error will be returned.
+
+        Pathway type may be omitted. In this case, all pathways will be searched.
+      tags:
+      - smpdb
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/SMPDBPathwaySearchRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SMPDBPathwaySearchResponse'
+          description: ''
+  /api/t3db/toxin/{t3db_id}/:
+    get:
+      operationId: t3db_toxin_list
+      description: |-
+        Given a T3DB ID, return the toxin compound information.
+
+        T3DB ID needs to be provided directly on the URL, e.g. /t3db/toxin/T3D0001/?api-key=...
+
+        If no T3DB ID is provided, an error will be returned.
+
+        If T3DB compound with the given ID is not found, an error will be returned.
+      parameters:
+      - in: path
+        name: t3db_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - t3db
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/T3dbToxin'
+          description: ''
+  /api/t3db/toxin/{t3db_id}/genes/:
+    get:
+      operationId: t3db_toxin_genes_retrieve
+      description: |-
+        Given a T3DB ID, return the genes up- and down-regulated by the toxin compound.
+
+        T3DB ID needs to be provided directly on the URL, e.g. /t3db/toxin/T3D0001/genes/?api-key=...
+
+        If no T3DB ID is provided, an error will be returned.
+
+        If T3DB compound with the given ID is not found, an error will be returned.
+      parameters:
+      - in: path
+        name: t3db_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - t3db
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/T3dbToxinGenes'
+          description: ''
+  /api/t3db/toxin/{t3db_id}/targets/:
+    get:
+      operationId: t3db_toxin_targets_list
+      description: |-
+        Given a T3DB ID, return the targets of the toxin compound.
+
+        T3DB ID needs to be provided directly on the URL, e.g. /t3db/toxin/T3D0001/targets/?api-key=...
+
+        If no T3DB ID is provided, an error will be returned.
+
+        If T3DB compound with the given ID is not found, an error will be returned.
+      parameters:
+      - in: path
+        name: t3db_id
+        schema:
+          type: string
+        required: true
+      tags:
+      - t3db
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TargetBond'
+          description: ''
+  /api/t3db/toxin/search/:
+    post:
+      operationId: t3db_toxin_search_create
+      description: |-
+        Given a search string and categories, return toxin compounds that match the search string and categories.
+
+        Both search string and categories are optional.
+
+        Search string, if present, must be longer than 3 characters. If search string is too short, an error will be returned.
+
+        Categories, if present, must be a list composed of category identifiers below, provided as a string:
+
+            * Airborne Pollutant
+            * Animal Toxin
+            * Bacterial Toxin
+            * Cigarette Toxin
+            * Drug
+            * Food Toxin
+            * Fungal Toxin
+            * Household Toxin
+            * Industrial Toxin
+            * Natural Toxin
+            * Pesticide
+            * Plant Toxin
+            * Pollutant
+            * Polychlorinated Biphenyl
+            * Protein
+            * Synthetic Toxin
+            * Uremic Toxin
+
+        Both search term and categories must be provided as a JSON object in the request body, e.g.: {"search_term": "Arsenic", "categories": ["Pollutant", "Pesticide"]}
+
+        If no search string is provided, all compounds within a category will be returned.
+
+        If no categories are provided, compounds will be retrieved regardless of category identifier.
+
+        Search string is case-insensitive.
+
+        Categories are case-sensitive.
+      tags:
+      - t3db
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/T3dbCategoryRequestRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/T3dbCategoryRequestRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/T3dbCategoryRequestRequest'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - ApiKeyAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/T3dbCategoryResponse'
+          description: ''
+components:
+  schemas:
+    Compound:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        name:
+          type: string
+          maxLength: 255
+        primary_id:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          nullable: true
+        cas_number:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_formula:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_iupac:
+          type: string
+          nullable: true
+        moldb_inchi:
+          type: string
+          nullable: true
+        moldb_inchikey:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_average_mass:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,5}(?:\.\d{0,4})?$
+          nullable: true
+        moldb_monoisotopic_mass:
+          type: string
+          readOnly: true
+        image_link:
+          type: string
+          readOnly: true
+        classification:
+          type: string
+          readOnly: true
+        molecular_framework:
+          type: string
+          nullable: true
+          maxLength: 255
+        predicted_properties:
+          type: string
+          readOnly: true
+        experimental_properties:
+          type: string
+          readOnly: true
+        external_links:
+          type: string
+          readOnly: true
+      required:
+      - classification
+      - experimental_properties
+      - external_links
+      - id
+      - image_link
+      - moldb_monoisotopic_mass
+      - name
+      - predicted_properties
+      - primary_id
+    CompoundPaginatedView:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number.
+        foods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleCompound'
+          description: List of food items in this page.
+        prev_page:
+          type: integer
+          description: Previous page number.
+        next_page:
+          type: integer
+          description: Next page number.
+        total_page:
+          type: integer
+          description: Total number of pages.
+      required:
+      - foods
+      - next_page
+      - page
+      - prev_page
+      - total_page
+    CompoundSearchView:
+      type: object
+      properties:
+        search_term:
+          type: string
+          description: The search term used.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleCompound'
+          description: List of compounds matching the search term.
+      required:
+      - results
+      - search_term
+    CompoundSearchViewRequest:
+      type: object
+      properties:
+        search_term:
+          type: string
+          minLength: 1
+          description: The search term to be used.
+      required:
+      - search_term
+    ConcentrationSearchRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: array
+          items: {}
+          description: HMDB ID(s) of metabolites.
+      required:
+      - hmdb_id
+    ConcentrationSerializerMultiResult:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConcentrationSerializerMultiResultFound'
+        not_found:
+          type: array
+          items: {}
+          description: List of HMDB ID(s) that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    ConcentrationSerializerMultiResultAbnormal:
+      type: object
+      properties:
+        biospecimen:
+          type: string
+          description: Location of where biospecimen was found.
+        status:
+          type: string
+          description: Status of biospecimen (whether detected or quantified).
+        condition:
+          type: string
+          description: Subject's condition which condition the biospecimen are found.
+        value:
+          type: number
+          format: double
+          description: Concentration value of biospecimen.
+        age:
+          type: string
+          description: Age of the subject.
+        sex:
+          type: string
+          description: Sex of the subject.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of biospecimen.
+      required:
+      - age
+      - biospecimen
+      - condition
+      - publications
+      - sex
+      - status
+      - value
+    ConcentrationSerializerMultiResultFound:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of metabolite.
+        normal_concentration:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConcentrationSerializerMultiResultNormal'
+        abnormal_concentration:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConcentrationSerializerMultiResultAbnormal'
+      required:
+      - abnormal_concentration
+      - hmdb_id
+      - normal_concentration
+    ConcentrationSerializerMultiResultNormal:
+      type: object
+      properties:
+        biospecimen:
+          type: string
+          description: Location of where biospecimen was found.
+        status:
+          type: string
+          description: Status of biospecimen (whether detected or quantified).
+        condition:
+          type: string
+          description: Subject's condition which condition the biospecimen are found.
+        value:
+          type: number
+          format: double
+          description: Concentration value of biospecimen.
+        age:
+          type: string
+          description: Age of the subject.
+        sex:
+          type: string
+          description: Sex of the subject.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of biospecimen.
+      required:
+      - age
+      - biospecimen
+      - condition
+      - publications
+      - sex
+      - status
+      - value
+    ConcentrationSerializerSingleResult:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of metabolite.
+        normal_concentration:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConcentrationSerializerSingleResultNormal'
+        abnormal_concentration:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConcentrationSerializerSingleResultAbnormal'
+      required:
+      - abnormal_concentration
+      - hmdb_id
+      - normal_concentration
+    ConcentrationSerializerSingleResultAbnormal:
+      type: object
+      properties:
+        biospecimen:
+          type: string
+          description: Location of where biospecimen was found.
+        status:
+          type: string
+          description: Status of biospecimen (whether detected or quantified).
+        condition:
+          type: string
+          description: Subject's condition which condition the biospecimen are found.
+        value:
+          type: number
+          format: double
+          description: Concentration value of biospecimen.
+        age:
+          type: string
+          description: Age of the subject.
+        sex:
+          type: string
+          description: Sex of the subject.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of biospecimen.
+      required:
+      - age
+      - biospecimen
+      - condition
+      - publications
+      - sex
+      - status
+      - value
+    ConcentrationSerializerSingleResultNormal:
+      type: object
+      properties:
+        biospecimen:
+          type: string
+          description: Location of where biospecimen was found.
+        status:
+          type: string
+          description: Status of biospecimen (whether detected or quantified).
+        condition:
+          type: string
+          description: Subject's condition which condition the biospecimen are found.
+        value:
+          type: number
+          format: double
+          description: Concentration value of biospecimen.
+        age:
+          type: string
+          description: Age of the subject.
+        sex:
+          type: string
+          description: Sex of the subject.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of biospecimen.
+      required:
+      - age
+      - biospecimen
+      - condition
+      - publications
+      - sex
+      - status
+      - value
+    DiagnosticInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Condition of the diagnostic information.
+        biofluid:
+          type: string
+          description: Biofluid source.
+        age_range:
+          type: string
+          description: Age range of the subjects.
+        sex:
+          type: string
+          description: Sex of the subjects.
+        level:
+          type: string
+          description: Total concentration level of the biomarker in subjects.
+        range:
+          type: string
+          description: Concentration range of the biomarker in subjects.
+        high:
+          type: string
+          description: Highest concentration of the biomarker in subjects.
+        low:
+          type: string
+          description: Lowest concentration of the biomarker in subjects.
+        mean:
+          type: string
+          description: Mean concentration of the biomarker in subjects.
+        status:
+          type: string
+          description: Annotation status of the biomarker.
+        reference:
+          type: array
+          items: {}
+          description: Pubmed ID and citation of the relevant reference(s).
+      required:
+      - age_range
+      - biofluid
+      - condition
+      - high
+      - level
+      - low
+      - mean
+      - range
+      - reference
+      - sex
+      - status
+    EnzymeSearchRequestMultipleRequest:
+      type: object
+      properties:
+        formula:
+          type: array
+          items: {}
+          description: Chemical formula of metabolite ion.
+      required:
+      - formula
+    ExposureInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Exposure source information.
+        biofluid:
+          type: string
+          description: Biofluid source.
+        age_range:
+          type: string
+          description: Age range of the subjects.
+        sex:
+          type: string
+          description: Sex of the subjects.
+        level:
+          type: string
+          description: Total concentration level of the biomarker in subjects.
+        range:
+          type: string
+          description: Concentration range of the biomarker in subjects.
+        high:
+          type: string
+          description: Highest concentration of the biomarker in subjects.
+        low:
+          type: string
+          description: Lowest concentration of the biomarker in subjects.
+        mean:
+          type: string
+          description: Mean concentration of the biomarker in subjects.
+        status:
+          type: string
+          description: Annotation status of the biomarker.
+        reference:
+          type: array
+          items: {}
+          description: Pubmed ID and citation of the relevant reference(s).
+      required:
+      - age_range
+      - biofluid
+      - condition
+      - high
+      - level
+      - low
+      - mean
+      - range
+      - reference
+      - sex
+      - status
+    Food:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        public_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        name_scientific:
+          type: string
+          nullable: true
+          maxLength: 255
+        description:
+          type: string
+          nullable: true
+        food_group:
+          type: string
+          nullable: true
+          maxLength: 255
+        food_subgroup:
+          type: string
+          nullable: true
+          maxLength: 255
+        updated_at:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - name
+    FoodCompoundViewSingle:
+      type: object
+      properties:
+        num_compounds:
+          type: integer
+          description: Total number of compounds associated with the food item.
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Compound'
+          description: List of compounds associated with the food item.
+      required:
+      - data
+      - num_compounds
+    FoodNutrientViewSingle:
+      type: object
+      properties:
+        food_id:
+          type: string
+          description: The FooDB ID of the food item.
+        nutrients:
+          $ref: '#/components/schemas/Nutrient'
+      required:
+      - food_id
+      - nutrients
+    FoodPaginatedView:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number.
+        foods:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleFood'
+          description: List of food items in this page.
+        prev_page:
+          type: integer
+          description: Previous page number.
+        next_page:
+          type: integer
+          description: Next page number.
+        total_page:
+          type: integer
+          description: Total number of pages.
+      required:
+      - foods
+      - next_page
+      - page
+      - prev_page
+      - total_page
+    FoodSearchView:
+      type: object
+      properties:
+        search_term:
+          type: string
+          description: The search term used.
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Food'
+          description: List of food items matching the search term.
+      required:
+      - results
+      - search_term
+    FoodSearchViewRequest:
+      type: object
+      properties:
+        search_term:
+          type: string
+          minLength: 1
+          description: The search term to be used.
+      required:
+      - search_term
+    FunctionalOntology:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          nullable: true
+          maxLength: 11
+        functional_ontology:
+          type: string
+          readOnly: true
+      required:
+      - functional_ontology
+    HmdbEnzyme:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of the metabolite.
+        proteins:
+          type: array
+          items:
+            $ref: '#/components/schemas/Protein'
+      required:
+      - hmdb_id
+      - proteins
+    KaryotypeIndicationInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Condition in which karyotype is found.
+        gene_list:
+          type: string
+          description: List of genes involved in the karyotype.
+        age:
+          type: string
+          description: Age range of the subjects.
+        sex:
+          type: string
+          description: Sex of the subjects.
+        citation:
+          type: array
+          items: {}
+          description: Citation of the relevant reference(s).
+      required:
+      - age
+      - citation
+      - condition
+      - gene_list
+      - sex
+    LcMsSearchRequestRequest:
+      type: object
+      properties:
+        query_mass:
+          type: array
+          items:
+            type: number
+            format: double
+          description: List of query mass(es) to search for.
+        ion_mode:
+          type: string
+          minLength: 1
+          description: Ion mode to search for. Can be 'Positive', 'Negative', or 'Neutral'.
+        adduct_type:
+          type: array
+          items: {}
+          description: List of adduct type(s) to search for.
+        da_tolerance:
+          type: number
+          format: double
+          description: Upper and lower bound for weight tolerance in dalton(da). Can
+            be either +ve or -ve.
+        ppm_tolerance:
+          type: integer
+          description: Upper and lower bound for weight tolerance in ppm. Can be either
+            +ve or -ve.
+        ccs_prediction:
+          type: boolean
+          description: Collision Cross Section prediction method. Can be 'AllCCS',
+            'DarkChem', or 'DeepCCS'.
+        ccs_tolerance:
+          type: number
+          format: double
+          description: Upper and lower bound for CCS tolerance. Can be either +ve
+            or -ve.
+      required:
+      - adduct_type
+      - ion_mode
+      - query_mass
+    LcMsSearchResponse:
+      type: object
+      properties:
+        found:
+          $ref: '#/components/schemas/LcMsSearchResponseFound'
+        not_found:
+          type: array
+          items:
+            $ref: '#/components/schemas/LcMsSearchResponseNotFound'
+      required:
+      - found
+      - not_found
+    LcMsSearchResponseFound:
+      type: object
+      properties:
+        da_result:
+          $ref: '#/components/schemas/LcMsSearchResponseFoundDa'
+        ppm_result:
+          $ref: '#/components/schemas/LcMsSearchResponseFoundPpm'
+      required:
+      - da_result
+      - ppm_result
+    LcMsSearchResponseFoundDa:
+      type: object
+      properties:
+        query_mass:
+          type: array
+          items:
+            $ref: '#/components/schemas/LcMsSearchResponseFoundQueryMass'
+      required:
+      - query_mass
+    LcMsSearchResponseFoundPpm:
+      type: object
+      properties:
+        query_mass:
+          type: array
+          items:
+            $ref: '#/components/schemas/LcMsSearchResponseFoundQueryMass'
+      required:
+      - query_mass
+    LcMsSearchResponseFoundQueryMass:
+      type: object
+      properties:
+        compound_id:
+          type: string
+          description: Compound ID of the metabolite.
+        compound_name:
+          type: string
+          description: Name of the metabolite.
+        formula:
+          type: string
+          description: Chemical formula of the metabolite.
+        mono_mass:
+          type: number
+          format: double
+          description: Monoisotopic mass of the metabolite.
+        adduct:
+          type: string
+          description: Adduct type of the metabolite.
+        adduct_type:
+          type: string
+          description: Whether adduct is positive, negative, or neutral
+        adduct_m/z:
+          type: number
+          format: double
+          description: Adduct m/z of the metabolite.
+        delta(ppm):
+          type: number
+          format: double
+          description: Delta in ppm of the metabolite.
+        ccs_value:
+          type: number
+          format: double
+          description: CCS value of the metabolite.
+      required:
+      - adduct
+      - adduct_m/z
+      - adduct_type
+      - ccs_value
+      - compound_id
+      - compound_name
+      - delta(ppm)
+      - formula
+      - mono_mass
+    LcMsSearchResponseNotFound:
+      type: object
+      properties:
+        query_mass:
+          type: number
+          format: double
+          description: Query mass that did not return any search result.
+        adduct_type:
+          type: string
+          description: Adduct type setting that was used.
+      required:
+      - adduct_type
+      - query_mass
+    MarkerDB:
+      type: object
+      properties:
+        marker_type:
+          type: string
+          description: Type of the marker entry; can be Chemical, Protein, Genetic,
+            or Karyotype.
+        marker_info:
+          $ref: '#/components/schemas/MarkerDBPage'
+        diagnostic_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/DiagnosticInfo'
+        prognostic_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/PrognosticInfo'
+        predictive_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/PredictiveInfo'
+        exposure_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExposureInfo'
+        karyotype_indication_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/KaryotypeIndicationInfo'
+        marker_panel_info:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarkerPanelInfo'
+      required:
+      - diagnostic_info
+      - exposure_info
+      - karyotype_indication_info
+      - marker_info
+      - marker_panel_info
+      - marker_type
+      - predictive_info
+      - prognostic_info
+    MarkerDBConditionSearchRequestRequest:
+      type: object
+      properties:
+        search_term:
+          type: string
+          minLength: 1
+          description: Search term to query MarkerDB conditions.
+      required:
+      - search_term
+    MarkerDBConditionSearchResponse:
+      type: object
+      properties:
+        search_term:
+          type: string
+          description: Search term used to query MarkerDB conditions.
+        count:
+          type: integer
+          description: Number of conditions found.
+        value:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleCondition'
+      required:
+      - count
+      - search_term
+      - value
+    MarkerDBPage:
+      type: object
+      properties:
+        markerdb_id:
+          type: string
+          description: MarkerDB ID of the entry.
+        name:
+          type: string
+          description: Name of the marker.
+        description:
+          type: string
+          description: Description of the marker.
+        created_at:
+          type: string
+          format: date-time
+          description: Date and time of creation of the marker.
+        updated_at:
+          type: string
+          format: date-time
+          description: Date and time of last update of the marker.
+      required:
+      - created_at
+      - description
+      - markerdb_id
+      - name
+      - updated_at
+    MarkerPanelInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Condition in which biomarker is found.
+        biofluid:
+          type: string
+          description: Biofluid source.
+        logistic_equation:
+          type: string
+          description: Logistic equation for condition, given biomarkers.
+        status:
+          type: string
+          description: Annotation status of the biomarker.
+      required:
+      - biofluid
+      - condition
+      - logistic_equation
+      - status
+    Metabolite:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          maxLength: 25
+        status:
+          type: string
+          readOnly: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        name:
+          type: string
+          maxLength: 255
+        description:
+          type: string
+          readOnly: true
+        synonyms:
+          type: string
+          readOnly: true
+        moldb_formula:
+          type: string
+          nullable: true
+          maxLength: 255
+        cas:
+          type: string
+          nullable: true
+          maxLength: 25
+        moldb_average_mass:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,5}(?:\.\d{0,4})?$
+          nullable: true
+        moldb_mono_mass:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,5}(?:\.\d{0,9})?$
+          nullable: true
+        moldb_smiles:
+          type: string
+          nullable: true
+        moldb_inchi:
+          type: string
+          nullable: true
+        moldb_inchikey:
+          type: string
+          nullable: true
+          maxLength: 255
+        chemical_taxonomy:
+          type: string
+          readOnly: true
+        moldb_alogps_solubility:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_alogps_logp:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_alogps_logs:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_pka_strongest_acidic:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_pka_strongest_basic:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_physiological_charge:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_acceptor_count:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_donor_count:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_polar_surface_area:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_rotatable_bond_count:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_refractivity:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_polarizability:
+          type: string
+          nullable: true
+          maxLength: 255
+        retention_indices:
+          type: string
+          readOnly: true
+        biospecimen_normal:
+          type: string
+          readOnly: true
+        biospecimen_abnormal:
+          type: string
+          readOnly: true
+        external_links:
+          type: string
+          readOnly: true
+        synthesis_reference:
+          type: string
+          nullable: true
+        general_references:
+          type: string
+          readOnly: true
+      required:
+      - biospecimen_abnormal
+      - biospecimen_normal
+      - chemical_taxonomy
+      - created_at
+      - description
+      - external_links
+      - general_references
+      - hmdb_id
+      - name
+      - retention_indices
+      - status
+      - synonyms
+      - updated_at
+    MetaboliteIDRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: array
+          items: {}
+          description: HMDB ID(s) of metabolites.
+      required:
+      - hmdb_id
+    MetaboliteIDResponse:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/Metabolite'
+        not_found:
+          type: array
+          items: {}
+          description: List of HMDB ID(s) that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    MetaboliteIonRequestMultipleRequest:
+      type: object
+      properties:
+        formula:
+          type: array
+          items: {}
+          description: Chemical formula of metabolite ion.
+      required:
+      - formula
+    MetaboliteIonResponse:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of metabolite ion.
+        name:
+          type: string
+          description: Name of metabolite ion.
+        moldb_inchi:
+          type: string
+          description: InChI of metabolite ion.
+        moldb_inchikey:
+          type: string
+          description: InChIKey of metabolite ion.
+        moldb_smiles:
+          type: string
+          description: SMILES of metabolite ion.
+        synonyms:
+          $ref: '#/components/schemas/MetaboliteIonResponseSynonyms'
+        biospecimen_normal:
+          $ref: '#/components/schemas/MetaboliteIonResponseBiospecimensNormal'
+        biospecimen_abnormal:
+          $ref: '#/components/schemas/MetaboliteIonResponseBiospecimensNormal'
+        publications:
+          type: array
+          items: {}
+          description: List of publications of metabolite ion.
+      required:
+      - biospecimen_abnormal
+      - biospecimen_normal
+      - hmdb_id
+      - moldb_inchi
+      - moldb_inchikey
+      - moldb_smiles
+      - name
+      - publications
+      - synonyms
+    MetaboliteIonResponseBiospecimensNormal:
+      type: object
+      properties:
+        biospecimen:
+          type: string
+          description: Biospecimen where metabolite was found.
+        condition:
+          type: string
+          description: Condition of biospecimen where metabolite was found.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of metabolite ion.
+      required:
+      - biospecimen
+      - condition
+      - publications
+    MetaboliteIonResponseFoundContent:
+      type: object
+      properties:
+        formula:
+          type: string
+          description: Chemical formula of metabolite ion.
+        metabolites:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetaboliteIonResponseFoundMetabolitesContent'
+      required:
+      - formula
+      - metabolites
+    MetaboliteIonResponseFoundMetabolitesContent:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of metabolite ion.
+        name:
+          type: string
+          description: Name of metabolite ion.
+        moldb_inchi:
+          type: string
+          description: InChI of metabolite ion.
+        moldb_inchikey:
+          type: string
+          description: InChIKey of metabolite ion.
+        moldb_smiles:
+          type: string
+          description: SMILES of metabolite ion.
+        synonyms:
+          $ref: '#/components/schemas/MetaboliteIonResponseSynonyms'
+        biospecimen_normal:
+          $ref: '#/components/schemas/MetaboliteIonResponseBiospecimensNormal'
+        biospecimen_abnormal:
+          $ref: '#/components/schemas/MetaboliteIonResponseBiospecimensNormal'
+        publications:
+          type: array
+          items: {}
+          description: List of publications of metabolite ion.
+      required:
+      - biospecimen_abnormal
+      - biospecimen_normal
+      - hmdb_id
+      - moldb_inchi
+      - moldb_inchikey
+      - moldb_smiles
+      - name
+      - publications
+      - synonyms
+    MetaboliteIonResponseMultiple:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/MetaboliteIonResponseFoundContent'
+        not_found:
+          type: array
+          items: {}
+          description: List of chemical formula that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    MetaboliteIonResponseSynonyms:
+      type: object
+      properties:
+        synonym:
+          type: string
+          description: Synonyms of metabolite ion.
+        source:
+          type: string
+          description: Source of synonym.
+      required:
+      - source
+      - synonym
+    MetaboliteSearchRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          minLength: 1
+          description: HMDB ID of the compound.
+        name:
+          type: string
+          minLength: 1
+          description: Common name of the compound, including the synonyms.
+        inchi:
+          type: string
+          minLength: 1
+          description: InChI of the compound.
+        inchi_key:
+          type: string
+          minLength: 1
+          description: InChI Key of the compound.
+        formula:
+          type: string
+          minLength: 1
+          description: Molecular formula of the compound.
+        smiles:
+          type: string
+          minLength: 1
+          description: SMILES key of the compound.
+        cas:
+          type: string
+          minLength: 1
+          description: CAS number of the compound.
+    Nutrient:
+      type: object
+      properties:
+        id:
+          type: string
+          description: The FooDB ID of the nutrient.
+        name:
+          type: string
+          description: The name of the nutrient.
+        content_range:
+          type: string
+          description: The range of nutrient content in the food item.
+        average:
+          type: string
+          description: The average nutrient content in the food item.
+        reference:
+          type: array
+          items:
+            type: string
+          description: The list of related publications for the nutrient content.
+      required:
+      - average
+      - content_range
+      - id
+      - name
+      - reference
+    Ontology:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of the metabolite.
+        status:
+          type: string
+          description: Experimental/predictive record of metabolite.
+        created_at:
+          type: string
+          format: date-time
+          description: Date of creation of metabolite record.
+        updated_at:
+          type: string
+          format: date-time
+          description: Date of last update of metabolite record.
+        name:
+          type: string
+          description: Common name of metabolite.
+        moldb_formula:
+          type: string
+          description: Molecular formula of metabolite.
+        moldb_smiles:
+          type: string
+          description: SMILES key for metabolite.
+        functional_ontology:
+          type: array
+          items: {}
+          description: List of functional ontology of metabolite. Varies between metabolites.
+      required:
+      - created_at
+      - functional_ontology
+      - hmdb_id
+      - moldb_formula
+      - moldb_smiles
+      - name
+      - status
+      - updated_at
+    OntologyRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: array
+          items: {}
+          description: HMDB ID(s) of metabolites.
+      required:
+      - hmdb_id
+    OntologyResponse:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/FunctionalOntology'
+        not_found:
+          type: array
+          items: {}
+          description: List of HMDB ID(s) that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    PathwayDetailViewRequestRequest:
+      type: object
+      properties:
+        smpdb_id:
+          type: array
+          items: {}
+          description: SMPDB IDs of the pathways to search.
+      required:
+      - smpdb_id
+    PathwayDetailViewResponseMultiple:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwayDetailViewSingleResponse'
+        not_found:
+          type: array
+          items: {}
+          description: SMPDB IDs of pathways that were not found.
+      required:
+      - found
+      - not_found
+    PathwayDetailViewSingleResponse:
+      type: object
+      properties:
+        smpdb_id:
+          type: string
+          description: SMPDB ID of the pathway.
+        cached_name:
+          type: string
+          description: Name of the pathway.
+        cached_subject:
+          type: string
+          description: Subject of the pathway.
+        cached_description:
+          type: string
+          description: Description of the pathway.
+        pw_id:
+          type: string
+          description: PW ID of the pathway.
+        kegg_id:
+          type: string
+          description: KEGG ID of the pathway.
+        compounds:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwaySearchResponseReferences'
+        proteins:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwaySearchResponseReferences'
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwaySearchResponseReferences'
+      required:
+      - cached_description
+      - cached_name
+      - cached_subject
+      - compounds
+      - kegg_id
+      - proteins
+      - pw_id
+      - references
+      - smpdb_id
+    PathwayReactionViewComponents:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the component.
+        type:
+          type: string
+          description: Type of the component; can be Compound, ProteinComplex, ElementCollection,
+            Bound, or NucleicAcid.
+      required:
+      - name
+      - type
+    PathwayReactionViewReactions:
+      type: object
+      properties:
+        reaction:
+          type: string
+          description: Reaction equation.
+        components:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwayReactionViewComponents'
+      required:
+      - components
+      - reaction
+    PathwayReactionViewResponse:
+      type: object
+      properties:
+        smpdb_id:
+          type: string
+          description: SMPDB ID of the pathway.
+        cached_name:
+          type: string
+          description: Name of the pathway.
+        cached_subject:
+          type: string
+          description: Subject of the pathway.
+        cached_description:
+          type: string
+          description: Description of the pathway.
+        pw_id:
+          type: string
+          description: PW ID of the pathway.
+        kegg_id:
+          type: string
+          description: KEGG ID of the pathway.
+        reactions:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwayReactionViewReactions'
+      required:
+      - cached_description
+      - cached_name
+      - cached_subject
+      - kegg_id
+      - pw_id
+      - reactions
+      - smpdb_id
+    PathwaySearchRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: array
+          items: {}
+          description: HMDB ID(s) of metabolites.
+      required:
+      - hmdb_id
+    PathwaySearchResponse:
+      type: object
+      properties:
+        found:
+          $ref: '#/components/schemas/PathwaySearchResponseFound'
+        not_found:
+          type: array
+          items: {}
+          description: List of HMDB ID(s) that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    PathwaySearchResponseFound:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of metabolite.
+        pathways:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathwaySearchResponseFoundPathways'
+      required:
+      - hmdb_id
+      - pathways
+    PathwaySearchResponseFoundPathways:
+      type: object
+      properties:
+        smpdb_id:
+          type: string
+          description: SMPDB ID of pathway.
+        name:
+          type: string
+          description: Name of pathway.
+        description:
+          type: string
+          description: Detailed description of the pathway.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of pathway.
+      required:
+      - description
+      - name
+      - publications
+      - smpdb_id
+    PathwaySearchResponseReferences:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the compound.
+        description:
+          type: string
+          description: Description of the compound.
+        hmpdb_id:
+          type: string
+          description: HMPDB ID of the compound.
+        pwc_id:
+          type: string
+          description: Internal compound ID within the SMPDB.
+        cas:
+          type: string
+          description: CAS registry number of the compound.
+        kegg_id:
+          type: string
+          description: KEGG ID of the compound.
+        pubchem_cid:
+          type: string
+          description: PubChem ID of the compound.
+        chebi_id:
+          type: string
+          description: ChEBI ID of the compound.
+        biocyc_id:
+          type: string
+          description: BioCyc ID of the compound.
+        chemspider_id:
+          type: string
+          description: ChemSpider ID of the compound.
+        drugbank_id:
+          type: string
+          description: DrugBank ID of the compound.
+        moldb_smiles:
+          type: string
+          description: Moldb database SMILES key.
+        moldb_formula:
+          type: string
+          description: Chemical formula of the compound, stored in Moldb.
+        moldb_inchikey:
+          type: string
+          description: InChI key of the compound.
+        foodb_id:
+          type: string
+          description: FooDB ID of the compound.
+      required:
+      - biocyc_id
+      - cas
+      - chebi_id
+      - chemspider_id
+      - description
+      - drugbank_id
+      - foodb_id
+      - hmpdb_id
+      - kegg_id
+      - moldb_formula
+      - moldb_inchikey
+      - moldb_smiles
+      - name
+      - pubchem_cid
+      - pwc_id
+    PathwaySerializerSingleResult:
+      type: object
+      properties:
+        smpdb_id:
+          type: string
+          description: SMPDB ID of pathway.
+        name:
+          type: string
+          description: Name of pathway.
+        description:
+          type: string
+          description: Detailed description of the pathway.
+        publications:
+          type: array
+          items: {}
+          description: List of publications of pathway.
+      required:
+      - description
+      - name
+      - publications
+      - smpdb_id
+    PredictiveInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Condition of the predictive information.
+        biofluid:
+          type: string
+          description: Biofluid source.
+        age_range:
+          type: string
+          description: Age range of the subjects.
+        sex:
+          type: string
+          description: Sex of the subjects.
+        level:
+          type: string
+          description: Total concentration level of the biomarker in subjects.
+        range:
+          type: string
+          description: Concentration range of the biomarker in subjects.
+        high:
+          type: string
+          description: Highest concentration of the biomarker in subjects.
+        low:
+          type: string
+          description: Lowest concentration of the biomarker in subjects.
+        mean:
+          type: string
+          description: Mean concentration of the biomarker in subjects.
+        status:
+          type: string
+          description: Annotation status of the biomarker.
+        reference:
+          type: array
+          items: {}
+          description: Pubmed ID and citation of the relevant reference(s).
+      required:
+      - age_range
+      - biofluid
+      - condition
+      - high
+      - level
+      - low
+      - mean
+      - range
+      - reference
+      - sex
+      - status
+    PrognosticInfo:
+      type: object
+      properties:
+        condition:
+          type: string
+          description: Condition of the prognostic information.
+        biofluid:
+          type: string
+          description: Biofluid source.
+        age_range:
+          type: string
+          description: Age range of the subjects.
+        sex:
+          type: string
+          description: Sex of the subjects.
+        level:
+          type: string
+          description: Total concentration level of the biomarker in subjects.
+        range:
+          type: string
+          description: Concentration range of the biomarker in subjects.
+        high:
+          type: string
+          description: Highest concentration of the biomarker in subjects.
+        low:
+          type: string
+          description: Lowest concentration of the biomarker in subjects.
+        mean:
+          type: string
+          description: Mean concentration of the biomarker in subjects.
+        status:
+          type: string
+          description: Annotation status of the biomarker.
+        reference:
+          type: array
+          items: {}
+          description: Pubmed ID and citation of the relevant reference(s).
+      required:
+      - age_range
+      - biofluid
+      - condition
+      - high
+      - level
+      - low
+      - mean
+      - range
+      - reference
+      - sex
+      - status
+    Protein:
+      type: object
+      properties:
+        hmdbp_id:
+          type: string
+          maxLength: 255
+        name:
+          type: string
+          maxLength: 255
+        uniprot_name:
+          type: string
+          nullable: true
+          maxLength: 255
+        gene_name:
+          type: string
+          nullable: true
+          maxLength: 255
+        locus:
+          type: string
+          nullable: true
+          maxLength: 255
+        protein_type:
+          type: string
+          maxLength: 255
+        general_function:
+          type: string
+          nullable: true
+        specific_function:
+          type: string
+          nullable: true
+        uniprot_id:
+          type: string
+          maxLength: 255
+        pdb_ids:
+          type: string
+          nullable: true
+        genbank_gene_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        genbank_protein_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        genecard_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        theoretical_pi:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,5})?$
+          nullable: true
+        molecular_weight:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,5})?$
+          nullable: true
+        num_residues:
+          type: integer
+          nullable: true
+        reactions:
+          type: string
+          readOnly: true
+      required:
+      - hmdbp_id
+      - name
+      - protein_type
+      - reactions
+      - uniprot_id
+    SMPDBPathwaySearchRequestRequest:
+      type: object
+      properties:
+        search_term:
+          type: string
+          minLength: 1
+          description: Search term to query pathways with.
+        species:
+          type: string
+          minLength: 1
+          description: Species to filter pathways by.
+        pathway_type:
+          type: string
+          minLength: 1
+          description: Pathway type to filter pathways by.
+      required:
+      - pathway_type
+      - search_term
+      - species
+    SMPDBPathwaySearchResponse:
+      type: object
+      properties:
+        search_term:
+          type: string
+          description: Search term provided.
+        species:
+          type: string
+          description: Species specified.
+        pathway_type:
+          type: string
+          description: Pathway type specified.
+        pathways:
+          type: array
+          items:
+            $ref: '#/components/schemas/SMPDBPathwaySearchResponsePathways'
+      required:
+      - pathway_type
+      - pathways
+      - search_term
+      - species
+    SMPDBPathwaySearchResponsePathways:
+      type: object
+      properties:
+        smpdb_id:
+          type: string
+          description: SMPDB ID of the pathway.
+        cached_name:
+          type: string
+          description: Name of the pathway.
+        cached_subject:
+          type: string
+          description: Subject of the pathway.
+        cached_description:
+          type: string
+          description: Description of the pathway.
+        pw_id:
+          type: string
+          description: PW ID of the pathway.
+        kegg_id:
+          type: string
+          description: KEGG ID of the pathway.
+      required:
+      - cached_description
+      - cached_name
+      - cached_subject
+      - kegg_id
+      - pw_id
+      - smpdb_id
+    SimpleCompound:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        primary_id:
+          type: string
+          readOnly: true
+        description:
+          type: string
+          nullable: true
+        cas_number:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_formula:
+          type: string
+          nullable: true
+          maxLength: 255
+        moldb_iupac:
+          type: string
+          nullable: true
+        moldb_inchi:
+          type: string
+          nullable: true
+        moldb_inchikey:
+          type: string
+          nullable: true
+          maxLength: 255
+        image_link:
+          type: string
+          readOnly: true
+        moldb_average_mass:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,5}(?:\.\d{0,4})?$
+          nullable: true
+        moldb_monoisotopic_mass:
+          type: string
+          readOnly: true
+        molecular_framework:
+          type: string
+          nullable: true
+          maxLength: 255
+      required:
+      - image_link
+      - moldb_monoisotopic_mass
+      - name
+      - primary_id
+    SimpleCondition:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: ID of the condition.
+        name:
+          type: string
+          description: Name of the condition.
+        description:
+          type: string
+          description: Description of the condition.
+        info_source:
+          type: string
+          description: Information source of the condition.
+      required:
+      - description
+      - id
+      - info_source
+      - name
+    SimpleFood:
+      type: object
+      properties:
+        name:
+          type: string
+          maxLength: 255
+        public_id:
+          type: string
+          nullable: true
+          maxLength: 255
+        name_scientific:
+          type: string
+          nullable: true
+          maxLength: 255
+        food_group:
+          type: string
+          nullable: true
+          maxLength: 255
+        food_subgroup:
+          type: string
+          nullable: true
+          maxLength: 255
+      required:
+      - name
+    SimpleMetabolite:
+      type: object
+      properties:
+        metabolites:
+          $ref: '#/components/schemas/SimpleMetaboliteSerializerIndividual'
+        next_page:
+          type: integer
+          description: Next page number. If no next page, this field will not be present.
+        prev_page:
+          type: integer
+          description: Previous page number. If no previous page, this field will
+            not be present.
+        total_page:
+          type: integer
+          description: Total number of pages.
+      required:
+      - metabolites
+      - next_page
+      - prev_page
+      - total_page
+    SimpleMetaboliteSerializerIndividual:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of the metabolite.
+        name:
+          type: string
+          description: Common name of metabolite.
+        moldb_formula:
+          type: string
+          description: Molecular formula of metabolite.
+        moldb_average_mass:
+          type: number
+          format: double
+          description: Average mass of metabolite.
+        moldb_mono_mass:
+          type: number
+          format: double
+          description: Monoisotopic mass of metabolite.
+        biospecimen_locations:
+          type: array
+          items: {}
+          description: List of biospecimen locations of metabolite. Varies between
+            metabolites.
+      required:
+      - biospecimen_locations
+      - hmdb_id
+      - moldb_average_mass
+      - moldb_formula
+      - moldb_mono_mass
+      - name
+    Spectra:
+      type: object
+      properties:
+        hmdb_id:
+          type: string
+          description: HMDB ID of the metabolite.
+        status:
+          type: string
+          description: Experimental/predictive record of metabolite.
+        created_at:
+          type: string
+          format: date-time
+          description: Date of creation of metabolite record.
+        updated_at:
+          type: string
+          format: date-time
+          description: Date of last update of metabolite record.
+        name:
+          type: string
+          description: Common name of metabolite.
+        moldb_formula:
+          type: string
+          description: Molecular formula of metabolite.
+        moldb_smiles:
+          type: string
+          description: SMILES key for metabolite.
+        c_ms:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerCMS'
+        ms_ms:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerMSMS'
+        nmr:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerNMR'
+        ms_ir:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerMSIR'
+      required:
+      - c_ms
+      - created_at
+      - hmdb_id
+      - moldb_formula
+      - moldb_smiles
+      - ms_ir
+      - ms_ms
+      - name
+      - nmr
+      - status
+      - updated_at
+    SpectraRequestRequest:
+      type: object
+      properties:
+        hmdb_id:
+          type: array
+          items: {}
+          description: HMDB ID(s) of metabolites.
+      required:
+      - hmdb_id
+    SpectraResponseMultiple:
+      type: object
+      properties:
+        found:
+          type: array
+          items:
+            $ref: '#/components/schemas/Spectra'
+        not_found:
+          type: array
+          items: {}
+          description: List of HMDB ID(s) that cannot be found in HMDB.
+      required:
+      - found
+      - not_found
+    SpectraSerializerCMS:
+      type: object
+      properties:
+        spectrum_type:
+          type: string
+          description: Type of spectrum.
+        instrument_type:
+          type: string
+          description: Type of instrument used to generate spectrum.
+        ionization_mode:
+          type: string
+          description: Ion mode of spectrum.
+        chromatography_type:
+          type: string
+          description: Type of chromatography used to generate spectrum.
+        splash_key:
+          type: string
+          description: Splash key of spectrum.
+        created_at:
+          type: string
+          format: date-time
+          description: Date of creation of spectrum record.
+        peaks:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerCMSPeaks'
+        spectrum_url:
+          type: string
+          description: URL to the spectrum in HMDB.
+      required:
+      - chromatography_type
+      - created_at
+      - instrument_type
+      - ionization_mode
+      - peaks
+      - spectrum_type
+      - spectrum_url
+      - splash_key
+    SpectraSerializerCMSPeaks:
+      type: object
+      properties:
+        mass_charge:
+          type: number
+          format: double
+          description: Mass charge of peak.
+        intensity:
+          type: number
+          format: double
+          description: Intensity of peak.
+      required:
+      - intensity
+      - mass_charge
+    SpectraSerializerMSIR:
+      type: object
+      properties:
+        spectrum_type:
+          type: string
+          description: Type of spectrum.
+        adduct:
+          type: string
+          description: Adduct of spectrum.
+        instrument_type:
+          type: string
+          description: Type of instrument used to generate spectrum.
+        laser_power:
+          type: string
+          description: Laser power used to generate spectrum.
+        number_of_pulses:
+          type: string
+          description: Number of pulses used to generate spectrum.
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerMSIRReferences'
+        spectrum_url:
+          type: string
+          description: URL to the spectrum in HMDB.
+      required:
+      - adduct
+      - instrument_type
+      - laser_power
+      - number_of_pulses
+      - references
+      - spectrum_type
+      - spectrum_url
+    SpectraSerializerMSIRReferences:
+      type: object
+      properties:
+        ref_text:
+          type: number
+          format: double
+          description: Full citation for the spectrum publication.
+      required:
+      - ref_text
+    SpectraSerializerMSMS:
+      type: object
+      properties:
+        spectrum_type:
+          type: string
+          description: Type of spectrum.
+        instrument_type:
+          type: string
+          description: Type of instrument used to generate spectrum.
+        ionization_mode:
+          type: string
+          description: Ion mode of spectrum.
+        collision_energy:
+          type: string
+          description: Collision energy of spectrum.
+        splash_key:
+          type: string
+          description: Splash key of spectrum.
+        created_at:
+          type: string
+          format: date-time
+          description: Date of creation of spectrum record.
+        peaks:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerMSMSPeaks'
+        spectrum_url:
+          type: string
+          description: URL to the spectrum in HMDB.
+      required:
+      - collision_energy
+      - created_at
+      - instrument_type
+      - ionization_mode
+      - peaks
+      - spectrum_type
+      - spectrum_url
+      - splash_key
+    SpectraSerializerMSMSPeaks:
+      type: object
+      properties:
+        mass_charge:
+          type: number
+          format: double
+          description: Mass charge of peak.
+        intensity:
+          type: number
+          format: double
+          description: Intensity of peak.
+      required:
+      - intensity
+      - mass_charge
+    SpectraSerializerNMR:
+      type: object
+      properties:
+        nmr_type:
+          type: string
+          description: Type of NMR spectrum.
+        sample_concentration:
+          type: string
+          description: Concentration of sample used to generate spectrum.
+        solvent:
+          type: string
+          description: Solvent used to generate spectrum.
+        sample_mass:
+          type: string
+          description: Mass of sample used to generate spectrum.
+        sample_assessment:
+          type: string
+          description: Quality assessment for sample used to generate spectrum.
+        spectra_assessment:
+          type: string
+          description: Quality assessment for spectrum.
+        instrument_type:
+          type: string
+          description: Type of instrument used to generate spectrum.
+        nucleus:
+          type: string
+          description: Nucleus.
+        frequency:
+          type: string
+          description: Frequency of spectrum.
+        sample_ph:
+          type: string
+          description: pH of sample used to generate spectrum.
+        sample_temperature:
+          type: string
+          description: Temperature of sample used to generate spectrum.
+        chemical_shift_reference:
+          type: string
+          description: Chemical shift reference.
+        peaks:
+          type: array
+          items:
+            $ref: '#/components/schemas/SpectraSerializerNMRPeaks'
+        spectrum_url:
+          type: string
+          description: URL to the spectrum in HMDB.
+      required:
+      - chemical_shift_reference
+      - frequency
+      - instrument_type
+      - nmr_type
+      - nucleus
+      - peaks
+      - sample_assessment
+      - sample_concentration
+      - sample_mass
+      - sample_ph
+      - sample_temperature
+      - solvent
+      - spectra_assessment
+      - spectrum_url
+    SpectraSerializerNMRPeaks:
+      type: object
+      properties:
+        ppm:
+          type: number
+          format: double
+          description: PPM of peak.
+        intensity:
+          type: number
+          format: double
+          description: Intensity of peak.
+      required:
+      - intensity
+      - ppm
+    T3dbCategoryRequestRequest:
+      type: object
+      properties:
+        search_term:
+          type: string
+          minLength: 1
+          description: Search term for the toxin compound.
+        categories:
+          type: array
+          items: {}
+          description: Categories for the toxin compound.
+      required:
+      - categories
+      - search_term
+    T3dbCategoryResponse:
+      type: object
+      properties:
+        search_term:
+          type: string
+          description: Search term provided for the toxin compound.
+        categories:
+          type: array
+          items: {}
+          description: Categories provided by the user.
+        count:
+          type: integer
+          description: Number of compounds found.
+        value:
+          type: array
+          items:
+            $ref: '#/components/schemas/SimpleCompound'
+      required:
+      - categories
+      - count
+      - search_term
+      - value
+    T3dbTargetCompound:
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of the target compound.
+        general_function:
+          type: string
+          description: General function of the target compound.
+        specific_function:
+          type: string
+          description: Detailed explanation of the target compound function.
+        gene_name:
+          type: string
+          description: UniProt Gene name of the target compound.
+        uniprot_id:
+          type: string
+          description: Gene ID as recorded in UniProt.
+        molecular_weight:
+          type: number
+          format: double
+          description: Molecular weight of the target compound.
+      required:
+      - gene_name
+      - general_function
+      - molecular_weight
+      - name
+      - specific_function
+      - uniprot_id
+    T3dbTargetCompoundReference:
+      type: object
+      properties:
+        citation:
+          type: string
+          description: Authors, year of publishment, and title of the reference.
+        pubmed_id:
+          type: string
+          description: PubMed ID of the reference; only shown if reference type is
+            an online article.
+        isbn:
+          type: string
+          description: ISBN number of the reference; only shown if reference type
+            is a textbook.
+        url:
+          type: string
+          description: URL of the reference; only shown if reference type is an external
+            link.
+      required:
+      - citation
+      - isbn
+      - pubmed_id
+      - url
+    T3dbToxin:
+      type: object
+      properties:
+        t3db_id:
+          type: string
+          description: T3DB ID of the toxin compound.
+        common_name:
+          type: string
+          description: Common name of the toxin compound.
+        compound_class:
+          type: string
+          description: Class of the toxin compound; crystal, protein, or small molecule.
+        description:
+          type: string
+          description: Description of the toxin compound.
+        compound_type:
+          type: string
+          description: Type categories of the toxin compound; metal, food toxin, natural
+            compound, etc.
+        synonyms:
+          type: string
+          description: Synonyms of the toxin compound.
+        chemical_formula:
+          type: string
+          description: Chemical formula of the toxin compound.
+        moldb_average_mass:
+          type: number
+          format: double
+          description: Average mass of the toxin compound.
+        moldb_mono_mass:
+          type: number
+          format: double
+          description: Monoisotopic mass of the toxin compound.
+        cas:
+          type: string
+          description: CAS number of the toxin compound.
+        moldb_smiles:
+          type: string
+          description: SMILES notation of the toxin compound.
+        moldb_formula:
+          type: string
+          description: Chemical formula of the toxin compound.
+        moldb_inchi:
+          type: string
+          description: InChI notation of the toxin compound.
+        moldb_inchikey:
+          type: string
+          description: InChIKey of the toxin compound.
+        chemical_taxonomy:
+          $ref: '#/components/schemas/T3dbToxinTaxonomy'
+        origin:
+          type: string
+          description: Exogenous or endogenous.
+        cellular_location:
+          type: array
+          items: {}
+          description: Cellular location of the toxin compound.
+        tissue_location:
+          type: array
+          items: {}
+          description: Tissue location of the toxin compound.
+        roles:
+          $ref: '#/components/schemas/T3dbToxinRoles'
+        state:
+          type: string
+          description: Physical state of the toxin compound; solid, liquid, or gas.
+        appearance:
+          type: string
+          description: Physical appearance of the toxin compound.
+        melting_point:
+          type: number
+          format: double
+          description: Melting point of the toxin compound.
+        boiling_point:
+          type: number
+          format: double
+          description: Boiling point of the toxin compound.
+        solubility:
+          type: string
+          description: Solubility of the toxin compound.
+        logp:
+          type: number
+          format: double
+          description: LogP of the toxin compound.
+        route_of_exposure:
+          type: string
+          description: Route of exposure of the toxin compound.
+        mechanism_of_toxicity:
+          type: string
+          description: Detailed toxicity mechanism for the given toxin compound.
+        metabolism:
+          type: string
+          description: Metabolism profile of the toxin compound.
+        toxicity:
+          type: string
+          description: Toxicity values of the toxin compound.
+        lethaldose:
+          type: string
+          description: Lethal dose of the toxin compound.
+        carcinogenicity:
+          type: string
+          description: IARC carcinogenicity classification of the compound.
+        use_source:
+          type: string
+          description: Usage and source for the compound.
+        min_risk_level:
+          type: string
+          description: Minimum risk level for the compound.
+        health_effects:
+          type: string
+          description: Health effects from exposure to the compound.
+        symptoms:
+          type: string
+          description: Symptoms of the compound exposure.
+        treatment:
+          type: string
+          description: Treatment for exposure to the compound.
+        wikipedia_link:
+          type: string
+          description: Wikipedia link for the compound.
+        uniprot_id:
+          type: string
+          description: UniProt ID for the compound.
+        kegg_compound_id:
+          type: string
+          description: KEGG Compound ID for the compound.
+        omim_id:
+          type: string
+          description: OMIM ID for the compound.
+        chebi_id:
+          type: string
+          description: ChEBI ID for the compound.
+        biocyc_id:
+          type: string
+          description: BioCyc ID for the compound.
+        ctd_id:
+          type: string
+          description: CTD ID for the compound.
+        stitch_id:
+          type: string
+          description: STITCH DB ID for the compound.
+        pdb_id:
+          type: string
+          description: PDB ID for the compound.
+        actor_id:
+          type: string
+          description: ACToR ID for the compound.
+        pubchem_id:
+          type: string
+          description: PubChem ID for the compound.
+        hmdb_id:
+          type: string
+          description: HMDB ID for the compound.
+        chembl_id:
+          type: string
+          description: ChEMBL ID for the compound.
+        chemspider_id:
+          type: string
+          description: ChemSpider ID for the compound.
+        synthesis_reference:
+          type: string
+          description: Synthesis reference for the compound.
+        msds:
+          type: string
+          description: MSDS for the compound.
+        general_reference:
+          $ref: '#/components/schemas/T3dbToxinGeneralReference'
+      required:
+      - actor_id
+      - appearance
+      - biocyc_id
+      - boiling_point
+      - carcinogenicity
+      - cas
+      - cellular_location
+      - chebi_id
+      - chembl_id
+      - chemical_formula
+      - chemical_taxonomy
+      - chemspider_id
+      - common_name
+      - compound_class
+      - compound_type
+      - ctd_id
+      - description
+      - general_reference
+      - health_effects
+      - hmdb_id
+      - kegg_compound_id
+      - lethaldose
+      - logp
+      - mechanism_of_toxicity
+      - melting_point
+      - metabolism
+      - min_risk_level
+      - moldb_average_mass
+      - moldb_formula
+      - moldb_inchi
+      - moldb_inchikey
+      - moldb_mono_mass
+      - moldb_smiles
+      - msds
+      - omim_id
+      - origin
+      - pdb_id
+      - pubchem_id
+      - roles
+      - route_of_exposure
+      - solubility
+      - state
+      - stitch_id
+      - symptoms
+      - synonyms
+      - synthesis_reference
+      - t3db_id
+      - tissue_location
+      - toxicity
+      - treatment
+      - uniprot_id
+      - use_source
+      - wikipedia_link
+    T3dbToxinDownRegulated:
+      type: object
+      properties:
+        gene:
+          $ref: '#/components/schemas/T3dbToxinGene'
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3dbToxinGeneReference'
+      required:
+      - gene
+      - references
+    T3dbToxinGene:
+      type: object
+      properties:
+        gene_symbol:
+          type: string
+          description: Official gene symbol.
+        gene_name:
+          type: string
+          description: Official full name of the gene.
+        ncbi_gene_id:
+          type: string
+          description: NCBI Gene ID.
+        chromosome:
+          type: string
+          description: Location of the gene within chromosome.
+        interaction:
+          type: string
+          description: Brief description of toxin and gene interaction.
+      required:
+      - chromosome
+      - gene_name
+      - gene_symbol
+      - interaction
+      - ncbi_gene_id
+    T3dbToxinGeneReference:
+      type: object
+      properties:
+        citation:
+          type: string
+          description: Authors, year of publishment, and title of the reference.
+        pubmed_id:
+          type: string
+          description: PubMed ID of the reference; only shown if reference type is
+            an online article.
+        isbn:
+          type: string
+          description: ISBN number of the reference; only shown if reference type
+            is a textbook.
+        url:
+          type: string
+          description: URL of the reference; only shown if reference type is an external
+            link.
+      required:
+      - citation
+      - isbn
+      - pubmed_id
+      - url
+    T3dbToxinGeneralReference:
+      type: object
+      properties:
+        citation:
+          type: string
+          description: Authors, year of publishment, and title of the reference.
+        pubmed_id:
+          type: string
+          description: PubMed ID of the reference; only shown if reference type is
+            an online article.
+        isbn:
+          type: string
+          description: ISBN number of the reference; only shown if reference type
+            is a textbook.
+        url:
+          type: string
+          description: URL of the reference; only shown if reference type is an external
+            link.
+      required:
+      - citation
+      - isbn
+      - pubmed_id
+      - url
+    T3dbToxinGenes:
+      type: object
+      properties:
+        up_regulated:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3dbToxinUpRegulated'
+        down_regulated:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3dbToxinDownRegulated'
+      required:
+      - down_regulated
+      - up_regulated
+    T3dbToxinRoles:
+      type: object
+      properties:
+        application:
+          type: array
+          items: {}
+          description: Application of the toxin compound.
+        biological:
+          type: array
+          items: {}
+          description: Biological role of the toxin compound.
+        chemical:
+          type: array
+          items: {}
+          description: Chemical role of the toxin compound.
+      required:
+      - application
+      - biological
+      - chemical
+    T3dbToxinTaxonomy:
+      type: object
+      properties:
+        kingdom:
+          type: string
+          description: Kingdom of the toxin compound.
+        superclass:
+          type: string
+          description: Super class of the toxin compound.
+        class:
+          type: string
+          description: Class of the toxin compound.
+        subclass:
+          type: string
+          description: Subclass of the toxin compound.
+        direct_parent:
+          type: string
+          description: Direct parent of the toxin compound.
+        alternative_parents:
+          type: array
+          items: {}
+          description: Alternative parents of the toxin compound.
+        substituents:
+          type: array
+          items: {}
+          description: Substituents of the toxin compound.
+        molecular_framework:
+          type: string
+          description: Molecular framework of the toxin compound.
+        external_descriptors:
+          type: array
+          items: {}
+          description: External descriptors of the toxin compound.
+      required:
+      - alternative_parents
+      - class
+      - direct_parent
+      - external_descriptors
+      - kingdom
+      - molecular_framework
+      - subclass
+      - substituents
+      - superclass
+    T3dbToxinUpRegulated:
+      type: object
+      properties:
+        gene:
+          $ref: '#/components/schemas/T3dbToxinGene'
+        references:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3dbToxinGeneReference'
+      required:
+      - gene
+      - references
+    TargetBond:
+      type: object
+      properties:
+        compound:
+          $ref: '#/components/schemas/T3dbTargetCompound'
+        reference:
+          type: array
+          items:
+            $ref: '#/components/schemas/T3dbTargetCompoundReference'
+      required:
+      - compound
+      - reference
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid

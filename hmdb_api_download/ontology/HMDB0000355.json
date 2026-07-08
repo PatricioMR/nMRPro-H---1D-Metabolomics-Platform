@@ -1,0 +1,1 @@
+{"source_hilevel": ["Exogenous", "Endogenous"], "role_drug": true, "role_toxic": false, "role_industrial": false, "is_endogenous": true, "is_exogenous": true, "is_food": false, "is_microbial": false, "is_synthetic": false, "keep_mammalian": false, "exclude_reason": "role=Drug", "primary_origin": "drug", "hmdb_id": "HMDB0000355", "name": "3-Hydroxymethylglutaric acid"}

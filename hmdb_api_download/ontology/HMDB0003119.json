@@ -1,0 +1,1 @@
+{"source_hilevel": ["Exogenous", "Food", "Plant", "Animal"], "role_drug": true, "role_toxic": true, "role_industrial": false, "is_endogenous": false, "is_exogenous": true, "is_food": true, "is_microbial": false, "is_synthetic": false, "keep_mammalian": false, "exclude_reason": "role=Drug", "primary_origin": "drug", "hmdb_id": "HMDB0003119", "name": "Benzyl alcohol"}

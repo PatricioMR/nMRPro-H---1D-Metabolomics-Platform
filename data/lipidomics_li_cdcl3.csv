@@ -1,0 +1,44 @@
+id,name,class,start_ppm,end_ppm,multiplicity,signal,comment,solvent
+3001,Free Cholesterol (FC),FC,0.688,0.7,s,C18-H3 angular methyl,model=voigt; protons=3; region=C18 chol (0.65-0.73),CDCl3
+3002,Cholesteryl Ester (CE),CE,0.685,0.697,s,C18-H3 angular methyl esterified,model=voigt; protons=3; region=C18 chol (0.65-0.73),CDCl3
+3003,Free Cholesterol (FC),FC,0.862,0.874,d,Chol C26 methyl,model=voigt; protons=3; J=6.6 Hz; region=FA methyl (0.85-0.95),CDCl3
+3004,Free Cholesterol (FC),FC,0.867,0.879,d,Chol C27 methyl,model=voigt; protons=3; J=6.6 Hz; region=FA methyl (0.85-0.95),CDCl3
+3005,Saturated Fatty Acids (SFA),SFA,0.88,0.892,t,omega-CH3 terminal,model=voigt; protons=3; J=6.9 Hz; region=FA methyl (0.85-0.95),CDCl3
+3006,omega-9 Fatty Acids,omega9,0.882,0.894,t,omega-9 terminal methyl,model=voigt; protons=3; J=6.9 Hz; region=FA methyl (0.85-0.95),CDCl3
+3007,omega-7 Fatty Acids,omega7,0.892,0.904,t,omega-7 terminal methyl,model=voigt; protons=3; J=6.9 Hz; region=FA methyl (0.85-0.95),CDCl3
+3008,omega-6 Fatty Acids,omega6,0.894,0.906,t,omega-6 terminal methyl,model=voigt; protons=3; J=6.9 Hz; region=FA methyl (0.85-0.95),CDCl3
+3009,Free Cholesterol (FC),FC,0.916,0.928,d,Chol C21 methyl,model=voigt; protons=3; J=6.6 Hz; region=FA methyl (0.85-0.95),CDCl3
+3010,omega-3 Fatty Acids,omega3,0.976,0.988,t,omega-3 terminal methyl,model=voigt; protons=3; J=7.2 Hz; region=FA omega-3 methyl (0.95-1.01),CDCl3
+3011,Free Cholesterol (FC),FC,0.976,0.988,m,FC signal in omega-3 region,model=standard; region=FA omega-3 methyl (0.95-1.01),CDCl3
+3012,Cholesteryl Ester (CE),CE,0.976,0.988,m,CE signal in omega-3 region,model=standard; region=FA omega-3 methyl (0.95-1.01),CDCl3
+3013,Eicosapentaenoic Acid (EPA),EPA,1.691,1.703,m,beta-methylene,model=standard; protons=2; region=FA ARA+EPA beta-methylene (1.66-1.75),CDCl3
+3014,Arachidonic Acid (ARA),ARA,1.693,1.705,m,beta-methylene,model=standard; protons=2; region=FA ARA+EPA beta-methylene (1.66-1.75),CDCl3
+3015,Free Cholesterol (FC),FC,1.967,1.979,m,allylic CH2 (a),model=standard; protons=0.5; region=FA allylic (1.93-2.10),CDCl3
+3016,Free Cholesterol (FC),FC,1.995,2.007,m,allylic CH2 (b),model=standard; protons=0.5; region=FA allylic (1.93-2.10),CDCl3
+3017,Free Cholesterol (FC),FC,2.012,2.024,m,allylic CH2 (c),model=standard; protons=0.5; region=FA allylic (1.93-2.10),CDCl3
+3018,Monounsaturated Fatty Acids (MUFA),MUFA,2.018,2.03,m,allylic CH2,model=standard; protons=4; region=FA allylic (1.93-2.10),CDCl3
+3019,Free Cholesterol (FC),FC,2.034,2.046,m,allylic CH2 (d),model=standard; protons=0.5; region=FA allylic (1.93-2.10),CDCl3
+3020,Linoleic Acid,linoleic,2.057,2.069,qua,allylic CH2,model=voigt; protons=4; J=7.05 Hz; region=FA allylic (1.93-2.10),CDCl3
+3021,Docosahexaenoic Acid (DHA),DHA,2.414,2.426,m,alpha-methylene,model=standard; protons=4; region=FA DHA alpha-methylene (2.40-2.45),CDCl3
+3022,Linoleic Acid,linoleic,2.777,2.789,t,bis-allylic CH2,model=voigt; protons=2; J=7.0 Hz; region=FA diallylic (2.70-2.94),CDCl3
+3023,Polyunsaturated Fatty Acids (PUFA),PUFA,2.811,2.823,t,bis-allylic CH2 (a),model=voigt; J=7.0 Hz; region=FA diallylic (2.70-2.94),CDCl3
+3024,Polyunsaturated Fatty Acids (PUFA),PUFA,2.821,2.833,t,bis-allylic CH2 (b),model=voigt; J=7.0 Hz; region=FA diallylic (2.70-2.94),CDCl3
+3025,Polyunsaturated Fatty Acids (PUFA),PUFA,2.848,2.86,t,bis-allylic CH2 (c),model=voigt; J=7.0 Hz; region=FA diallylic (2.70-2.94),CDCl3
+3026,Polyunsaturated Fatty Acids (PUFA),PUFA,2.856,2.868,t,bis-allylic CH2 (d),model=voigt; J=7.0 Hz; region=FA diallylic (2.70-2.94),CDCl3
+3027,Phosphatidylethanolamine (PE),PE,3.146,3.158,m,N-CH2 alkyl amine,model=standard; protons=2; region=PE alkyl (3.12-3.18),CDCl3
+3028,Sphingomyelin (SM),SM,3.186,3.198,s,N+(CH3)3 choline,model=voigt; protons=9; region=PL cholines (3.18-3.25),CDCl3
+3029,Lysophosphatidylcholine (LPC),LPC,3.195,3.207,s,N+(CH3)3 choline,model=voigt; protons=9; region=PL cholines (3.18-3.25),CDCl3
+3030,Phosphatidylcholine (PC),PC,3.202,3.214,s,N+(CH3)3 choline,model=voigt; protons=9; region=PL cholines (3.18-3.25),CDCl3
+3031,Triglycerides (TG),TG,4.326,4.338,m,glycerol sn-1/3 CH2,"model=standard; protons=2; region=glycerol backbone sn-1,3 (4.31-4.45)",CDCl3
+3032,Glycerophospholipids (GPL),GPL,4.406,4.418,m,glycerol sn-1/3 CH2,"model=standard; protons=2; region=glycerol backbone sn-1,3 (4.31-4.45)",CDCl3
+3033,Triglycerides (TG),TG,5.231,5.243,m,glycerol sn-2 CH,model=standard; protons=1; region=glycerol backbone sn-2 (5.15-5.33),CDCl3
+3034,Glycerophospholipids (GPL),GPL,5.282,5.294,m,glycerol sn-2 CH,model=standard; protons=1; region=glycerol backbone sn-2 (5.15-5.33),CDCl3
+3035,Sphingomyelin (SM),SM,5.702,5.714,m,trans double bond CH=CH,model=standard; protons=1; region=PL olefinic (5.65-6.00),CDCl3
+3036,Plasmalogen (PLA),PLA,5.916,5.928,m,vinyl ether CH=CH,model=standard; protons=1; region=PL olefinic (5.65-6.00),CDCl3
+3901,Box1 a — olefinic =CH-CH=,BOX1_WINDOW,5.25,5.45,m,=CH-CH= olefinic,box1=a; protons=2 per C=C; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3902,"Box1 b — TG glycerol sn-1,3",BOX1_WINDOW,4.05,4.4,m,TG glycerol CH2,box1=b; protons=4 per TG; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3903,Box1 c — bis-allylic =C-CH2-C=,BOX1_WINDOW,2.72,2.88,m,bis-allylic CH2,box1=c; protons=2 per group; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3904,Box1 d — alpha-CH2 to C=O,BOX1_WINDOW,2.22,2.38,m,alpha-CH2,box1=d; protons=2 per chain (6 per TG); Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3905,Box1 e — allylic =CH-CH2,BOX1_WINDOW,1.97,2.07,m,allylic CH2,box1=e; protons=2 per group; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3906,Box1 h — terminal CH3 (non-n3),BOX1_WINDOW,0.84,0.92,m,terminal CH3,box1=h; protons=3 per chain; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3
+3907,Box1 i — terminal CH3 n-3 (ALA),BOX1_WINDOW,0.95,1.01,m,n-3 terminal CH3,box1=i; protons=3 per ALA chain; Li et al. 2017 Prog Lipid Res 68:37-56,CDCl3

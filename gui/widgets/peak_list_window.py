@@ -84,9 +84,7 @@ class PeakListWindow:
                   font=("Arial", 10, "bold")).pack(
             anchor=tk.W, pady=(4, 2), padx=4)
 
-        n_overlap = sum(1 for p in self.peaks if p.get('overlapping', False))
         summary   = (f"{len(self.peaks)} peaks"
-                     + (f"  ·  {n_overlap} overlapping" if n_overlap else "")
                      + "  ·  Ctrl+1 Good  Ctrl+2 Average  Ctrl+3 Poor")
         ttk.Label(frame_a, text=summary,
                   font=("Arial", 7), foreground="gray").pack(
@@ -115,7 +113,7 @@ class PeakListWindow:
             cb.pack(side=tk.LEFT, padx=2)
 
         # Treeview
-        cols = ('rank', 'ppm', 'start', 'end', 'width', 'snr', 'area', 'metabolite', 'status', 'overlap')
+        cols = ('rank', 'ppm', 'start', 'end', 'width', 'snr', 'area', 'metabolite', 'status')
         tree_frame = ttk.Frame(frame_a)
         tree_frame.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
@@ -135,7 +133,7 @@ class PeakListWindow:
 
         col_defs = [
             ('rank',       '#',          50,  tk.CENTER),
-            ('ppm',        'PPM',        80,  tk.CENTER),
+            ('ppm',        'δ (ppm)',    80,  tk.CENTER),
             ('start',      'Start',      80,  tk.CENTER),
             ('end',        'End',        80,  tk.CENTER),
             ('width',      'Width',      65,  tk.CENTER),
@@ -143,15 +141,17 @@ class PeakListWindow:
             ('area',       'Area',       85,  tk.CENTER),
             ('metabolite', 'Metabolite',160,  tk.W),
             ('status',     'Quality',   110,  tk.CENTER),
-            ('overlap',    'Overlap',    60,  tk.CENTER),
         ]
         for cid, heading, width, anchor in col_defs:
             self.tree.heading(cid, text=heading,
                               command=lambda c=cid: self._sort(c))
             self.tree.column(cid, width=width, anchor=anchor, minwidth=35)
 
-        # Row tags for overlap
-        self.tree.tag_configure('overlap',          background='#ffe4e4')
+        # Row tags for the 3-tier peak quality (shape-based; shown when the peak
+        # has no manual status yet).
+        self.tree.tag_configure('quality_green',  background='#e6f4ea')
+        self.tree.tag_configure('quality_yellow', background='#fff4d6')
+        self.tree.tag_configure('quality_red',    background='#fde4e4')
         self.tree.tag_configure('normal',           background='white')
         # Row tags for status (overlap rows keep overlap bg; status shown via Status col)
         self.tree.bind('<<TreeviewSelect>>', lambda e: self._on_select())
@@ -357,18 +357,19 @@ class PeakListWindow:
             elif _st not in _allowed:
                 continue
             is_sub   = p.get('is_sub_peak', False)
-            st_sym   = self._status_symbol(p.get('status', STATUS_UNDEFINED),
-                                             is_anchor=p.get('is_anchor_line', False),
-                                             r2=p.get('gaussian_r2'))
-            if is_sub:
-                ovlp_sym = '🔧'
-            elif p.get('overlapping', False):
-                ovlp_sym = '⚠'
-            else:
-                ovlp_sym = '—'
+            _qs      = p.get('peak_quality_score')
+            q_txt    = (f"{_qs:.2f}" if (_qs is not None and _qs == _qs) else '—')
+            if p.get('is_anchor_line', False):
+                q_txt = '⚓ ' + q_txt
             _st  = p.get('status')
-            tag  = ('sub_peak' if is_sub
-                    else ('status_none' if _st is None else f'status_{_st}'))
+            # Row tint: manual status wins; otherwise the 3-tier peak quality
+            # (green good / yellow crooked-baseline-overlap / red straight-line).
+            if is_sub:
+                tag = 'sub_peak'
+            elif _st is not None:
+                tag = f'status_{_st}'
+            else:
+                tag = f'quality_{p.get("peak_quality", "yellow")}'
             area_val = p.get('area', 0) or 0
             met_name = (p.get('assigned_metabolite')
                         or p.get('metabolite')
@@ -383,14 +384,13 @@ class PeakListWindow:
                                  f"{p.get('snr', 0):.1f}",
                                  f"{area_val:.2f}",
                                  met_name,
-                                 st_sym,
-                                 ovlp_sym,
+                                 q_txt,
                              ))
         self._apply_status_colors()
 
     def _apply_status_colors(self):
-        """Cor da linha determinada exclusivamente pelo status.
-        None (sem status) → branco, sem marcação."""
+        """Row colour: manual status when set, else the 3-tier peak quality
+        (green good / yellow crooked-baseline-overlap / red straight-line)."""
         self.tree.tag_configure('status_none', background='white')
         for status, bg in STATUS_COLORS.items():
             self.tree.tag_configure(f'status_{status}', background=bg)
@@ -400,10 +400,10 @@ class PeakListWindow:
             if not self.tree.exists(iid):
                 continue
             status = p.get('status')   # pode ser None
-            if status is None:
-                tag = 'status_none'
-            else:
+            if status is not None:
                 tag = f'status_{status}'
+            else:
+                tag = f'quality_{p.get("peak_quality", "yellow")}'
             self.tree.item(iid, tags=(tag,))
 
     def _refresh_row(self, peak):
@@ -429,10 +429,10 @@ class PeakListWindow:
             f"{peak['snr']:.1f}",
             f"{peak.get('area', 0) or 0:.2f}",
             met_name,
-            self._status_symbol(peak.get('status', STATUS_UNDEFINED),
-                                is_anchor=peak.get('is_anchor_line', False),
-                                r2=peak.get('gaussian_r2')),
-            "⚠" if peak.get('overlapping', False) else "—",
+            (('⚓ ' if peak.get('is_anchor_line', False) else '')
+             + (f"{peak.get('peak_quality_score'):.2f}"
+                if peak.get('peak_quality_score') == peak.get('peak_quality_score')
+                else '—')),
         ))
         self._apply_status_colors()
 
@@ -444,8 +444,10 @@ class PeakListWindow:
             'end':     lambda p: p['end_ppm'],
             'width':   lambda p: p['width_ppm'],
             'snr':     lambda p: p['snr'],
-            'status':  lambda p: (p.get('status') or ''),
-            'overlap': lambda p: int(p.get('overlapping', False)),
+            # 'Quality' column → sort by the numeric shape-quality score.
+            'status':  lambda p: (p.get('peak_quality_score')
+                                  if p.get('peak_quality_score') == p.get('peak_quality_score')
+                                  else -1.0),
         }
         return sorted(self.peaks,
                       key=key_map.get(self._sort_col, lambda p: p['rank']),
@@ -457,8 +459,8 @@ class PeakListWindow:
         else:
             self._sort_col     = col
             self._sort_reverse = False
-        labels = dict(rank='#', ppm='PPM', start='Start', end='End',
-                      width='Width', snr='SNR', status='Quality', overlap='Overlap')
+        labels = dict(rank='#', ppm='δ (ppm)', start='Start', end='End',
+                      width='Width', snr='SNR', status='Quality')
         for c in labels:
             arrow = (' ▲' if not self._sort_reverse else ' ▼') if c == col else ''
             self.tree.heading(c, text=labels[c] + arrow)
@@ -549,9 +551,12 @@ class PeakListWindow:
 
     def _update_info_bar(self, peak):
         n_samples   = self.all_intensities.shape[1]
-        overlap_txt = "  ⚠ overlapping" if peak.get('overlapping') else ""
+        _tier       = peak.get('peak_quality')
+        _qscore     = peak.get('peak_quality_score')
+        quality_txt = (f"  ·  {_tier} ({_qscore:.2f})"
+                       if _tier and _qscore is not None else "")
         status_txt  = f"  ·  {peak.get('status') or '—'}"
-        r2_val      = peak.get('shape_r2')
+        r2_val      = peak.get('gaussian_r2')
         r2_txt      = (f"  ·  R²={r2_val:.3f}" if r2_val is not None
                        else "  ·  R²=n/a")
         self.peak_info_label.config(
@@ -562,7 +567,7 @@ class PeakListWindow:
                   f"{n_samples} spectra"
                   f"{status_txt}"
                   f"{r2_txt}"
-                  f"{overlap_txt}"),
+                  f"{quality_txt}"),
             foreground=STATUS_FG.get(peak.get('status'), '#444'))
 
     def _open_region_alignment(self, peak):
@@ -913,15 +918,26 @@ class PeakListWindow:
                            handlelength=1.5, handletextpad=0.4)
 
         self.ax.set_xlim(hi, lo)
+
+        # Y-scale to the SELECTED peak, not the whole window: a tall neighbour
+        # (e.g. TSP/residual water) inside the view would otherwise blow up the
+        # range and squash the peak of interest. Use the max intensity within the
+        # peak's own boundaries [p_lo, p_hi] across the shown spectra, and put the
+        # apex near the vertical centre of the viewer (top ≈ 1.9 × apex).
+        _own_mask = (self.ppm >= p_lo) & (self.ppm <= p_hi)
+        _y_peak = 0.0
+        if shown_samples and _own_mask.sum() > 0:
+            _y_peak = float(np.max(
+                self.all_intensities[_own_mask][:, shown_samples]))
+        if _y_peak <= 0:
+            _y_peak = float(peak.get('height', 0.0)) or float(y_max_visible)
+
         if is_sub:
-            # Scale to show both the fit and the raw context spectra
             _fh = fit_max if fit_max > 0 else float(peak.get('height', 1.0))
-            # Never clip the raw spectra — include y_max_visible so context is visible
-            _top = max(_fh * 1.5, y_max_visible * 1.15)
+            _top = max(_fh * 1.5, _y_peak * 1.9)
             self.ax.set_ylim(bottom=0, top=_top)
         else:
-            self.ax.set_ylim(bottom=0,
-                             top=max(peak['height'] * 1.3, y_max_visible * 1.15))
+            self.ax.set_ylim(bottom=0, top=max(_y_peak * 1.9, 1e-9))
         self.ax.set_xlabel('δ (ppm)', fontsize=9)
         self.ax.set_ylabel('Intensity', fontsize=9)
         self.ax.tick_params(labelsize=8)

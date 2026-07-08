@@ -33,6 +33,10 @@ def _get_quantification_matrix(app):
         feature_labels = []
         X_cols = []
         for met in quant_results:
+            # Não-quantificados (perderam competição ou 0/NaN): sem sinal
+            # mensurável — excluídos da matriz estatística.
+            if met.get('_not_quantified'):
+                continue
             concs = met.get('_concs_per_sample') or []
             if not concs:
                 continue
@@ -87,6 +91,50 @@ def _group_to_int(group_labels):
     return np.array([mapping[g] for g in group_labels], dtype=int), unique
 
 
+_CM_PER_IN = 2.54
+
+
+def _fit_page(w, h):
+    """Scale (w, h) inches down proportionally so it fits one A4 page.
+
+    Orientation follows the content: a wider-than-tall figure is bounded by
+    landscape A4 (11.69 × 8.27 in), otherwise by portrait A4 (8.27 × 11.69).
+    Never scales up — small figures are left untouched.
+    """
+    A4_LONG, A4_SHORT = 11.69, 8.27
+    w = max(float(w), 0.5)
+    h = max(float(h), 0.5)
+    if w >= h:
+        wmax, hmax = A4_LONG, A4_SHORT
+    else:
+        wmax, hmax = A4_SHORT, A4_LONG
+    scale = min(1.0, wmax / w, hmax / h)
+    return w * scale, h * scale
+
+
+def _resolve_box_selection(selected, feat_raw, capacity, x_raw=None,
+                           fallback_order=None):
+    """Map user-selected metabolite names to column indices in `feat_raw`.
+
+    Explicit selections are returned in `feat_raw` order (stable across renders)
+    and capped to `capacity` (= grid rows × cols). When nothing valid is
+    selected, fall back to `fallback_order` (a precomputed ranking of column
+    indices, e.g. by significance or abundance); if that is not given, fall back
+    to highest-variance columns (requires `x_raw`). Names not present in
+    `feat_raw` (e.g. globally excluded) are dropped rather than fabricated.
+    """
+    capacity = max(int(capacity), 0)
+    name_set = set(selected or [])
+    idx = [i for i, f in enumerate(feat_raw) if f in name_set]
+    if not idx:
+        if fallback_order is not None:
+            idx = [int(i) for i in fallback_order]
+        elif x_raw is not None and getattr(x_raw, 'shape', (0, 0))[1] > 0:
+            scores = np.nanvar(x_raw, axis=0)
+            idx = list(np.argsort(scores)[::-1])
+    return idx[:capacity]
+
+
 # ---------- main class -------------------------------------------------------
 
 class StatisticsStage:
@@ -100,6 +148,7 @@ class StatisticsStage:
         self._right_widget = None   # widget inside app.right_panel
         self._current_method = None
         self._last_plot_fig  = None   # for export
+        self._plot_export    = None   # {'method','headers','rows'} for CSV export
         self._cb_a         = None
         self._cb_b         = None
         self._excluded_samples     = set()
@@ -122,13 +171,29 @@ class StatisticsStage:
             'title_size':   11,
             'title_bold':   True,
             'xlabel':       'Metabolite',
-            'ylabel':       'Concentration',
+            'ylabel':       '',   # blank = auto unit from the quantification method
             'label_size':   9,
             'tick_size':    7,
             'xlabel_rot':   45,
             'linewidth':    1.0,
             'tight_pad':    1.2,
             'group_colors': {},   # {group_name: hex}
+        }
+        # Unified Box/Violin layout config (grid of per-metabolite panels).
+        # Persisted via project_manager. `selected` is an ordered metabolite list.
+        self._box_config = {
+            'kind':       'box',    # 'box' | 'violin'
+            'rows':       3,        # panel grid rows
+            'cols':       3,        # panel grid cols
+            'panel_w':    6.5,      # cm per panel (width)
+            'panel_h':    6.0,      # cm per panel (height)
+            'selected':   [],       # metabolite names to plot (empty -> top variance)
+            'points':     True,     # overlay raw data points
+            'point_size': 24,       # scatter marker area
+            'mean':       False,    # box only
+            'inner':      'box',    # violin only: box|quartile|point|stick|none
+            'test':       'none',   # 'none' | 't' (Welch) | 'mann' (Mann-Whitney)
+            'sig_line':   False,    # draw significance brackets between groups
         }
         self._box_export_figsize = None
         self.create_widgets()
@@ -190,17 +255,30 @@ class StatisticsStage:
             _mode_style = 'Toolbutton'
         mode_bar = ttk.Frame(parent, relief='groove', borderwidth=1)
         mode_bar.pack(fill=tk.X, pady=(0, 6))
+        # In lipidomics projects metabolic pathways do not apply to lipid
+        # classes, so the third mode becomes "FA ratios" instead of "Pathway".
+        _fa = self._is_lipidomics_project()
         ttk.Radiobutton(mode_bar, text='Statistics', value='statistics',
                         variable=self._mode_var, command=self._on_mode_change,
                         style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
-        ttk.Radiobutton(mode_bar, text='Pathway', value='pathway',
+        ttk.Radiobutton(mode_bar, text=('FA ratios' if _fa else 'Pathway'),
+                        value='pathway',
                         variable=self._mode_var, command=self._on_mode_change,
                         style=_mode_style).pack(side=tk.LEFT, expand=True, fill=tk.X)
 
         if self._mode_var.get() == 'pathway':
-            self._build_left_pathway(parent)
+            if _fa:
+                self._build_left_fa_ratios(parent)
+            else:
+                self._build_left_pathway(parent)
         else:
             self._build_left_statistics(parent)
+
+    def _is_lipidomics_project(self):
+        """True when the active annotation run used the Lipidomics library."""
+        ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        args = getattr(ann, '_last_results_args', None) or {}
+        return str(args.get('internal_library_mode', '')) == 'Lipidomics'
 
     def _on_mode_change(self):
         self._build_left(self._left_inner)
@@ -215,7 +293,7 @@ class StatisticsStage:
         self._method_var = tk.StringVar(value='PCA')
         for m in ['PCA', 'PLS-DA', 'OPLS-DA', 'Heatmap', 'Correlation',
                   'VIP Score', 'Volcano', 'Metabolic Profile',
-                  'Boxplot', 'Violin']:
+                  'Box / Violin']:
             ttk.Radiobutton(mf, text=m, variable=self._method_var,
                             value=m, command=self._on_method_change
                             ).pack(**_RB)
@@ -226,22 +304,7 @@ class StatisticsStage:
         self._build_options('PCA')
 
         # ── Scaling ───────────────────────────────────────────────────────────
-        sf = ttk.LabelFrame(parent, text='Scaling', **_SEC)
-        sf.pack(fill=tk.X, pady=(0, 4))
-        self._log_pre_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(sf, text='Log10 pre-transform',
-                        variable=self._log_pre_var).pack(**_RB)
-        ttk.Separator(sf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=3)
-        self._scale_var = tk.StringVar(value='pareto')
-        for lbl, val in [
-            ('None',           'none'),
-            ('UV (unit var.)', 'UV'),
-            ('Pareto',         'pareto'),
-            ('Cube root',      'cbrt'),
-            ('Median center',  'median'),
-        ]:
-            ttk.Radiobutton(sf, text=lbl, variable=self._scale_var,
-                            value=val).pack(**_RB)
+        self._build_scaling_frame(parent, _SEC, _RB)
 
         # ── Filters ───────────────────────────────────────────────────────────
         ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
@@ -258,6 +321,29 @@ class StatisticsStage:
         self._filter_status_lbl = ttk.Label(
             ff, text='', font=('Arial', 7), foreground='#666')
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    def _build_scaling_frame(self, parent, _SEC, _RB):
+        """Scaling/normalization controls. Shared by Statistics and Pathway
+        panels so the same preprocessing applies in both modes; the vars persist
+        across mode toggles (guarded by hasattr)."""
+        sf = ttk.LabelFrame(parent, text='Scaling', **_SEC)
+        sf.pack(fill=tk.X, pady=(0, 4))
+        if not hasattr(self, '_log_pre_var'):
+            self._log_pre_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(sf, text='Log10 pre-transform',
+                        variable=self._log_pre_var).pack(**_RB)
+        ttk.Separator(sf, orient=tk.HORIZONTAL).pack(fill=tk.X, padx=2, pady=3)
+        if not hasattr(self, '_scale_var'):
+            self._scale_var = tk.StringVar(value='pareto')
+        for lbl, val in [
+            ('None',           'none'),
+            ('UV (unit var.)', 'UV'),
+            ('Pareto',         'pareto'),
+            ('Cube root',      'cbrt'),
+            ('Median center',  'median'),
+        ]:
+            ttk.Radiobutton(sf, text=lbl, variable=self._scale_var,
+                            value=val).pack(**_RB)
 
     # ── Pathway mode left panel ──────────────────────────────────────────────
 
@@ -290,11 +376,12 @@ class StatisticsStage:
         # ── Plot type ────────────────────────────────────────────────────────
         pf = ttk.LabelFrame(parent, text='Plot', **_SEC)
         pf.pack(fill=tk.X, pady=(0, 4))
-        for m in ['Overview enrichment', 'Network', 'Dot plot', 'Lollipop']:
+        for m in ['Overview enrichment', 'Network', 'Dot plot', 'Lollipop',
+                  'Dumbbell']:
             ttk.Radiobutton(pf, text=m, variable=self._pw_plot_var,
-                            value=m).pack(**_RB)
+                            value=m, command=self._on_pw_plot_change).pack(**_RB)
 
-        # ── Groups (A vs B) ──────────────────────────────────────────────────
+        # ── Groups (A vs B; + Control row, shown only for Dumbbell) ──────────
         gf = ttk.LabelFrame(parent, text='Comparison', **_SEC)
         gf.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(gf, text='Group A:', font=('Arial', 8)
@@ -311,7 +398,24 @@ class StatisticsStage:
         self._cb_b = ttk.Combobox(gf, textvariable=self._grp_b_var,
                                   width=14, state='readonly')
         self._cb_b.grid(row=1, column=1, sticky=tk.W, padx=4, pady=1)
+        # Control rows — one per treatment; gridded/removed by
+        # _on_pw_plot_change (Dumbbell only). A vs Control-A, B vs Control-B.
+        self._pw_ctrla_lbl = ttk.Label(gf, text='Control A:', font=('Arial', 8))
+        if not hasattr(self, '_grp_ca_var'):
+            self._grp_ca_var = tk.StringVar(value=_sv.get('group_ca')
+                                            or _sv.get('group_c') or '')
+        self._cb_ca = ttk.Combobox(gf, textvariable=self._grp_ca_var,
+                                   width=14, state='readonly')
+        self._pw_ctrlb_lbl = ttk.Label(gf, text='Control B:', font=('Arial', 8))
+        if not hasattr(self, '_grp_cb_var'):
+            self._grp_cb_var = tk.StringVar(value=_sv.get('group_cb') or '')
+        self._cb_cb = ttk.Combobox(gf, textvariable=self._grp_cb_var,
+                                   width=14, state='readonly')
+        self._pw_ctrl_hint = ttk.Label(
+            gf, text='(Dumbbell: A vs Control-A, B vs Control-B)',
+            font=('Arial', 7), foreground='#666')
         self._refresh_groups()
+        self._on_pw_plot_change()
 
         # ── Options ──────────────────────────────────────────────────────────
         of = ttk.LabelFrame(parent, text='Options', **_SEC)
@@ -366,6 +470,10 @@ class StatisticsStage:
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
         self._update_filter_status()
 
+        # Same scaling/normalization controls as Statistics — values persist and
+        # are applied to the per-metabolite significance test below.
+        self._build_scaling_frame(parent, _SEC, _RB)
+
         ttk.Label(parent,
                   text='ORA (Fisher) on metabolites significant\n'
                        'between Group A and B (t-test / Mann-Whitney).\n'
@@ -406,7 +514,7 @@ class StatisticsStage:
                         textvariable=self._n_comp_var, width=4
                         ).grid(row=0, column=1, sticky=tk.W, padx=4)
             self._cv_var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self._opt_frame, text='Show CV R²/Q²',
+            ttk.Checkbutton(self._opt_frame, text='Show Q² (cross-validated)',
                             variable=self._cv_var
                             ).grid(row=1, column=0, columnspan=2, sticky=tk.W)
             self._ellipse_var = tk.BooleanVar(value=True)
@@ -455,7 +563,8 @@ class StatisticsStage:
         elif method == 'Correlation':
             ttk.Label(self._opt_frame, text='Coefficient:',
                       font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._corr_method_var = tk.StringVar(value='spearman')
+            if not hasattr(self, '_corr_method_var'):
+                self._corr_method_var = tk.StringVar(value='spearman')
             ttk.Combobox(self._opt_frame, textvariable=self._corr_method_var,
                          values=['spearman', 'pearson'],
                          width=10, state='readonly'
@@ -478,9 +587,58 @@ class StatisticsStage:
             ttk.Checkbutton(self._opt_frame, text='Significant only (FDR<0.05)',
                             variable=self._corr_sig_var
                             ).grid(row=3, column=0, columnspan=2, sticky=tk.W, pady=(2, 0))
-            ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\nneeds exactly 2 groups.',
+            # Differential panel: pick the two groups to contrast.
+            _cg = sorted(set(s.get('label', s.get('group', 'Unknown'))
+                             for s in getattr(self.app, 'samples_info', [])
+                             if str(s.get('label', s.get('group', ''))).upper() != 'BLK'))
+            ttk.Label(self._opt_frame, text='Diff. Group A:',
+                      font=('Arial', 8)).grid(row=4, column=0, sticky=tk.W, pady=(4, 0))
+            self._corr_g1_var = tk.StringVar(value=_cg[0] if _cg else '')
+            self._corr_cb1 = ttk.Combobox(self._opt_frame, textvariable=self._corr_g1_var,
+                                          values=_cg, width=10, state='readonly')
+            self._corr_cb1.grid(row=4, column=1, sticky=tk.W, padx=4, pady=(4, 0))
+            ttk.Label(self._opt_frame, text='Diff. Group B:',
+                      font=('Arial', 8)).grid(row=5, column=0, sticky=tk.W)
+            self._corr_g2_var = tk.StringVar(value=_cg[1] if len(_cg) > 1 else '')
+            self._corr_cb2 = ttk.Combobox(self._opt_frame, textvariable=self._corr_g2_var,
+                                          values=_cg, width=10, state='readonly')
+            self._corr_cb2.grid(row=5, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\ncontrasts the two groups above.',
                       font=('Arial', 7), foreground='#666'
-                      ).grid(row=4, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
+                      ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
+
+            ttk.Separator(self._opt_frame, orient=tk.HORIZONTAL).grid(
+                row=7, column=0, columnspan=2, sticky=tk.EW, pady=4)
+            ttk.Label(self._opt_frame, text='Plot:',
+                      font=('Arial', 8)).grid(row=8, column=0, sticky=tk.W)
+            if not hasattr(self, '_corr_plot_var'):
+                self._corr_plot_var = tk.StringVar(value='Heatmap')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_plot_var,
+                         values=['Heatmap', 'Linear (X vs Y)'],
+                         width=14, state='readonly'
+                         ).grid(row=8, column=1, sticky=tk.W, padx=4)
+            _, _, _feat_corr, _ = _get_quantification_matrix(self.app)
+            _feat_corr = _feat_corr or []
+            ttk.Label(self._opt_frame, text='X analyte:',
+                      font=('Arial', 8)).grid(row=9, column=0, sticky=tk.W, pady=(4, 0))
+            if not hasattr(self, '_corr_x_var'):
+                self._corr_x_var = tk.StringVar(value=_feat_corr[0] if _feat_corr else '')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_x_var,
+                         values=_feat_corr, width=14, state='readonly'
+                         ).grid(row=9, column=1, sticky=tk.W, padx=4, pady=(4, 0))
+            ttk.Label(self._opt_frame, text='Y analyte:',
+                      font=('Arial', 8)).grid(row=10, column=0, sticky=tk.W)
+            if not hasattr(self, '_corr_y_var'):
+                self._corr_y_var = tk.StringVar(
+                    value=_feat_corr[1] if len(_feat_corr) > 1 else '')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_y_var,
+                         values=_feat_corr, width=14, state='readonly'
+                         ).grid(row=10, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame,
+                      text='Linear: scatter X vs Y with OLS trend\n'
+                           'line + 95% band; r/p per coefficient.',
+                      font=('Arial', 7), foreground='#666'
+                      ).grid(row=11, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
 
         elif method == 'VIP Score':
             ttk.Label(self._opt_frame, text='Top N features:',
@@ -491,21 +649,34 @@ class StatisticsStage:
                         ).grid(row=0, column=1, sticky=tk.W, padx=4)
             ttk.Label(self._opt_frame, text='VIP threshold:',
                       font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._vip_thr_var = tk.DoubleVar(value=1.0)
+            self._vip_thr_var = tk.DoubleVar(value=1.5)
             ttk.Spinbox(self._opt_frame, from_=0.5, to=3.0, increment=0.1,
                         textvariable=self._vip_thr_var, width=5, format='%.1f'
                         ).grid(row=1, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame, text='Class color map:',
+                      font=('Arial', 8)).grid(row=2, column=0, sticky=tk.W)
+            self._vip_cmap_var = tk.StringVar(value='RdBu_r')
+            ttk.Combobox(self._opt_frame, textvariable=self._vip_cmap_var,
+                         values=['RdBu_r', 'RdYlBu_r', 'seismic', 'coolwarm',
+                                 'viridis', 'plasma'],
+                         width=10, state='readonly'
+                         ).grid(row=2, column=1, sticky=tk.W, padx=4)
 
         elif method == 'Volcano':
             ttk.Label(self._opt_frame, text='Group A:',
                       font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._grp_a_var = tk.StringVar()
+            # Reuse an existing var so the user's group choice survives an options
+            # rebuild (recreating it empty would silently reset both groups to
+            # the defaults → every Run compares the same pair).
+            if not hasattr(self, '_grp_a_var'):
+                self._grp_a_var = tk.StringVar()
             self._cb_a = ttk.Combobox(self._opt_frame, textvariable=self._grp_a_var,
                                        width=12, state='readonly')
             self._cb_a.grid(row=0, column=1, sticky=tk.W, padx=4)
             ttk.Label(self._opt_frame, text='Group B:',
                       font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._grp_b_var = tk.StringVar()
+            if not hasattr(self, '_grp_b_var'):
+                self._grp_b_var = tk.StringVar()
             self._cb_b = ttk.Combobox(self._opt_frame, textvariable=self._grp_b_var,
                                        width=12, state='readonly')
             self._cb_b.grid(row=1, column=1, sticky=tk.W, padx=4)
@@ -565,47 +736,306 @@ class StatisticsStage:
                        command=self._open_pie_style_dialog
                        ).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
 
-        elif method in ('Boxplot', 'Violin'):
-            ttk.Label(self._opt_frame, text='Top N metabolites:',
-                      font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._box_topn_var = tk.IntVar(value=15)
-            ttk.Spinbox(self._opt_frame, from_=1, to=100, increment=1,
-                        textvariable=self._box_topn_var, width=5
-                        ).grid(row=0, column=1, sticky=tk.W, padx=4)
-
-            ttk.Label(self._opt_frame, text='Sort by:',
-                      font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._box_sort_var = tk.StringVar(value='variance')
-            ttk.Combobox(self._opt_frame, textvariable=self._box_sort_var,
-                         values=['variance', 'mean', 'name'], width=10, state='readonly'
-                         ).grid(row=1, column=1, sticky=tk.W, padx=4)
-
-            self._box_points_var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self._opt_frame, text='Overlay data points',
-                            variable=self._box_points_var
-                            ).grid(row=2, column=0, columnspan=2, sticky=tk.W)
-
-            if method == 'Boxplot':
-                self._box_notch_var = tk.BooleanVar(value=False)
-                ttk.Checkbutton(self._opt_frame, text='Notched boxes',
-                                variable=self._box_notch_var
-                                ).grid(row=3, column=0, columnspan=2, sticky=tk.W)
-                self._box_mean_var = tk.BooleanVar(value=False)
-                ttk.Checkbutton(self._opt_frame, text='Show means',
-                                variable=self._box_mean_var
-                                ).grid(row=4, column=0, columnspan=2, sticky=tk.W)
-            else:  # Violin
-                ttk.Label(self._opt_frame, text='Inner:',
-                          font=('Arial', 8)).grid(row=3, column=0, sticky=tk.W)
-                self._violin_inner_var = tk.StringVar(value='box')
-                ttk.Combobox(self._opt_frame, textvariable=self._violin_inner_var,
-                             values=['box', 'quartile', 'point', 'stick', 'none'],
-                             width=10, state='readonly'
-                             ).grid(row=3, column=1, sticky=tk.W, padx=4)
-
+        elif method == 'Box / Violin':
+            ttk.Label(self._opt_frame,
+                      text='Pick the panel grid and which\n'
+                           'metabolites to plot, then Apply.',
+                      font=('Arial', 8), foreground='#555', justify=tk.LEFT
+                      ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+            self._box_cfg_status = ttk.Label(
+                self._opt_frame, text='', font=('Arial', 7), foreground='#666')
+            self._box_cfg_status.grid(row=1, column=0, columnspan=2, sticky=tk.W,
+                                      pady=(2, 0))
+            ttk.Button(self._opt_frame, text='Configure…',
+                       command=self._open_box_config_dialog
+                       ).grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
             ttk.Button(self._opt_frame, text='Edit Style…',
                        command=self._open_box_style_dialog
-                       ).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
+                       ).grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+            self._update_box_cfg_status()
+
+    def _on_pw_plot_change(self):
+        """Show the two Control rows only for the Dumbbell plot; hide otherwise."""
+        is_db = (getattr(self, '_pw_plot_var', None)
+                 and self._pw_plot_var.get() == 'Dumbbell')
+        for w, r, c, kw in (
+            (getattr(self, '_pw_ctrla_lbl', None), 2, 0, dict(sticky=tk.W)),
+            (getattr(self, '_cb_ca', None),        2, 1, dict(sticky=tk.W, padx=4, pady=1)),
+            (getattr(self, '_pw_ctrlb_lbl', None), 3, 0, dict(sticky=tk.W)),
+            (getattr(self, '_cb_cb', None),        3, 1, dict(sticky=tk.W, padx=4, pady=1)),
+            (getattr(self, '_pw_ctrl_hint', None), 4, 0,
+             dict(columnspan=2, sticky=tk.W)),
+        ):
+            if w is None:
+                continue
+            try:
+                if is_db:
+                    w.grid(row=r, column=c, **kw)
+                else:
+                    w.grid_remove()
+            except Exception:
+                pass
+
+    def _dumbbell_pathway_map(self, feature_labels, category, min_mets=2):
+        """metabolite name → representative pathway name (within ``category``).
+        Each metabolite is assigned to the pathway it shares with the most other
+        analytes; pathways with fewer than ``min_mets`` of our metabolites
+        collapse to 'Other'."""
+        import os, sqlite3
+        from collections import Counter
+        from app_paths import databases_dir
+        try:
+            qr = self._pathway_quant_results(feature_labels)
+            id_by_name = {r['metabolite']: str(r.get('hmdb_id') or '') for r in qr}
+        except Exception:
+            id_by_name = {}
+        pw_of = {n: [] for n in feature_labels}
+        cat = str(category).lower()
+        try:
+            conn = sqlite3.connect(os.path.join(databases_dir(), 'hmdb_pathways.db'))
+            cur = conn.cursor()
+            for name in feature_labels:
+                hid = id_by_name.get(name, '')
+                if not hid.upper().startswith('HMDB'):
+                    continue
+                if cat in ('', 'all'):
+                    q = ('SELECT p.name FROM metabolite_pathways mp '
+                         'JOIN pathways p ON p.id = mp.pathway_id '
+                         'WHERE mp.hmdb_id = ?')
+                    args = (hid,)
+                else:
+                    q = ('SELECT p.name FROM metabolite_pathways mp '
+                         'JOIN pathways p ON p.id = mp.pathway_id '
+                         'WHERE mp.hmdb_id = ? AND p.category = ?')
+                    args = (hid, cat)
+                pw_of[name] = [r[0] for r in cur.execute(q, args).fetchall() if r[0]]
+            conn.close()
+        except Exception:
+            pass
+        freq = Counter()
+        for ps in pw_of.values():
+            for p in set(ps):
+                freq[p] += 1
+        assign = {}
+        for name, ps in pw_of.items():
+            best, bf = None, 0
+            for p in ps:
+                if freq[p] > bf or (freq[p] == bf and (best is None or p < best)):
+                    bf, best = freq[p], p
+            assign[name] = (best if (best is not None
+                                     and freq[best] >= max(1, int(min_mets)))
+                            else 'Other')
+        return assign
+
+    def _dumbbell_category_map(self, feature_labels):
+        """metabolite name → pathway category (Metabolic/Disease/Drug/Other)."""
+        import os, sqlite3
+        from app_paths import databases_dir
+        try:
+            qr = self._pathway_quant_results(feature_labels)
+            id_by_name = {r['metabolite']: str(r.get('hmdb_id') or '') for r in qr}
+        except Exception:
+            id_by_name = {}
+        cat = {n: 'Other' for n in feature_labels}
+        try:
+            conn = sqlite3.connect(os.path.join(databases_dir(), 'hmdb_pathways.db'))
+            cur = conn.cursor()
+            for name in feature_labels:
+                hid = id_by_name.get(name, '')
+                if hid.upper().startswith('HMDB'):
+                    row = cur.execute(
+                        'SELECT p.category, COUNT(*) c FROM metabolite_pathways mp '
+                        'JOIN pathways p ON p.id = mp.pathway_id '
+                        'WHERE mp.hmdb_id = ? GROUP BY p.category '
+                        'ORDER BY c DESC LIMIT 1', (hid,)).fetchone()
+                    if row and row[0]:
+                        cat[name] = str(row[0]).capitalize()
+            conn.close()
+        except Exception:
+            pass
+        return cat
+
+    def _plot_dumbbell(self, X, feature_labels, group_labels,
+                       ctrl_a, ctrl_b, ga, gb, p_thr=0.05, category='all'):
+        """Dumbbell plot: log2 FC of treatment A vs Control-A and B vs Control-B
+        per metabolite, joined by a line; filled ▲ = significant (p<thr vs its
+        own control). Restricted to one pathway ``category`` (or 'all')."""
+        from scipy import stats as spstats
+        if not ga or not gb or not ctrl_a or not ctrl_b:
+            raise ValueError('Pick Group A, Group B and a Control for each.')
+        if ga == gb:
+            raise ValueError('Group A and Group B must differ.')
+
+        # Treatment colours from the Options colormap (low end = A, high = B).
+        try:
+            import matplotlib as _mpl
+            _cm = _mpl.colormaps[self._pw_cmap_var.get()]
+            col_a, col_b = _cm(0.15), _cm(0.85)
+        except Exception:
+            col_a, col_b = '#d1495b', '#1565c0'
+
+        gl = list(group_labels)
+        idx_ca = [i for i, g in enumerate(gl) if g == ctrl_a]
+        idx_cb = [i for i, g in enumerate(gl) if g == ctrl_b]
+        idx_a = [i for i, g in enumerate(gl) if g == ga]
+        idx_b = [i for i, g in enumerate(gl) if g == gb]
+        # Name exactly which role is short (and its count) — the usual cause is a
+        # sample exclusion that dropped a group below 2, which the generic message
+        # hid. A count of 0 also flags a stale selection no longer in the data.
+        _short = [f'{role}="{name}": {len(idx)} sample(s)'
+                  for role, name, idx in (('Group A', ga, idx_a),
+                                          ('Group B', gb, idx_b),
+                                          ('Control A', ctrl_a, idx_ca),
+                                          ('Control B', ctrl_b, idx_cb))
+                  if len(idx) < 2]
+        if _short:
+            raise ValueError(
+                'Each of Group A / B / Control A / Control B needs ≥2 samples.\n'
+                'Too few after sample exclusion:\n  ' + '\n  '.join(_short))
+
+        # Group metabolites by PATHWAY (within the chosen category); a band needs
+        # ≥ Min mets (Options) metabolites, else they go to 'Other'.
+        try:
+            _min_mets = int(self._pw_minmets_var.get())
+        except Exception:
+            _min_mets = 2
+        pmap = self._dumbbell_pathway_map(feature_labels, category, _min_mets)
+        keep = list(range(len(feature_labels)))
+        if category and str(category).lower() != 'all':
+            keep = [j for j, n in enumerate(feature_labels)
+                    if pmap.get(n, 'Other') != 'Other']
+            if not keep:
+                raise ValueError(f'No metabolites with a "{category}" pathway.')
+
+        def _fc_p(treat_idx, ctrl_idx, j):
+            c = X[ctrl_idx, j]; t = X[treat_idx, j]
+            c = c[np.isfinite(c)]; t = t[np.isfinite(t)]
+            if c.size < 2 or t.size < 2:
+                return 0.0, 1.0
+            mc, mt = float(np.mean(c)), float(np.mean(t))
+            l2 = float(np.log2(mt / mc)) if (mc > 0 and mt > 0) else 0.0
+            try:
+                if c.size >= 3 and t.size >= 3:
+                    _, p = spstats.ttest_ind(t, c, equal_var=False)
+                else:
+                    _, p = spstats.mannwhitneyu(t, c, alternative='two-sided')
+                p = float(p)
+                if not np.isfinite(p):
+                    p = 1.0
+            except Exception:
+                p = 1.0
+            return l2, p
+
+        rows = []   # (name, pathway, l2a, pa, l2b, pb)
+        for j in keep:
+            name = feature_labels[j]
+            l2a, pa = _fc_p(idx_a, idx_ca, j)
+            l2b, pb = _fc_p(idx_b, idx_cb, j)
+            rows.append([name, pmap.get(name, 'Other'), l2a, pa, l2b, pb])
+        if not rows:
+            raise ValueError('No metabolites to plot.')
+
+        # Cap (Options → Top N) keeping the strongest by |log2FC|.
+        try:
+            MAXN = int(self._pw_topn_var.get())
+        except Exception:
+            MAXN = 45
+        MAXN = max(3, MAXN)
+        if len(rows) > MAXN:
+            rows = sorted(rows, key=lambda r: -max(abs(r[2]), abs(r[4])))[:MAXN]
+
+        # CSV result: per-metabolite log2 fold change + p vs each control.
+        self._plot_export = {
+            'method': 'Dumbbell',
+            'headers': ['metabolite', 'pathway',
+                        f'log2fc_{ga}_vs_{ctrl_a}', f'p_{ga}',
+                        f'log2fc_{gb}_vs_{ctrl_b}', f'p_{gb}'],
+            'rows': [[r[0], r[1], float(r[2]), float(r[3]),
+                      float(r[4]), float(r[5])] for r in rows],
+        }
+
+        # Order: pathway bands ('Other' last); within a band by mean log2FC.
+        from collections import Counter
+        from itertools import groupby
+        _bsize = Counter(r[1] for r in rows)
+        def _band_key(pw):
+            return (pw == 'Other', -_bsize[pw], pw)
+        rows.sort(key=lambda r: (_band_key(r[1]), -((r[2] + r[4]) / 2.0)))
+
+        # One stacked panel (facet) per pathway, small gap between them.
+        bands = [(pw, list(grp)) for pw, grp in groupby(rows, key=lambda r: r[1])]
+        nb = len(bands)
+
+        # Figure height scales with content so panels/labels are not squashed
+        # (the viewer scrolls). Width follows the container.
+        _tot = sum(len(b[1]) for b in bands)
+        self._dumbbell_export_figsize = (
+            9.5, max(6.0, _tot * 0.34 + nb * 0.55 + 1.2))
+        all_l2 = [v for r in rows for v in (r[2], r[4])]
+        xlo, xhi = (min(all_l2 + [0.0]), max(all_l2 + [0.0]))
+        pad = max((xhi - xlo) * 0.12, 0.05)
+        xlo, xhi = xlo - pad, xhi + pad
+
+        gs = self._fig.add_gridspec(
+            nb, 1, hspace=0.45,
+            height_ratios=[len(b[1]) + 0.7 for b in bands])
+        self._fig.suptitle(
+            f'{ga} (A) vs {ctrl_a}   ·   {gb} (B) vs {ctrl_b}',
+            fontsize=10, fontweight='bold')
+
+        from matplotlib.lines import Line2D
+        ax0 = None
+        for k, (pw, brows) in enumerate(bands):
+            axk = self._fig.add_subplot(gs[k, 0])
+            if ax0 is None:
+                ax0 = axk
+            ny = len(brows)
+            yp = list(range(ny))[::-1]
+            for y, r in zip(yp, brows):
+                _, _, l2a, pa, l2b, pb = r
+                axk.plot([l2a, l2b], [y, y], color='#bbbbbb', lw=1.2, zorder=2)
+                for l2, p, col in ((l2a, pa, col_a), (l2b, pb, col_b)):
+                    if p < p_thr:
+                        axk.scatter(l2, y, marker='^', s=50, color=col,
+                                    edgecolors=col, zorder=3)
+                    else:
+                        axk.scatter(l2, y, marker='o', s=38, facecolors='white',
+                                    edgecolors=col, linewidths=1.3, zorder=3)
+            axk.axvline(0.0, color='#888', ls='--', lw=1.0, zorder=0)
+            axk.set_xlim(xlo, xhi)
+            axk.set_ylim(-0.6, ny - 0.4)
+            axk.set_yticks(yp)
+            axk.set_yticklabels([r[0] for r in brows], fontsize=7)
+            axk.set_title(pw, loc='left', fontsize=8, fontweight='bold',
+                          color='#1a1a2e', pad=2)
+            axk.tick_params(labelsize=7, labelbottom=True)   # x scale on every panel
+
+        # Single shared x-axis label at the figure bottom (always visible).
+        self._fig.supxlabel('log2 Fold Change vs Control', fontsize=9)
+
+        # Legends once, close to the top-right of the figure.
+        sig_leg = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor='white',
+                   markeredgecolor='#555', markersize=8, label='ns'),
+            Line2D([0], [0], marker='^', color='w', markerfacecolor='#555',
+                   markeredgecolor='#555', markersize=9, label=f'p < {p_thr:g}'),
+        ]
+        trt_leg = [
+            Line2D([0], [0], marker='o', color='w', markerfacecolor=col_a,
+                   markersize=9, label=f'A: {ga}'),
+            Line2D([0], [0], marker='o', color='w', markerfacecolor=col_b,
+                   markersize=9, label=f'B: {gb}'),
+        ]
+        if ax0 is not None:
+            leg1 = ax0.legend(handles=sig_leg, title='Significance', fontsize=7,
+                              title_fontsize=8, loc='upper left',
+                              bbox_to_anchor=(1.005, 1.0), borderaxespad=0.0,
+                              framealpha=0.9)
+            ax0.add_artist(leg1)
+            ax0.legend(handles=trt_leg, title='Treatment', fontsize=7,
+                       title_fontsize=8, loc='upper left',
+                       bbox_to_anchor=(1.005, 0.4), borderaxespad=0.0,
+                       framealpha=0.9)
 
     def _open_pie_style_dialog(self):
         from tkinter import colorchooser
@@ -803,7 +1233,8 @@ class StatisticsStage:
     def _refresh_groups(self):
         si = getattr(self.app, 'samples_info', [])
         groups = sorted(set(s.get('label', s.get('group', 'Unknown')) for s in si))
-        for cb in (getattr(self, '_cb_a', None), getattr(self, '_cb_b', None)):
+        for cb in (getattr(self, '_cb_a', None), getattr(self, '_cb_b', None),
+                   getattr(self, '_cb_ca', None), getattr(self, '_cb_cb', None)):
             if cb is not None:
                 try:
                     if cb.winfo_exists():
@@ -815,6 +1246,11 @@ class StatisticsStage:
                 self._grp_a_var.set(groups[0])
             if hasattr(self, '_grp_b_var') and not self._grp_b_var.get():
                 self._grp_b_var.set(groups[-1] if len(groups) > 1 else groups[0])
+            if hasattr(self, '_grp_ca_var') and not self._grp_ca_var.get():
+                self._grp_ca_var.set(groups[1] if len(groups) > 2 else groups[0])
+            if hasattr(self, '_grp_cb_var') and not self._grp_cb_var.get():
+                self._grp_cb_var.set(groups[2] if len(groups) > 3 else
+                                     (groups[1] if len(groups) > 1 else groups[0]))
 
     def _update_filter_status(self):
         parts = []
@@ -946,12 +1382,18 @@ class StatisticsStage:
         ttk.Button(bottom, text='Cancel', command=dlg.destroy    ).pack(side=tk.RIGHT)
 
     def _open_normality_popup(self):
-        """Per-sample normality + Grubbs outlier detection within each group.
+        """Per-sample profile QC + Grubbs outlier detection within each group.
 
-        Shapiro-Wilk on each sample's log-transformed analyte profile.
-        Grubbs' G on Euclidean distance from group centroid (log+z-score space)
-        — detects samples with anomalous metabolite profiles regardless of
-        overall concentration magnitude.
+        Shapiro-Wilk on each sample's log-transformed analyte profile is a
+        whole-sample QC metric (is this sample's overall distribution as
+        expected?), NOT a parametric-vs-nonparametric gate — the group tests
+        choose by sample size, not by this flag.
+
+        Grubbs' G on the Euclidean distance from the group centroid (log+z-score
+        space) flags samples with anomalous metabolite profiles regardless of
+        overall concentration magnitude. Because distances are non-negative,
+        the test is one-sided (upper tail) and iterative — see
+        processing/outlier_detection.
         """
         from scipy import stats as spstats
         import csv
@@ -1032,12 +1474,12 @@ class StatisticsStage:
                 diff = X_z[i, :] - centroid
                 sample_dist[i] = float(np.sqrt(np.nansum(diff ** 2)))
 
-        def _grubbs_critical(n, alpha=0.05):
-            if n < 3:
-                return float('nan')
-            t_crit = spstats.t.ppf(1.0 - alpha / (2.0 * n), df=n - 2)
-            return ((n - 1) / np.sqrt(n)) * np.sqrt(
-                t_crit ** 2 / (n - 2 + t_crit ** 2))
+        # Grubbs on distance-to-centroid: distances are non-negative, so only the
+        # UPPER tail (far from centroid) is an outlier — a one-sided test avoids
+        # flagging samples that are unusually CLOSE to the centroid. Iterative
+        # removal prevents a single outlier from masking itself by inflating the
+        # group SD. See processing/outlier_detection.
+        from processing.outlier_detection import grubbs_outliers
 
         grubbs_g    = [float('nan')] * n_samples
         grubbs_crit = [float('nan')] * n_samples
@@ -1047,15 +1489,12 @@ class StatisticsStage:
             idx_g = [i for i, g in enumerate(all_groups) if g == grp]
             if len(idx_g) < 3:
                 continue
-            vals   = sample_dist[idx_g]
-            mu_g   = float(np.mean(vals))
-            s_g    = float(np.std(vals, ddof=1))
-            g_crit = _grubbs_critical(len(idx_g))
-            for i in idx_g:
-                g_val = abs(sample_dist[i] - mu_g) / s_g if s_g > 0 else 0.0
-                grubbs_g[i]    = round(g_val, 4)
-                grubbs_crit[i] = round(g_crit, 4)
-                grubbs_flag[i] = g_val > g_crit
+            flags_g, gstat_g, gcrit_g = grubbs_outliers(
+                sample_dist[idx_g], alpha=0.05, side='upper')
+            for k, i in enumerate(idx_g):
+                grubbs_g[i]    = float(gstat_g[k])
+                grubbs_crit[i] = float(gcrit_g[k])
+                grubbs_flag[i] = bool(flags_g[k])
 
         # ── Build results rows ────────────────────────────────────────────────
         rows = []
@@ -1089,7 +1528,7 @@ class StatisticsStage:
         cols   = ('sample', 'group', 'n', 'sw_stat', 'sw_p',
                   'parametric', 'dist', 'g_stat', 'g_crit', 'outlier')
         hdrs   = ('Sample', 'Group', 'n', 'SW stat', 'SW p (log)',
-                  'Parametric?', 'Profile dist.', 'G stat', 'G critical', 'Outlier?')
+                  'Profile normal?', 'Profile dist.', 'G stat', 'G critical', 'Outlier?')
         widths = (150, 90, 42, 78, 85, 88, 95, 78, 88, 78)
 
         frm = ttk.Frame(dlg)
@@ -1151,9 +1590,10 @@ class StatisticsStage:
         ttk.Label(
             bot,
             text=(f'{n_samples} samples · {n_analytes} analytes · '
-                  'SW on log-profile (p<0.05 → non-parametric) · '
+                  'Profile normal? = Shapiro-Wilk on each sample log-profile '
+                  '(QC of the sample as a whole; group test choice is by size) · '
                   'Profile dist. = Euclidean distance to group centroid (log+z-score) · '
-                  'G > G_crit (α=0.05) → possible outlier'),
+                  'Grubbs one-sided upper, iterative (α=0.05) → possible outlier'),
             font=('Arial', 7), foreground='#555'
         ).pack(side=tk.LEFT, padx=8)
 
@@ -1265,6 +1705,8 @@ class StatisticsStage:
                      width=6, state='readonly').pack(side=tk.LEFT, padx=(0, 8))
         ttk.Button(eb, text='💾 Save figure', command=self._export
                    ).pack(side=tk.LEFT, padx=4)
+        ttk.Button(eb, text='📄 CSV result', command=self._export_csv_result
+                   ).pack(side=tk.LEFT, padx=4)
 
         # Scrollable display canvas
         plot_outer = ttk.Frame(self._right_widget)
@@ -1322,10 +1764,62 @@ class StatisticsStage:
             self._scroll_canvas.after(80, self._render_and_display)
             return
         dpi = self._fig.dpi
-        self._fig.set_size_inches(w_px / dpi, h_px / dpi)
+        # Dumbbell (Pathway) renders at a content-scaled height so its stacked
+        # facets are readable (the canvas scrolls); other plots fill the panel.
+        _db = (getattr(self, '_mode_var', None) and self._mode_var.get() == 'pathway'
+               and getattr(self, '_pw_plot_var', None)
+               and self._pw_plot_var.get() == 'Dumbbell'
+               and getattr(self, '_dumbbell_export_figsize', None))
+        # Compact Volcano is a portrait plot (taller than wide) — fill the height
+        # and make the width ~0.72× of it, instead of filling the wide canvas.
+        _vol_compact = (
+            getattr(self, '_method_var', None) is not None
+            and self._method_var.get() == 'Volcano'
+            and getattr(self, '_volcano_style', None)
+            and self._volcano_style.get('theme') == 'Compact')
+        # Box/Violin renders at its configured panel size (A4-capped), not the
+        # canvas size, so the panel W/H controls the on-screen graph size too
+        # (the canvas scrolls when the figure is larger than the viewport).
+        _is_box = (getattr(self, '_method_var', None) is not None
+                   and self._method_var.get() == 'Box / Violin'
+                   and getattr(self, '_box_export_figsize', None))
+        if _db:
+            self._fig.set_size_inches(max(w_px / dpi, _db[0]), _db[1])
+        elif _vol_compact:
+            _h = h_px / dpi
+            self._fig.set_size_inches(min(_h * 0.72, w_px / dpi), _h)
+        elif _is_box:
+            self._fig.set_size_inches(*self._box_export_figsize)
+        else:
+            self._fig.set_size_inches(w_px / dpi, h_px / dpi)
         buf = io.BytesIO()
-        self._fig.savefig(buf, format='png', dpi=dpi,
-                          bbox_inches='tight', facecolor='white')
+        try:
+            self._fig.savefig(buf, format='png', dpi=dpi,
+                              bbox_inches='tight', facecolor='white')
+        except Exception:
+            # Tight bbox + constrained_layout can fail hard: a non-finite size
+            # from a stray artist, or "axes collapsed to zero" when the layout
+            # solver can't fit legend/labels. If we let this propagate the panel
+            # keeps showing the PREVIOUS plot (looks like swapping groups does
+            # nothing). Retry with the plain box and no layout engine, and fall
+            # back to an error placeholder so the image ALWAYS refreshes.
+            try:
+                self._fig.set_layout_engine('none')
+            except Exception:
+                pass
+            buf.seek(0); buf.truncate(0)
+            try:
+                self._fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
+            except Exception as _re:
+                import traceback; traceback.print_exc()
+                self._fig.clear()
+                _ax = self._fig.add_subplot(111)
+                _ax.text(0.5, 0.5, f'Render failed:\n{_re}',
+                         transform=_ax.transAxes, ha='center', va='center',
+                         color='red', fontsize=9, wrap=True)
+                _ax.set_axis_off()
+                buf.seek(0); buf.truncate(0)
+                self._fig.savefig(buf, format='png', dpi=dpi, facecolor='white')
         buf.seek(0)
         self._base_image = _PILImage.open(buf).copy()
         buf.close()
@@ -1432,11 +1926,14 @@ class StatisticsStage:
                                  parent=self.frame)
             return
         if getattr(self, '_mode_var', None) and self._mode_var.get() == 'pathway':
-            self._run_pathway()
+            if self._is_lipidomics_project():
+                self._run_fa_ratios()
+            else:
+                self._run_pathway()
             return
         method = self._method_var.get()
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
-        _single_sample_ok = method in ('Metabolic Profile', 'Boxplot', 'Violin')
+        _single_sample_ok = method in ('Metabolic Profile', 'Box / Violin')
         _min_samples = 1 if _single_sample_ok else 2
         if X is None or X.shape[0] < _min_samples or X.shape[1] < 2:
             messagebox.showwarning(
@@ -1481,6 +1978,8 @@ class StatisticsStage:
         self._base_image = None
         self._fig.set_layout_engine('constrained')
         self._fig.clear()
+        # Reset per-plot export data; each _plot_* sets it with the values shown.
+        self._plot_export = None
         try:
             if method == 'PCA':
                 self._plot_pca(X_scaled, sample_names, feature_labels, group_labels)
@@ -1498,10 +1997,8 @@ class StatisticsStage:
                 self._plot_volcano(X, sample_names, feature_labels, group_labels)
             elif method == 'Metabolic Profile':
                 self._plot_metabolic_profile(X, sample_names, feature_labels, group_labels)
-            elif method == 'Boxplot':
-                self._plot_box_violin(X, sample_names, feature_labels, group_labels, kind='box')
-            elif method == 'Violin':
-                self._plot_box_violin(X, sample_names, feature_labels, group_labels, kind='violin')
+            elif method == 'Box / Violin':
+                self._plot_box_violin_grid()
         except Exception as e:
             import traceback; traceback.print_exc()
             ax = self._fig.add_subplot(111)
@@ -1510,6 +2007,117 @@ class StatisticsStage:
                     color='red', fontsize=9, wrap=True)
             ax.set_axis_off()
 
+        self._render_and_display()
+
+    # ── FA ratios mode (lipidomics) ──────────────────────────────────────────
+
+    def _build_left_fa_ratios(self, parent):
+        _SEC = dict(padding=(6, 4, 6, 4), relief='groove')
+        info = ttk.LabelFrame(parent, text='FA ratios', **_SEC)
+        info.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(
+            info,
+            text=('Fatty-acid composition ratios derived from the\n'
+                  'Box 1 indices (Li et al. 2017) — CDCl3 lipid\n'
+                  'extracts only. Box plots compare groups per ratio.'),
+            font=('Arial', 8), foreground='#444', justify=tk.LEFT,
+        ).pack(anchor=tk.W, padx=4, pady=2)
+        ttk.Label(
+            info, text='n-3 index is ALA-only (EPA/DHA not resolved).',
+            font=('Arial', 7, 'italic'), foreground='#a60',
+            justify=tk.LEFT, wraplength=210,
+        ).pack(anchor=tk.W, padx=4, pady=(0, 2))
+        ttk.Label(
+            info, text='Press Run to draw the box plots.',
+            font=('Arial', 8, 'italic'), foreground='#666',
+        ).pack(anchor=tk.W, padx=4, pady=(2, 2))
+
+        # Sample filter is shared/honoured by the FA-ratios run.
+        ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
+        ff.pack(fill=tk.X, pady=(0, 4))
+        self._filter_samples_btn = ttk.Button(
+            ff, text='Samples', command=self._open_sample_selector)
+        self._filter_samples_btn.pack(fill=tk.X, padx=4, pady=2)
+        self._filter_status_lbl = ttk.Label(
+            ff, text='', font=('Arial', 7), foreground='#666')
+        self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    def _run_fa_ratios(self):
+        from processing import lipidomics as _lp
+        import matplotlib.pyplot as plt
+
+        quant = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        results = getattr(quant, '_quant_results', None) or []
+        ratios = _lp.fa_ratio_series(results)
+        if not ratios:
+            self._pathway_status(
+                'No FA composition ratios available.\n\n'
+                'FA ratios are built from the Box 1 indices, computed only for '
+                'CDCl3 (Li) lipidomics runs. Run Quantification in Lipidomics '
+                'mode with the CDCl3 solvent first.')
+            return
+
+        si = getattr(self.app, 'samples_info', []) or []
+        sample_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
+        group_labels = [s.get('label', s.get('group', 'Unknown')) for s in si]
+        keep = [i for i, n in enumerate(sample_names)
+                if n not in self._excluded_samples]
+        groups = {}
+        for i in keep:
+            groups.setdefault(group_labels[i], []).append(i)
+        if not groups:
+            self._pathway_status('No samples remain after filtering.')
+            return
+        order = list(groups.keys())
+
+        _app_colors = getattr(self.app, 'group_colors', {})
+        cmap = plt.cm.get_cmap('tab10', max(len(order), 1))
+        gcol = {g: (_app_colors.get(g) or cmap(i)) for i, g in enumerate(order)}
+
+        self._zoom_level = 1.0
+        self._base_image = None
+        self._fig.set_layout_engine('constrained')
+        self._fig.clear()
+
+        names = list(ratios.keys())
+        ncol = 3
+        nrow = int(np.ceil(len(names) / ncol))
+        for k, name in enumerate(names):
+            ax = self._fig.add_subplot(nrow, ncol, k + 1)
+            arr = ratios[name]
+            data = []
+            for g in order:
+                vals = [float(arr[i]) for i in groups[g]
+                        if i < len(arr) and np.isfinite(arr[i])]
+                data.append(vals)
+            if not any(data):
+                ax.text(0.5, 0.5, 'no data', transform=ax.transAxes,
+                        ha='center', va='center', color='#999', fontsize=8)
+                ax.set_title(name, fontsize=9)
+                ax.set_axis_off()
+                continue
+            try:
+                bp = ax.boxplot(data, tick_labels=order, patch_artist=True,
+                                showfliers=False)
+            except TypeError:                      # matplotlib < 3.9
+                bp = ax.boxplot(data, labels=order, patch_artist=True,
+                                showfliers=False)
+            for patch, g in zip(bp['boxes'], order):
+                patch.set_facecolor(gcol[g])
+                patch.set_alpha(0.6)
+            rng = np.random.RandomState(0)
+            for xi, (g, vals) in enumerate(zip(order, data), start=1):
+                if vals:
+                    jit = (rng.rand(len(vals)) - 0.5) * 0.15
+                    ax.scatter(np.full(len(vals), xi) + jit, vals, s=12,
+                               color=gcol[g], edgecolor='k',
+                               linewidths=0.3, zorder=3)
+            ax.set_title(name, fontsize=9)
+            ax.tick_params(labelsize=7)
+            ax.set_ylabel('%' if name.endswith('(%)') else 'ratio', fontsize=7)
+
+        self._fig.suptitle(
+            'Fatty-acid composition ratios (Box 1, Li et al. 2017)', fontsize=10)
         self._render_and_display()
 
     # ── Pathway mode run ─────────────────────────────────────────────────────
@@ -1526,6 +2134,9 @@ class StatisticsStage:
         self._render_and_display()
 
     def _run_pathway(self):
+        # Reset so a run that aborts early (status message) cannot export the
+        # previous plot's stale table; each successful path sets it again.
+        self._plot_export = None
         ga = self._grp_a_var.get() if hasattr(self, '_grp_a_var') else ''
         gb = self._grp_b_var.get() if hasattr(self, '_grp_b_var') else ''
         if not ga or not gb or ga == gb:
@@ -1561,11 +2172,37 @@ class StatisticsStage:
                 'Not enough valid metabolites after filtering.', parent=self.frame)
             return
 
+        # ── Dumbbell: A vs Control-A and B vs Control-B, RAW data (no ORA) ────
+        if self._pw_plot_var.get() == 'Dumbbell':
+            _ctrl_a = self._grp_ca_var.get()
+            _ctrl_b = self._grp_cb_var.get()
+            self._zoom_level = 1.0; self._base_image = None
+            self._fig.set_layout_engine('constrained'); self._fig.clear()
+            try:
+                self._plot_dumbbell(
+                    X, feature_labels, group_labels, _ctrl_a, _ctrl_b, ga, gb,
+                    p_thr=float(self._pw_p_thr_var.get()),
+                    category=self._pw_cat_var.get())
+            except Exception as _e:
+                _ax = self._fig.add_subplot(111)
+                _ax.text(0.5, 0.5, f'Error:\n{_e}', transform=_ax.transAxes,
+                         ha='center', va='center', color='#c0392b')
+                _ax.axis('off')
+            self._render_and_display()
+            return
+
         if ga not in group_labels or gb not in group_labels:
             messagebox.showwarning('Pathway',
                 'Selected groups are not present in the (filtered) samples.',
                 parent=self.frame)
             return
+
+        # Apply the same normalization/scaling as Statistics for the significance
+        # test, but keep the raw matrix for fold-change direction (scaling
+        # mean-centres the data → ratios on centred values are meaningless).
+        X_raw = X.copy()
+        X = self._scale(X)
+        self._pw_X_raw = X_raw
 
         # ── Build membership (cached; fetch in background thread) ─────────────
         quant_results = self._pathway_quant_results(feature_labels)
@@ -1583,7 +2220,8 @@ class StatisticsStage:
         if (cached is not None and cached.get('key') == cache_key
                 and cached.get('use_api') == use_api):
             self._finish_pathway(cached['table'], cached['skipped'],
-                                 X, feature_labels, group_labels, ga, gb)
+                                 X, feature_labels, group_labels, ga, gb,
+                                 X_fc=X_raw)
             return
 
         self._pathway_status('Fetching pathway membership…')
@@ -1603,7 +2241,8 @@ class StatisticsStage:
                 'key': cache_key, 'use_api': use_api,
                 'table': table, 'skipped': skipped}
             self.frame.after(0, lambda: self._finish_pathway(
-                table, skipped, X, feature_labels, group_labels, ga, gb))
+                table, skipped, X, feature_labels, group_labels, ga, gb,
+                X_fc=X_raw))
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -1614,6 +2253,8 @@ class StatisticsStage:
         raw = getattr(quant_stage, '_quant_results', None) or []
         id_map = {}
         for r in raw:
+            if r.get('_not_quantified'):
+                continue
             nm = r.get('metabolite') or r.get('name')
             if nm:
                 id_map[nm] = r.get('hmdb_id') or r.get('id') or ''
@@ -1621,8 +2262,11 @@ class StatisticsStage:
                 for f in feature_labels]
 
     def _finish_pathway(self, pathway_table, skipped, X, feature_labels,
-                        group_labels, ga, gb):
-        """Compute ORA and render the selected pathway plot (main thread)."""
+                        group_labels, ga, gb, X_fc=None):
+        """Compute ORA and render the selected pathway plot (main thread).
+
+        X is the scaled matrix used for the significance test; X_fc (raw) is used
+        for fold-change direction so scaling's mean-centring does not corrupt it."""
         from data import pathway_membership as pwm
         from processing import pathway_enrichment as pwe
 
@@ -1634,7 +2278,8 @@ class StatisticsStage:
                 'Try Category = all.')
             return
 
-        test_res = pwe.per_metabolite_test(X, group_labels, ga, gb, feature_labels)
+        test_res = pwe.per_metabolite_test(X, group_labels, ga, gb, feature_labels,
+                                           X_fc=X_fc)
         p_thr = float(self._pw_p_thr_var.get())
         hits = pwe.select_hits(test_res, p_thr)
         if not hits:
@@ -1675,6 +2320,19 @@ class StatisticsStage:
         self._pw_last_rows = rows
         self._pw_skipped   = skipped
 
+        # CSV result: the ORA table behind the overview/dot/lollipop/network plot.
+        self._plot_export = {
+            'method': 'Pathway',
+            'headers': ['pathway', 'hits_k', 'pathway_size_K', 'sig_total_n',
+                        'enrichment_ratio', 'p_value', 'fdr_bh', 'smpdb_id',
+                        'hit_metabolites'],
+            'rows': [[r['name'], r['k'], r['K'], r['n'],
+                      float(r['enrichment_ratio']), float(r['p']),
+                      float(r.get('fdr', float('nan'))), r.get('smpdb', ''),
+                      '; '.join(r.get('mets', []))]
+                     for r in rows],
+        }
+
         self._zoom_level = 1.0
         self._base_image = None
         self._fig.set_layout_engine('constrained')
@@ -1713,10 +2371,30 @@ class StatisticsStage:
         return vals, norm, cmap, label
 
     def _pathway_colorbar(self, mappable, label):
+        from matplotlib.ticker import FuncFormatter
         cb = self._fig.colorbar(mappable, ax=self._fig.axes,
                                 fraction=0.046, pad=0.04, shrink=0.5)
         cb.set_label(label, fontsize=8)
         cb.ax.tick_params(labelsize=7)
+
+        # The p-value / FDR scale is LogNorm; matplotlib's default log ticks are
+        # scientific notation (1e-2, …). Show plain decimals at the familiar
+        # significance thresholds instead (0.05, 0.01, …) for readability.
+        try:
+            vmin = float(getattr(mappable.norm, 'vmin', None) or 1e-3)
+        except (TypeError, ValueError):
+            vmin = 1e-3
+        ticks = [t for t in (1.0, 0.5, 0.1, 0.05, 0.01, 0.001, 1e-4, 1e-5)
+                 if t >= vmin * 0.999]
+        if ticks:
+            cb.set_ticks(ticks)
+        cb.minorticks_off()                          # drop sci-notation minor labels
+
+        def _decimal(v, _pos):
+            if v <= 0:
+                return ''
+            return f'{v:.10f}'.rstrip('0').rstrip('.')
+        cb.ax.yaxis.set_major_formatter(FuncFormatter(_decimal))
 
     def _plot_pathway_overview(self, rows, ga, gb):
         import numpy as np
@@ -1731,7 +2409,7 @@ class StatisticsStage:
         y = np.arange(len(rows))
         ax.barh(y, ratios, color=colors, edgecolor='#888', linewidth=0.4)
         ax.set_yticks(y)
-        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5)
+        ax.set_yticklabels([n[:42] for n in names], fontsize=7.5, fontweight='bold')
         ax.set_xlabel('Enrichment Ratio', fontsize=8)
         ax.set_title(f'Overview of Enriched Metabolite Sets\n{ga} vs {gb}',
                      fontsize=10, fontweight='bold')
@@ -1974,6 +2652,16 @@ class StatisticsStage:
         scores = pca.fit_transform(X)
         ev     = pca.explained_variance_ratio_ * 100
 
+        # CSV export: PCA scores per sample (explained variance in the header).
+        self._plot_export = {
+            'method': 'PCA',
+            'headers': (['sample', 'group']
+                        + ['PC%d (%.1f%%)' % (c + 1, ev[c]) for c in range(n_comp)]),
+            'rows': [([sample_names[i], str(group_labels[i])]
+                      + [float(scores[i, c]) for c in range(n_comp)])
+                     for i in range(scores.shape[0])],
+        }
+
         y, unique = _group_to_int(group_labels)
         gcols = self._group_colors(unique)
 
@@ -2041,7 +2729,6 @@ class StatisticsStage:
     def _plot_plsda(self, X, sample_names, feature_labels, group_labels, opls=False):
         from sklearn.cross_decomposition import PLSRegression
         from sklearn.preprocessing import label_binarize
-        from sklearn.model_selection import cross_val_score
 
         y_int, unique = _group_to_int(group_labels)
         n_classes = len(unique)
@@ -2057,32 +2744,39 @@ class StatisticsStage:
         n_comp = n_comp.get() if n_comp else 2
         n_comp = min(n_comp, X.shape[0]-1, X.shape[1])
 
-        pls = PLSRegression(n_components=n_comp, scale=False)
-        pls.fit(X, Y)
-        scores = pls.transform(X)
-        if scores.ndim == 1:
-            scores = scores.reshape(-1, 1)
+        from processing.multivariate import opls_da, pls_r2x_per_component
 
-        total_var_X = np.sum(np.var(X, axis=0))  # sum of per-feature variances
-        ev_x = [np.var(scores[:, k]) / total_var_X * 100 for k in range(min(2, scores.shape[1]))]
         gcols   = self._group_colors(unique)
         ellipse = getattr(self, '_ellipse_var', None)
         ellipse = ellipse.get() if ellipse else True
 
         if opls:
-            # OPLS-DA approximation: orthogonal correction
-            # Regress out the variance orthogonal to Y from T[:,0]
-            t1 = scores[:, 0]
-            t_orth = scores[:, 1] if scores.shape[1] > 1 else np.zeros_like(t1)
-            proj = np.dot(t_orth, t1) / (np.dot(t1, t1) + 1e-12)
-            t_orth_corr = t_orth - proj * t1
-            plot_x, plot_y = t1, t_orth_corr
-            ev_pred  = np.var(t1)          / total_var_X * 100
-            ev_orth  = np.var(t_orth_corr) / total_var_X * 100
-            xlabel = f'T score (predictive, {ev_pred:.1f}% X var.)'
-            ylabel = f'T orthogonal ({ev_orth:.1f}% X var.)'
-            title = 'OPLS-DA Score Plot'
+            # Real OPLS-DA (Trygg & Wold, J. Chemometrics 2002): one predictive
+            # component vs Y-orthogonal components. Defined for two classes — the
+            # previous "OPLS" merely Gram-Schmidt'd two already-orthogonal PLS
+            # scores (a no-op that produced a mislabeled PLS-DA plot).
+            if n_classes > 2:
+                raise ValueError(
+                    'OPLS-DA is defined for two classes only.\n'
+                    'Use PLS-DA for more than two groups.')
+            res = opls_da(X, y_int.astype(float), n_ortho=max(1, n_comp - 1))
+            plot_x = res['t_pred']
+            t_o    = res['t_ortho']
+            plot_y = t_o[:, 0] if t_o.shape[1] else np.zeros_like(plot_x)
+            ev_pred = res['r2x_pred']
+            ev_orth = float(res['r2x_ortho'][0]) if res['r2x_ortho'].size else 0.0
+            xlabel = f'Predictive t  (R²X = {ev_pred:.1f}%)'
+            ylabel = f'Orthogonal t  (R²X = {ev_orth:.1f}%)'
+            title  = 'OPLS-DA Score Plot'
         else:
+            pls = PLSRegression(n_components=n_comp, scale=False)
+            pls.fit(X, Y)
+            scores = pls.transform(X)
+            if scores.ndim == 1:
+                scores = scores.reshape(-1, 1)
+            # Correct %X variance per LV: R2X_k = ||t_k||²·||p_k||² / ||X||²
+            # (the dropped loading-norm factor under-reported the explained var).
+            ev_x = pls_r2x_per_component(scores, pls.x_loadings_, X)
             plot_x = scores[:, 0]
             plot_y = scores[:, 1] if scores.shape[1] > 1 else np.zeros_like(plot_x)
             xlabel = f'LV1 ({ev_x[0]:.1f}% X var.)'
@@ -2102,33 +2796,31 @@ class StatisticsStage:
                         fontsize=5.5, ha='center', va='bottom',
                         xytext=(0, 4), textcoords='offset points', color='#444')
 
+        # Validation fits the SAME binarized Y as the plotted model (ordinal
+        # y_int would impose a false class ordering for ≥3 groups). Folds are
+        # stratified and n_comp is clamped per fold (see plsda_cv_q2), so no fold
+        # collapses to a constant Y — that was the "y residual is constant" warning.
+        from processing.multivariate import plsda_cv_q2, plsda_permutation_p
+        _min_class = int(np.min(np.bincount(y_int))) if len(y_int) else 0
+        _n_splits  = max(2, min(5, _min_class))
+
         cv = getattr(self, '_cv_var', None)
-        if cv and cv.get():
+        if cv and cv.get() and _min_class >= 2:
             try:
-                from sklearn.model_selection import StratifiedKFold
-                cv_scores = cross_val_score(
-                    PLSRegression(n_components=n_comp, scale=False),
-                    X, y_int.astype(float),
-                    cv=StratifiedKFold(n_splits=min(5, X.shape[0])),
-                    scoring='r2')
-                r2cv = cv_scores.mean()
-                ax.set_title(f'{title}  —  CV R²={r2cv:.3f}', fontsize=10)
+                r2cv = plsda_cv_q2(X, y_int, n_comp, _n_splits)
+                ax.set_title(f'{title}  —  Q²={r2cv:.3f}', fontsize=10)
             except Exception:
                 ax.set_title(title, fontsize=10)
         else:
             ax.set_title(title, fontsize=10)
 
-        # Permutation test
+        # Permutation test (stratified CV, label shuffling — preserves class sizes
+        # so every permuted fit stays non-degenerate).
         n_perm = getattr(self, '_n_perm_var', None)
         n_perm = n_perm.get() if n_perm else 0
-        if n_perm > 0:
+        if n_perm > 0 and _min_class >= 2:
             try:
-                from sklearn.model_selection import permutation_test_score
-                _, _, pval = permutation_test_score(
-                    PLSRegression(n_components=n_comp, scale=False),
-                    X, y_int.astype(float),
-                    n_permutations=n_perm, scoring='r2',
-                    cv=min(5, X.shape[0]), n_jobs=1)
+                _, pval = plsda_permutation_p(X, y_int, n_comp, _n_splits, n_perm)
                 ax.text(0.02, 0.02, f'Permutation p={pval:.3f}',
                         transform=ax.transAxes, fontsize=7.5,
                         color='#555', va='bottom')
@@ -2197,8 +2889,11 @@ class StatisticsStage:
         gcols = self._group_colors(unique)
         import matplotlib.colors as mcolors
 
-        # Disable all layout engines — use manual subplots_adjust only
-        self._fig.set_layout_engine('none')
+        # Remove any layout engine — use manual subplots_adjust only. Must pass
+        # None (not the string 'none'): switching from the 'constrained' engine
+        # set in _run() to 'none' leaves an adjust-incompatible placeholder that
+        # makes subplots_adjust warn and no-op; None clears it cleanly.
+        self._fig.set_layout_engine(None)
 
         # GridSpec: 2 rows × 2 cols  (colorbar/legend placed manually)
         #   row 0: [blank | col_dendrogram]
@@ -2281,6 +2976,98 @@ class StatisticsStage:
             vips[i] = np.sqrt(p * weight.sum() / s_total)
         return vips
 
+    def _plot_correlation_linear(self, X, feature_labels, group_labels):
+        """Scatter of one analyte vs another across samples, with an OLS trend
+        line and a 95% confidence band (regression-mean CI). The reported
+        coefficient follows the Coefficient selector: Pearson (parametric) or
+        Spearman (non-parametric). See processing.correlation for the maths."""
+        from processing.correlation import correlation_coeff, linear_fit_ci
+        import matplotlib.cm as cm
+
+        method = getattr(self, '_corr_method_var', None)
+        method = method.get() if method else 'pearson'
+        xname = (getattr(self, '_corr_x_var', None).get()
+                 if getattr(self, '_corr_x_var', None) else '')
+        yname = (getattr(self, '_corr_y_var', None).get()
+                 if getattr(self, '_corr_y_var', None) else '')
+
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+
+        if (xname not in feature_labels or yname not in feature_labels
+                or xname == yname):
+            ax.text(0.5, 0.5,
+                    'Pick two different analytes for X and Y\n'
+                    '(Options → X analyte / Y analyte).',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
+
+        xi = feature_labels.index(xname)
+        yi = feature_labels.index(yname)
+        xdata = np.asarray(X[:, xi], dtype=float)
+        ydata = np.asarray(X[:, yi], dtype=float)
+
+        st = self._box_style
+        y_int, uniq = _group_to_int(group_labels)
+        gcmap = cm.get_cmap('tab10', max(len(uniq), 1))
+        def _auto_hex(i):
+            r, g, b, _ = gcmap(i)
+            return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
+
+        for gi, g in enumerate(uniq):
+            m = np.asarray(y_int) == gi
+            color = st['group_colors'].get(g, _auto_hex(gi))
+            ax.scatter(xdata[m], ydata[m], s=30, color=color, alpha=0.9,
+                       edgecolors='black', linewidths=0.4, label=g, zorder=3)
+
+        fit = linear_fit_ci(xdata, ydata, alpha=0.05)
+        r, p = correlation_coeff(xdata, ydata, method)
+        n_fin = int(np.sum(np.isfinite(xdata) & np.isfinite(ydata)))
+        if fit is not None:
+            ax.fill_between(fit['xs'], fit['lower'], fit['upper'],
+                            color='gray', alpha=0.25, zorder=1,
+                            label='95% CI')
+            ax.plot(fit['xs'], fit['ys'], color='black', linewidth=1.5,
+                    zorder=2, label='OLS fit')
+
+        coef_lbl = 'Pearson r' if method == 'pearson' else 'Spearman ρ'
+        if np.isfinite(r):
+            txt = f'{coef_lbl} = {r:.3f}\np = {p:.3g}\nn = {n_fin}'
+        else:
+            txt = f'{coef_lbl}: undefined\n(n = {n_fin}, need ≥3 varying pairs)'
+        ax.text(0.03, 0.97, txt, transform=ax.transAxes, va='top', ha='left',
+                fontsize=9, bbox=dict(boxstyle='round', facecolor='white',
+                                      edgecolor='#999', alpha=0.85))
+
+        q = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        unit = 'a.u.'
+        if q is not None and getattr(q, '_quant_results', None) \
+                and hasattr(q, 'concentration_unit'):
+            try:
+                unit = q.concentration_unit() or 'a.u.'
+            except Exception:
+                unit = 'a.u.'
+        ax.set_xlabel(f'{xname} ({unit})', fontsize=st.get('label_size', 9))
+        ax.set_ylabel(f'{yname} ({unit})', fontsize=st.get('label_size', 9))
+        ax.set_title(f'{yname} vs {xname}', fontsize=st.get('title_size', 11),
+                     fontweight='bold' if st.get('title_bold', True) else 'normal')
+        ax.tick_params(labelsize=st.get('tick_size', 7))
+        ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.4)
+        for _sp in ('top', 'right'):
+            ax.spines[_sp].set_visible(False)
+        ax.legend(fontsize=8, framealpha=0.85, loc='best')
+
+        # CSV export of the plotted values
+        rows = [[float(xv), float(yv), g]
+                for xv, yv, g in zip(xdata, ydata, group_labels)
+                if np.isfinite(xv) and np.isfinite(yv)]
+        self._plot_export = {
+            'method': 'Correlation (linear)',
+            'headers': [xname, yname, 'group'],
+            'rows': rows,
+        }
+
     def _plot_correlation(self, X, sample_names, feature_labels, group_labels):
         """Metabolite–metabolite correlation: clustered heatmap (A) and, when
         exactly two groups are present, the differential correlation (C).
@@ -2290,6 +3077,11 @@ class StatisticsStage:
         so co-regulated modules form visible blocks; the differential panel
         highlights pairs whose association rewires between the two groups.
         """
+        _pv = getattr(self, '_corr_plot_var', None)
+        if _pv is not None and _pv.get() == 'Linear (X vs Y)':
+            self._plot_correlation_linear(X, feature_labels, group_labels)
+            return
+
         from scipy.cluster.hierarchy import linkage, leaves_list
         from scipy.spatial.distance import squareform
         from scipy.stats import spearmanr, t as _tdist
@@ -2385,19 +3177,40 @@ class StatisticsStage:
             sig_o = sig[np.ix_(order, order)]
             Ro = np.ma.masked_where(~sig_o & ~np.eye(n_feat, dtype=bool), Ro)
 
-        # Two groups (excluding BLK) → differential panel.
+        # CSV export: clustered metabolite × metabolite correlation matrix.
+        _Rf = (np.ma.filled(Ro, np.nan) if np.ma.isMaskedArray(Ro)
+               else np.asarray(Ro))
+        self._plot_export = {
+            'method': 'Correlation',
+            'headers': ['metabolite'] + list(feats_o),
+            'rows': [[feats_o[i]] + [float(_Rf[i, j]) for j in range(n_feat)]
+                     for i in range(n_feat)],
+        }
+
+        # Differential panel: contrast the two user-selected groups (falls back
+        # to the first two present when no/invalid selection).
         groups = [g for g in dict.fromkeys(group_labels)
                   if str(g).upper() != 'BLK']
         rows_by_g = {g: [i for i, gl in enumerate(group_labels) if gl == g]
                      for g in groups}
-        do_diff = (len(groups) == 2
-                   and all(len(rows_by_g[g]) >= 3 for g in groups))
+        sel1 = getattr(self, '_corr_g1_var', None)
+        sel2 = getattr(self, '_corr_g2_var', None)
+        sel1 = sel1.get() if sel1 else ''
+        sel2 = sel2.get() if sel2 else ''
+        if sel1 in rows_by_g and sel2 in rows_by_g and sel1 != sel2:
+            g1, g2 = sel1, sel2
+        elif len(groups) == 2:
+            g1, g2 = groups
+        else:
+            g1 = g2 = None
+        do_diff = (g1 is not None
+                   and all(len(rows_by_g[g]) >= 3 for g in (g1, g2)))
 
         if do_diff:
-            g1, g2 = groups
             R1, _ = _corr(X[rows_by_g[g1], :])
             R2, _ = _corr(X[rows_by_g[g2], :])
             D  = (R1 - R2)[np.ix_(order, order)]
+            D  = np.nan_to_num(D, nan=0.0, posinf=0.0, neginf=0.0)
             axA = self._fig.add_subplot(1, 2, 1)
             axC = self._fig.add_subplot(1, 2, 2)
         else:
@@ -2411,8 +3224,12 @@ class StatisticsStage:
         imA = axA.imshow(Ro, cmap=_cmapA, vmin=-1, vmax=1, aspect='auto')
         axA.set_xticks(range(n_feat)); axA.set_yticks(range(n_feat))
         _fs = max(4, min(8, int(420 / max(n_feat, 1))))
-        axA.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
-        axA.set_yticklabels(feats_o, fontsize=_fs)
+        # Truncate long names (same as heatmap) so 45°-rotated labels don't pile
+        # onto each other; full name stays in the y-axis order / tooltip.
+        _MAX = 20
+        feats_t = [f'{l[:_MAX]}…' if len(l) > _MAX else l for l in feats_o]
+        axA.set_xticklabels(feats_t, rotation=45, ha='right', fontsize=_fs)
+        axA.set_yticklabels(feats_t, fontsize=_fs)
         axA.set_title(f'A · Clustered correlation ({cmethod.title()})',
                       fontsize=10, fontweight='bold')
         self._fig.colorbar(imA, ax=axA, fraction=0.046, pad=0.04,
@@ -2420,19 +3237,30 @@ class StatisticsStage:
 
         # ── Panel C: differential correlation ─────────────────────────────────
         if axC is not None:
-            vmax = float(min(2.0, np.nanmax(np.abs(D)) or 1.0))
+            _absD = np.abs(D)
+            _finite = _absD[np.isfinite(_absD)]
+            _peak = float(_finite.max()) if _finite.size else 0.0
+            vmax = float(min(2.0, _peak)) if _peak > 0 else 1.0
             imC = axC.imshow(D, cmap='PRGn', vmin=-vmax, vmax=vmax, aspect='auto')
             axC.set_xticks(range(n_feat)); axC.set_yticks(range(n_feat))
-            axC.set_xticklabels(feats_o, rotation=90, fontsize=_fs)
-            axC.set_yticklabels(feats_o, fontsize=_fs)
+            axC.set_xticklabels(feats_t, rotation=45, ha='right', fontsize=_fs)
+            axC.set_yticklabels(feats_t, fontsize=_fs)
             axC.set_title(f'C · Differential ({g1} − {g2})',
                           fontsize=10, fontweight='bold')
             self._fig.colorbar(imC, ax=axC, fraction=0.046, pad=0.04, label='Δρ')
-        elif len(groups) != 2:
-            axA.text(0.5, -0.18,
-                     f'Differential panel needs exactly 2 groups (have {len(groups)})',
+        else:
+            _msg = ('Differential panel needs 2 distinct groups with ≥3 samples each'
+                    if len(groups) >= 2
+                    else f'Differential panel needs 2 groups (have {len(groups)})')
+            axA.text(0.5, -0.18, _msg,
                      transform=axA.transAxes, ha='center', va='top',
                      fontsize=7, color='#666')
+
+        # Spacing: wide wspace so the two panels' rotated labels don't collide,
+        # and a bottom margin so the x labels clear the axes (bbox_inches='tight'
+        # in _render_and_display then crops the outer whitespace).
+        self._fig.subplots_adjust(left=0.13, right=0.95, top=0.92,
+                                  bottom=0.28, wspace=0.55)
 
     def _plot_vip(self, X, sample_names, feature_labels, group_labels):
         y_int, unique = _group_to_int(group_labels)
@@ -2450,7 +3278,7 @@ class StatisticsStage:
         top_n  = getattr(self, '_top_n_var',  None)
         top_n  = top_n.get()  if top_n  else 20
         vip_thr = getattr(self, '_vip_thr_var', None)
-        vip_thr = vip_thr.get() if vip_thr else 1.0
+        vip_thr = vip_thr.get() if vip_thr else 1.5
 
         vips = self._vip_scores(X, Y, n_comp)
         self._last_vip_scores = vips
@@ -2458,23 +3286,72 @@ class StatisticsStage:
         vips_top  = vips[order]
         feats_top = [feature_labels[i] for i in order]
 
-        ax = self._fig.add_subplot(111)
+        # Per-group mean on the (already autoscaled) X for the class-direction
+        # squares: >0 → above grand mean (high, red), <0 → low (blue). Mirrors
+        # the coloured class strip on the right of a MetaboAnalyst VIP plot.
+        gmeans = np.zeros((len(order), len(unique)))
+        for gi in range(len(unique)):
+            rows = np.where(y_int == gi)[0]
+            if rows.size:
+                gmeans[:, gi] = np.mean(X[np.ix_(rows, order)], axis=0)
+
+        # CSV export: VIP score per metabolite + per-group mean (autoscaled).
+        self._plot_export = {
+            'method': 'VIP Score',
+            'headers': (['metabolite', 'vip_score', 'above_threshold']
+                        + ['mean_' + str(unique[gi]) for gi in range(len(unique))]),
+            'rows': [([feats_top[r], float(vips_top[r]),
+                       bool(vips_top[r] >= vip_thr)]
+                      + [float(gmeans[r, gi]) for gi in range(len(unique))])
+                     for r in range(len(feats_top))],
+        }
+
+        # Layout: VIP bars (left) + class-mean squares (right), aligned rows.
+        gs = self._fig.add_gridspec(
+            1, 2, width_ratios=[5, max(1.0, 0.45 * len(unique))], wspace=0.04)
+        ax  = self._fig.add_subplot(gs[0, 0])
+        axh = self._fig.add_subplot(gs[0, 1], sharey=ax)
+
         colors = ['#c62828' if v >= vip_thr else '#1565c0' for v in vips_top]
         ax.barh(range(len(feats_top)), vips_top[::-1], color=colors[::-1],
                 edgecolor='white', linewidth=0.5)
         ax.set_yticks(range(len(feats_top)))
         ax.set_yticklabels(feats_top[::-1], fontsize=7)
+        ax.set_ylim(-0.5, len(feats_top) - 0.5)
         ax.axvline(vip_thr, color='#c62828', lw=1.0, ls='--',
                    label=f'VIP = {vip_thr:.1f}')
         ax.set_xlabel('VIP Score', fontsize=9)
         ax.set_title(f'VIP Scores (PLS-DA, top {top_n})', fontsize=10)
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, loc='lower right')
         ax.set_facecolor('#f9f9f9')
+
+        # Right strip: one coloured square per group, rows reversed to match bars.
+        _vip_cmap = getattr(self, '_vip_cmap_var', None)
+        _vip_cmap = _vip_cmap.get() if _vip_cmap else 'RdBu_r'
+        _vmax = float(np.nanmax(np.abs(gmeans))) or 1.0
+        im = axh.imshow(gmeans[::-1, :], aspect='auto', cmap=_vip_cmap,
+                        vmin=-_vmax, vmax=_vmax, origin='lower',
+                        extent=(-0.5, len(unique) - 0.5,
+                                -0.5, len(feats_top) - 0.5))
+        axh.set_xticks(range(len(unique)))
+        axh.set_xticklabels([str(g) for g in unique], rotation=90, fontsize=7)
+        axh.tick_params(left=False, labelleft=False)
+        # White separators → discrete-square look.
+        axh.set_xticks(np.arange(-0.5, len(unique), 1), minor=True)
+        axh.set_yticks(np.arange(-0.5, len(feats_top), 1), minor=True)
+        axh.grid(which='minor', color='white', linewidth=1.5)
+        axh.set_title('Class', fontsize=8)
+        # Half-height colorbar, vertically centred on the class strip.
+        cb = self._fig.colorbar(im, ax=axh, fraction=0.25, pad=0.06,
+                                shrink=0.5, anchor=(0.0, 0.5),
+                                ticks=[-_vmax, _vmax])
+        cb.ax.set_yticklabels(['Low', 'High'], fontsize=7)
 
     def _ensure_volcano_style(self):
         """Lazily create the persistent volcano style dict with defaults."""
         if not hasattr(self, '_volcano_style') or not self._volcano_style:
             self._volcano_style = {
+                'theme':          'Classic',   # 'Classic' | 'Compact'
                 'n_labels':       10,
                 'color_up':       '#c62828',
                 'color_down':     '#1565c0',
@@ -2500,6 +3377,7 @@ class StatisticsStage:
         frm = ttk.Frame(dlg, padding=10)
         frm.pack(fill=tk.BOTH, expand=True)
 
+        theme_var = tk.StringVar(value=str(st.get('theme', 'Classic')))
         n_var    = tk.IntVar(value=int(st['n_labels']))
         size_var = tk.DoubleVar(value=float(st['label_fontsize']))
         dot_var  = tk.IntVar(value=int(st['dot_size']))
@@ -2509,6 +3387,14 @@ class StatisticsStage:
                     'color_ns': st['color_ns']}
 
         r = 0
+        ttk.Label(frm, text='Theme:').grid(row=r, column=0, sticky=tk.W, pady=2)
+        ttk.Combobox(frm, textvariable=theme_var, state='readonly', width=12,
+                     values=['Classic', 'Compact']).grid(
+            row=r, column=1, sticky=tk.W, padx=6)
+        ttk.Label(frm, text='(Compact: clean axes, no labels)',
+                  font=('Arial', 7), foreground='#666').grid(
+            row=r, column=2, sticky=tk.W)
+        r += 1
         ttk.Label(frm, text='Labels shown (top significant):').grid(
             row=r, column=0, sticky=tk.W, pady=2)
         ttk.Spinbox(frm, from_=0, to=100, increment=1, width=6,
@@ -2552,6 +3438,7 @@ class StatisticsStage:
             r += 1
 
         def _apply():
+            st['theme']          = str(theme_var.get())
             st['n_labels']       = int(n_var.get())
             st['label_fontsize'] = float(size_var.get())
             st['dot_size']       = int(dot_var.get())
@@ -2577,58 +3464,123 @@ class StatisticsStage:
         dlg.geometry(f'+{(sw_ - w_) // 2}+{(sh_ - h_) // 2}')
 
     def _repel_labels(self, ax, xy, labels, fontsize, bold, leader, leader_color):
-        """Place point labels with greedy overlap removal + optional leader lines.
+        """Place point labels, fanned outward, with bounded vertical de-overlap.
 
-        No external dependency (adjustText). Operates in display space: starts
-        each label at a small offset from its point, then iteratively pushes
-        overlapping label boxes apart. When a label ends up far from its point,
-        an arrowless leader line connects them so the mapping stays unambiguous.
+        Each label starts just beside its dot, fanning OUTWARD from the plot
+        centre (left-half points label left, right-half right) so names never
+        cross the busy middle of the volcano. Overlapping labels are then pushed
+        apart VERTICALLY ONLY, in display (pixel) space, for a fixed number of
+        passes — deterministic and impossible to hang. Unlike the old iterative
+        repel (which mixed point/pixel units, drifted labels off-axes and tangled
+        leader lines), labels never move horizontally and stay in their dot's
+        column, so an optional leader is a short, near-vertical connector — no
+        crossing tangle. Final positions are clamped to the axes so nothing is
+        pushed outside the plotting area.
         """
         if not labels:
             return
-        fig = ax.figure
         weight = 'bold' if bold else 'normal'
-        arrow = (dict(arrowstyle='-', color=leader_color, lw=0.4,
-                      shrinkA=0, shrinkB=2) if leader else None)
-        anns = []
+        xs = [p[0] for p in xy]
+        x_mid = (min(xs) + max(xs)) / 2.0 if xs else 0.0
+
+        fig   = ax.figure
+        trans = ax.transData
+        inv   = trans.inverted()
+
+        # Freeze the data limits before adding labels. Annotations placed in data
+        # coords otherwise enlarge the axes on the next draw (autoscale), shifting
+        # transData and invalidating the pixel-space de-overlap below. With limits
+        # locked, the geometry we measure stays valid through the final draw.
+        ax.set_xlim(ax.get_xlim())
+        ax.set_ylim(ax.get_ylim())
+
+        # Place every label beside its dot, fanned to the outward side.
+        anns = []                                    # (annotation, (dot_x, dot_y), ha)
         for (x, y), lab in zip(xy, labels):
-            anns.append(ax.annotate(
-                lab, xy=(x, y), xytext=(7, 5), textcoords='offset points',
+            dpx, dpy = trans.transform((x, y))
+            if x < x_mid:
+                ha, ox = 'right', -5.0
+            else:
+                ha, ox = 'left', 5.0
+            tx, ty = inv.transform((dpx + ox, dpy))
+            ann = ax.annotate(
+                lab, xy=(x, y), xytext=(tx, ty), textcoords='data',
                 fontsize=fontsize, weight=weight, color='#222',
-                zorder=6, ha='left', va='bottom',
-                arrowprops=arrow))
+                zorder=6, ha=ha, va='center')
+            anns.append((ann, (x, y), ha))
 
-        # One draw to obtain a usable renderer; extents recompute without redraw.
+        # De-overlap using REAL text boxes from the renderer — estimating text
+        # width under-detects collisions. Labels move VERTICALLY ONLY; a fixed
+        # pass cap keeps it deterministic and hang-proof. If no renderer exists
+        # yet, the base placement above is kept (never worse than before).
         try:
-            fig.canvas.draw()
-            renderer = fig.canvas.get_renderer()
+            fig.canvas.draw()                        # realize axes geometry
+            renderer = fig.canvas.get_renderer()      # (limits frozen → no shift)
         except Exception:
-            return
+            renderer = None
 
-        def _extent(a):
-            return a.get_window_extent(renderer)
+        if renderer is not None:
+            # The draw above can move the axes; transData.inverted() is a snapshot,
+            # so refresh it (and use it freshly) to map pixels back to data with
+            # the FINAL geometry — a stale inverse drops labels off the axes.
+            inv = trans.inverted()
 
-        for _ in range(120):
-            moved = False
-            boxes = [_extent(a) for a in anns]
-            for i in range(len(anns)):
-                for j in range(i + 1, len(anns)):
-                    bi, bj = boxes[i], boxes[j]
-                    if not bi.overlaps(bj):
-                        continue
-                    moved = True
-                    # Push apart mostly vertically (labels read in stacked rows).
-                    ci = (bi.y0 + bi.y1) / 2
-                    cj = (bj.y0 + bj.y1) / 2
-                    step = max(1.0, (bi.height + bj.height) / 4)
-                    up, down = (i, j) if ci >= cj else (j, i)
-                    for idx, dy in ((up, +step), (down, -step)):
-                        ox, oy = anns[idx].get_position()
-                        anns[idx].set_position((ox, oy + dy))
-                    boxes[i] = _extent(anns[i])
-                    boxes[j] = _extent(anns[j])
-            if not moved:
-                break
+            def _set_center_y(ann, cpy):
+                px, _ = trans.transform(ann.get_position())
+                ann.set_position(inv.transform((px, cpy)))
+
+            try:
+                ab = ax.get_window_extent(renderer)
+                ax_y0, ax_y1 = ab.y0, ab.y1
+            except Exception:
+                ax_y0, ax_y1 = None, None
+
+            gap = 2.0
+            # Each fan side is an independent vertical column. Greedy single-pass
+            # stacking (top→down) guarantees a non-overlapping column without the
+            # compounding pairwise pushes that previously exploded the spacing.
+            for side in ('right', 'left'):
+                grp = [a for a in anns if a[2] == side]
+                if not grp:
+                    continue
+                recs = []
+                for ann, (dx, dy0), _ in grp:
+                    apy = trans.transform((dx, dy0))[1]    # dot anchor (px)
+                    h   = ann.get_window_extent(renderer).height
+                    recs.append([ann, apy, h, apy])        # last = target centre
+                recs.sort(key=lambda r: -r[1])             # top (high px) first
+                prev_bottom = None
+                for r in recs:
+                    c = r[1]
+                    if prev_bottom is not None and c + r[2] / 2.0 > prev_bottom - gap:
+                        c = prev_bottom - gap - r[2] / 2.0
+                    r[3] = c
+                    prev_bottom = c - r[2] / 2.0
+
+                # Rigid-translate the whole column to fit the axes (preserves the
+                # spacing). A column taller than the axes is top-aligned — overflow
+                # is then unavoidable without shrinking the font.
+                if ax_y1 is not None:
+                    blk_top = max(r[3] + r[2] / 2.0 for r in recs)
+                    blk_bot = min(r[3] - r[2] / 2.0 for r in recs)
+                    dy = 0.0
+                    if blk_top > ax_y1:
+                        dy = ax_y1 - blk_top
+                    if blk_bot + dy < ax_y0:
+                        dy += ax_y0 - (blk_bot + dy)
+                else:
+                    dy = 0.0
+                for ann, _, _, c in recs:
+                    _set_center_y(ann, c + dy)
+
+            # Short connector from dot to a label that ended up displaced.
+            if leader:
+                for ann, (dx, dy0), _ in anns:
+                    tx2, ty2 = ann.get_position()
+                    if abs(trans.transform((tx2, ty2))[1]
+                           - trans.transform((dx, dy0))[1]) > fontsize:
+                        ax.plot([dx, tx2], [dy0, ty2], color=leader_color,
+                                lw=0.5, alpha=0.7, zorder=5)
 
     def _plot_volcano(self, X_raw, sample_names, feature_labels, group_labels):
         from scipy import stats
@@ -2658,9 +3610,33 @@ class StatisticsStage:
         fc  = (Xb.mean(axis=0) + eps) / (Xa.mean(axis=0) + eps)
         log2fc = np.log2(fc)
 
+        # Drop features whose fold change is non-finite — happens when a group
+        # mean is zero/negative (e.g. after baseline/normalization), giving
+        # fc <= 0 → log2(fc) = nan/-inf. Plotting those points (or annotating
+        # them) makes the tight-bbox export compute an infinite figure size,
+        # which RendererAgg rejects and the whole plot fails to render. We never
+        # interpolate the value — the feature is excluded and the user warned.
+        finite = np.isfinite(log2fc)
+        n_dropped = int((~finite).sum())
+        if not finite.any():
+            raise ValueError(
+                'No features with a finite fold change between the two groups.\n'
+                'Check that concentrations are positive (Volcano needs raw, '
+                'non-normalized values).')
+        if n_dropped:
+            messagebox.showwarning(
+                'Volcano',
+                f'{n_dropped} feature(s) excluded: group mean ≤ 0 gives a '
+                'non-finite fold change. They are not plotted.',
+                parent=self.frame)
+            Xa = Xa[:, finite]
+            Xb = Xb[:, finite]
+            log2fc = log2fc[finite]
+            feature_labels = [l for l, ok in zip(feature_labels, finite) if ok]
+
         pvals = np.array([stats.ttest_ind(Xa[:, j], Xb[:, j],
                                           equal_var=False).pvalue
-                          for j in range(X_raw.shape[1])])
+                          for j in range(Xa.shape[1])])
         pvals = np.nan_to_num(pvals, nan=1.0)
 
         if p_adj:
@@ -2692,39 +3668,81 @@ class StatisticsStage:
         sig_down = (log2fc < -np.log2(fc_thr)) & (pvals_plot < p_thr)
         ns       = ~(sig_up | sig_down)
 
-        ax.scatter(log2fc[ns],       neg_log_p[ns],       color=c_ns, s=dot_s * 0.7,
-                   alpha=0.5, label='NS', edgecolors='none')
-        ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color=c_up, s=dot_s,
-                   alpha=0.85, label=f'Up in {gb}', edgecolors='white', lw=0.4)
-        ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down, s=dot_s,
-                   alpha=0.85, label=f'Up in {ga}', edgecolors='white', lw=0.4)
+        # Capture ONLY the significant features (sig_up or sig_down) for CSV
+        # export — those past the FC and p thresholds, i.e. the hits the user
+        # wants to replot. fc is recomputed from the (filtered) log2fc so it
+        # aligns with feature_labels after non-finite features were dropped.
+        _fc_used = np.power(2.0, log2fc)
+        self._plot_export = {
+            'method': 'Volcano',
+            'headers': ['metabolite', 'mean_' + ga, 'mean_' + gb,
+                        'log2_fold_change', 'fold_change', 'p_value',
+                        'p_value_adjusted' if p_adj else 'p_value_raw',
+                        'neg_log10_p', 'direction'],
+            'rows': [[feature_labels[j],
+                      float(Xa[:, j].mean()), float(Xb[:, j].mean()),
+                      float(log2fc[j]), float(_fc_used[j]),
+                      float(pvals[j]), float(pvals_plot[j]),
+                      float(neg_log_p[j]),
+                      'up in ' + gb if sig_up[j] else 'down in ' + gb]
+                     for j in range(len(feature_labels))
+                     if sig_up[j] or sig_down[j]],
+        }
 
-        # Label the top-N significant features. Names are de-overlapped and, when
-        # crowded, tethered to their dot by a leader line (see _repel_labels).
-        n_lab = int(style['n_labels'])
-        if n_lab > 0:
-            sig_mask = pvals_plot < p_thr
-            cand = [i for i in np.argsort(neg_log_p)[::-1] if sig_mask[i]][:n_lab]
-            self._repel_labels(
-                ax,
-                xy=[(log2fc[i], neg_log_p[i]) for i in cand],
-                labels=[feature_labels[i] for i in cand],
-                fontsize=float(style['label_fontsize']),
-                bold=bool(style['label_bold']),
-                leader=bool(style['leader_lines']),
-                leader_color='#555')
+        if str(style.get('theme', 'Classic')) == 'Compact':
+            # Compact/clean publication theme: light (Negative) / dark (Positive) /
+            # grey (Insignificant) classes, minimal axes (no top/right spines, white
+            # background, no threshold guides), simple legend, no per-feature labels.
+            h_ns = ax.scatter(log2fc[ns], neg_log_p[ns], color=c_ns,
+                              s=dot_s * 0.8, alpha=0.9, edgecolors='none')
+            h_dn = ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down,
+                              s=dot_s, alpha=0.95, edgecolors='none')
+            h_up = ax.scatter(log2fc[sig_up], neg_log_p[sig_up], color=c_up,
+                              s=dot_s, alpha=0.95, edgecolors='none')
+            for _sp in ('top', 'right'):
+                ax.spines[_sp].set_visible(False)
+            ax.set_facecolor('white')
+            ax.set_xlabel('Fold change (log₂)', fontsize=11)
+            ax.set_ylabel('−log₁₀ (P-value)', fontsize=11)
+            ax.legend([h_dn, h_up, h_ns], ['Negative', 'Positive', 'Insignificant'],
+                      fontsize=9, loc='upper right', frameon=True,
+                      framealpha=1.0, edgecolor='#333', handletextpad=0.4)
+            ax.set_title(f'{ga} vs {gb}', fontsize=12, loc='left', fontweight='bold')
+        else:
+            ax.scatter(log2fc[ns],       neg_log_p[ns],       color=c_ns, s=dot_s * 0.7,
+                       alpha=0.5, label='NS', edgecolors='none')
+            ax.scatter(log2fc[sig_up],   neg_log_p[sig_up],   color=c_up, s=dot_s,
+                       alpha=0.85, label=f'Up in {gb}', edgecolors='white', lw=0.4)
+            ax.scatter(log2fc[sig_down], neg_log_p[sig_down], color=c_down, s=dot_s,
+                       alpha=0.85, label=f'Up in {ga}', edgecolors='white', lw=0.4)
 
-        ax.axhline(-np.log10(p_thr), color='#555', lw=0.8, ls='--',
-                   label=f'p={p_thr}')
-        ax.axvline( np.log2(fc_thr), color='#999', lw=0.6, ls=':')
-        ax.axvline(-np.log2(fc_thr), color='#999', lw=0.6, ls=':')
-        ax.set_xlabel(f'log₂ FC ({gb} / {ga})', fontsize=9)
-        p_label = 'FDR-adjusted p' if p_adj else 'p-value'
-        ax.set_ylabel(f'−log₁₀({p_label})', fontsize=9)
-        ax.set_title(f'Volcano: {ga} vs {gb}  '
-                     f'({sig_up.sum()} up, {sig_down.sum()} down)', fontsize=10)
-        ax.legend(fontsize=7.5, loc='best', framealpha=0.85)
-        ax.set_facecolor('#f9f9f9')
+            ax.axhline(-np.log10(p_thr), color='#555', lw=0.8, ls='--',
+                       label=f'p={p_thr}')
+            ax.axvline( np.log2(fc_thr), color='#999', lw=0.6, ls=':')
+            ax.axvline(-np.log2(fc_thr), color='#999', lw=0.6, ls=':')
+            ax.set_xlabel(f'log₂ FC ({gb} / {ga})', fontsize=9)
+            p_label = 'FDR-adjusted p' if p_adj else 'p-value'
+            ax.set_ylabel(f'−log₁₀({p_label})', fontsize=9)
+            ax.set_title(f'Volcano: {ga} vs {gb}  '
+                         f'({sig_up.sum()} up, {sig_down.sum()} down)', fontsize=10)
+            ax.legend(fontsize=7.5, loc='best', framealpha=0.85)
+            ax.set_facecolor('#f9f9f9')
+
+            # Labels LAST — after axes/legend/title fix the final geometry — so
+            # the renderer-based de-overlap (see _repel_labels) measures the true
+            # text positions. Top-N significant features, capped for readability.
+            n_lab = min(int(style['n_labels']), 40)
+            if n_lab > 0:
+                sig_mask = pvals_plot < p_thr
+                cand = [i for i in np.argsort(neg_log_p)[::-1] if sig_mask[i]][:n_lab]
+                self._repel_labels(
+                    ax,
+                    xy=[(log2fc[i], neg_log_p[i]) for i in cand],
+                    labels=[feature_labels[i] for i in cand],
+                    fontsize=float(style['label_fontsize']),
+                    bold=bool(style['label_bold']),
+                    leader=bool(style['leader_lines']),
+                    leader_color='#555')
 
     # ── Export ────────────────────────────────────────────────────────────────
 
@@ -2864,13 +3882,16 @@ class StatisticsStage:
                 ax.legend(wedges, legend_labels,
                           loc='center left',
                           bbox_to_anchor=(1.02, 0.5),
-                          fontsize=6.5, frameon=False)
+                          fontsize=7.8, frameon=False)
 
         _st = self._pie_style
         self._fig.suptitle(
             _st.get('title', 'Metabolic Profile by Group'),
             fontsize=_st.get('title_size', 11),
             fontweight='bold' if _st.get('title_bold', True) else 'normal')
+        # Clear the 'constrained' engine set in _run() before tight_layout, else
+        # matplotlib warns about the engine switch (None clears it cleanly).
+        self._fig.set_layout_engine(None)
         self._fig.tight_layout(pad=_st.get('tight_pad', 1.0), rect=[0, 0, 1, 0.95])
 
     # ── Box / Violin style dialog ─────────────────────────────────────────────
@@ -2929,6 +3950,10 @@ class StatisticsStage:
         _rot_v = tk.IntVar(value=st['xlabel_rot'])
         ttk.Spinbox(tab_t, from_=0, to=90, increment=15, textvariable=_rot_v, width=5
                     ).grid(row=6, column=1, sticky=tk.W, padx=4)
+
+        ttk.Label(tab_t, text='(blank Y-axis label = auto unit from quantification)',
+                  font=('Arial', 7), foreground='#666'
+                  ).grid(row=7, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
 
         tab_t.columnconfigure(1, weight=1)
 
@@ -3010,168 +4035,558 @@ class StatisticsStage:
         ttk.Button(btn_row, text='Apply',  command=_apply).pack(side=tk.RIGHT, padx=2)
         ttk.Button(btn_row, text='Cancel', command=dlg.destroy).pack(side=tk.RIGHT)
 
-    # ── Box / Violin plot ─────────────────────────────────────────────────────
+    # ── Box / Violin config dialog ─────────────────────────────────────────────
 
-    def _plot_box_violin(self, X, sample_names, feature_labels, group_labels, kind='box'):
+    def _concentration_axis_label(self):
+        """Y-axis label whose unit follows the quantification method: mM for
+        IS/IS+PQN, percent for Total, arbitrary units otherwise (and when the
+        matrix comes from raw Good-peak intensities rather than quantification)."""
+        q = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        has_quant = bool(getattr(q, '_quant_results', None)) if q else False
+        unit = 'a.u.'
+        if has_quant and hasattr(q, 'concentration_unit'):
+            try:
+                unit = q.concentration_unit() or 'a.u.'
+            except Exception:
+                unit = 'a.u.'
+        return 'Relative area (%)' if unit == '%' else f'Concentration ({unit})'
+
+    def _box_dims(self):
+        """Panel grid as (rows, cols). Falls back to a legacy square 'grid' key
+        so projects saved before the free rows×cols layout still load."""
+        cfg = self._box_config
+        if 'rows' in cfg and 'cols' in cfg:
+            return max(int(cfg['rows']), 1), max(int(cfg['cols']), 1)
+        g = max(int(cfg.get('grid', 3)), 1)
+        return g, g
+
+    def _update_box_cfg_status(self):
+        """Refresh the one-line summary under the Options 'Configure…' button."""
+        lbl = getattr(self, '_box_cfg_status', None)
+        if lbl is None:
+            return
+        cfg = self._box_config
+        rows, cols = self._box_dims()
+        n_sel = len([m for m in cfg.get('selected', [])])
+        kind = cfg.get('kind', 'box')
+        cap = rows * cols
+        pick = f'{n_sel} picked' if n_sel else 'auto'
+        try:
+            lbl.config(text=f'{kind.capitalize()} · {rows}×{cols} · {pick}/{cap}')
+        except tk.TclError:
+            pass
+
+    def _open_box_config_dialog(self):
+        """Non-modal window to pick the panel grid + which metabolites to plot.
+
+        Left: searchable metabolite checklist. Right: plot type, grid size and
+        per-type options. Apply renders onto the main canvas without closing, so
+        the user can tweak and re-Apply while the main stage stays usable.
+        """
+        cfg = self._box_config
+
+        _, _, feat_all, _ = _get_quantification_matrix(self.app)
+        all_mets = [f for f in (feat_all or [])
+                    if f not in self._excluded_metabolites]
+        if not all_mets:
+            messagebox.showinfo('No metabolites',
+                                'No metabolite data found.', parent=self.frame)
+            return
+
+        dlg = tk.Toplevel(self.frame)
+        dlg.title('Configure Box / Violin')
+        dlg.resizable(True, True)          # non-modal: no grab_set (stages unlocked)
+        dlg.update_idletasks()
+        px = self.frame.winfo_rootx() + self.frame.winfo_width() // 2
+        py = self.frame.winfo_rooty() + self.frame.winfo_height() // 2
+        w, h = 640, 560
+        dlg.geometry(f'{w}x{h}+{px - w//2}+{py - h//2}')
+
+        # Button bar reserved at the bottom first so it can never be pushed off
+        # the window by the (taller) options column.
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 8))
+
+        body = ttk.Frame(dlg, padding=8)
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # ── Left: metabolite checklist ────────────────────────────────────────
+        left = ttk.LabelFrame(body, text='Metabolites', padding=6)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+
+        search_var = tk.StringVar()
+        ttk.Entry(left, textvariable=search_var).pack(fill=tk.X, pady=(0, 4))
+
+        lc_container = ttk.Frame(left)
+        lc_container.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(lc_container, highlightthickness=0)
+        sb = ttk.Scrollbar(lc_container, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas)
+        cwin = canvas.create_window((0, 0), window=inner, anchor='nw')
+        inner.bind('<Configure>', lambda e: (
+            canvas.configure(scrollregion=canvas.bbox('all')),
+            canvas.itemconfig(cwin, width=canvas.winfo_width())))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfig(cwin, width=e.width))
+        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>',
+            lambda ev: canvas.yview_scroll(-1 * (ev.delta // 120), 'units')))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+
+        check_vars = {m: tk.BooleanVar(value=(m in cfg.get('selected', [])))
+                      for m in all_mets}
+
+        def _populate(filter_text=''):
+            for wch in inner.winfo_children():
+                wch.destroy()
+            ft = filter_text.lower()
+            for m in all_mets:
+                if ft and ft not in m.lower():
+                    continue
+                ttk.Checkbutton(inner, text=m, variable=check_vars[m],
+                                command=_refresh_counter
+                                ).pack(anchor=tk.W, padx=2)
+        search_var.trace_add('write', lambda *a: _populate(search_var.get()))
+
+        # ── Right: layout / type controls ─────────────────────────────────────
+        right = ttk.Frame(body)
+        right.pack(side=tk.LEFT, fill=tk.Y)
+
+        type_f = ttk.LabelFrame(right, text='Plot type', padding=6)
+        type_f.pack(fill=tk.X, pady=(0, 6))
+        kind_var = tk.StringVar(value=cfg.get('kind', 'box'))
+        ttk.Radiobutton(type_f, text='Boxplot', value='box',
+                        variable=kind_var, command=lambda: _toggle_type()
+                        ).pack(anchor=tk.W)
+        ttk.Radiobutton(type_f, text='Violin', value='violin',
+                        variable=kind_var, command=lambda: _toggle_type()
+                        ).pack(anchor=tk.W)
+
+        _rows0, _cols0 = self._box_dims()
+        grid_f = ttk.LabelFrame(right, text='Grid layout', padding=6)
+        grid_f.pack(fill=tk.X, pady=(0, 6))
+        _rc = ttk.Frame(grid_f)
+        _rc.pack(anchor=tk.W)
+        ttk.Label(_rc, text='Rows:', font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
+        rows_var = tk.IntVar(value=_rows0)
+        ttk.Spinbox(_rc, from_=1, to=8, increment=1, width=4, textvariable=rows_var
+                    ).grid(row=0, column=1, padx=(4, 10))
+        ttk.Label(_rc, text='Cols:', font=('Arial', 8)).grid(row=0, column=2, sticky=tk.W)
+        cols_var = tk.IntVar(value=_cols0)
+        ttk.Spinbox(_rc, from_=1, to=8, increment=1, width=4, textvariable=cols_var
+                    ).grid(row=0, column=3, padx=4)
+        rows_var.trace_add('write', lambda *a: _refresh_counter())
+        cols_var.trace_add('write', lambda *a: _refresh_counter())
+
+        ttk.Label(grid_f, text='Panel size (cm):',
+                  font=('Arial', 8)).pack(anchor=tk.W, pady=(6, 0))
+        _sz = ttk.Frame(grid_f)
+        _sz.pack(anchor=tk.W)
+        ttk.Label(_sz, text='W:', font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
+        panelw_var = tk.DoubleVar(value=float(cfg.get('panel_w', 6.5)))
+        ttk.Spinbox(_sz, from_=2.5, to=20.0, increment=0.5, format='%.1f', width=5,
+                    textvariable=panelw_var).grid(row=0, column=1, padx=(4, 10))
+        ttk.Label(_sz, text='H:', font=('Arial', 8)).grid(row=0, column=2, sticky=tk.W)
+        panelh_var = tk.DoubleVar(value=float(cfg.get('panel_h', 6.0)))
+        ttk.Spinbox(_sz, from_=2.5, to=20.0, increment=0.5, format='%.1f', width=5,
+                    textvariable=panelh_var).grid(row=0, column=3, padx=4)
+        ttk.Label(grid_f, text='(figure is capped to one A4 page)',
+                  font=('Arial', 7), foreground='#666').pack(anchor=tk.W)
+
+        opt_f = ttk.LabelFrame(right, text='Options', padding=6)
+        opt_f.pack(fill=tk.X, pady=(0, 6))
+        points_var = tk.BooleanVar(value=cfg.get('points', True))
+        _psize_row = ttk.Frame(opt_f)
+        ttk.Checkbutton(opt_f, text='Overlay data points', variable=points_var,
+                        command=lambda: _toggle_points()).pack(anchor=tk.W)
+        _psize_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 2))
+        ttk.Label(_psize_row, text='Point size:',
+                  font=('Arial', 8)).pack(side=tk.LEFT)
+        psize_var = tk.IntVar(value=int(cfg.get('point_size', 24)))
+        _psize_sb = ttk.Spinbox(_psize_row, from_=4, to=80, increment=2,
+                                textvariable=psize_var, width=5)
+        _psize_sb.pack(side=tk.LEFT, padx=4)
+        mean_var = tk.BooleanVar(value=cfg.get('mean', False))
+        _mean_cb = ttk.Checkbutton(opt_f, text='Show means', variable=mean_var)
+        _mean_cb.pack(anchor=tk.W)
+        _inner_row = ttk.Frame(opt_f)
+        _inner_row.pack(anchor=tk.W, fill=tk.X, pady=(2, 0))
+        ttk.Label(_inner_row, text='Violin inner:',
+                  font=('Arial', 8)).pack(side=tk.LEFT)
+        inner_var = tk.StringVar(value=cfg.get('inner', 'box'))
+        _inner_cb = ttk.Combobox(_inner_row, textvariable=inner_var, width=9,
+                                 state='readonly',
+                                 values=['box', 'quartile', 'point', 'stick', 'none'])
+        _inner_cb.pack(side=tk.LEFT, padx=4)
+
+        # ── Significance testing ──────────────────────────────────────────────
+        sig_f = ttk.LabelFrame(right, text='Significance', padding=6)
+        sig_f.pack(fill=tk.X, pady=(0, 6))
+        _test_row = ttk.Frame(sig_f)
+        _test_row.pack(anchor=tk.W, fill=tk.X)
+        ttk.Label(_test_row, text='Test:', font=('Arial', 8)).pack(side=tk.LEFT)
+        _test_labels = {'None': 'none', 't-test (Welch)': 't',
+                        'Mann-Whitney': 'mann'}
+        _test_rev = {v: k for k, v in _test_labels.items()}
+        test_disp_var = tk.StringVar(
+            value=_test_rev.get(cfg.get('test', 'none'), 'None'))
+        ttk.Combobox(_test_row, textvariable=test_disp_var, width=14,
+                     state='readonly', values=list(_test_labels)
+                     ).pack(side=tk.LEFT, padx=4)
+        sig_line_var = tk.BooleanVar(value=cfg.get('sig_line', False))
+        ttk.Checkbutton(sig_f, text='Connect groups with significance bars',
+                        variable=sig_line_var).pack(anchor=tk.W, pady=(2, 0))
+
+        counter_lbl = ttk.Label(right, text='', font=('Arial', 8), foreground='#333')
+        counter_lbl.pack(anchor=tk.W, pady=(2, 4))
+
+        def _toggle_points():
+            _psize_sb.state(['!disabled'] if points_var.get() else ['disabled'])
+
+        def _rc_dims():
+            try:
+                r = max(int(rows_var.get()), 1)
+            except (tk.TclError, ValueError):
+                r = 1
+            try:
+                c = max(int(cols_var.get()), 1)
+            except (tk.TclError, ValueError):
+                c = 1
+            return r, c
+
+        def _n_checked():
+            return sum(1 for v in check_vars.values() if v.get())
+
+        def _refresh_counter():
+            r, c = _rc_dims()
+            cap = r * c
+            n = _n_checked()
+            over = '  (over capacity — extras ignored)' if n > cap else ''
+            counter_lbl.config(text=f'Selected: {n} / {cap}{over}')
+
+        def _toggle_type():
+            is_box = kind_var.get() == 'box'
+            _mean_cb.state(['!disabled'] if is_box else ['disabled'])
+            _inner_cb.state(['disabled'] if is_box else ['!disabled'])
+
+        # Select all / none (respect current search filter)
+        sel_row = ttk.Frame(left)
+        sel_row.pack(fill=tk.X, pady=(4, 0))
+        def _visible_mets():
+            ft = search_var.get().lower()
+            return [m for m in all_mets if not ft or ft in m.lower()]
+        def _sel_all():
+            for m in _visible_mets():
+                check_vars[m].set(True)
+            _refresh_counter()
+        def _sel_none():
+            for m in _visible_mets():
+                check_vars[m].set(False)
+            _refresh_counter()
+        ttk.Button(sel_row, text='All',  command=_sel_all ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sel_row, text='None', command=_sel_none).pack(side=tk.LEFT, padx=2)
+
+        # ── Bottom buttons (btn_row created up front, populated here) ──────────
+        def _apply():
+            rows, cols = _rc_dims()
+            selected = [m for m in all_mets if check_vars[m].get()]
+            if not selected:
+                messagebox.showinfo(
+                    'No metabolites',
+                    'No metabolites selected — auto-picking by significance '
+                    '(when a test is active) or abundance.', parent=dlg)
+            cap = rows * cols
+            if len(selected) > cap:
+                messagebox.showwarning(
+                    'Too many selected',
+                    f'{len(selected)} metabolites selected but the {rows}×{cols} '
+                    f'grid holds {cap}. Only the first {cap} will be plotted.',
+                    parent=dlg)
+            cfg['kind']       = kind_var.get()
+            cfg['rows']       = rows
+            cfg['cols']       = cols
+            cfg.pop('grid', None)          # migrate off the legacy square key
+            cfg['panel_w']    = round(float(panelw_var.get()), 2)
+            cfg['panel_h']    = round(float(panelh_var.get()), 2)
+            cfg['selected']   = selected
+            cfg['points']     = points_var.get()
+            cfg['point_size'] = int(psize_var.get())
+            cfg['mean']       = mean_var.get()
+            cfg['inner']      = inner_var.get()
+            cfg['test']       = _test_labels.get(test_disp_var.get(), 'none')
+            cfg['sig_line']   = sig_line_var.get()
+            self._update_box_cfg_status()
+            if hasattr(self, '_method_var'):
+                self._method_var.set('Box / Violin')
+            self._run()
+
+        ttk.Button(btn_row, text='Edit Style…',
+                   command=self._open_box_style_dialog).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text='Close', command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_row, text='Apply', command=_apply).pack(side=tk.RIGHT, padx=2)
+
+        _populate()
+        _toggle_type()
+        _toggle_points()
+        _refresh_counter()
+
+    # ── Box / Violin plot (grid of per-metabolite panels) ──────────────────────
+
+    def _plot_box_violin_grid(self):
         import matplotlib.cm as cm
+        from matplotlib.colors import to_rgba as _to_rgba
 
-        top_n      = int(getattr(self, '_box_topn_var',      tk.IntVar(value=15)).get())
-        sort_by    = getattr(self, '_box_sort_var',           None)
-        sort_by    = sort_by.get() if sort_by else 'variance'
-        show_pts   = getattr(self, '_box_points_var',         None)
-        show_pts   = show_pts.get() if show_pts else True
+        cfg       = self._box_config
+        kind      = cfg.get('kind', 'box')
+        rows, cols = self._box_dims()
+        panel_w   = float(cfg.get('panel_w', 6.5)) / _CM_PER_IN   # cm -> inches
+        panel_h   = float(cfg.get('panel_h', 6.0)) / _CM_PER_IN
+        selected  = list(cfg.get('selected', []))
+        show_pts  = bool(cfg.get('points', True))
+        pt_size   = int(cfg.get('point_size', 24))
+        show_mean = bool(cfg.get('mean', False))
+        vio_inner = cfg.get('inner', 'box')
+        vio_inner = None if vio_inner == 'none' else vio_inner
+        test      = cfg.get('test', 'none')
+        sig_line  = bool(cfg.get('sig_line', False))
+        st        = self._box_style
 
-        notch      = getattr(self, '_box_notch_var',          None)
-        notch      = notch.get() if notch else False
-        show_mean  = getattr(self, '_box_mean_var',           None)
-        show_mean  = show_mean.get() if show_mean else False
-        vio_inner  = getattr(self, '_violin_inner_var',       None)
-        vio_inner  = vio_inner.get() if vio_inner else 'box'
-        if vio_inner == 'none':
-            vio_inner = None
-
-        st = self._box_style
-        y, unique_groups = _group_to_int(group_labels)
+        # Fetch raw concentrations and apply the active sample/metabolite filters
+        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
+        if X_raw is None:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No quantification data available.',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
+        # Drop all-NaN columns only. Do NOT mean-impute (as _remove_nan does):
+        # imputing a not-detected value with the column mean fabricates data and
+        # pulls both groups toward a shared mean, which flattens every group test
+        # to non-significant. Missing entries stay NaN and are excluded per group.
+        X_raw = np.asarray(X_raw, dtype=float)
+        _valid = ~np.all(np.isnan(X_raw), axis=0)
+        X_raw    = X_raw[:, _valid]
+        feat_raw = [f for f, v in zip(feat_raw, _valid) if v]
+        if self._excluded_samples:
+            _si = getattr(self.app, 'samples_info', []) or []
+            _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
+            _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
+            X_raw  = X_raw[_kr, :]
+            gl_raw = [gl_raw[i] for i in _kr]
+        if self._excluded_metabolites:
+            _kc = [i for i, f in enumerate(feat_raw)
+                   if f not in self._excluded_metabolites]
+            X_raw    = X_raw[:, _kc]
+            feat_raw = [feat_raw[i] for i in _kc]
+        y_raw, unique_groups = _group_to_int(gl_raw)
         n_groups = len(unique_groups)
 
-        # Re-fetch raw concentrations
-        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
-        if X_raw is not None:
-            X_raw, feat_raw = self._remove_nan(X_raw, feat_raw)
-            if self._excluded_samples:
-                _si = getattr(self.app, 'samples_info', []) or []
-                _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
-                _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
-                X_raw  = X_raw[_kr, :]
-                gl_raw = [gl_raw[i] for i in _kr]
-            if self._excluded_metabolites:
-                _kc = [i for i, f in enumerate(feat_raw) if f not in self._excluded_metabolites]
-                X_raw    = X_raw[:, _kc]
-                feat_raw = [feat_raw[i] for i in _kc]
-            y_raw, _ = _group_to_int(gl_raw)
+        # Auto-pick order when no metabolite is chosen: by significance when a
+        # test is active (most-separated groups first), else by abundance.
+        fallback_order = None
+        if test != 'none' and n_groups >= 2:
+            from processing.group_stats import metabolite_min_pvalues
+            pvals = metabolite_min_pvalues(X_raw, y_raw, test=test)
+            # finite p-values first (ascending), NaN (untestable) last
+            fallback_order = list(np.argsort(
+                np.where(np.isnan(pvals), np.inf, pvals)))
         else:
-            X_raw    = np.abs(X)
-            feat_raw = feature_labels
-            y_raw    = y
-            gl_raw   = group_labels
+            abundance = np.nanmean(X_raw, axis=0)
+            fallback_order = list(np.argsort(
+                np.where(np.isnan(abundance), -np.inf, abundance))[::-1])
 
-        # Select top N metabolites by chosen criterion
-        if sort_by == 'variance':
-            scores = np.nanvar(X_raw, axis=0)
-        elif sort_by == 'mean':
-            scores = np.nanmean(X_raw, axis=0)
-        else:
-            scores = np.array([0.0] * X_raw.shape[1])   # name sort below
-
-        if sort_by == 'name':
-            order = np.array(sorted(range(len(feat_raw)), key=lambda i: feat_raw[i]))
-        else:
-            order = np.argsort(scores)[::-1]
-
-        order    = order[:top_n]
-        feat_sel = [feat_raw[i] for i in order]
-        X_sel    = X_raw[:, order]
+        capacity = rows * cols
+        sel_idx  = _resolve_box_selection(selected, feat_raw, capacity,
+                                          x_raw=X_raw, fallback_order=fallback_order)
+        feat_sel = [feat_raw[i] for i in sel_idx]
         n_mets   = len(feat_sel)
+        if n_mets == 0:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No metabolites to plot.',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
 
-        # Group colors
+        # Group colors (user overrides win, else tab10)
         gcmap = cm.get_cmap('tab10', max(n_groups, 1))
         def _auto_grp_hex(i):
             r, g, b, _ = gcmap(i)
             return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
-        grp_colors = [
-            st['group_colors'].get(g, _auto_grp_hex(i))
-            for i, g in enumerate(unique_groups)
-        ]
+        grp_colors = [st['group_colors'].get(g, _auto_grp_hex(i))
+                      for i, g in enumerate(unique_groups)]
+        lw = st.get('linewidth', 1.0)
 
-        # Figure size: scale with number of metabolites, stored for export
-        fig_w = max(1.1 * n_mets * n_groups + 2, 8)
-        fig_h = 5.5
-        self._box_export_figsize = (fig_w, fig_h)
+        # Figure size = panel size × grid, capped to one A4 page. Stored for export.
+        self._box_export_figsize = _fit_page(cols * panel_w, rows * panel_h)
         self._fig.clear()
+        axes = self._fig.subplots(rows, cols, squeeze=False)
+        flat = [ax for row in axes for ax in row]
 
-        ax = self._fig.add_subplot(111)
+        ylabel = st.get('ylabel') or self._concentration_axis_label()
 
-        # Positions: each metabolite group shares a cluster of n_groups boxes
-        spacing   = n_groups + 1.5
-        positions = np.arange(n_mets) * spacing
-        width     = 0.8
+        for k, met_i in enumerate(sel_idx):
+            ax = flat[k]
+            col_all = X_raw[:, met_i]
+            vals_by_group = []
+            for gi in range(n_groups):
+                mask  = (np.asarray(y_raw) == gi)
+                color = grp_colors[gi]
+                vals  = col_all[mask]
+                vals  = vals[np.isfinite(vals)]
+                vals_by_group.append(vals)
+                pos   = gi
 
-        for gi, grp in enumerate(unique_groups):
-            mask  = np.array(y_raw) == gi
-            color = grp_colors[gi]
-            lw    = st.get('linewidth', 1.0)
+                if kind == 'box' and len(vals) >= 1:
+                    # Fill = group color at 60%; edge, whiskers/caps, median all
+                    # solid black. Error bars raised above the box (zorder).
+                    face = _to_rgba(color, 0.60)
+                    bp = ax.boxplot(
+                        [vals], positions=[pos], widths=0.6, patch_artist=True,
+                        showmeans=show_mean,
+                        meanprops=dict(marker='D', markerfacecolor='white',
+                                       markeredgecolor='black', markersize=4),
+                        medianprops=dict(color='black', linewidth=1.4),
+                        boxprops=dict(facecolor=face, edgecolor='black', linewidth=lw),
+                        whiskerprops=dict(color='black', linewidth=lw),
+                        capprops=dict(color='black', linewidth=lw),
+                        flierprops=dict(marker='o', markerfacecolor=color,
+                                        markeredgecolor='black', markersize=3, alpha=0.6),
+                        manage_ticks=False)
+                    for _b in bp['boxes']:
+                        _b.set_zorder(2)
+                    for _key in ('whiskers', 'caps', 'medians', 'means'):
+                        for _art in bp.get(_key, []):
+                            _art.set_zorder(3)
+                elif kind == 'violin' and len(vals) >= 2:
+                    # violinplot needs ≥2 points; groups with fewer are shown
+                    # only as scatter below — never padded with fake values.
+                    vp = ax.violinplot([vals], positions=[pos], widths=0.6,
+                                       showmedians=True, showextrema=True)
+                    for pc in vp['bodies']:
+                        pc.set_facecolor(_to_rgba(color, 0.60))
+                        pc.set_edgecolor('black'); pc.set_linewidth(lw)
+                    for part in ('cmedians', 'cmaxes', 'cmins', 'cbars'):
+                        if part in vp:
+                            vp[part].set_color('black'); vp[part].set_linewidth(lw)
 
-            grp_pos = positions + (gi - (n_groups - 1) / 2) * width
+                if show_pts and len(vals):
+                    # Marker fill = group color at full opacity, black edge to
+                    # separate overlapping points; box/violin fill stays at 80%.
+                    jit = np.random.default_rng(seed=met_i * 97 + gi
+                          ).uniform(-0.12, 0.12, len(vals))
+                    ax.scatter(pos + jit, vals, color=color, s=pt_size, alpha=1.0,
+                               edgecolors='black', linewidths=0.4, zorder=3)
 
-            data_cols = [X_sel[mask, mi] for mi in range(n_mets)]
-            data_cols = [col[np.isfinite(col)] for col in data_cols]
+            # Significance brackets between groups (explicit test, never faked)
+            if sig_line and test != 'none' and n_groups >= 2:
+                self._draw_significance(ax, vals_by_group, test)
 
-            if kind == 'box':
-                bp = ax.boxplot(
-                    data_cols,
-                    positions=grp_pos,
-                    widths=width * 0.85,
-                    patch_artist=True,
-                    notch=notch,
-                    showmeans=show_mean,
-                    meanprops=dict(marker='D', markerfacecolor='white',
-                                   markeredgecolor=color, markersize=5),
-                    medianprops=dict(color='white', linewidth=1.5),
-                    boxprops=dict(facecolor=color, color=color, linewidth=lw, alpha=0.80),
-                    whiskerprops=dict(color=color, linewidth=lw),
-                    capprops=dict(color=color, linewidth=lw),
-                    flierprops=dict(marker='o', markerfacecolor=color,
-                                    markeredgecolor=color, markersize=3, alpha=0.5),
-                    manage_ticks=False,
-                )
-            else:  # violin
-                valid_cols = [(col if len(col) >= 2 else np.array([0.0, 0.0]))
-                              for col in data_cols]
-                vp = ax.violinplot(
-                    valid_cols,
-                    positions=grp_pos,
-                    widths=width * 0.85,
-                    showmedians=True,
-                    showextrema=True,
-                )
-                for pc in vp['bodies']:
-                    pc.set_facecolor(color)
-                    pc.set_edgecolor(color)
-                    pc.set_alpha(0.75)
-                    pc.set_linewidth(lw)
-                for part in ('cmedians', 'cmeans', 'cmaxes', 'cmins', 'cbars'):
-                    if part in vp:
-                        vp[part].set_color(color)
-                        vp[part].set_linewidth(lw)
+            ax.set_title(feat_sel[k], fontsize=st.get('tick_size', 7) + 1)
+            ax.set_ylabel(ylabel, fontsize=max(st.get('label_size', 9) - 1, 6))
+            ax.set_xticks(range(n_groups))
+            ax.set_xticklabels(unique_groups,
+                               rotation=st.get('xlabel_rot', 45),
+                               ha='right' if st.get('xlabel_rot', 45) > 0 else 'center',
+                               fontsize=st.get('tick_size', 7))
+            ax.tick_params(axis='y', labelsize=st.get('tick_size', 7))
+            ax.grid(axis='y', linestyle='--', linewidth=0.5, alpha=0.5)
+            # Only left (Y) and bottom (X) spines; drop the top/right frame lines.
+            for _sp in ('top', 'right'):
+                ax.spines[_sp].set_visible(False)
+            for _sp in ('left', 'bottom'):
+                ax.spines[_sp].set_color('black')
+                ax.spines[_sp].set_linewidth(0.8)
 
-            if show_pts:
-                for mi, col in enumerate(data_cols):
-                    if len(col) == 0:
-                        continue
-                    jitter = np.random.default_rng(seed=mi + gi * 1000
-                             ).uniform(-width * 0.18, width * 0.18, len(col))
-                    ax.scatter(grp_pos[mi] + jitter, col,
-                               color=color, s=14, alpha=0.6,
-                               edgecolors='white', linewidths=0.3, zorder=3)
+        # Turn off unused cells
+        for k in range(n_mets, len(flat)):
+            flat[k].set_axis_off()
 
-            # Invisible scatter for legend
-            ax.scatter([], [], color=color, label=grp, s=60)
+        # Reserve a bottom strip for the shared legend (constrained_layout does
+        # not account for figure legends) and a top strip for the title.
+        try:
+            self._fig.get_layout_engine().set(rect=(0.0, 0.07, 1.0, 0.94))
+        except Exception:
+            pass
 
-        ax.set_xticks(positions)
-        ax.set_xticklabels(feat_sel,
-                           rotation=st.get('xlabel_rot', 45),
-                           ha='right' if st.get('xlabel_rot', 45) > 0 else 'center',
-                           fontsize=st.get('tick_size', 7))
-        ax.tick_params(axis='y', labelsize=st.get('tick_size', 7))
-        ax.set_xlabel(st.get('xlabel', 'Metabolite'), fontsize=st.get('label_size', 9))
-        ax.set_ylabel(st.get('ylabel', 'Concentration'), fontsize=st.get('label_size', 9))
-        ax.legend(fontsize=8, framealpha=0.85, loc='upper right')
-        ax.grid(axis='y', linestyle='--', linewidth=0.5, alpha=0.5)
+        # Shared group legend at the bottom of the figure
+        from matplotlib.patches import Patch
+        handles = [Patch(facecolor=_to_rgba(grp_colors[i], 0.60),
+                         edgecolor='black', label=g)
+                   for i, g in enumerate(unique_groups)]
+        self._fig.legend(handles=handles, loc='lower center',
+                         ncol=min(n_groups, 6), fontsize=8, framealpha=0.85,
+                         bbox_to_anchor=(0.5, 0.005))
 
         title_w = 'bold' if st.get('title_bold', True) else 'normal'
         self._fig.suptitle(st.get('title', 'Distribution by Group'),
                            fontsize=st.get('title_size', 11), fontweight=title_w)
-        self._fig.tight_layout(pad=st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
+
+    def _draw_significance(self, ax, vals_by_group, test):
+        """Draw stacked significance brackets between group pairs on `ax`.
+
+        Uses processing.group_stats (Welch t or Mann-Whitney). Pairs whose test
+        is undefined (NaN p) are skipped rather than annotated with a fake bar.
+        """
+        from processing.group_stats import pairwise_significance
+        pairs = [pw for pw in pairwise_significance(vals_by_group, test=test)
+                 if np.isfinite(pw[2])]
+        if not pairs:
+            return
+        finite = np.concatenate([v for v in vals_by_group if len(v)]) \
+            if any(len(v) for v in vals_by_group) else np.array([0.0, 1.0])
+        data_max = float(np.max(finite))
+        data_min = float(np.min(finite))
+        span = (data_max - data_min) or (abs(data_max) or 1.0)
+        top = data_max
+        for level, (i, j, p, stars) in enumerate(pairs):
+            y0 = data_max + span * 0.10 * (level + 1)
+            h  = span * 0.02
+            ax.plot([i, i, j, j], [y0, y0 + h, y0 + h, y0],
+                    color='black', linewidth=0.8, clip_on=False)
+            ax.text((i + j) / 2.0, y0 + h, stars,
+                    ha='center', va='bottom', fontsize=8,
+                    fontweight='bold' if stars != 'ns' else 'normal')
+            top = max(top, y0 + h)
+        ax.set_ylim(top=top + span * 0.08)
+
+    def _export_csv_result(self):
+        """Export the underlying values of the currently displayed plot as CSV
+        so they can be replotted in another tool (e.g. Volcano: log2FC, p, padj)."""
+        exp    = getattr(self, '_plot_export', None)
+        # Prefer the method the export itself records (in pathway mode _method_var
+        # still holds the Statistics method, which would mislabel the file).
+        method = (exp.get('method') if exp else None) or (
+            self._method_var.get() if hasattr(self, '_method_var') else '')
+        if not exp or not exp.get('rows'):
+            messagebox.showinfo(
+                'CSV result',
+                f'No exportable values for "{method}".\n'
+                'Render the plot first. CSV export is available for the plots '
+                'that produce tabular values (e.g. Volcano, VIP, Correlation, PCA, '
+                'Pathway, Dumbbell).',
+                parent=self.frame)
+            return
+        fn = filedialog.asksaveasfilename(
+            title='Save CSV result',
+            defaultextension='.csv',
+            filetypes=[('CSV', '*.csv'), ('All', '*.*')],
+            initialfile=f'statistics_{method.replace(" ", "_")}_data.csv',
+            parent=self.frame)
+        if not fn:
+            return
+        try:
+            import csv as _csv
+            with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
+                w = _csv.writer(f)
+                w.writerow(exp['headers'])
+                w.writerows(exp['rows'])
+            messagebox.showinfo(
+                'CSV result',
+                f'Saved {len(exp["rows"])} row(s) to:\n{fn}', parent=self.frame)
+        except Exception as e:
+            messagebox.showerror('CSV result',
+                                 f'Failed to save CSV:\n{e}', parent=self.frame)
 
     def _export(self):
         fmt  = getattr(self, '_fmt_var', None)
@@ -3192,21 +4607,27 @@ class StatisticsStage:
             # save, then restore the original canvas size so the window isn't affected.
             _orig_size = self._fig.get_size_inches()
             _method    = self._method_var.get()
-            _is_pie    = (_method == 'Metabolic Profile' and
-                          getattr(self, '_pie_export_figsize', None) is not None)
-            _is_box    = (_method in ('Boxplot', 'Violin') and
+            # Metabolic Profile (donut) is NOT resized on export: it must match what
+            # the user sees on screen (the figure is already sized to the canvas in
+            # _render_and_display). Forcing _pie_export_figsize made the figure
+            # larger than the canvas, so the point-sized legend shrank relative to
+            # the donut. Export at the on-screen size keeps legend/donut proportion.
+            _is_box    = (_method == 'Box / Violin' and
                           getattr(self, '_box_export_figsize', None) is not None)
-            if _is_pie:
-                self._fig.set_size_inches(self._pie_export_figsize)
-                _st = self._pie_style
-                self._fig.tight_layout(pad=_st.get('tight_pad', 1.0), rect=[0, 0, 1, 0.95])
-            elif _is_box:
+            _is_db     = (getattr(self, '_mode_var', None)
+                          and self._mode_var.get() == 'pathway'
+                          and getattr(self, '_pw_plot_var', None)
+                          and self._pw_plot_var.get() == 'Dumbbell'
+                          and getattr(self, '_dumbbell_export_figsize', None) is not None)
+            if _is_box:
+                # Grid panels use the figure's constrained layout engine; just
+                # resize (tight_layout would clash with it).
                 self._fig.set_size_inches(self._box_export_figsize)
-                _st = self._box_style
-                self._fig.tight_layout(pad=_st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
+            elif _is_db:
+                self._fig.set_size_inches(self._dumbbell_export_figsize)
             self._fig.savefig(fn, dpi=dpi, format=fmt,
                               bbox_inches='tight', facecolor='white')
-            if _is_pie or _is_box:
+            if _is_box or _is_db:
                 self._fig.set_size_inches(_orig_size)
                 self._render_and_display()
             messagebox.showinfo('Saved', f'Figure saved to:\n{fn}', parent=self.frame)

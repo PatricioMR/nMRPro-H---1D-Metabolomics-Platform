@@ -74,14 +74,14 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         tf = ttk.Frame(s3); tf.pack(fill=tk.X, pady=2)
         ttk.Label(tf, text='Tolerance (ppm):', width=18).pack(side=tk.LEFT)
         self.tolerance_var = tk.DoubleVar(value=0.05)
-        ttk.Entry(tf, textvariable=self.tolerance_var, width=7).pack(
-            side=tk.LEFT, padx=2)
+        self._tolerance_entry = ttk.Entry(tf, textvariable=self.tolerance_var, width=7)
+        self._tolerance_entry.pack(side=tk.LEFT, padx=2)
 
         sf = ttk.Frame(s3); sf.pack(fill=tk.X, pady=2)
         ttk.Label(sf, text='Spectrometer (MHz):', width=18).pack(side=tk.LEFT)
         self.spectrometer_var = tk.StringVar(value='600')
-        ttk.Entry(sf, textvariable=self.spectrometer_var, width=7).pack(
-            side=tk.LEFT, padx=2)
+        self._spectrometer_entry = ttk.Entry(sf, textvariable=self.spectrometer_var, width=7)
+        self._spectrometer_entry.pack(side=tk.LEFT, padx=2)
         ttk.Label(sf, text='for J Hz→ppm',
                   font=('Arial', 7), foreground='gray').pack(
                       side=tk.LEFT, padx=4)
@@ -92,15 +92,16 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         # Chenomx/MetaboAnalyst exclusion lists).
         wf = ttk.Frame(s3); wf.pack(fill=tk.X, pady=2)
         self.exclude_water_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(wf, text='Exclude water region',
-                        variable=self.exclude_water_var).pack(side=tk.LEFT)
+        self._exclude_water_cb = ttk.Checkbutton(
+            wf, text='Exclude water region', variable=self.exclude_water_var)
+        self._exclude_water_cb.pack(side=tk.LEFT)
         self.water_lo_var = tk.DoubleVar(value=4.70)
         self.water_hi_var = tk.DoubleVar(value=4.90)
-        ttk.Entry(wf, textvariable=self.water_lo_var, width=5).pack(
-            side=tk.LEFT, padx=(6, 1))
+        self._water_lo_entry = ttk.Entry(wf, textvariable=self.water_lo_var, width=5)
+        self._water_lo_entry.pack(side=tk.LEFT, padx=(6, 1))
         ttk.Label(wf, text='–').pack(side=tk.LEFT)
-        ttk.Entry(wf, textvariable=self.water_hi_var, width=5).pack(
-            side=tk.LEFT, padx=1)
+        self._water_hi_entry = ttk.Entry(wf, textvariable=self.water_hi_var, width=5)
+        self._water_hi_entry.pack(side=tk.LEFT, padx=1)
         ttk.Label(wf, text='ppm', font=('Arial', 7),
                   foreground='gray').pack(side=tk.LEFT)
 
@@ -115,23 +116,43 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
             values=['Metabolomics (default)', 'Lipidomics'])
         self.internal_library_mode.pack(side=tk.LEFT, padx=2)
 
+        # Lipidomics solvent selector — chemical shifts (and the validity of the
+        # Box 1 FA-composition indices) depend on the acquisition solvent, so the
+        # solvent picks which cited library is used. Shown only in Lipidomics mode.
+        from processing import lipidomics as _lp
+        self._lp_solvent_keys = list(_lp.SOLVENT_LIBRARIES.keys())
+        self.lipid_solvent_var = tk.StringVar(value=_lp.SOLVENT_LABELS[_lp.DEFAULT_SOLVENT])
+        self._lp_mf = mf  # anchor for pack(after=…)
+        self.lipid_solvent_frame = ttk.Frame(s3)
+        ttk.Label(self.lipid_solvent_frame, text='Solvent:',
+                  width=18).pack(side=tk.LEFT)
+        self.lipid_solvent_combo = ttk.Combobox(
+            self.lipid_solvent_frame,
+            textvariable=self.lipid_solvent_var,
+            state='readonly',
+            width=36,
+            values=[_lp.SOLVENT_LABELS[k] for k in self._lp_solvent_keys])
+        self.lipid_solvent_combo.pack(side=tk.LEFT, padx=2)
+        self.internal_library_mode_var.trace_add('write', self._on_lib_mode_change)
+
         bf = ttk.Frame(s3); bf.pack(fill=tk.X, pady=5)
         self.btn_search_internal = ttk.Button(
-            bf, text='🔍 Search in External DB',
+            bf, text='🔍 Search in Database',
             command=self.search_internal_db)
         self.btn_search_internal.pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2)
         self.btn_search_online = ttk.Button(
-            bf, text='📚 Use Internal DB',
+            bf, text='📚 Internal Library',
             command=self.search_builtin_library)
         self.btn_search_online.pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
         mcr_bf = ttk.Frame(s3); mcr_bf.pack(fill=tk.X, pady=(0, 5))
         self.mcr_run_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(
+        self._mcr_run_cb = ttk.Checkbutton(
             mcr_bf, text='🔬 Run MCR Deconvolution',
-            variable=self.mcr_run_var).pack(side=tk.LEFT, padx=2)
+            variable=self.mcr_run_var)
+        self._mcr_run_cb.pack(side=tk.LEFT, padx=2)
 
         self.internal_status = ttk.Label(
             s3, text='Internal DB: ready', foreground='gray')
@@ -159,10 +180,90 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
                   font=('Arial', 8), foreground='blue',
                   justify=tk.LEFT).pack(anchor=tk.W, padx=5)
 
+    # ── Lipidomics solvent selector ────────────────────────────────────────────
+
+    def _on_lib_mode_change(self, *_):
+        """Show the solvent selector only in Lipidomics mode."""
+        is_lipid = (self.internal_library_mode_var.get() == 'Lipidomics')
+        if is_lipid:
+            self.lipid_solvent_frame.pack(fill=tk.X, pady=2, after=self._lp_mf)
+        else:
+            self.lipid_solvent_frame.pack_forget()
+        self._apply_lipidomics_ui_state()
+        # Refresh nav-bar availability (JG-Deconv blocked in lipidomics).
+        _upd = getattr(self.app, '_update_stage_availability', None)
+        if callable(_upd):
+            try: _upd()
+            except Exception: pass
+
+    _LIPID_DISABLED_MSG = (
+        'Desativado em modo Lipidomica:\n'
+        'integração por região do espectro — sem deteção/correspondência de\n'
+        'picos, acoplamento J, deconvolução MCR ou base de dados externa.')
+
+    def _attach_lipid_tooltip(self, widget):
+        """Tooltip shown only while the widget is disabled, explaining the
+        lipidomics restriction (disabled ttk widgets give no other feedback)."""
+        def _show(_e=None):
+            try:
+                if str(widget.cget('state')) != 'disabled':
+                    return
+            except Exception:
+                return
+            self._hide_lipid_tooltip()
+            try:
+                tw = tk.Toplevel(widget)
+                tw.wm_overrideredirect(True)
+                x = widget.winfo_rootx() + 10
+                y = widget.winfo_rooty() + widget.winfo_height() + 2
+                tw.wm_geometry(f'+{x}+{y}')
+                tk.Label(tw, text=self._LIPID_DISABLED_MSG, justify=tk.LEFT,
+                         background='#ffffe0', relief=tk.SOLID, borderwidth=1,
+                         font=('Arial', 8), padx=4, pady=2).pack()
+                self._lipid_tooltip_win = tw
+            except Exception:
+                self._lipid_tooltip_win = None
+        widget.bind('<Enter>', _show, add='+')
+        widget.bind('<Leave>', self._hide_lipid_tooltip, add='+')
+
+    def _hide_lipid_tooltip(self, _e=None):
+        tw = getattr(self, '_lipid_tooltip_win', None)
+        if tw is not None:
+            try: tw.destroy()
+            except Exception: pass
+            self._lipid_tooltip_win = None
+
+    def _apply_lipidomics_ui_state(self):
+        """Disable peak/J/MCR/external-DB options that do not apply to the
+        region-integration lipidomics workflow."""
+        is_lipid = (self.internal_library_mode_var.get() == 'Lipidomics')
+        targets = [getattr(self, n, None) for n in (
+            '_tolerance_entry', '_spectrometer_entry', '_exclude_water_cb',
+            '_water_lo_entry', '_water_hi_entry', '_mcr_run_cb',
+            'btn_search_internal')]
+        if not getattr(self, '_lipid_tips_attached', False):
+            for w in targets:
+                if w is not None:
+                    self._attach_lipid_tooltip(w)
+            self._lipid_tips_attached = True
+        for w in targets:
+            if w is not None:
+                w.configure(state='disabled' if is_lipid else 'normal')
+
+    def lipid_solvent(self):
+        """Return the selected solvent key ('D2O' / 'CDCl3')."""
+        from processing import lipidomics as _lp
+        label = self.lipid_solvent_var.get()
+        for k, v in _lp.SOLVENT_LABELS.items():
+            if v == label:
+                return k
+        return _lp.DEFAULT_SOLVENT
+
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     def on_activate(self):
         self.frame.pack(fill=tk.BOTH, expand=True)
+        self._apply_lipidomics_ui_state()
         n      = len(self.peaks)
         n_good = sum(1 for p in self.peaks
                      if p.get('status', 'Undefined') == 'Good')

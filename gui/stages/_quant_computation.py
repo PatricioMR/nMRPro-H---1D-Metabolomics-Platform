@@ -15,6 +15,8 @@ import numpy as np
 import csv
 import os
 
+from processing import lipidomics
+
 # ── Debug logging ─────────────────────────────────────────────────────────────
 # Set to True to write a detailed quant_debug.log in the project root.
 _QUANT_DEBUG = True
@@ -67,13 +69,70 @@ def _per_sample_snr(p, all_int, n_s):
 
 from ._quant_helpers import (
     _trapz, _pls_vip, _cv, _pqn, _effective_nh, _effective_nh_source,
-    _mcr_als, _fit_lorentz_mean, _fit_lorentz_mean_with_bl,
-    _fit_lorentz_sample, _fit_multi_lorentz,
-    _align_sample_center, _lorentz_amplitude, _lorentz_shape,
+    _mcr_als, _fit_multi_lorentz, _align_sample_center,
     bootstrap_fraction_ci as _bootstrap_fraction_ci,
-    jr_pointwise_multiplet_area,
+    jr_pointwise_multiplet_area, jr_analyte_fraction, _anchor_lines_complete,
+    is_unquantified_conc, multiplet_tier_penalty, multiplet_sdj_missing,
+    NQ_REASON_LOST_COMPETITION, NQ_REASON_ZERO_NAN,
 )
-from processing.multiplet_line_selector import select_clean_lines
+from processing.multiplet_line_selector import (
+    select_clean_lines, matched_line_ranks, line_match_tolerance)
+
+
+def _multiplet_line_peaks(hit, pk_by_rank):
+    """Detected peaks that make up the multiplet = the peaks the Annotation
+    Results tree shows for the signal: each predicted line matched to its nearest
+    detected peak (same 0.015 ppm tolerance, greedy no-reuse, as the annotation
+    tree's _register_peak_overlap / subchild matching).
+
+    IMPORTANT: the hit's ``peak_rank`` (anchor) is NOT used — for a multiplet the
+    anchor is the multiplet CENTRE, which can land on a stray peak sitting between
+    the real lines (e.g. peak 461 between Alanine's doublet 49/51). Only the
+    predicted-line peaks count. A singlet falls back to the anchor peak when its
+    single line cannot be matched.
+
+    Returns a list of detected-peak dicts (may be empty).
+    """
+    pls = hit.get('predicted_lines') or []
+    pl_ppms = [float(l['ppm']) for l in pls if 'ppm' in l]
+    # Tolerance from the multiplet's own line spacing (J/MHz): a line's match
+    # window never reaches the midpoint toward its neighbour, so a foreign peak
+    # between the legs is not swept into the integration window. No dependence on
+    # nH / rel_intensity — safe for DB signals lacking proton counts.
+    tol = line_match_tolerance(pl_ppms)
+    matched, used = [], set()
+    for lp in pl_ppms:
+        best, bd = None, tol
+        for pk in pk_by_rank.values():
+            r = pk.get('rank')
+            if r in used:
+                continue
+            d = abs(float(pk.get('ppm', 1e9)) - lp)
+            if d < bd:
+                bd, best = d, pk
+        if best is not None:
+            matched.append(best)
+            used.add(best.get('rank'))
+    if not matched:
+        p0 = pk_by_rank.get(hit.get('peak_rank'))
+        if p0 is not None:
+            matched = [p0]
+    return matched
+
+
+def _multiplet_window_from_peaks(hit, pk_by_rank):
+    """Integration window = union of the multiplet line peaks' Peak-List
+    boundaries (left foot of the leftmost line … right foot of the rightmost),
+    i.e. exactly the peaks shown in Annotation Results. Returns [lo, hi] ppm or
+    None when no line peak can be matched."""
+    matched = _multiplet_line_peaks(hit, pk_by_rank)
+    if not matched:
+        return None
+    lo = min(min(float(pk.get('start_ppm', pk.get('ppm', 0))),
+                 float(pk.get('end_ppm',   pk.get('ppm', 0)))) for pk in matched)
+    hi = max(max(float(pk.get('start_ppm', pk.get('ppm', 0))),
+                 float(pk.get('end_ppm',   pk.get('ppm', 0)))) for pk in matched)
+    return [float(lo), float(hi)]
 
 
 class _QuantCompMixin:
@@ -95,7 +154,11 @@ class _QuantCompMixin:
         # ── Full reset before every run ───────────────────────────────────────
         self._quant_results          = []
         self._all_peak_quant         = {}
-        self._quant_peak_overrides   = {}
+        # NOTE: _quant_peak_overrides is intentionally NOT reset here — user
+        # multiplet choices (Quant Peaks window) must survive a re-quantification.
+        # They are cleared only when annotation is re-run (_annotation_search).
+        if not hasattr(self, '_quant_peak_overrides'):
+            self._quant_peak_overrides = {}
         self._peak_competitor_count  = {}
         self._pqn_factor             = 1.0
         self._last_groups            = {}
@@ -121,36 +184,42 @@ class _QuantCompMixin:
             args    = self.annotation_stage._last_results_args or {}
             results = args.get('results', [])
             is_lipidomics_mode = (str(args.get('internal_library_mode', '')) == 'Lipidomics')
+            lipid_solvent = args.get('lipid_solvent') or None
             if not results:
                 messagebox.showinfo('Info', 'Annotation results are empty.')
                 return
         else:
             results = []
             is_lipidomics_mode = False
+            lipid_solvent = None
 
         _integ        = self.integ_var.get()
         # 'Area' (single-line trapz) is temporarily disabled (under development).
         # The UI radiobutton is greyed out, but a loaded project could still carry
         # 'Area' — block it here and fall back to Multiplet so no run uses it.
+        if _integ == 'Lorentz':
+            # 'Lorentz Fit' integration mode was removed — migrate old projects
+            # to Multiplicity so a loaded 'Lorentz' selection still runs.
+            self.integ_var.set('Multiplet')
+            _integ = 'Multiplet'
         if _integ == 'Area':
             messagebox.showinfo(
                 'Single-Line Area em desenvolvimento',
                 'O método "Single-Line Area" está em desenvolvimento e foi '
                 'temporariamente desativado.\n\n'
-                'A quantificação vai usar "Multiplet (whole)".')
+                'A quantificação vai usar "Multiplicity".')
             self.integ_var.set('Multiplet')
             _integ = 'Multiplet'
         use_area      = (_integ == 'Area')
-        use_lorentz   = (_integ == 'Lorentz')
         use_multiplet = (_integ == 'Multiplet')
         proton_corr   = self.proton_corr_var.get()
         use_mcr       = self.mcr_var.get()
         if use_mcr and use_multiplet:
             messagebox.showwarning(
-                'MCR + Multiplet incompatíveis',
-                'MCR Deconvolution está activado mas o modo de integração é Multiplet.\n'
-                'MCR nunca será executado — Multiplet tem prioridade.\n\n'
-                'Desactive MCR ou mude o modo para Area/Lorentz.')
+                'MCR + Multiplicity incompatíveis',
+                'MCR Deconvolution está activado mas o modo de integração é Multiplicity.\n'
+                'MCR nunca será executado — Multiplicity tem prioridade.\n\n'
+                'Desactive MCR ou mude o modo para Single-Line Area.')
             use_mcr = False
         local_baseline = bool(getattr(self, 'local_baseline_var', None) and
                               self.local_baseline_var.get())
@@ -175,7 +244,6 @@ class _QuantCompMixin:
         if is_lipidomics_mode:
             # Lipidomics path is intentionally simple: integrate full ppm regions only.
             use_area = True
-            use_lorentz = False
             use_mcr = False
 
         if self.ext_is_var.get() and self._ext_is_indices:
@@ -223,6 +291,65 @@ class _QuantCompMixin:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
 
+        # ── Global arPLS baseline (faithful qNMR integration) ─────────────────
+        # qNMR integrates the signal above a flat baseline. Integrating raw data
+        # from 0 biases regions sitting on a sloping/elevated baseline (valleys,
+        # macromolecule humps, residual-water wings). arPLS (Baek 2015) estimates
+        # the true baseline globally per sample; the local-linear per-window
+        # option is an inferior fallback that can subtract real signal when a
+        # window edge lands on a neighbour's skirt.
+        #
+        # Applied to a WORKING COPY only (app state untouched, reversible).
+        # Skipped when the spectrum was already globally baseline-corrected
+        # upstream (Visualization step) to avoid double correction.
+        _arpls_applied = False
+        if not getattr(self.app, 'baseline_corrected', False):
+            try:
+                from processing.baseline_correction import airPLS
+                _ai   = np.asarray(all_int, dtype=float)
+                _corr = np.empty_like(_ai)
+                for _s in range(_ai.shape[1]):
+                    _corr[:, _s] = _ai[:, _s] - airPLS(
+                        _ai[:, _s], lam=1e5, p=0.01, niter=100)
+                all_int = _corr
+                _arpls_applied = True
+            except Exception as _bl_e:
+                print(f'[Quant] arPLS global baseline skipped: {_bl_e}')
+
+        # Global arPLS already flattened the baseline → the per-window local
+        # linear subtraction would double-correct (and remove real signal at
+        # edges). Disable it whenever a global baseline is in effect.
+        if _arpls_applied or getattr(self.app, 'baseline_corrected', False):
+            local_baseline = False
+
+        # Expose the exact matrix the integration uses so the quant visualizer
+        # draws/shades the SAME baseline-corrected spectrum (otherwise the fill
+        # would show a raw pedestal that no longer matches the integrated value).
+        self._quant_int = all_int
+
+        # ── Water-suppression exclusion ───────────────────────────────────────
+        # Mirror the annotation-stage 'Exclude water region' option in
+        # quantification: when active, anything whose ppm falls inside the
+        # residual-water zone is ignored, so solvent-suppression artefacts never
+        # enter a quantified area (CLAUDE.md: never fabricate data).
+        _ann_for_water = getattr(self, 'annotation_stage', None)
+
+        def _in_water_zone(ppm_val):
+            try:
+                if not bool(_ann_for_water.exclude_water_var.get()):
+                    return False
+                _wlo = float(_ann_for_water.water_lo_var.get())
+                _whi = float(_ann_for_water.water_hi_var.get())
+            except Exception:
+                return False
+            if _wlo > _whi:
+                _wlo, _whi = _whi, _wlo
+            try:
+                return _wlo <= float(ppm_val) <= _whi
+            except (TypeError, ValueError):
+                return False
+        self._in_water_zone = _in_water_zone
+
         # Build a fallback protons lookup from the DB so that annotation results
         # from before the protons column was added still get the correct nH.
         # Key: (hmdb_id_or_bmrb_id, ppm_rounded_3dp) → protons (int)
@@ -254,6 +381,8 @@ class _QuantCompMixin:
         _dbg(_dbg_f, f'integ_mode   : {_integ}')
         _dbg(_dbg_f, f'use_multiplet: {use_multiplet}')
         _dbg(_dbg_f, f'local_baseline:{local_baseline}')
+        _dbg(_dbg_f, f'arPLS global : applied={_arpls_applied}  '
+                     f'already_corrected={getattr(self.app, "baseline_corrected", False)}')
         _dbg(_dbg_f, f'proton_corr  : {proton_corr}')
         _dbg(_dbg_f, f'use_blk_sub  : {use_blk_sub}')
         _dbg(_dbg_f, f'use_j_resolve: {use_j_resolve}')
@@ -302,21 +431,8 @@ class _QuantCompMixin:
             hi_r = max(ref_peak.get('start_idx', 0), ref_peak.get('end_idx', 0))
             # Use the same integration method as metabolites for consistency.
             _is_x     = ppm_arr[lo_r:hi_r + 1]
-            _is_ymean = np.mean(all_int[lo_r:hi_r + 1, :], axis=1)
-            _is_lorentz_params = None
-            if use_lorentz and len(_is_x) >= 4:
-                _is_A, _is_cen, _is_wid = _fit_lorentz_mean(_is_x, _is_ymean)
-                _is_max_sh = max(abs(float(_is_x[-1] - _is_x[0])) * 0.2, 0.003)
-                _is_lorentz_params = (_is_A, _is_cen, _is_wid, _is_max_sh)
 
             def _is_area(s):
-                if _is_lorentz_params is not None:
-                    _A0, _c0, _w0, _msh = _is_lorentz_params
-                    _res = _fit_lorentz_sample(
-                        _is_x, all_int[lo_r:hi_r + 1, s], _A0, _c0, _w0,
-                        max_shift_ppm=_msh)
-                    if _res is not None:
-                        return _res[0]
                 return abs(float(_trapz(all_int[lo_r:hi_r + 1, s], _is_x)))
 
             if use_ext_is:
@@ -364,10 +480,13 @@ class _QuantCompMixin:
                     if qv is not None:
                         auto_quality_marks[(mid, pr)] = qv
                     elif (mp.get('anchor_status') == 'clean'
-                          and mp.get('j_met_confirmed')):
+                          and mp.get('j_met_confirmed')
+                          and _anchor_lines_complete(mp)):
                         # This specific peak is J-anchor-confirmed (clean + j_met_confirmed).
                         # Treat it as good even if annotation_quality is None, mirroring
                         # the has_anchor condition in annotation_results_window._met_parent_qual.
+                        # Multiplets must have ALL predicted lines found — a partial
+                        # multiplet has no confirmed J and must not be quantified.
                         auto_quality_marks[(mid, pr)] = 'good'
         except Exception as _aqm_exc:
             import traceback
@@ -388,11 +507,18 @@ class _QuantCompMixin:
                 _mps_gmi = _met_gmi.get('matched_peaks', [])
                 _is_bdl_gmi = bool(_mps_gmi) and all(
                     mp.get('below_detection_limit', False) for mp in _mps_gmi)
+                # Mirror _met_parent_qual: an anchor only makes the metabolite
+                # Good when the anchoring peak is itself quality-'good'. This
+                # blocks an incomplete multiplet (J unconfirmed, not all lines
+                # found → marked 'bad' upstream) from being quantified via a
+                # stale clean/auto_anchor flag.
                 _has_anchor_gmi = (
                     _mid_gmi in _anchor_met_ids
                     or any(
-                        (mp.get('anchor_status') == 'clean' and mp.get('j_met_confirmed'))
-                        or mp.get('auto_anchor')
+                        mp.get('annotation_quality') == 'good'
+                        and ((mp.get('anchor_status') == 'clean'
+                              and mp.get('j_met_confirmed'))
+                             or mp.get('auto_anchor'))
                         for mp in _mps_gmi)
                 )
                 if _has_anchor_gmi and not _is_bdl_gmi:
@@ -461,6 +587,18 @@ class _QuantCompMixin:
                     _s_dj_map[(_mid_sdj, _pr_sdj)] = float(_mp_sdj.get('_s_dj', 0) or 0)
         except Exception:
             _s_dj_map = {}
+
+        # Drop any annotation hit whose peak sits in the water-exclusion zone.
+        if results:
+            _n_before_w = len(results)
+            results = [r for r in results
+                       if not _in_water_zone(
+                           r.get('peak_ppm', r.get('ppm', r.get('db_ppm'))))]
+            _n_water = _n_before_w - len(results)
+            if _n_water:
+                print(f'[Quant] water exclusion: dropped {_n_water} hit(s) inside '
+                      f'water zone')
+                _dbg(_dbg_f, f'water exclusion: dropped {_n_water} hit(s)')
 
         by_peak = {}
         for r in results:
@@ -609,10 +747,10 @@ class _QuantCompMixin:
             score = float(h.get('composite_score',
                                  h.get('multiplet_score', 0)) or 0)
 
-            # 1. Anchor peak: designated by _sync_anchors_to_peaks (J-confirmed,
-            #    exclusive, or manually set).  Anchors are the most reliable
-            #    quantification references — always prefer them.
-            is_anchor = bool(pk.get('is_anchor_line', False))
+            # Anchor priority is intentionally DISABLED: anchors were forcing the
+            # quantified peak to a single J-confirmed leg that did not match the
+            # signal shown in Annotation Results / Quant Peaks. Selection now goes
+            # purely by purity / contamination / competitors / width / score.
 
             # 2. NNLS / J-Resolve purity: fraction of this peak's area that
             #    belongs to this metabolite (1.0 = pure, <1 = shared).
@@ -635,15 +773,20 @@ class _QuantCompMixin:
             #    overlap with neighbouring resonances.  Prefer narrower peaks.
             _pk_width = float(pk.get('width_ppm') or pk.get('width_at_half') or 0)
 
+            # 6. SNR tie-break (qNMR): among otherwise-equivalent candidates prefer
+            #    the stronger signal — a higher-SNR line yields lower quantification
+            #    uncertainty.  Used only as a tie-break; never vetoes a weak line.
+            _snr = float(pk.get('snr', 0) or 0)
+
             # Sort ascending: lower tuple = better hit
             return (
-                not is_anchor,              # anchors first
                 _ls.get('mode') == 'skip',  # skip-flagged hits last
                 -own_frac,                  # higher NNLS purity first
                 _contamination_penalty,     # lower intra-multiplet contamination first
                 n_jr_cands,                 # fewer NNLS competitors first
                 n_cands,                    # fewer annotation competitors first
                 _pk_width,                  # narrower peak (less overlap) first
+                -_snr,                      # higher SNR first (qNMR tie-break)
                 -score,                     # higher composite score first
             )
 
@@ -673,39 +816,60 @@ class _QuantCompMixin:
             # that loses a multiplicity falls to its next candidate automatically;
             # one that wins nothing is discarded (never enters met_map).
             def _compete_key(h, mid_str):
+                # ── Multiplicity selection rule (which signal to quantify) ──────
+                # PRIMARY:
+                #   • multiplet → smallest |ΔJ| (J match), then smallest Δppm
+                #   • singlet   → smallest Δppm only (no J to match)
+                # A J-confirmed multiplet outranks a singlet (tier). Everything
+                # else — quality, NNLS purity, contamination, competitors, width,
+                # score (_hit_sort_key) — is TIE-BREAK only.
                 _mult = (h.get('multiplicity') or '').strip().lower()
                 _is_singlet = _mult in _SINGLET_MULTS
-                _s_dj_v = _s_dj_map.get(
-                    (mid_str, h.get('peak_rank')), h.get('s_dj', 0))
-                _s_dj_v = float(_s_dj_v or 0)
-                # Tier 0: confirmed multiplet. Singlets default to s_dj=1.0 in the
-                # scorer, so the multiplicity check is what keeps them in tier 1.
-                _is_valid_mult = (not _is_singlet) and _s_dj_v >= 1.0
-                _tier = 0 if _is_valid_mult else 1
-                _dj = h.get('delta_j_hz')
-                _dj_key = float(_dj) if (_tier == 0 and _dj is not None) else 0.0
+                _s_dj_v = float(_s_dj_map.get(
+                    (mid_str, h.get('peak_rank')), h.get('s_dj', 0)) or 0)
+                # Continuous tier penalty (lower = better): a near-perfect
+                # multiplet degrades smoothly toward the singlet boundary instead
+                # of falling off the old binary s_dj>=1.0 cliff. s_dj is monotonic
+                # in |ΔJ|, so this stays consistent with the ΔJ tie-break below.
+                _tier = multiplet_tier_penalty(_is_singlet, _s_dj_v)
+
                 _ppm_diff = float(h.get('ppm_diff', h.get('ppm_error', 999)) or 999)
+                if _is_singlet:
+                    _dj_key = 999.0                     # ΔJ not applicable
+                else:
+                    _dj = h.get('delta_j_hz')
+                    _dj_key = float(_dj) if _dj is not None else 999.0
+
                 _h_q = _effective_quality(h)
                 _q_rank = 0 if _h_q == 'good' else 1
+                # (_tier, ΔJ, Δppm) = primary; (_q_rank, _hit_sort_key) = tie-break.
                 return (_tier, _dj_key, _ppm_diff, _q_rank,
                         _hit_sort_key(h, mid_str))
 
             # s_dj drives the multiplet/singlet tier in _compete_key. When it is
-            # missing (e.g. a project loaded before scores were computed, or the
-            # Annotation Results window never post-processed _metabolites), every
-            # hit collapses to tier 1 and the multiplet-over-singlet priority is
-            # silently lost. Surface this instead of hiding it (CLAUDE.md: never
-            # silence data warnings) — the run still proceeds with ppm ordering.
-            if not _s_dj_map and any(
-                    str(_h.get('_mid', '')) in good_met_ids
-                    and _effective_quality(_h) != 'bad'
-                    and (_h.get('multiplicity') or '').strip().lower()
-                        not in _SINGLET_MULTS
-                    for _h in results):
-                self._warn_no_sdj = True
-                print('[Quant] WARNING: s_dj (J-quality) unavailable — '
-                      'multiplet/singlet tier priority disabled; competition '
-                      'ordered by ppm only.')
+            # missing (project loaded before scores were computed, or the
+            # Annotation Results window never post-processed _metabolites) a
+            # multiplet's J cannot be confirmed, so it must NOT be quantified —
+            # quantifying it would fabricate a tier from unknown J (CLAUDE.md:
+            # never silence data warnings). Such multiplet hits are blocked below
+            # (singlets need no J and are unaffected); the blocked set is surfaced.
+            _blocked_no_sdj: set = set()
+
+            # Annotation-assigned (metabolite, peak_rank) pairs — exactly the
+            # peaks the Annotation Results window shows for each metabolite.
+            # Quantification must compete ONLY on these; stray candidate hits the
+            # DB search produced at other peaks (never assigned to the analyte)
+            # must not enter — e.g. a spurious peak winning over Alanine's
+            # annotated doublet (peaks 49/51).
+            _assigned_pairs = set()
+            _mids_with_assign = set()
+            for _met_a in (getattr(self.annotation_stage, '_metabolites', []) or []):
+                _mid_a = str(_met_a.get('id', ''))
+                for _mp_a in _met_a.get('matched_peaks', []):
+                    _r_a = _mp_a.get('peak_rank')
+                    if _r_a is not None:
+                        _assigned_pairs.add((_mid_a, _r_a))
+                        _mids_with_assign.add(_mid_a)
 
             _all_non_bad = []
             for _h in results:
@@ -715,8 +879,33 @@ class _QuantCompMixin:
                 _h_q = _effective_quality(_h)
                 if _h_q == 'bad':
                     continue
+                # Only the peaks annotation assigned to this metabolite may
+                # compete (peak_rank None = DB gap-fill, allowed). When the
+                # metabolite has no assigned peaks at all, don't filter.
+                _pr_h = _h.get('peak_rank')
+                if (_pr_h is not None and _h_mid in _mids_with_assign
+                        and (_h_mid, _pr_h) not in _assigned_pairs):
+                    continue
+                # Block multiplet hits whose s_dj (J quality) is unknown — a
+                # multiplet with unconfirmed J cannot anchor quantification. Only
+                # gate hits anchored on a detected peak (peak_rank not None);
+                # gap-fill candidates are handled by their own path.
+                if _pr_h is not None and multiplet_sdj_missing(
+                        _h.get('multiplicity'),
+                        (_h_mid, _pr_h) in _s_dj_map,
+                        _SINGLET_MULTS):
+                    _blocked_no_sdj.add(_h_mid)
+                    continue
                 _all_non_bad.append((_compete_key(_h, _h_mid), _h_mid, _h))
             _all_non_bad.sort(key=lambda x: x[0])
+
+            if _blocked_no_sdj:
+                self._warn_no_sdj = True
+                print(f'[Quant] WARNING: {len(_blocked_no_sdj)} multiplet(s) blocked '
+                      f'— s_dj (J-quality) unavailable, J unconfirmed: '
+                      f'{sorted(_blocked_no_sdj)}. Reopen Annotation Results to '
+                      f'recompute scores before quantifying these analytes.')
+                _dbg(_dbg_f, f'blocked (no s_dj): {sorted(_blocked_no_sdj)}')
 
             _assigned_mets = set()
             for _sk, _h_mid, _h in _all_non_bad:
@@ -734,24 +923,31 @@ class _QuantCompMixin:
                     _assigned_peaks.add(_pr)
                 met_map[_h_mid] = {'name': _h.get('name', _h_mid), 'hits': [_h]}
 
-                # Non-singlet: claim every peak_rank whose ppm falls within the
-                # multiplet window so competing metabolites cannot re-use those lines.
+                # Non-singlet: claim only THIS metabolite's own multiplet legs —
+                # the detected peaks matched to its predicted lines — so the other
+                # legs of its multiplet cannot be re-used by a competitor. A peak
+                # that merely falls inside the ppm window but belongs to a
+                # NEIGHBOURING resonance is NOT claimed (the old window scan stole
+                # such peaks from their rightful metabolite).
                 _pl_gr = _h.get('predicted_lines') or []
-                _pl_ppms_gr = [float(l['ppm']) for l in _pl_gr if 'ppm' in l]
-                if len(_pl_ppms_gr) >= 2:
-                    _pk_gr = _pk_by_rank.get(_pr, {})
-                    _pkw_gr = float(_pk_gr.get('width_ppm',
-                                               _pk_gr.get('width_at_half', 0.008)) or 0.008)
-                    _mar_gr = max(_pkw_gr * 0.7, 0.010)
-                    _gr_lo  = min(_pl_ppms_gr) - _mar_gr
-                    _gr_hi  = max(_pl_ppms_gr) + _mar_gr
-                    for _or, _op in _pk_by_rank.items():
-                        if _or not in _assigned_peaks:
-                            if _gr_lo <= float(_op.get('ppm', -999)) <= _gr_hi:
-                                _assigned_peaks.add(_or)
+                if len([l for l in _pl_gr if 'ppm' in l]) >= 2:
+                    for _or in matched_line_ranks(_h, _pk_by_rank):
+                        _assigned_peaks.add(_or)
 
             print(f'[Quant] greedy: {len(met_map)}/{len(good_met_ids)} mets placed '
                   f'using {len(_assigned_peaks)} claimed peak slots')
+
+            # Diagnostic: assigned (annotation) vs chosen peak per metabolite.
+            if _dbg_f is not None:
+                _dbg(_dbg_f, '')
+                _dbg(_dbg_f, '── PEAK SELECTION (assigned vs chosen) ───────────────')
+                for _mid_d, _info_d in met_map.items():
+                    _nm_d = _info_d.get('name', _mid_d)
+                    _chosen = (_info_d.get('hits') or [{}])[0].get('peak_rank')
+                    _assigned_d = sorted(
+                        r for (m, r) in _assigned_pairs if m == str(_mid_d))
+                    _dbg(_dbg_f, f'  {_nm_d} ({_mid_d}): chosen_peak={_chosen}  '
+                                 f'annotation_assigned={_assigned_d}')
 
         # ── User peak override (from Quant Peaks window) ──────────────────────
         # _quant_peak_overrides maps hmdb_id → peak_rank chosen by the user.
@@ -892,6 +1088,8 @@ class _QuantCompMixin:
         _mcr_overridden_peaks = set()
         _all_mcr_peaks = list(self.peak_stage.peaks or []) + list(_fs_regions)
         for pk in _all_mcr_peaks:
+            if _in_water_zone(pk.get('ppm')):
+                continue
             mcr_ann   = pk.get('mcr_annotation')
             if not mcr_ann:
                 continue
@@ -965,16 +1163,15 @@ class _QuantCompMixin:
                    if info.get('hits') and
                    info['hits'][0].get('peak_rank') not in _mcr_overridden_peaks}
 
-        _lorentz_params  = {}
         _mcr_info        = {}
         _align_shifts    = {}   # mid → list[float] per-sample ppm shift
 
         # ── Multiplet window pre-pass ─────────────────────────────────────────
-        # In Multiplet mode, each metabolite's integration window is [min(pred_ppms)
-        # - margin, max(pred_ppms) + margin].  When two metabolites have overlapping
-        # windows (different peak ranks, nearby ppm), they double-count the shared
-        # spectral region.  This pre-pass resolves overlaps by clipping the
-        # lower-priority metabolite's window at the overlap boundary.
+        # The integration window is the UNION of the Peak-List boundaries of the
+        # peaks composing the multiplet (left foot of the leftmost line … right
+        # foot of the rightmost) — see _multiplet_window_from_peaks. When two
+        # metabolites' windows overlap (shared region) the lower-priority one is
+        # clipped at the overlap boundary so the area is not double-counted.
         # Priority = composite_score of the selected hit (higher = keeps full window).
         _mult_windows_precomp = {}   # mid → [lo_ppm, hi_ppm]  (mutable)
         if use_multiplet and not is_lipidomics_mode:
@@ -985,19 +1182,13 @@ class _QuantCompMixin:
                 _p_pw = _pk_by_rank.get(_hit_pw.get('peak_rank'))
                 if _p_pw is None:
                     continue
-                _pl_pw   = _hit_pw.get('predicted_lines') or []
-                _ppms_pw = [float(l['ppm']) for l in _pl_pw if 'ppm' in l]
-                _pkw_pw  = float(_p_pw.get('width_ppm', _p_pw.get('width_at_half', 0.008)) or 0.008)
-                _mar_pw  = max(_pkw_pw * 0.7, 0.010)
-                if _ppms_pw:
-                    _lo_pw = min(_ppms_pw) - _mar_pw
-                    _hi_pw = max(_ppms_pw) + _mar_pw
-                else:
+                _win_pw = _multiplet_window_from_peaks(_hit_pw, _pk_by_rank)
+                if _win_pw is None:
                     _li_pw   = min(_p_pw.get('start_idx', 0), _p_pw.get('end_idx', 0))
                     _hii_pw  = max(_p_pw.get('start_idx', 0), _p_pw.get('end_idx', 0))
-                    _lo_pw   = float(min(ppm_arr[_li_pw], ppm_arr[_hii_pw]))
-                    _hi_pw   = float(max(ppm_arr[_li_pw], ppm_arr[_hii_pw]))
-                _mult_windows_precomp[_mid_pw] = [_lo_pw, _hi_pw]
+                    _win_pw  = [float(min(ppm_arr[_li_pw], ppm_arr[_hii_pw])),
+                                float(max(ppm_arr[_li_pw], ppm_arr[_hii_pw]))]
+                _mult_windows_precomp[_mid_pw] = _win_pw
 
             # Sort descending by composite_score; higher score keeps full window.
             _sorted_pw = sorted(
@@ -1180,37 +1371,34 @@ class _QuantCompMixin:
                     _pk_width = float(p.get('width_ppm', p.get('width_at_half', 0.008)) or 0.008)
                     _margin   = max(_pk_width * 0.7, 0.010)
 
+                    # Integration window = union of the Peak-List boundaries of
+                    # the multiplet's peaks (left foot of the leftmost line …
+                    # right foot of the rightmost), possibly clipped by the
+                    # overlap pre-pass to avoid double-counting shared regions.
                     if mid in _mult_windows_precomp:
-                        # Use pre-computed (possibly clipped) window to avoid
-                        # double-counting spectral regions shared with other analytes.
                         _m_lo, _m_hi = _mult_windows_precomp[mid]
-                        # Overlap clipping can produce a degenerate window (lo >= hi).
-                        # Two distinct situations require different handling:
-                        #   Case A — detected peak IS within the predicted_lines range:
-                        #     this sub-peak lost the region to a higher-scoring metabolite.
-                        #     Keep the degenerate window → _sm_mult.sum()<2 fallback below
-                        #     will integrate only this metabolite's own detected sub-peak.
-                        #   Case B — detected peak is OUTSIDE the predicted_lines range:
-                        #     the peak_rank points to an unrelated peak (e.g. after PPM
-                        #     calibration shifted db_ppm away from the detected peak).
-                        #     Use the full predicted-lines window so the correct spectral
-                        #     region is integrated rather than the mismatched single peak.
-                        if _m_hi <= _m_lo + 1e-5 and _pl_ppms:
-                            _actual_det_ppm = float(p.get('ppm', detected_ppm))
-                            _pl_lo = min(_pl_ppms) - _margin * 2
-                            _pl_hi = max(_pl_ppms) + _margin * 2
-                            _det_outside_pl = not (_pl_lo <= _actual_det_ppm <= _pl_hi)
-                            if _det_outside_pl:
-                                # Case B: restore full multiplet window
-                                _m_lo = min(_pl_ppms) - _margin
-                                _m_hi = max(_pl_ppms) + _margin
-                            # else Case A: keep degenerate → single-sub-peak fallback
-                    elif _pl_ppms:
-                        _m_lo = min(_pl_ppms) - _margin
-                        _m_hi = max(_pl_ppms) + _margin
+                        # Overlap clipping can produce a degenerate window
+                        # (lo >= hi) when this metabolite lost the shared region
+                        # to a higher-scoring one. If the detected peak sits
+                        # OUTSIDE that clipped window, restore the un-clipped
+                        # union of boundaries (the peak_rank points elsewhere,
+                        # e.g. after ppm calibration); otherwise keep degenerate
+                        # so the _sm_mult.sum()<2 fallback integrates just this
+                        # metabolite's own detected sub-peak.
+                        if _m_hi <= _m_lo + 1e-5:
+                            _full = _multiplet_window_from_peaks(hit, _pk_by_rank)
+                            if _full is not None:
+                                _actual_det_ppm = float(p.get('ppm', detected_ppm))
+                                if not (_full[0] - _margin <= _actual_det_ppm
+                                        <= _full[1] + _margin):
+                                    _m_lo, _m_hi = _full
                     else:
-                        _m_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
-                        _m_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
+                        _full = _multiplet_window_from_peaks(hit, _pk_by_rank)
+                        if _full is not None:
+                            _m_lo, _m_hi = _full
+                        else:
+                            _m_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
+                            _m_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
                     _dbg(_dbg_f, f'    integ window  : [{_m_lo:.4f}, {_m_hi:.4f}] ppm  (margin={_margin:.4f})')
                     # Store multiplet window for visualization/export
                     hit['_multiplet_window'] = (_m_lo, _m_hi)
@@ -1247,16 +1435,13 @@ class _QuantCompMixin:
                                 _dd = abs(float(_cpk.get('ppm', 1e9)) - _lp)
                                 if _dd < _lr_d:
                                     _lr_q, _lr_d = _cpr, _dd
-                            _fval = 1.0   # line not NNLS-resolved → fully this analyte
-                            if _lr_q is not None:
-                                _fa_ps = _j_resolve_contribs_ps.get(_lr_q, {}).get(mid)
-                                if _fa_ps is not None and len(_fa_ps) == n_s:
-                                    _fval = np.clip(np.asarray(_fa_ps, float), 0.0, 1.0)
-                                else:
-                                    _fs = _j_resolve_contribs.get(_lr_q, {}).get(mid)
-                                    if _fs is not None and 0.0 < float(_fs) <= 1.0:
-                                        _fval = float(_fs)
-                            _line_fr.append(_fval)
+                            # Per-line fraction for THIS analyte (1.0 if JG never
+                            # deconvolved the line's peak, the analyte's share if
+                            # it has one, 0.0 if JG resolved the peak without it —
+                            # see jr_analyte_fraction for the double-count rule).
+                            _line_fr.append(jr_analyte_fraction(
+                                _lr_q, mid, _j_resolve_contribs,
+                                _j_resolve_contribs_ps, n_s))
                         a_vec = jr_pointwise_multiplet_area(
                             _x_mult, _seg_m, _pl_ppms, _line_fr)
                         _jr_multiplet_applied = True
@@ -1277,58 +1462,6 @@ class _QuantCompMixin:
                     else:
                         a_vec = np.array([abs(float(_trapz(_seg_m[:, s], _x_mult)))
                                           for s in range(n_s)])
-                elif use_lorentz and (hi_i - lo_i) >= 1:
-                    x_r      = ppm_arr[lo_i:hi_i + 1]
-                    y_mean_r = np.mean(all_int[lo_i:hi_i+1, :], axis=1)
-                    A_l, cen_l, wid_l, _bl_y0, _bl_slope = \
-                        _fit_lorentz_mean_with_bl(x_r, y_mean_r,
-                                                  with_baseline=local_baseline)
-                    # Post-fit R² on signal (baseline-corrected when local_baseline)
-                    _bl_arr  = _bl_y0 + _bl_slope * (x_r - float(x_r[0]))
-                    _fit_arr = _bl_arr + A_l * _lorentz_shape(x_r, cen_l, wid_l)
-                    _ss_res  = float(np.sum((y_mean_r - _fit_arr) ** 2))
-                    _ss_tot  = float(np.sum((y_mean_r - np.mean(y_mean_r)) ** 2))
-                    _lor_r2  = (1.0 - _ss_res / _ss_tot) if _ss_tot > 0 else float('nan')
-                    # Fit validity: R² >= 0.70 and width sane (< half window span)
-                    _win_span = abs(float(x_r[-1] - x_r[0])) or 1e-6
-                    _fit_ok   = (np.isfinite(_lor_r2) and _lor_r2 >= 0.70
-                                 and wid_l < _win_span * 0.5)
-                    if _fit_ok:
-                        max_shift = max(_win_span * 0.15, 0.005)
-                        shifts = []
-                        a_list = []
-                        for s in range(n_s):
-                            y_s  = all_int[lo_i:hi_i+1, s]
-                            res  = _fit_lorentz_sample(x_r, y_s, A_l, cen_l, wid_l,
-                                                       max_shift_ppm=max_shift,
-                                                       with_baseline=local_baseline)
-                            if res is not None:
-                                area_s, _, cen_s, _ = res
-                                shifts.append(cen_s - cen_l)
-                            else:
-                                area_s = abs(float(_trapz(y_s, x_r)))
-                                shifts.append(0.0)
-                            a_list.append(area_s)
-                        a_vec = np.array(a_list)
-                        _lorentz_params[mid] = {
-                            'cen':      cen_l,   'wid':      wid_l,
-                            'shifts':   shifts,
-                            'bl_y0':    _bl_y0,  'bl_slope': _bl_slope,
-                            'bl_x0':    float(x_r[0]),
-                            'r2':       _lor_r2,
-                        }
-                    else:
-                        # Lorentz fit invalid (multi-peak region or poor baseline):
-                        # fall back to trapz; multi-Lorentz trigger below may recover.
-                        a_list = []
-                        for s in range(n_s):
-                            seg = all_int[lo_i:hi_i+1, s].copy()
-                            if local_baseline and len(seg) >= 2:
-                                bl = np.linspace(max(float(seg[0]), 0.0),
-                                                 max(float(seg[-1]), 0.0), len(seg))
-                                seg = seg - bl
-                            a_list.append(abs(float(_trapz(seg, x_r))))
-                        a_vec = np.array(a_list)
                 elif use_mcr and (hi_i - lo_i) >= 3:
                     X = all_int[lo_i:hi_i+1, :]
                     try:
@@ -1408,12 +1541,11 @@ class _QuantCompMixin:
                 _gr2  = float(p.get('gaussian_r2', 1.0) or 1.0)
                 _n_cl = int(p.get('n_cluster_peaks', 1) or 1)
 
-                _lorentz_rejected = use_lorentz and mid not in _lorentz_params
                 # Skip in Multiplet mode: there we integrate the WHOLE multiplet
                 # window (trapz) by design, so per-cluster multi-Lorentz curve_fit
                 # would both contradict that and dominate runtime.
                 if ((not use_multiplet)
-                        and (_gr2 < _R2_MULTI_TRIGGER or _lorentz_rejected)
+                        and (_gr2 < _R2_MULTI_TRIGGER)
                         and _n_cl >= 2):
                     # cluster_lo / cluster_hi are spectrum indices (from peak
                     # detection) — use them directly; avoids searchsorted on the
@@ -1484,13 +1616,6 @@ class _QuantCompMixin:
                                 a_vec[s_idx] = C_s * (s_scale if s_scale > 1e-12 else 1.0)
                             else:
                                 a_vec[s_idx] = abs(float(_trapz(col_s, ppm_s))) if col_s.size > 1 else 0.0
-                        elif use_lorentz:
-                            try:
-                                _, cen_l2, wid_l2 = _fit_lorentz_mean(ppm_s, col_s)
-                                A_s2 = _lorentz_amplitude(ppm_s, col_s, cen_l2, wid_l2)
-                                a_vec[s_idx] = float(A_s2) * (np.pi * float(wid_l2))
-                            except Exception:
-                                a_vec[s_idx] = abs(float(_trapz(col_s, ppm_s))) if col_s.size > 1 else 0.0
                         else:
                             a_vec[s_idx] = abs(float(_trapz(col_s, ppm_s))) if col_s.size > 1 else 0.0
 
@@ -1505,7 +1630,13 @@ class _QuantCompMixin:
                 _ls_mode = _ls.get('mode')
                 _ls_sf   = float(_ls.get('scale_factor', 1.0))
                 _line_sel_applied = False
-                if use_j_resolve and _ls_mode == 'skip':
+                # Skip-zeroing only applies to single-line integration (Area/
+                # Lorentz), where a fully contaminated multiplet has no clean line
+                # to integrate. In Multiplet mode the whole window is integrated
+                # with per-line J-Resolve fractions already folded into a_vec
+                # (jr_pointwise), so hard-zeroing here would discard a valid area —
+                # the contamination is still surfaced as a warning downstream.
+                if use_j_resolve and _ls_mode == 'skip' and not use_multiplet:
                     a_vec = np.zeros(n_s)
                     hit['_line_sel_skip'] = True
                 elif (_ls_mode in ('nnls', 'ratio') and _ls_sf > 1.0
@@ -1542,18 +1673,20 @@ class _QuantCompMixin:
                     # Prefer per-sample fraction vector (achado A): preserves
                     # group differences in overlapped regions.  Falls back to the
                     # mean scalar fraction when no per-sample vector is present.
-                    _frac_arr = _j_resolve_contribs_ps.get(_peak_rank, {}).get(mid)
-                    if _frac_arr is not None and len(_frac_arr) == len(a_vec):
-                        _fa = np.asarray(_frac_arr, dtype=float)
-                        _fa = np.clip(_fa, 0.0, 1.0)
-                        a_vec = a_vec * _fa
-                        _j_frac_this_met = float(np.mean(_fa))
-                    else:
-                        _jrc = _j_resolve_contribs.get(_peak_rank, {})
-                        _frac = _jrc.get(mid)
-                        if _frac is not None and 0.0 < _frac <= 1.0:
-                            a_vec = a_vec * _frac
-                            _j_frac_this_met = _frac
+                    # Apply the JG share only when JG actually deconvolved this
+                    # peak; otherwise leave the area untouched and report no
+                    # J-Resolve fraction. jr_analyte_fraction returns 0.0 when JG
+                    # resolved the peak without this analyte, so a non-contributor
+                    # no longer double-counts the same ppm at 100%.
+                    _resolved = (_peak_rank in _j_resolve_contribs_ps
+                                 or _peak_rank in _j_resolve_contribs)
+                    if _resolved:
+                        _fr = jr_analyte_fraction(
+                            _peak_rank, mid, _j_resolve_contribs,
+                            _j_resolve_contribs_ps, len(a_vec))
+                        _fr = np.clip(np.asarray(_fr, dtype=float), 0.0, 1.0)
+                        a_vec = a_vec * _fr
+                        _j_frac_this_met = float(np.mean(_fr))
 
                 _blk_mean_area = 0.0
                 if use_blk_sub and blk_indices:
@@ -1584,30 +1717,10 @@ class _QuantCompMixin:
                     # nH with source
                     _, _nh_src = _effective_nh_source(hit, detected_ppm, _spec_mhz)
                     _dbg(_dbg_f, f'    nH         : {nh:.6f}  ← {_nh_src}')
-                    # Integration mode + Lorentz params
+                    # Integration mode
                     _im = ("line_sel+trapz" if _line_sel_applied
-                           else "lorentz" if use_lorentz
                            else "mcr" if use_mcr else "trapz")
-                    _lp = _lorentz_params.get(mid)
-                    if _lp and use_lorentz and not _line_sel_applied:
-                        _r2_lp = float('nan')
-                        try:
-                            _xl = ppm_arr[lo_i:hi_i+1]
-                            _yl = np.mean(all_int[lo_i:hi_i+1, :], axis=1)
-                            _yfit = _lp['wid']**2 / ((_xl - _lp['cen'])**2 + _lp['wid']**2)
-                            _yfit = _yfit / max(_yfit.max(), 1e-30) * _yl.max()
-                            _ss_res = float(np.sum((_yl - _yfit)**2))
-                            _ss_tot = float(np.sum((_yl - _yl.mean())**2))
-                            _r2_lp  = 1.0 - _ss_res / _ss_tot if _ss_tot > 1e-30 else float('nan')
-                        except Exception:
-                            pass
-                        _r2_warn = '  ⚠ BAD FIT' if np.isfinite(_r2_lp) and _r2_lp < 0.5 else ''
-                        _dbg(_dbg_f, f'    integ      : {_im}  cen={_lp["cen"]:.4f}  wid={_lp["wid"]:.5f} ppm  R²={_r2_lp:.4f}{_r2_warn}')
-                        if _lp.get('shifts'):
-                            _sh = _lp['shifts']
-                            _dbg(_dbg_f, f'    lz_shifts  : {[f"{v:+.4f}" for v in _sh]} ppm')
-                    else:
-                        _dbg(_dbg_f, f'    integ      : {_im}')
+                    _dbg(_dbg_f, f'    integ      : {_im}')
                     _dbg(_dbg_f, f'    area/nH    : {[f"{v:.4e}" for v in a_vec.tolist()]}')
                     if _line_sel_applied:
                         _dbg(_dbg_f,
@@ -1641,7 +1754,7 @@ class _QuantCompMixin:
                         break
                 meta_info[mid] = {'name': info['name'], 'hits': info['hits'],
                                   '_peak': p, '_used_mcr': use_mcr and found,
-                                  '_lorentz': _lorentz_params.get(mid),
+                                  '_lorentz': None,
                                   '_mcr': _mcr_info.get(mid),
                                   '_ann_score': _ann_score,
                                   '_nh': nh,
@@ -1916,6 +2029,22 @@ class _QuantCompMixin:
             _reasons.insert(0, _conf_reason)
             status = _conf_bar
 
+            # Representative peak for navigation ("Open peak in Peak List"): the
+            # detected peak INSIDE the integrated multiplet window nearest the
+            # reported centre, so it matches what Quant Peaks shows and the
+            # boundaries actually integrated — not necessarily the competition
+            # anchor (_peak_rank), which can sit on one leg only.
+            _disp_rank = _peak_rank_val
+            try:
+                _line_pks = _multiplet_line_peaks(_sel_hit, _pk_by_rank)
+                _cands_d = [(abs(float(_pk.get('ppm', 1e9)) - ppm_val),
+                             _pk.get('rank'))
+                            for _pk in _line_pks if _pk.get('rank') is not None]
+                if _cands_d:
+                    _disp_rank = min(_cands_d)[1]
+            except Exception:
+                pass
+
             self._quant_results.append({
                 'metabolite':        m.get('name', mid),
                 'hmdb_id':           mid,
@@ -1953,6 +2082,7 @@ class _QuantCompMixin:
                                       .strip().lower() in _SINGLET_MULTS),
                 '_has_anchor':       _has_anchor,
                 '_peak_rank':        _peak_rank_val,
+                '_display_peak_rank': _disp_rank,
                 '_used_j_resolve':   _used_jr,
                 '_j_resolve_frac':   m.get('_j_resolve_frac'),
                 '_jr_line_fracs':    m.get('_jr_line_fracs'),
@@ -1961,10 +2091,13 @@ class _QuantCompMixin:
                 '_hits':             m.get('hits', []),
             })
 
-        # ── Lipid composition indices (lipidomics mode only) ──────────────────
-        if is_lipidomics_mode:
-            _lipid_idx_entries = self._compute_lipid_composition_indices(
-                ppm_arr, all_int, n_s, groups)
+        # ── Lipid composition indices (Box 1) — CDCl3/Li extract only ─────────
+        # FA composition (Li et al. 2017) relies on CDCl3 chemical shifts and is
+        # invalid for aqueous (D2O) plasma spectra, so it is skipped there.
+        if is_lipidomics_mode and lipidomics.supports_composition(lipid_solvent):
+            _lipid_df = lipidomics.load_library(lipid_solvent)
+            _lipid_idx_entries = lipidomics.composition_indices(
+                ppm_arr, all_int, n_s, groups, _lipid_df)
             self._quant_results.extend(_lipid_idx_entries)
 
         # ── IS + PQN post-processing ──────────────────────────────────────────
@@ -2126,37 +2259,11 @@ class _QuantCompMixin:
                     _apq_nh = max(1.0, float(_r.get('protons', 1) or 1))
 
 
-                if use_lorentz:
-                    _ppm_seg = ppm_arr[_apq_lo:_apq_hi + 1]
-                    _int_seg = np.mean(all_int[_apq_lo:_apq_hi + 1, :], axis=1)
-                    _A_l, _cen_l, _wid_l, _apq_bl_y0, _apq_bl_slope = \
-                        _fit_lorentz_mean_with_bl(_ppm_seg, _int_seg)
-                    _max_sh = max(abs(float(_ppm_seg[-1] - _ppm_seg[0])) * 0.15, 0.005)
-                    _apq_shifts = []
-                    _apq_avec = np.zeros(n_s, dtype=float)
-                    for _s in range(n_s):
-                        _res_s = _fit_lorentz_sample(
-                            _ppm_seg, all_int[_apq_lo:_apq_hi + 1, _s],
-                            _A_l, _cen_l, _wid_l, max_shift_ppm=_max_sh)
-                        if _res_s is not None:
-                            _apq_avec[_s] = _res_s[0]
-                            _apq_shifts.append(_res_s[2] - _cen_l)
-                        else:
-                            _apq_avec[_s] = abs(float(_trapz(
-                                all_int[_apq_lo:_apq_hi + 1, _s], _ppm_seg)))
-                            _apq_shifts.append(0.0)
-                    _apq_lorentz = {
-                        'cen':      _cen_l,        'wid':      _wid_l,
-                        'shifts':   _apq_shifts,
-                        'bl_y0':    _apq_bl_y0,    'bl_slope': _apq_bl_slope,
-                        'bl_x0':    float(_ppm_seg[0]),
-                    }
-                else:
-                    _apq_avec = np.array([
-                        abs(float(_trapz(all_int[_apq_lo:_apq_hi + 1, s],
-                                         ppm_arr[_apq_lo:_apq_hi + 1])))
-                        for s in range(n_s)
-                    ], dtype=float)
+                _apq_avec = np.array([
+                    abs(float(_trapz(all_int[_apq_lo:_apq_hi + 1, s],
+                                     ppm_arr[_apq_lo:_apq_hi + 1])))
+                    for s in range(n_s)
+                ], dtype=float)
 
                 # Mirror main pipeline: divide by nH only when IS mode or proton_corr
                 if norm_mode in ('IS', 'IS+PQN') or proton_corr:
@@ -2189,7 +2296,7 @@ class _QuantCompMixin:
                     'conc_mm':           _apq_mean,
                     'concs_by_group':    _apq_cbg,
                     'ppm':               float(_apq_p.get('ppm', 0)),
-                    '_lorentz':          _apq_lorentz if use_lorentz else None,
+                    '_lorentz':          None,
                     '_concs_per_sample': _apq_concs.tolist(),
                     '_peak':             _apq_p,
                     '_nh':               _apq_nh,
@@ -2337,36 +2444,12 @@ class _QuantCompMixin:
                 else:
                     _fm_nh = max(1.0, float(_fm_hit.get('protons', 1) or 1))
 
-                if use_lorentz:
-                    _fm_seg  = ppm_arr[_fm_lo:_fm_hi + 1]
-                    _fm_iseg = np.mean(all_int[_fm_lo:_fm_hi + 1, :], axis=1)
-                    _fm_A, _fm_cen, _fm_wid, _fm_bl_y0, _fm_bl_slope = \
-                        _fit_lorentz_mean_with_bl(_fm_seg, _fm_iseg)
-                    _fm_max_sh = max(abs(float(_fm_seg[-1] - _fm_seg[0])) * 0.15, 0.005)
-                    _fm_avec   = np.zeros(n_s, dtype=float)
-                    _fm_shifts = []
-                    for _s in range(n_s):
-                        _fm_rs = _fit_lorentz_sample(
-                            _fm_seg, all_int[_fm_lo:_fm_hi + 1, _s],
-                            _fm_A, _fm_cen, _fm_wid, max_shift_ppm=_fm_max_sh)
-                        if _fm_rs is not None:
-                            _fm_avec[_s] = _fm_rs[0]
-                            _fm_shifts.append(_fm_rs[2] - _fm_cen)
-                        else:
-                            _fm_avec[_s] = abs(float(_trapz(
-                                all_int[_fm_lo:_fm_hi + 1, _s], _fm_seg)))
-                            _fm_shifts.append(0.0)
-                    _fm_lorentz = {'cen': _fm_cen, 'wid': _fm_wid,
-                                   'shifts': _fm_shifts, 'bl_y0': _fm_bl_y0,
-                                   'bl_slope': _fm_bl_slope,
-                                   'bl_x0': float(_fm_seg[0])}
-                else:
-                    _fm_avec = np.array([
-                        abs(float(_trapz(all_int[_fm_lo:_fm_hi + 1, s],
-                                         ppm_arr[_fm_lo:_fm_hi + 1])))
-                        for s in range(n_s)
-                    ], dtype=float)
-                    _fm_lorentz = None
+                _fm_avec = np.array([
+                    abs(float(_trapz(all_int[_fm_lo:_fm_hi + 1, s],
+                                     ppm_arr[_fm_lo:_fm_hi + 1])))
+                    for s in range(n_s)
+                ], dtype=float)
+                _fm_lorentz = None
 
                 if norm_mode in ('IS', 'IS+PQN') or proton_corr:
                     _fm_avec /= _fm_nh
@@ -2431,11 +2514,10 @@ class _QuantCompMixin:
                 if _apq_cps.size != n_s:
                     continue
                 _apq_cbg2 = _best_apq.get('concs_by_group', {})
-                _apq_cv2  = {}
-                for _g2, _gv2 in _apq_cbg2.items():
-                    _apq_cv2[_g2] = (float(np.std(_gv2) / np.mean(_gv2) * 100)
-                                     if len(_gv2) >= 2 and np.mean(_gv2) > 0
-                                     else float('nan'))
+                # Use the shared _cv helper (sample SD, ddof=1) so this fallback
+                # path reports CV% identically to the main quantification path —
+                # an inline np.std here defaulted to ddof=0 and diverged.
+                _apq_cv2  = {_g2: _cv(_gv2) for _g2, _gv2 in _apq_cbg2.items()}
                 _apq_pk2  = _best_apq.get('_peak')
                 _apq_name = _apq_mid_fb
                 for _r_fb in results:
@@ -2480,6 +2562,74 @@ class _QuantCompMixin:
                     '_hits':              [],
                     '_from_apq':          True,
                 })
+
+        # ── Não-quantificados (cinzento na lista, fora de export/estatística) ──
+        # (1) Metabolitos Good que perderam TODAS as competições de picos — nunca
+        #     entraram em met_map e não foram recuperados/APQ. Sem eles a lista
+        #     escondia silenciosamente que o metabolito existia mas não ganhou
+        #     sinal; CLAUDE.md exige tornar isto visível ao utilizador.
+        # (2) Metabolitos que ganharam pico mas cuja concentração é 0/NaN em todas
+        #     as amostras (integraram só ruído).
+        # Ambos ficam marcados _not_quantified=True com a razão em _status_reasons
+        # (mostrada no tooltip da coluna Conf). São excluídos de export e stats.
+        if not is_lipidomics_mode and not _fs_mode:
+            _name_by_mid = {}
+            for _r_nm in results:
+                _rm = str(_r_nm.get('_mid', ''))
+                if _rm and _rm not in _name_by_mid and _r_nm.get('name'):
+                    _name_by_mid[_rm] = _r_nm.get('name')
+            for _met_nm in (getattr(self.annotation_stage, '_metabolites', []) or []):
+                _mid_nm = str(_met_nm.get('id', ''))
+                if _mid_nm and _mid_nm not in _name_by_mid and _met_nm.get('name'):
+                    _name_by_mid[_mid_nm] = _met_nm.get('name')
+
+            _quantified_mids = {
+                str(r.get('hmdb_id') or r.get('bmrb_id') or '')
+                for r in self._quant_results
+            }
+            _n_lost = 0
+            for _lost_mid in sorted(good_met_ids):
+                if str(_lost_mid) in _quantified_mids:
+                    continue
+                self._quant_results.append({
+                    'metabolite':        _name_by_mid.get(str(_lost_mid), str(_lost_mid)),
+                    'hmdb_id':           _lost_mid,
+                    'ppm':               0.0,
+                    'n_peaks':           0,
+                    'raw_area':          float('nan'),
+                    'corr_area':         float('nan'),
+                    'conc_mm':           float('nan'),
+                    'cv_by_group':       {},
+                    'snr':               0.0,
+                    'status':            'n.q.',
+                    '_confidence':       0,
+                    '_status_reasons':   [NQ_REASON_LOST_COMPETITION],
+                    '_peak':             None,
+                    '_areas_per_sample': [],
+                    '_concs_per_sample': [],
+                    '_concs_by_group':   {},
+                    '_integ_mode':       _integ,
+                    '_ann_score':        _mid_ann_score.get(str(_lost_mid), 0.0),
+                    '_hits':             [],
+                    '_not_quantified':   True,
+                })
+                _n_lost += 1
+
+            # Flag won-but-empty analytes (0/NaN across all samples).
+            for _r_nq in self._quant_results:
+                if (_r_nq.get('_is_is') or _r_nq.get('_is_lipid_index')
+                        or _r_nq.get('_not_quantified')):
+                    continue
+                if is_unquantified_conc(_r_nq.get('conc_mm')):
+                    _r_nq['_not_quantified'] = True
+                    _r_nq['status'] = 'n.q.'
+                    _reasons_nq = _r_nq.get('_status_reasons') or []
+                    if NQ_REASON_ZERO_NAN not in _reasons_nq:
+                        _r_nq['_status_reasons'] = [NQ_REASON_ZERO_NAN] + _reasons_nq
+            _n_nq = sum(1 for r in self._quant_results if r.get('_not_quantified'))
+            print(f'[Quant] não-quantificados: {_n_nq} '
+                  f'({_n_lost} perderam competição, {_n_nq - _n_lost} 0/NaN) '
+                  f'— excluídos de export e estatística')
 
         if _dbg_f is not None:
             _dbg(_dbg_f, '')
@@ -2592,7 +2742,6 @@ class _QuantCompMixin:
         # touched from the main thread — schedule via after(0, ...).
         _norm_f     = norm_mode
         _use_mcr_f  = use_mcr
-        _use_lor_f  = use_lorentz
 
         def _finish_ui():
             self._prog_apply(93, 'Computing VIP scores…')
@@ -2605,7 +2754,7 @@ class _QuantCompMixin:
 
             self._prog_apply(99, 'Done.')
             _note     = (f' PQN×{self._pqn_factor:.3f}' if _norm_f == 'PQN' else '')
-            _mcr_note = (' +MCR' if _use_mcr_f else ' +Lorentz' if _use_lor_f else '')
+            _mcr_note = ' +MCR' if _use_mcr_f else ''
             self.run_status.config(
                 text=f'{len(self._quant_results)} metabolites '
                      f'[{_norm_f}{_note}{_mcr_note}]',
@@ -2728,8 +2877,19 @@ class _QuantCompMixin:
                 r['vip_score'] = float('nan')
             return
 
-        X = np.array([r.get('_concs_per_sample', [float('nan')] * n_s)
-                      for r in results], dtype=float).T
+        # Per-sample vectors can differ in length across analytes (e.g. an analyte
+        # quantified before a sample was added). Pad/truncate each to exactly n_s
+        # so the matrix is rectangular — a ragged list raises "inhomogeneous shape"
+        # under numpy and silently skipped all VIP scores.
+        rows = []
+        for r in results:
+            c = list(r.get('_concs_per_sample', []) or [])
+            if len(c) < n_s:
+                c = c + [float('nan')] * (n_s - len(c))
+            elif len(c) > n_s:
+                c = c[:n_s]
+            rows.append(c)
+        X = np.array(rows, dtype=float).T
 
         blk_idx = set(getattr(self, '_last_blk_indices', []))
         groups  = getattr(self, '_last_groups', {})
@@ -2829,14 +2989,6 @@ class _QuantCompMixin:
             else:
                 area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
 
-        elif integ_mode == 'Lorentz':
-            try:
-                _, cen_l, wid_l = _fit_lorentz_mean(ppm_sub, col)
-                A_s = _lorentz_amplitude(ppm_sub, col, cen_l, wid_l)
-                area_raw = float(A_s) * (np.pi * float(wid_l))
-            except Exception:
-                area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
-
         else:
             area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
 
@@ -2855,7 +3007,7 @@ class _QuantCompMixin:
         ref_conc_used  = getattr(self, '_last_ref_conc',  1.0)
         _dil           = getattr(self, '_last_sample_dil', np.ones(n_s))
 
-        if norm_mode_used == 'IS' and ref_areas_used is not None:
+        if norm_mode_used in ('IS', 'IS+PQN') and ref_areas_used is not None:
             s_concs = np.array([
                 (s_areas[s] / ref_areas_used[s] * ref_conc_used * _dil[s]
                  if ref_areas_used[s] > 0 else float('nan'))
@@ -2961,7 +3113,9 @@ class _QuantCompMixin:
         conc  = r.get('conc_mm', float('nan'))
         if not np.isfinite(conc):
             conc_s = 'N/A'
-        elif _norm == 'IS':
+        elif _norm in ('IS', 'IS+PQN'):
+            conc_s = f'{conc:.4f}'
+        elif _norm == 'Total':
             conc_s = f'{conc:.4f}'
         else:
             conc_s = f'{conc:.3e}'
@@ -3023,7 +3177,7 @@ class _QuantCompMixin:
                 # Non-parametric bootstrap CI95 of each group mean (Bootstrap-2)
                 ci_hdrs  = [h for g in all_groups
                             for h in (f'CI95lo_{g}', f'CI95hi_{g}')]
-                quality_cols = (['PPM', 'Width(ppm)', 'SNR', 'R2', 'Score',
+                quality_cols = (['ChemShift(ppm)', 'Width(ppm)', 'SNR', 'R2', 'Score',
                                  'IntegMode', 'Status', 'Norm'] + cv_hdrs + ci_hdrs)
 
                 def _fmt(v):
@@ -3041,9 +3195,10 @@ class _QuantCompMixin:
                     # Group row: blank for quality cols | sample group labels
                     w.writerow(['Group', ''] + [''] * len(quality_cols) + slabels)
 
-                    # One row per analyte (skip IS internal standard row)
+                    # One row per analyte (skip IS internal standard row and
+                    # não-quantificados — these carry no measurable signal).
                     for r in self._quant_results:
-                        if r.get('_is_is'):
+                        if r.get('_is_is') or r.get('_not_quantified'):
                             continue
                         p = r.get('_peak') or {}
                         _im = r.get('_integ_mode', '')
@@ -3056,12 +3211,7 @@ class _QuantCompMixin:
                         else:
                             width_val = p.get('width_ppm', float('nan'))
                         snr_val   = r.get('snr', p.get('snr', float('nan')))
-                        # Bug 4 fix: use Lorentz R² when available, else gaussian_r2
-                        _lz = r.get('_lorentz') or {}
-                        if _im == 'Lorentz' and _lz.get('r2') is not None:
-                            r2_val = float(_lz['r2'])
-                        else:
-                            r2_val = p.get('gaussian_r2', float('nan'))
+                        r2_val    = p.get('gaussian_r2', float('nan'))
                         score_val = r.get('_ann_score', float('nan'))
                         status    = r.get('status', '')
                         hmdb_id   = r.get('hmdb_id', '')
@@ -3130,8 +3280,10 @@ class _QuantCompMixin:
                     w.writerow(['Sample'] + names)
                     w.writerow(['Label']  + labels)
                     for r in self._quant_results:
-                        # Bug 6 fix: skip IS internal standard and lipid index rows
-                        if r.get('_is_is') or r.get('_is_lipid_index'):
+                        # Bug 6 fix: skip IS internal standard and lipid index rows.
+                        # Skip não-quantificados — no measurable signal to export.
+                        if (r.get('_is_is') or r.get('_is_lipid_index')
+                                or r.get('_not_quantified')):
                             continue
                         concs = r.get('_concs_per_sample', [])
                         det   = r.get('_detected_per_sample', [])
@@ -3177,142 +3329,3 @@ class _QuantCompMixin:
         except Exception as exc:
             self._status_err(f'PDF export failed: {exc}')
             messagebox.showerror('PDF Export Error', str(exc))
-
-    # ── Lipid composition indices (Box 1, Li et al. 2017) ─────────────────────
-
-    def _compute_lipid_composition_indices(self, ppm_arr, all_int, n_s, groups):
-        """
-        Compute 1H NMR lipid composition indices following Li et al. 2017,
-        Prog Lipid Res 68:37-56, Box 1 (FA composition from diagnostic peaks).
-
-        Diagnostic windows (CDCl3 chemical shifts):
-          a  5.25-5.45  =CH-CH= olefinic          2H per C=C bond
-          b  4.05-4.40  TG glycerol CH2 (sn-1,3)  4H per TG molecule
-          c  2.72-2.88  bis-allylic =CH-CH2-CH=   2H per group
-          d  2.22-2.38  alpha-CH2 adjacent to C=O  2H per FA chain (6H per TG)
-          e  1.97-2.07  allylic =CH-CH2            2H per group
-          h  0.84-0.92  terminal CH3 (non-n3)      3H per FA chain
-          i  0.95-1.01  terminal CH3 n-3 ALA-type  3H per chain (linolenic-specific;
-                        EPA/DHA terminal CH3 overlaps with h at 0.88 ppm)
-
-        U = (b/4 + d/6 + (h+i)/9) / 3  — intensity per FA chain (3-estimator avg)
-
-        Results are dimensionless ratios (%) or double bonds per chain.
-        Not subject to IS/PQN normalisation.
-        """
-        _WINDOWS = {
-            'a': (5.25, 5.45),
-            'b': (4.05, 4.40),
-            'c': (2.72, 2.88),
-            'd': (2.22, 2.38),
-            'e': (1.97, 2.07),
-            'h': (0.84, 0.92),
-            'i': (0.95, 1.01),
-        }
-
-        raw = {}
-        for key, (lo, hi) in _WINDOWS.items():
-            mask = (ppm_arr >= lo) & (ppm_arr <= hi)
-            if mask.any():
-                raw[key] = np.array([
-                    abs(float(_trapz(all_int[mask, s], ppm_arr[mask])))
-                    for s in range(n_s)], dtype=float)
-            else:
-                raw[key] = np.zeros(n_s, dtype=float)
-
-        a  = raw['a']
-        b  = raw['b']
-        c  = raw['c']
-        d  = raw['d']
-        e  = raw['e']
-        h  = raw['h']
-        i_ = raw['i']
-
-        # Box 1, Eq (1) — intensity per FA chain (proton-normalised average)
-        U = (b / 4.0 + d / 6.0 + (h + i_) / 9.0) / 3.0
-        eps = np.finfo(float).eps
-
-        with np.errstate(divide='ignore', invalid='ignore'):
-            # n-3 PUFA %: linolenic-type ALA (18:3n-3) only.
-            # i/9 = ALA chain contribution per TG; divide by U = per-chain baseline.
-            n3_pct = np.where(U > eps, np.clip((i_ / 9.0) / U * 100.0, 0.0, 100.0), 0.0)
-
-            # n-6 PUFA %: from bis-allylic signal.
-            # Linolenic contributes 2 bis-allylic CH2 groups per chain;
-            # linoleic contributes 1. Subtract ALA contribution: c/2 - 2*(i/9).
-            n6_bisallylic = np.maximum(0.0, c / 2.0 - 2.0 * (i_ / 9.0))
-            n6_pct = np.where(U > eps, np.clip(n6_bisallylic / U * 100.0, 0.0, 100.0), 0.0)
-
-            # MUFA %: from allylic signal after subtracting PUFA contributions.
-            # Each MUFA chain contributes 4H to e (2 allylic CH2 groups);
-            # n-3 and n-6 chains also contribute to e, accounted for here.
-            mufa_allylic = np.maximum(0.0, e / 4.0 - 2.0 * (i_ / 9.0) - n6_bisallylic)
-            mufa_pct = np.where(U > eps, np.clip(mufa_allylic / U * 100.0, 0.0, 100.0), 0.0)
-
-            # Saturated FA % — remainder; 0 when U≈0 (no signal → no composition reported)
-            sat_pct = np.where(U > eps,
-                               np.clip(100.0 - n3_pct - n6_pct - mufa_pct, 0.0, 100.0),
-                               0.0)
-
-            # Degree of Unsaturation: average C=C double bonds per FA chain.
-            # a/2 = moles of C=C (each has 2 olefinic H); U*3 = moles of FA chains.
-            du = np.where(U > eps, (a / 2.0) / (U * 3.0), 0.0)
-
-            # Unsaturation Index: weighted average (MUFA=1, n-6=2, n-3=3 double bonds)
-            ui = np.clip((mufa_pct + 2.0 * n6_pct + 3.0 * n3_pct) / 100.0, 0.0, None)
-
-        def _make_index_entry(name, values, unit='%'):
-            vals = np.asarray(values, dtype=float)
-            mean_val = float(np.nanmean(vals))
-            cv_by_group = {}
-            concs_by_group = {}
-            for g, idxs in groups.items():
-                gv = [float(vals[idx]) for idx in idxs
-                      if idx < n_s and np.isfinite(vals[idx])]
-                from ._quant_helpers import _cv as _cv_fn
-                cv_by_group[g] = _cv_fn(gv)
-                concs_by_group[g] = gv
-            return {
-                'metabolite':          name,
-                'hmdb_id':             '__LIPID_INDEX__',
-                'ppm':                 0.0,
-                'n_peaks':             0,
-                'raw_area':            mean_val,
-                'corr_area':           mean_val,
-                'conc_mm':             mean_val,
-                'cv_by_group':         cv_by_group,
-                'snr':                 0.0,
-                'status':              '—',
-                '_confidence':         0,
-                '_status_reasons':     [f'Derived index ({unit}) — Li et al. 2017 Box 1'],
-                '_peak':               None,
-                '_areas_per_sample':   vals.tolist(),
-                '_concs_per_sample':   vals.tolist(),
-                '_concs_by_group':     concs_by_group,
-                '_used_mcr':           False,
-                '_lorentz':            None,
-                '_mcr':                None,
-                '_lipid_regions':      None,
-                '_lipid_window':       None,
-                '_integ_mode':         'LipidIndex',
-                '_ann_score':          1.0,
-                '_nh':                 1.0,
-                '_blk_mean_area':      0.0,
-                '_proton_corr':        False,
-                '_use_blk_sub':        False,
-                '_has_anchor':         False,
-                '_peak_rank':          None,
-                '_used_j_resolve':     False,
-                '_n_eligible':         0,
-                '_peak_align_shifts':  None,
-                '_is_lipid_index':     True,
-            }
-
-        return [
-            _make_index_entry('n-3 PUFA — ALA index (%)',         n3_pct,  '%'),
-            _make_index_entry('n-6 PUFA — bis-allylic index (%)', n6_pct,  '%'),
-            _make_index_entry('MUFA — allylic index (%)',          mufa_pct, '%'),
-            _make_index_entry('Saturated FA (%)',                  sat_pct, '%'),
-            _make_index_entry('Degree of Unsaturation (C=C/chain)', du,    'ratio'),
-            _make_index_entry('Unsaturation Index (UI)',           ui,      'ratio'),
-        ]

@@ -1,0 +1,1 @@
+{"source_hilevel": ["Endogenous", "Food", "Plant", "Fungi"], "role_drug": false, "role_toxic": true, "role_industrial": false, "is_endogenous": true, "is_exogenous": false, "is_food": true, "is_microbial": true, "is_synthetic": false, "keep_mammalian": true, "exclude_reason": "", "primary_origin": "endogenous", "hmdb_id": "HMDB0000152", "name": "Gentisic acid"}

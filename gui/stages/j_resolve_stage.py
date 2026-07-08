@@ -495,8 +495,11 @@ class JResolveStage(BaseStage):
         return float(abs(np.trapezoid(self._all_int[mask, s], self._ppm[mask])))
 
     def _get_protons(self, met, mp):
+        # Keep fractional per-signal nH (BMRB stores e.g. 0.33 for split
+        # assignments that sum to total_protons); int() truncated 0.33→0→1,
+        # biasing eff_nH up to ~3× and the resulting concentration.
         try:
-            n = int(mp.get('protons') or 0)
+            n = float(mp.get('protons') or 0)
             if n > 0:
                 return n
         except (TypeError, ValueError):
@@ -507,12 +510,12 @@ class JResolveStage(BaseStage):
              if abs(p.get('ppm_center', p.get('ppm', 0)) - db_ppm) < 0.02), None)
         if entry:
             try:
-                n = int(entry.get('protons') or 0)
+                n = float(entry.get('protons') or 0)
                 if n > 0:
                     return n
             except (TypeError, ValueError):
                 pass
-        return 1
+        return 1.0
 
     def _effective_nh(self, met, mp):
         _pascal = {
@@ -533,9 +536,13 @@ class JResolveStage(BaseStage):
             total = sum(ris)
             if total > 0:
                 # Integrar o perfil teórico sobre a janela real do pico detectado
-                # em vez de ponto-estimativa pelo apex → menos bias para doublets/triplets
-                sp = mp.get('start_ppm')
-                ep = mp.get('end_ppm')
+                # em vez de ponto-estimativa pelo apex → menos bias para doublets/triplets.
+                # F2: usar a MESMA janela que _get_area integra (o pico de deteção),
+                # senão a fração por-linha fica inconsistente com a área integrada.
+                _pk_w = (self._peak_by_rank(mp.get('peak_rank'))
+                         if mp.get('peak_rank') is not None else None)
+                sp = (_pk_w or mp).get('start_ppm', mp.get('start_ppm'))
+                ep = (_pk_w or mp).get('end_ppm',   mp.get('end_ppm'))
                 if sp is not None and ep is not None and abs(float(ep) - float(sp)) > 1e-6:
                     lo, hi = min(float(sp), float(ep)), max(float(sp), float(ep))
                     hwhm = (hi - lo) * 0.25   # estimativa HWHM a partir da largura
@@ -2177,7 +2184,7 @@ class JResolveStage(BaseStage):
                          if mp.get('annotation_quality') == 'good')
             if n_good == 0 and not self._auto_anchored:
                 self._anchor_lbl.config(
-                    text='⚠ No anchors — mark peaks Good in Annotation Results')
+                    text='⚠ No anchors — mark signals Good in Annotation Results')
             else:
                 self._anchor_lbl.config(
                     text=f'{n_good} Good + {len(self._auto_anchored)} auto-anchored')
@@ -2951,7 +2958,7 @@ class NNLSDeconvolutionDialog:
                                    command=self._tree_cands.yview)
         self._tree_cands.configure(yscrollcommand=_vsb_tree.set)
 
-        self._tree_cands.heading('#0',   text='Metabolite / Peak', anchor='w')
+        self._tree_cands.heading('#0',   text='Metabolite / Signal', anchor='w')
         self._tree_cands.heading('src',  text='Source',   anchor='center')
         self._tree_cands.heading('cb',   text='☑',        anchor='center')
         self._tree_cands.heading('j',    text='J',         anchor='center')

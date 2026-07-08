@@ -1,0 +1,1 @@
+{"source_hilevel": ["Food", "Plant", "Endogenous", "Exogenous"], "role_drug": true, "role_toxic": true, "role_industrial": false, "is_endogenous": true, "is_exogenous": true, "is_food": true, "is_microbial": false, "is_synthetic": false, "keep_mammalian": false, "exclude_reason": "role=Drug", "primary_origin": "drug", "hmdb_id": "HMDB0000714", "name": "Hippuric acid"}

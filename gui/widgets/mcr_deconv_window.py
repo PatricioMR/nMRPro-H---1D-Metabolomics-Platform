@@ -104,7 +104,7 @@ class MCRDeconvWindow:
         self.tree = ttk.Treeview(parent, columns=cols, show='tree headings',
                                   selectmode='browse')
         self.tree.heading('#0',    text='Peak')
-        self.tree.heading('ppm',   text='ppm')
+        self.tree.heading('ppm',   text='δ (ppm)')
         self.tree.heading('K',     text='K')
         self.tree.heading('r2',    text='R²')
         self.tree.heading('status',text='Status')
@@ -497,7 +497,7 @@ class MCRDeconvWindow:
             ax2.plot(rrp, residual, color='#555555', lw=0.9)
         ax2.axhline(0, color='#aaaaaa', lw=0.7, ls='--')
         ax2.set_ylabel('Residual\n(MCR region)', fontsize=7)
-        ax2.set_xlabel('ppm', fontsize=8)
+        ax2.set_xlabel('δ (ppm)', fontsize=8)
         ax2.tick_params(labelsize=7)
         ax2.set_facecolor('#f5f5f5')
 

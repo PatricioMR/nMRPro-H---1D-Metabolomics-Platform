@@ -9,12 +9,42 @@ Extracted from quantification_stage.py to keep each file focused:
 """
 import numpy as np
 
+# Integration & lineshape DSP now lives in the processing/ layer (MVC).
+# Re-exported here so existing callers (`from ._quant_helpers import _trapz, …`)
+# keep working unchanged.
+from processing.integration import (
+    _trapz, _lorentz_shape, _lorentz_func, _lorentz_amplitude,
+    _linear_baseline, _fit_lorentz_mean, _fit_lorentz_mean_with_bl,
+    _fit_lorentz_sample, _fit_multi_lorentz, jr_pointwise_multiplet_area,
+)
 
-def _trapz(y, x):
+
+# ── Não-quantificados ────────────────────────────────────────────────────────
+# Um metabolito é "não quantificado" quando não há sinal mensurável que lhe possa
+# ser atribuído: ou perdeu a competição por todos os picos atribuídos (todos
+# ficaram com metabolitos de maior score), ou a sua concentração média é 0/NaN
+# em todas as amostras (integrou apenas ruído). Estes nunca entram em exports
+# nem nas estatísticas — apenas aparecem a cinzento na lista, com a razão — para
+# não fabricar dados (CLAUDE.md: nunca reportar ruído como sinal).
+NQ_REASON_LOST_COMPETITION = (
+    'Não quantificado: perdeu a competição de picos — todos os picos atribuídos '
+    'foram quantificados para metabolitos de maior score.')
+NQ_REASON_ZERO_NAN = (
+    'Não quantificado: concentração 0/NaN em todas as amostras — sem sinal acima '
+    'do limite de deteção.')
+
+
+def is_unquantified_conc(conc_mm):
+    """True when a metabolite's mean concentration carries no measurable signal.
+
+    NaN (no finite positive sample anywhere) or a non-positive mean both mean
+    nothing was quantified — such an analyte must be excluded from exports and
+    statistics, never reported as a real value."""
     try:
-        return np.trapezoid(y, x=x)
-    except AttributeError:
-        return np.trapz(y, x=x)
+        c = float(conc_mm)
+    except (TypeError, ValueError):
+        return True
+    return (not np.isfinite(c)) or c <= 0.0
 
 
 # ── Robust / non-parametric statistics for J-Resolve ─────────────────────────
@@ -176,7 +206,12 @@ def _pqn(areas_dict, ref_dict):
 def _effective_nh(hit, detected_ppm, spectrometer_mhz=600.0):
     """Return the effective nH for the specific detected line of a multiplet."""
     import re as _re
-    nH = max(1.0, float(hit.get('protons', 1) or 1))
+    # Preserve fractional per-signal nH (the BMRB DB stores e.g. 0.33 when a
+    # proton is split across overlapping assignments; they sum to total_protons).
+    # Truncating/flooring to 1.0 biases eff_nH by up to ~3× → wrong concentration.
+    nH = float(hit.get('protons', 1) or 1)
+    if nH <= 0:
+        nH = 1.0
     # Result entries store multiplicity as 'type' (from DB), not 'pattern'.
     # 'type' is often a non-multiplicity string (e.g. 'HMDB', 'lipid_region') —
     # only use 'pattern' or 'multiplicity' to avoid misidentifying the multiplet.
@@ -266,60 +301,110 @@ def _effective_nh(hit, detected_ppm, spectrometer_mhz=600.0):
     return nH
 
 
-def jr_pointwise_multiplet_area(x_window, seg_matrix, line_ppms, line_fracs):
-    """Per-sample multiplet area with per-line J-Resolve fractions.
+_SINGLET_MULT_TYPES = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
 
-    A multiplet spans several lines that NNLS (J-Resolve) may resolve
-    differently — one leg of a doublet can be clean while the other is shared.
-    Integrating the whole window and scaling by a single (anchor) fraction loses
-    that per-leg reality. Here every spectral point of the window is weighted by
-    the fraction of the predicted line NEAREST to it, so each leg contributes its
-    own share, then the weighted curve is integrated.
+# Competition tier boundary between a multiplet and a singlet. A multiplet only
+# outranks a singlet when its J quality s_dj exceeds this value — mirroring the
+# "s_dj >= 0.5 = decent J" threshold used elsewhere (annotation post-processing).
+SINGLET_TIER_PENALTY = 0.5
 
-    Reduces EXACTLY to ``fraction × whole_window_area`` when all line fractions
-    are equal (and to the plain area when all are 1.0), so multiplets that were
-    not resolved per-line are unchanged.
 
-    Parameters
-    ----------
-    x_window : (m,) ppm of the integration window.
-    seg_matrix : (m,) or (m, n_s) intensities (already baseline-handled).
-    line_ppms : (L,) predicted line positions (ppm).
-    line_fracs : list length L; each entry a scalar in [0, 1] or an (n_s,) array.
+def multiplet_tier_penalty(is_singlet: bool, s_dj, singlet_penalty: float = SINGLET_TIER_PENALTY) -> float:
+    """Continuous competition penalty replacing the old binary multiplet tier.
 
-    Returns
-    -------
-    (n_s,) integrated area per sample (absolute value, like the trapz path).
+    Lower = better (sorts first). A J-confirmed multiplet (s_dj→1) approaches 0;
+    a poor-J multiplet (s_dj→0) approaches 1 and falls BELOW a singlet, which sits
+    at the fixed boundary ``singlet_penalty``. This removes the cliff where a
+    near-perfect multiplet (e.g. s_dj=0.98) was demoted to the singlet tier purely
+    because it fell short of the hard s_dj>=1.0 cut. s_dj is monotonic in |ΔJ|
+    (1.0 below dj_gold, linear decay), so ordering multiplets by this penalty is
+    consistent with the subsequent ΔJ tie-break.
     """
-    x   = np.asarray(x_window, dtype=float)
-    seg = np.asarray(seg_matrix, dtype=float)
-    if seg.ndim == 1:
-        seg = seg[:, None]
-    m, n_s = seg.shape
-    lp = np.asarray(line_ppms, dtype=float)
-    if lp.size == 0 or m < 2:
-        return np.array([abs(float(_trapz(seg[:, s], x))) for s in range(n_s)])
+    if is_singlet:
+        return float(singlet_penalty)
+    try:
+        sd = float(s_dj)
+    except (TypeError, ValueError):
+        sd = 0.0
+    return 1.0 - min(max(sd, 0.0), 1.0)
 
-    # Normalise each line fraction to an (n_s,) vector, clipped to [0, 1].
-    fr = []
-    for f in line_fracs:
-        fa = np.asarray(f, dtype=float)
-        fa = np.full(n_s, float(fa)) if fa.ndim == 0 else fa
-        fr.append(np.clip(fa, 0.0, 1.0))
 
-    nearest = np.argmin(np.abs(x[:, None] - lp[None, :]), axis=1)   # (m,)
-    weight  = np.empty((m, n_s), dtype=float)
-    for k in range(m):
-        weight[k, :] = fr[nearest[k]]
+def multiplet_sdj_missing(mult, has_sdj: bool, singlet_mults) -> bool:
+    """True when a multiplet hit cannot be quantified because its s_dj is unknown.
 
-    weighted = seg * weight
-    return np.array([abs(float(_trapz(weighted[:, s], x))) for s in range(n_s)])
+    s_dj (J quality) is computed only in the Annotation Results post-processing.
+    When it is absent for a multiplet — e.g. a project loaded before scores were
+    computed, or the window never post-processed — the multiplet/singlet tier
+    collapses silently and the multiplet-over-singlet priority is lost. Rather
+    than quantify on a fabricated tier (CLAUDE.md: never silence data warnings),
+    such a multiplet is blocked. Singlets need no J confirmation, so they are
+    never blocked here.
+    """
+    m = str(mult or '').strip().lower()
+    if m in singlet_mults:
+        return False
+    return not has_sdj
+
+
+def _anchor_lines_complete(mp):
+    """True if a matched peak may act as a quantification anchor on line count.
+
+    A singlet needs no J pattern. A multiplet (doublet, triplet, sextet, …) is
+    only trustworthy when EVERY predicted line was found — a partial multiplet
+    has no confirmed J coupling, so it must not anchor quantification (the user
+    rule: "não pode ser quantificado se não tem J bom com todas as linhas").
+    Returns True when the line counts are unknown (no metadata to gate on).
+    """
+    mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
+    if mult in _SINGLET_MULT_TYPES:
+        return True
+    nf = mp.get('_n_found_lines')
+    ne = mp.get('_n_exp_lines')
+    if nf is None or ne is None:
+        return True                      # no line metadata → don't gate here
+    return int(ne) > 0 and int(nf) >= int(ne)
+
+
+def jr_analyte_fraction(rank, mid, contribs, contribs_ps, n_samples):
+    """Fraction of a JG-deconvolved peak that belongs to one analyte.
+
+    J-Resolve (JG-Deconv) splits an overlapping peak between the analytes that
+    share it, storing ``{rank: {mid: frac}}`` (and an optional per-sample
+    vector). When integrating a peak for a given analyte the quant pipeline must
+    decide how much of that peak's area is really this analyte's:
+
+      • peak ``rank`` not in ``contribs``/``contribs_ps`` → JG never deconvolved
+        it; the analyte owns the peak → ``1.0``.
+      • peak deconvolved and the analyte has a share → that share (the
+        per-sample vector is preferred so group differences survive).
+      • peak deconvolved but the analyte is ABSENT → ``0.0``. JG assigned the
+        peak to other analytes; returning ``1.0`` here would quantify the same
+        ppm twice (fabricated signal — see the integrity rules in CLAUDE.md).
+
+    Returns a scalar in [0, 1] or an ``(n_samples,)`` array (per-sample case).
+    """
+    contribs    = contribs or {}
+    contribs_ps = contribs_ps or {}
+    if rank not in contribs_ps and rank not in contribs:
+        return 1.0                       # not deconvolved → analyte owns it
+    fa_ps = contribs_ps.get(rank, {}).get(mid)
+    if fa_ps is not None and len(fa_ps) == n_samples:
+        return np.clip(np.asarray(fa_ps, dtype=float), 0.0, 1.0)
+    fs = contribs.get(rank, {}).get(mid)
+    if fs is not None and 0.0 < float(fs) <= 1.0:
+        return float(fs)
+    return 0.0                           # deconvolved without this analyte
 
 
 def _effective_nh_source(hit, detected_ppm, spectrometer_mhz=600.0):
     """Same logic as _effective_nh but returns (nH, source_description)."""
     import re as _re
-    nH = max(1.0, float(hit.get('protons', 1) or 1))
+    # Preserve fractional per-signal nH (the BMRB DB stores e.g. 0.33 when a
+    # proton is split across overlapping assignments; they sum to total_protons).
+    # Truncating/flooring to 1.0 biases eff_nH by up to ~3× → wrong concentration.
+    nH = float(hit.get('protons', 1) or 1)
+    if nH <= 0:
+        nH = 1.0
     pattern = (hit.get('pattern') or hit.get('multiplicity') or 's').lower().strip()
     _pascal = {
         's': [1], 'd': [1, 1], 't': [1, 2, 1], 'q': [1, 3, 3, 1],
@@ -398,216 +483,6 @@ def _mcr_als(X, n_components=1, max_iter=200, tol=1e-6, S_init=None):
                        tol=tol, S_init=S_init)
 
 
-def _lorentz_shape(x, cen, wid):
-    """Unit-height Lorentzian: 1 at centre, HWHM = wid."""
-    return wid ** 2 / ((x - cen) ** 2 + wid ** 2)
-
-
-def _lorentz_func(x, A, cen, wid):
-    return A * _lorentz_shape(x, cen, wid)
-
-
-def _linear_baseline(x, y):
-    """2-point linear baseline anchored at window endpoints.
-
-    Returns (y0, slope, baseline_array) where baseline_array has the same
-    shape as x.  y0 is the baseline value at x[0]; slope is in units/ppm.
-    """
-    x0, y0 = float(x[0]), float(y[0])
-    x1, y1 = float(x[-1]), float(y[-1])
-    slope = (y1 - y0) / (x1 - x0) if abs(x1 - x0) > 1e-10 else 0.0
-    return float(y0), float(slope), y0 + slope * (x - x0)
-
-
-def _fit_lorentz_mean(x, y_mean, with_baseline=True):
-    """Fit Lorentzian to mean spectrum.
-
-    with_baseline=True: subtract 2-point linear baseline before fitting.
-    Returns (A, cen, wid_hwhm).  Area = A * pi * wid.
-    """
-    from scipy.optimize import curve_fit
-    y_raw = np.clip(y_mean, 0, None)
-    if len(x) < 4 or y_raw.max() <= 0:
-        i = int(np.argmax(y_raw))
-        return float(y_raw[i]), float(x[i]), float(abs(x[-1] - x[0]) / 4)
-
-    if with_baseline:
-        _, _, baseline = _linear_baseline(x, y_raw)
-        y = np.clip(y_raw - baseline, 0, None)
-        if y.max() <= 0:
-            y = y_raw
-    else:
-        y = y_raw
-
-    i_max = int(np.argmax(y))
-    A0 = float(y[i_max])
-    c0 = float(x[i_max])
-    above = np.where(y >= A0 / 2.0)[0]
-    w0 = (abs(float(x[above[-1]] - x[above[0]])) / 2.0
-          if len(above) >= 2 else abs(float(x[-1] - x[0])) / 4.0)
-    dppm = abs(float(x[1] - x[0])) if len(x) > 1 else 1e-4
-    w0 = max(w0, dppm)
-    x_span = abs(float(x[-1] - x[0]))
-    try:
-        popt, _ = curve_fit(
-            _lorentz_func, x, y,
-            p0=[A0, c0, w0],
-            bounds=([0, float(x.min()), dppm],
-                    [A0 * 5.0, float(x.max()), x_span]),
-            maxfev=4000)
-        if not all(np.isfinite(v) for v in popt):
-            return A0, c0, w0
-        return float(popt[0]), float(popt[1]), float(popt[2])
-    except Exception:
-        return A0, c0, w0
-
-
-def _fit_lorentz_mean_with_bl(x, y_mean, with_baseline=True):
-    """Like _fit_lorentz_mean but also returns baseline parameters.
-
-    Returns (A, cen, wid, bl_y0, bl_slope).
-    When with_baseline=False, bl_y0 and bl_slope are 0.
-    """
-    y_raw = np.clip(y_mean, 0, None)
-    if with_baseline:
-        bl_y0, bl_slope, _ = _linear_baseline(x, y_raw)
-    else:
-        bl_y0, bl_slope = 0.0, 0.0
-    A, cen, wid = _fit_lorentz_mean(x, y_mean, with_baseline=with_baseline)
-    return A, cen, wid, bl_y0, bl_slope
-
-
-def _fit_lorentz_sample(x, y, A0, cen0, wid0, max_shift_ppm=0.02, with_baseline=True):
-    """Per-sample Lorentzian fit.
-
-    with_baseline=True: subtract 2-point linear baseline before fitting.
-    Area = A * pi * wid.  Returns (area, A, cen, wid) or None on failure.
-    """
-    from scipy.optimize import curve_fit
-    y_raw = np.clip(y, 0, None)
-    if len(x) < 4 or y_raw.max() <= 0:
-        return None
-    if with_baseline:
-        _, _, baseline = _linear_baseline(x, y_raw)
-        y_cl = np.clip(y_raw - baseline, 0, None)
-        if y_cl.max() <= 0:
-            y_cl = y_raw
-    else:
-        y_cl = y_raw
-    dppm = abs(float(x[1] - x[0])) if len(x) > 1 else 1e-4
-    A_hi  = max(float(y_cl.max()) * 3.0, A0 * 5.0)
-    w_lo  = max(wid0 * 0.3, dppm)
-    w_hi  = wid0 * 3.0
-    c_lo  = max(cen0 - max_shift_ppm, float(x.min()))
-    c_hi  = min(cen0 + max_shift_ppm, float(x.max()))
-    if c_lo >= c_hi:
-        c_lo = float(x.min())
-        c_hi = float(x.max())
-    if not (np.isfinite(A0) and np.isfinite(cen0) and np.isfinite(wid0)):
-        return None
-    try:
-        popt, _ = curve_fit(
-            _lorentz_func, x, y_cl,
-            p0=[A0, cen0, wid0],
-            bounds=([0.0, c_lo, w_lo], [A_hi, c_hi, w_hi]),
-            maxfev=6000)
-        A, cen, wid = float(popt[0]), float(popt[1]), float(popt[2])
-        if not (np.isfinite(A) and np.isfinite(cen) and np.isfinite(wid)):
-            return None
-        return A * np.pi * wid, A, cen, wid
-    except Exception:
-        return None
-
-
-def _fit_multi_lorentz(x, y_mean, all_y, peak_ppms, max_shift=0.015):
-    """Fit sum of N Lorentzians to a cluster region for deconvolution.
-
-    x         : ppm array (any order — sorted internally)
-    y_mean    : mean spectrum intensity over x
-    all_y     : (len(x), n_samples) intensity matrix
-    peak_ppms : initial ppm position per component (one per cluster peak)
-    max_shift : max center shift allowed from initial ppm (ppm)
-
-    Returns {'r2': float, 'components': [(area_mean, cen_ppm, areas_per_sample), ...]}
-    or None on failure / insufficient data.
-
-    Per-sample amplitudes are solved via NNLS with shapes fixed from the mean
-    fit — all components simultaneously, so no area leaks between neighbours.
-    Area = A × π × wid  (analytical integral of Lorentzian).
-    """
-    from scipy.optimize import curve_fit, nnls
-
-    n = len(peak_ppms)
-    if n < 2 or len(x) < 2 * n:
-        return None
-
-    # Sort to ascending for curve_fit (ppm_arr may be descending in NMR)
-    order   = np.argsort(x)
-    x_s     = x[order]
-    ym_s    = np.clip(y_mean[order], 0, None)
-    all_y_s = all_y[order, :]
-    n_samp  = all_y_s.shape[1]
-
-    span  = float(x_s[-1] - x_s[0]) or 1.0
-    ym_pk = float(ym_s.max()) if ym_s.max() > 0 else 1e-6
-
-    def _model(xv, *params):
-        yv = np.zeros_like(xv, dtype=float)
-        for i in range(n):
-            A, cen, wid = params[3 * i], params[3 * i + 1], params[3 * i + 2]
-            yv += A * wid ** 2 / ((xv - cen) ** 2 + wid ** 2)
-        return yv
-
-    p0, lo, hi = [], [], []
-    for ppm0 in peak_ppms:
-        idx  = int(np.argmin(np.abs(x_s - ppm0)))
-        A0   = max(float(ym_s[idx]), 1e-6)
-        wid0 = max(span / (4.0 * n), 1e-4)
-        p0  += [A0, float(ppm0), wid0]
-        lo  += [0.0,
-                max(float(x_s[0]),  float(ppm0) - max_shift),
-                1e-5]
-        hi  += [max(5.0 * ym_pk, A0 * 10.0),
-                min(float(x_s[-1]), float(ppm0) + max_shift),
-                span]
-
-    try:
-        popt, _ = curve_fit(_model, x_s, ym_s, p0=p0,
-                            bounds=(lo, hi), maxfev=8000)
-    except Exception:
-        return None
-
-    y_fit  = _model(x_s, *popt)
-    ss_res = float(np.sum((ym_s - y_fit) ** 2))
-    ss_tot = float(np.sum((ym_s - ym_s.mean()) ** 2))
-    r2     = 1.0 - ss_res / ss_tot if ss_tot > 1e-30 else 0.0
-
-    # Build unit-height shape matrix (n_points × n_components) from mean fit.
-    # Per-sample amplitudes solved via NNLS — all components simultaneously so
-    # no area leaks between neighbours (equivalent to fixed-shape MCR-ALS step).
-    shapes = np.zeros((len(x_s), n), dtype=float)
-    wids   = np.empty(n)
-    for i in range(n):
-        _, cen_i, wid_i = float(popt[3 * i]), float(popt[3 * i + 1]), float(popt[3 * i + 2])
-        shapes[:, i] = wid_i ** 2 / ((x_s - cen_i) ** 2 + wid_i ** 2)
-        wids[i]      = wid_i
-
-    comp_areas_s = np.zeros((n, n_samp))
-    for si in range(n_samp):
-        y_si     = np.clip(all_y_s[:, si], 0, None)
-        amps, _  = nnls(shapes, y_si)          # non-negative amplitudes
-        comp_areas_s[:, si] = amps * np.pi * wids   # area = A × π × wid
-
-    comp_results = []
-    for i in range(n):
-        A_i   = float(popt[3 * i])
-        cen_i = float(popt[3 * i + 1])
-        wid_i = float(popt[3 * i + 2])
-        comp_results.append((float(A_i * np.pi * wid_i), cen_i, comp_areas_s[i]))
-
-    return {'r2': r2, 'components': comp_results}
-
-
 # kept for back-compat — used by update_sample_area fallback path
 def _align_sample_center(x, y, cen_mean, max_shift_ppm=0.02):
     # Delegates to the DSP-layer apex finder (single source of truth, shared with
@@ -618,15 +493,6 @@ def _align_sample_center(x, y, cen_mean, max_shift_ppm=0.02):
                                    np.asarray(y, dtype=float),
                                    float(cen_mean), max_shift_ppm, 0.0)
     return center
-
-
-def _lorentz_amplitude(x, y, cen, wid):
-    """NNLS amplitude for a Lorentzian with fixed shape (fallback only)."""
-    from scipy.optimize import nnls as _nnls
-    wid = max(abs(float(wid)), 1e-5)
-    L = _lorentz_shape(x, cen, wid).reshape(-1, 1)
-    A, _ = _nnls(L, np.clip(y, 0, None))
-    return float(A[0])
 
 
 _STD_PRESETS = {

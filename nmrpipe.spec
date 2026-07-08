@@ -18,8 +18,15 @@ from PyInstaller.utils.hooks import collect_all
 block_cipher = None
 
 # ── Bundled read-only assets (seed DBs, libraries, logo/icon) ────────────────
-datas = [
-    ('databases', 'databases'),   # seed metabolite DBs (.db/.csv)
+# Only ship the active databases — never .bak/backup_* (the seeding step in
+# app_paths.databases_dir copies *.db/*.csv only, so backups would be dead
+# weight in the installer).
+_db_seed = [
+    (os.path.join('databases', _f), 'databases')
+    for _f in os.listdir('databases')
+    if _f.lower().endswith(('.db', '.csv'))
+]
+datas = _db_seed + [
     ('data',      'data'),         # lipidomics / internal CSV libraries
     ('utils',     'utils'),        # Logo_nMRPipe.png, nmrpipe.ico
 ]
@@ -64,7 +71,7 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    console=True,           # keep True for the first debug build; flip to False
+    console=False,          # release build — no debug console window
     icon='utils/nmrpipe.ico',
 )
 coll = COLLECT(

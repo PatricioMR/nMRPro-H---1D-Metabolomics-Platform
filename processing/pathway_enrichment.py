@@ -31,14 +31,20 @@ def _shapiro_normal(values, alpha=0.05):
         return True
 
 
-def per_metabolite_test(X, group_labels, group_a, group_b, feature_labels):
+def per_metabolite_test(X, group_labels, group_a, group_b, feature_labels,
+                        X_fc=None):
     """
     Test each metabolite (column of X) between two groups.
 
-    X             : (n_samples, n_features) array of concentrations.
+    X             : (n_samples, n_features) array used for the significance test
+                    (may be normalized/scaled).
     group_labels  : length-n_samples sequence of group names.
     group_a/b     : the two group names to compare.
     feature_labels: length-n_features metabolite names.
+    X_fc          : optional (n_samples, n_features) raw matrix for fold-change.
+                    Scaling mean-centres the data, making mean(A)/mean(B) ratios
+                    meaningless, so log2fc is computed from this raw matrix when
+                    provided; otherwise it falls back to X.
 
     For each metabolite returns p-value and log2 fold-change of mean(A)/mean(B).
     A Mann-Whitney U test is used when either group's values are non-normal
@@ -52,6 +58,7 @@ def per_metabolite_test(X, group_labels, group_a, group_b, feature_labels):
     from scipy import stats as spstats
 
     X = np.asarray(X, dtype=float)
+    X_fc = X if X_fc is None else np.asarray(X_fc, dtype=float)
     gl = list(group_labels)
     idx_a = [i for i, g in enumerate(gl) if g == group_a]
     idx_b = [i for i, g in enumerate(gl) if g == group_b]
@@ -78,7 +85,10 @@ def per_metabolite_test(X, group_labels, group_a, group_b, feature_labels):
         except Exception:
             p = 1.0
 
-        ma, mb = float(np.mean(a)), float(np.mean(b))
+        fa = X_fc[idx_a, j]; fb = X_fc[idx_b, j]
+        fa = fa[np.isfinite(fa)]; fb = fb[np.isfinite(fb)]
+        ma = float(np.mean(fa)) if fa.size else 0.0
+        mb = float(np.mean(fb)) if fb.size else 0.0
         if ma > 0 and mb > 0:
             log2fc = float(np.log2(ma / mb))
         else:
