@@ -91,6 +91,50 @@ def _group_to_int(group_labels):
     return np.array([mapping[g] for g in group_labels], dtype=int), unique
 
 
+_CM_PER_IN = 2.54
+
+
+def _fit_page(w, h):
+    """Scale (w, h) inches down proportionally so it fits one A4 page.
+
+    Orientation follows the content: a wider-than-tall figure is bounded by
+    landscape A4 (11.69 × 8.27 in), otherwise by portrait A4 (8.27 × 11.69).
+    Never scales up — small figures are left untouched.
+    """
+    A4_LONG, A4_SHORT = 11.69, 8.27
+    w = max(float(w), 0.5)
+    h = max(float(h), 0.5)
+    if w >= h:
+        wmax, hmax = A4_LONG, A4_SHORT
+    else:
+        wmax, hmax = A4_SHORT, A4_LONG
+    scale = min(1.0, wmax / w, hmax / h)
+    return w * scale, h * scale
+
+
+def _resolve_box_selection(selected, feat_raw, capacity, x_raw=None,
+                           fallback_order=None):
+    """Map user-selected metabolite names to column indices in `feat_raw`.
+
+    Explicit selections are returned in `feat_raw` order (stable across renders)
+    and capped to `capacity` (= grid rows × cols). When nothing valid is
+    selected, fall back to `fallback_order` (a precomputed ranking of column
+    indices, e.g. by significance or abundance); if that is not given, fall back
+    to highest-variance columns (requires `x_raw`). Names not present in
+    `feat_raw` (e.g. globally excluded) are dropped rather than fabricated.
+    """
+    capacity = max(int(capacity), 0)
+    name_set = set(selected or [])
+    idx = [i for i, f in enumerate(feat_raw) if f in name_set]
+    if not idx:
+        if fallback_order is not None:
+            idx = [int(i) for i in fallback_order]
+        elif x_raw is not None and getattr(x_raw, 'shape', (0, 0))[1] > 0:
+            scores = np.nanvar(x_raw, axis=0)
+            idx = list(np.argsort(scores)[::-1])
+    return idx[:capacity]
+
+
 # ---------- main class -------------------------------------------------------
 
 class StatisticsStage:
@@ -127,13 +171,29 @@ class StatisticsStage:
             'title_size':   11,
             'title_bold':   True,
             'xlabel':       'Metabolite',
-            'ylabel':       'Concentration',
+            'ylabel':       '',   # blank = auto unit from the quantification method
             'label_size':   9,
             'tick_size':    7,
             'xlabel_rot':   45,
             'linewidth':    1.0,
             'tight_pad':    1.2,
             'group_colors': {},   # {group_name: hex}
+        }
+        # Unified Box/Violin layout config (grid of per-metabolite panels).
+        # Persisted via project_manager. `selected` is an ordered metabolite list.
+        self._box_config = {
+            'kind':       'box',    # 'box' | 'violin'
+            'rows':       3,        # panel grid rows
+            'cols':       3,        # panel grid cols
+            'panel_w':    6.5,      # cm per panel (width)
+            'panel_h':    6.0,      # cm per panel (height)
+            'selected':   [],       # metabolite names to plot (empty -> top variance)
+            'points':     True,     # overlay raw data points
+            'point_size': 24,       # scatter marker area
+            'mean':       False,    # box only
+            'inner':      'box',    # violin only: box|quartile|point|stick|none
+            'test':       'none',   # 'none' | 't' (Welch) | 'mann' (Mann-Whitney)
+            'sig_line':   False,    # draw significance brackets between groups
         }
         self._box_export_figsize = None
         self.create_widgets()
@@ -233,7 +293,7 @@ class StatisticsStage:
         self._method_var = tk.StringVar(value='PCA')
         for m in ['PCA', 'PLS-DA', 'OPLS-DA', 'Heatmap', 'Correlation',
                   'VIP Score', 'Volcano', 'Metabolic Profile',
-                  'Boxplot', 'Violin']:
+                  'Box / Violin']:
             ttk.Radiobutton(mf, text=m, variable=self._method_var,
                             value=m, command=self._on_method_change
                             ).pack(**_RB)
@@ -503,7 +563,8 @@ class StatisticsStage:
         elif method == 'Correlation':
             ttk.Label(self._opt_frame, text='Coefficient:',
                       font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._corr_method_var = tk.StringVar(value='spearman')
+            if not hasattr(self, '_corr_method_var'):
+                self._corr_method_var = tk.StringVar(value='spearman')
             ttk.Combobox(self._opt_frame, textvariable=self._corr_method_var,
                          values=['spearman', 'pearson'],
                          width=10, state='readonly'
@@ -545,6 +606,39 @@ class StatisticsStage:
             ttk.Label(self._opt_frame, text='Top N ranks by # significant\ncorrelations. Differential panel\ncontrasts the two groups above.',
                       font=('Arial', 7), foreground='#666'
                       ).grid(row=6, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
+
+            ttk.Separator(self._opt_frame, orient=tk.HORIZONTAL).grid(
+                row=7, column=0, columnspan=2, sticky=tk.EW, pady=4)
+            ttk.Label(self._opt_frame, text='Plot:',
+                      font=('Arial', 8)).grid(row=8, column=0, sticky=tk.W)
+            if not hasattr(self, '_corr_plot_var'):
+                self._corr_plot_var = tk.StringVar(value='Heatmap')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_plot_var,
+                         values=['Heatmap', 'Linear (X vs Y)'],
+                         width=14, state='readonly'
+                         ).grid(row=8, column=1, sticky=tk.W, padx=4)
+            _, _, _feat_corr, _ = _get_quantification_matrix(self.app)
+            _feat_corr = _feat_corr or []
+            ttk.Label(self._opt_frame, text='X analyte:',
+                      font=('Arial', 8)).grid(row=9, column=0, sticky=tk.W, pady=(4, 0))
+            if not hasattr(self, '_corr_x_var'):
+                self._corr_x_var = tk.StringVar(value=_feat_corr[0] if _feat_corr else '')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_x_var,
+                         values=_feat_corr, width=14, state='readonly'
+                         ).grid(row=9, column=1, sticky=tk.W, padx=4, pady=(4, 0))
+            ttk.Label(self._opt_frame, text='Y analyte:',
+                      font=('Arial', 8)).grid(row=10, column=0, sticky=tk.W)
+            if not hasattr(self, '_corr_y_var'):
+                self._corr_y_var = tk.StringVar(
+                    value=_feat_corr[1] if len(_feat_corr) > 1 else '')
+            ttk.Combobox(self._opt_frame, textvariable=self._corr_y_var,
+                         values=_feat_corr, width=14, state='readonly'
+                         ).grid(row=10, column=1, sticky=tk.W, padx=4)
+            ttk.Label(self._opt_frame,
+                      text='Linear: scatter X vs Y with OLS trend\n'
+                           'line + 95% band; r/p per coefficient.',
+                      font=('Arial', 7), foreground='#666'
+                      ).grid(row=11, column=0, columnspan=2, sticky=tk.W, pady=(3, 0))
 
         elif method == 'VIP Score':
             ttk.Label(self._opt_frame, text='Top N features:',
@@ -642,47 +736,23 @@ class StatisticsStage:
                        command=self._open_pie_style_dialog
                        ).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
 
-        elif method in ('Boxplot', 'Violin'):
-            ttk.Label(self._opt_frame, text='Top N metabolites:',
-                      font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
-            self._box_topn_var = tk.IntVar(value=15)
-            ttk.Spinbox(self._opt_frame, from_=1, to=100, increment=1,
-                        textvariable=self._box_topn_var, width=5
-                        ).grid(row=0, column=1, sticky=tk.W, padx=4)
-
-            ttk.Label(self._opt_frame, text='Sort by:',
-                      font=('Arial', 8)).grid(row=1, column=0, sticky=tk.W)
-            self._box_sort_var = tk.StringVar(value='variance')
-            ttk.Combobox(self._opt_frame, textvariable=self._box_sort_var,
-                         values=['variance', 'mean', 'name'], width=10, state='readonly'
-                         ).grid(row=1, column=1, sticky=tk.W, padx=4)
-
-            self._box_points_var = tk.BooleanVar(value=True)
-            ttk.Checkbutton(self._opt_frame, text='Overlay data points',
-                            variable=self._box_points_var
-                            ).grid(row=2, column=0, columnspan=2, sticky=tk.W)
-
-            if method == 'Boxplot':
-                self._box_notch_var = tk.BooleanVar(value=False)
-                ttk.Checkbutton(self._opt_frame, text='Notched boxes',
-                                variable=self._box_notch_var
-                                ).grid(row=3, column=0, columnspan=2, sticky=tk.W)
-                self._box_mean_var = tk.BooleanVar(value=False)
-                ttk.Checkbutton(self._opt_frame, text='Show means',
-                                variable=self._box_mean_var
-                                ).grid(row=4, column=0, columnspan=2, sticky=tk.W)
-            else:  # Violin
-                ttk.Label(self._opt_frame, text='Inner:',
-                          font=('Arial', 8)).grid(row=3, column=0, sticky=tk.W)
-                self._violin_inner_var = tk.StringVar(value='box')
-                ttk.Combobox(self._opt_frame, textvariable=self._violin_inner_var,
-                             values=['box', 'quartile', 'point', 'stick', 'none'],
-                             width=10, state='readonly'
-                             ).grid(row=3, column=1, sticky=tk.W, padx=4)
-
+        elif method == 'Box / Violin':
+            ttk.Label(self._opt_frame,
+                      text='Pick the panel grid and which\n'
+                           'metabolites to plot, then Apply.',
+                      font=('Arial', 8), foreground='#555', justify=tk.LEFT
+                      ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+            self._box_cfg_status = ttk.Label(
+                self._opt_frame, text='', font=('Arial', 7), foreground='#666')
+            self._box_cfg_status.grid(row=1, column=0, columnspan=2, sticky=tk.W,
+                                      pady=(2, 0))
+            ttk.Button(self._opt_frame, text='Configure…',
+                       command=self._open_box_config_dialog
+                       ).grid(row=2, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
             ttk.Button(self._opt_frame, text='Edit Style…',
                        command=self._open_box_style_dialog
-                       ).grid(row=5, column=0, columnspan=2, sticky=tk.EW, pady=(6, 0))
+                       ).grid(row=3, column=0, columnspan=2, sticky=tk.EW, pady=(2, 0))
+            self._update_box_cfg_status()
 
     def _on_pw_plot_change(self):
         """Show the two Control rows only for the Dumbbell plot; hide otherwise."""
@@ -1707,11 +1777,19 @@ class StatisticsStage:
             and self._method_var.get() == 'Volcano'
             and getattr(self, '_volcano_style', None)
             and self._volcano_style.get('theme') == 'Compact')
+        # Box/Violin renders at its configured panel size (A4-capped), not the
+        # canvas size, so the panel W/H controls the on-screen graph size too
+        # (the canvas scrolls when the figure is larger than the viewport).
+        _is_box = (getattr(self, '_method_var', None) is not None
+                   and self._method_var.get() == 'Box / Violin'
+                   and getattr(self, '_box_export_figsize', None))
         if _db:
             self._fig.set_size_inches(max(w_px / dpi, _db[0]), _db[1])
         elif _vol_compact:
             _h = h_px / dpi
             self._fig.set_size_inches(min(_h * 0.72, w_px / dpi), _h)
+        elif _is_box:
+            self._fig.set_size_inches(*self._box_export_figsize)
         else:
             self._fig.set_size_inches(w_px / dpi, h_px / dpi)
         buf = io.BytesIO()
@@ -1855,7 +1933,7 @@ class StatisticsStage:
             return
         method = self._method_var.get()
         X, sample_names, feature_labels, group_labels = _get_quantification_matrix(self.app)
-        _single_sample_ok = method in ('Metabolic Profile', 'Boxplot', 'Violin')
+        _single_sample_ok = method in ('Metabolic Profile', 'Box / Violin')
         _min_samples = 1 if _single_sample_ok else 2
         if X is None or X.shape[0] < _min_samples or X.shape[1] < 2:
             messagebox.showwarning(
@@ -1919,10 +1997,8 @@ class StatisticsStage:
                 self._plot_volcano(X, sample_names, feature_labels, group_labels)
             elif method == 'Metabolic Profile':
                 self._plot_metabolic_profile(X, sample_names, feature_labels, group_labels)
-            elif method == 'Boxplot':
-                self._plot_box_violin(X, sample_names, feature_labels, group_labels, kind='box')
-            elif method == 'Violin':
-                self._plot_box_violin(X, sample_names, feature_labels, group_labels, kind='violin')
+            elif method == 'Box / Violin':
+                self._plot_box_violin_grid()
         except Exception as e:
             import traceback; traceback.print_exc()
             ax = self._fig.add_subplot(111)
@@ -2900,6 +2976,98 @@ class StatisticsStage:
             vips[i] = np.sqrt(p * weight.sum() / s_total)
         return vips
 
+    def _plot_correlation_linear(self, X, feature_labels, group_labels):
+        """Scatter of one analyte vs another across samples, with an OLS trend
+        line and a 95% confidence band (regression-mean CI). The reported
+        coefficient follows the Coefficient selector: Pearson (parametric) or
+        Spearman (non-parametric). See processing.correlation for the maths."""
+        from processing.correlation import correlation_coeff, linear_fit_ci
+        import matplotlib.cm as cm
+
+        method = getattr(self, '_corr_method_var', None)
+        method = method.get() if method else 'pearson'
+        xname = (getattr(self, '_corr_x_var', None).get()
+                 if getattr(self, '_corr_x_var', None) else '')
+        yname = (getattr(self, '_corr_y_var', None).get()
+                 if getattr(self, '_corr_y_var', None) else '')
+
+        self._fig.clear()
+        ax = self._fig.add_subplot(111)
+
+        if (xname not in feature_labels or yname not in feature_labels
+                or xname == yname):
+            ax.text(0.5, 0.5,
+                    'Pick two different analytes for X and Y\n'
+                    '(Options → X analyte / Y analyte).',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
+
+        xi = feature_labels.index(xname)
+        yi = feature_labels.index(yname)
+        xdata = np.asarray(X[:, xi], dtype=float)
+        ydata = np.asarray(X[:, yi], dtype=float)
+
+        st = self._box_style
+        y_int, uniq = _group_to_int(group_labels)
+        gcmap = cm.get_cmap('tab10', max(len(uniq), 1))
+        def _auto_hex(i):
+            r, g, b, _ = gcmap(i)
+            return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
+
+        for gi, g in enumerate(uniq):
+            m = np.asarray(y_int) == gi
+            color = st['group_colors'].get(g, _auto_hex(gi))
+            ax.scatter(xdata[m], ydata[m], s=30, color=color, alpha=0.9,
+                       edgecolors='black', linewidths=0.4, label=g, zorder=3)
+
+        fit = linear_fit_ci(xdata, ydata, alpha=0.05)
+        r, p = correlation_coeff(xdata, ydata, method)
+        n_fin = int(np.sum(np.isfinite(xdata) & np.isfinite(ydata)))
+        if fit is not None:
+            ax.fill_between(fit['xs'], fit['lower'], fit['upper'],
+                            color='gray', alpha=0.25, zorder=1,
+                            label='95% CI')
+            ax.plot(fit['xs'], fit['ys'], color='black', linewidth=1.5,
+                    zorder=2, label='OLS fit')
+
+        coef_lbl = 'Pearson r' if method == 'pearson' else 'Spearman ρ'
+        if np.isfinite(r):
+            txt = f'{coef_lbl} = {r:.3f}\np = {p:.3g}\nn = {n_fin}'
+        else:
+            txt = f'{coef_lbl}: undefined\n(n = {n_fin}, need ≥3 varying pairs)'
+        ax.text(0.03, 0.97, txt, transform=ax.transAxes, va='top', ha='left',
+                fontsize=9, bbox=dict(boxstyle='round', facecolor='white',
+                                      edgecolor='#999', alpha=0.85))
+
+        q = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        unit = 'a.u.'
+        if q is not None and getattr(q, '_quant_results', None) \
+                and hasattr(q, 'concentration_unit'):
+            try:
+                unit = q.concentration_unit() or 'a.u.'
+            except Exception:
+                unit = 'a.u.'
+        ax.set_xlabel(f'{xname} ({unit})', fontsize=st.get('label_size', 9))
+        ax.set_ylabel(f'{yname} ({unit})', fontsize=st.get('label_size', 9))
+        ax.set_title(f'{yname} vs {xname}', fontsize=st.get('title_size', 11),
+                     fontweight='bold' if st.get('title_bold', True) else 'normal')
+        ax.tick_params(labelsize=st.get('tick_size', 7))
+        ax.grid(True, linestyle='--', linewidth=0.5, alpha=0.4)
+        for _sp in ('top', 'right'):
+            ax.spines[_sp].set_visible(False)
+        ax.legend(fontsize=8, framealpha=0.85, loc='best')
+
+        # CSV export of the plotted values
+        rows = [[float(xv), float(yv), g]
+                for xv, yv, g in zip(xdata, ydata, group_labels)
+                if np.isfinite(xv) and np.isfinite(yv)]
+        self._plot_export = {
+            'method': 'Correlation (linear)',
+            'headers': [xname, yname, 'group'],
+            'rows': rows,
+        }
+
     def _plot_correlation(self, X, sample_names, feature_labels, group_labels):
         """Metabolite–metabolite correlation: clustered heatmap (A) and, when
         exactly two groups are present, the differential correlation (C).
@@ -2909,6 +3077,11 @@ class StatisticsStage:
         so co-regulated modules form visible blocks; the differential panel
         highlights pairs whose association rewires between the two groups.
         """
+        _pv = getattr(self, '_corr_plot_var', None)
+        if _pv is not None and _pv.get() == 'Linear (X vs Y)':
+            self._plot_correlation_linear(X, feature_labels, group_labels)
+            return
+
         from scipy.cluster.hierarchy import linkage, leaves_list
         from scipy.spatial.distance import squareform
         from scipy.stats import spearmanr, t as _tdist
@@ -3778,6 +3951,10 @@ class StatisticsStage:
         ttk.Spinbox(tab_t, from_=0, to=90, increment=15, textvariable=_rot_v, width=5
                     ).grid(row=6, column=1, sticky=tk.W, padx=4)
 
+        ttk.Label(tab_t, text='(blank Y-axis label = auto unit from quantification)',
+                  font=('Arial', 7), foreground='#666'
+                  ).grid(row=7, column=0, columnspan=3, sticky=tk.W, pady=(4, 0))
+
         tab_t.columnconfigure(1, weight=1)
 
         # ── Tab 2: Group colors ───────────────────────────────────────────────
@@ -3858,168 +4035,520 @@ class StatisticsStage:
         ttk.Button(btn_row, text='Apply',  command=_apply).pack(side=tk.RIGHT, padx=2)
         ttk.Button(btn_row, text='Cancel', command=dlg.destroy).pack(side=tk.RIGHT)
 
-    # ── Box / Violin plot ─────────────────────────────────────────────────────
+    # ── Box / Violin config dialog ─────────────────────────────────────────────
 
-    def _plot_box_violin(self, X, sample_names, feature_labels, group_labels, kind='box'):
+    def _concentration_axis_label(self):
+        """Y-axis label whose unit follows the quantification method: mM for
+        IS/IS+PQN, percent for Total, arbitrary units otherwise (and when the
+        matrix comes from raw Good-peak intensities rather than quantification)."""
+        q = (getattr(self.app, 'stages', {}) or {}).get('quantification')
+        has_quant = bool(getattr(q, '_quant_results', None)) if q else False
+        unit = 'a.u.'
+        if has_quant and hasattr(q, 'concentration_unit'):
+            try:
+                unit = q.concentration_unit() or 'a.u.'
+            except Exception:
+                unit = 'a.u.'
+        return 'Relative area (%)' if unit == '%' else f'Concentration ({unit})'
+
+    def _box_dims(self):
+        """Panel grid as (rows, cols). Falls back to a legacy square 'grid' key
+        so projects saved before the free rows×cols layout still load."""
+        cfg = self._box_config
+        if 'rows' in cfg and 'cols' in cfg:
+            return max(int(cfg['rows']), 1), max(int(cfg['cols']), 1)
+        g = max(int(cfg.get('grid', 3)), 1)
+        return g, g
+
+    def _update_box_cfg_status(self):
+        """Refresh the one-line summary under the Options 'Configure…' button."""
+        lbl = getattr(self, '_box_cfg_status', None)
+        if lbl is None:
+            return
+        cfg = self._box_config
+        rows, cols = self._box_dims()
+        n_sel = len([m for m in cfg.get('selected', [])])
+        kind = cfg.get('kind', 'box')
+        cap = rows * cols
+        pick = f'{n_sel} picked' if n_sel else 'auto'
+        try:
+            lbl.config(text=f'{kind.capitalize()} · {rows}×{cols} · {pick}/{cap}')
+        except tk.TclError:
+            pass
+
+    def _open_box_config_dialog(self):
+        """Non-modal window to pick the panel grid + which metabolites to plot.
+
+        Left: searchable metabolite checklist. Right: plot type, grid size and
+        per-type options. Apply renders onto the main canvas without closing, so
+        the user can tweak and re-Apply while the main stage stays usable.
+        """
+        cfg = self._box_config
+
+        _, _, feat_all, _ = _get_quantification_matrix(self.app)
+        all_mets = [f for f in (feat_all or [])
+                    if f not in self._excluded_metabolites]
+        if not all_mets:
+            messagebox.showinfo('No metabolites',
+                                'No metabolite data found.', parent=self.frame)
+            return
+
+        dlg = tk.Toplevel(self.frame)
+        dlg.title('Configure Box / Violin')
+        dlg.resizable(True, True)          # non-modal: no grab_set (stages unlocked)
+        dlg.update_idletasks()
+        px = self.frame.winfo_rootx() + self.frame.winfo_width() // 2
+        py = self.frame.winfo_rooty() + self.frame.winfo_height() // 2
+        w, h = 640, 560
+        dlg.geometry(f'{w}x{h}+{px - w//2}+{py - h//2}')
+
+        # Button bar reserved at the bottom first so it can never be pushed off
+        # the window by the (taller) options column.
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=(0, 8))
+
+        body = ttk.Frame(dlg, padding=8)
+        body.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+
+        # ── Left: metabolite checklist ────────────────────────────────────────
+        left = ttk.LabelFrame(body, text='Metabolites', padding=6)
+        left.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 6))
+
+        search_var = tk.StringVar()
+        ttk.Entry(left, textvariable=search_var).pack(fill=tk.X, pady=(0, 4))
+
+        lc_container = ttk.Frame(left)
+        lc_container.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(lc_container, highlightthickness=0)
+        sb = ttk.Scrollbar(lc_container, orient=tk.VERTICAL, command=canvas.yview)
+        canvas.configure(yscrollcommand=sb.set)
+        sb.pack(side=tk.RIGHT, fill=tk.Y)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        inner = ttk.Frame(canvas)
+        cwin = canvas.create_window((0, 0), window=inner, anchor='nw')
+        inner.bind('<Configure>', lambda e: (
+            canvas.configure(scrollregion=canvas.bbox('all')),
+            canvas.itemconfig(cwin, width=canvas.winfo_width())))
+        canvas.bind('<Configure>', lambda e: canvas.itemconfig(cwin, width=e.width))
+        canvas.bind('<Enter>', lambda e: canvas.bind_all('<MouseWheel>',
+            lambda ev: canvas.yview_scroll(-1 * (ev.delta // 120), 'units')))
+        canvas.bind('<Leave>', lambda e: canvas.unbind_all('<MouseWheel>'))
+
+        check_vars = {m: tk.BooleanVar(value=(m in cfg.get('selected', [])))
+                      for m in all_mets}
+
+        def _populate(filter_text=''):
+            for wch in inner.winfo_children():
+                wch.destroy()
+            ft = filter_text.lower()
+            for m in all_mets:
+                if ft and ft not in m.lower():
+                    continue
+                ttk.Checkbutton(inner, text=m, variable=check_vars[m],
+                                command=_refresh_counter
+                                ).pack(anchor=tk.W, padx=2)
+        search_var.trace_add('write', lambda *a: _populate(search_var.get()))
+
+        # ── Right: layout / type controls ─────────────────────────────────────
+        right = ttk.Frame(body)
+        right.pack(side=tk.LEFT, fill=tk.Y)
+
+        type_f = ttk.LabelFrame(right, text='Plot type', padding=6)
+        type_f.pack(fill=tk.X, pady=(0, 6))
+        kind_var = tk.StringVar(value=cfg.get('kind', 'box'))
+        ttk.Radiobutton(type_f, text='Boxplot', value='box',
+                        variable=kind_var, command=lambda: _toggle_type()
+                        ).pack(anchor=tk.W)
+        ttk.Radiobutton(type_f, text='Violin', value='violin',
+                        variable=kind_var, command=lambda: _toggle_type()
+                        ).pack(anchor=tk.W)
+
+        _rows0, _cols0 = self._box_dims()
+        grid_f = ttk.LabelFrame(right, text='Grid layout', padding=6)
+        grid_f.pack(fill=tk.X, pady=(0, 6))
+        _rc = ttk.Frame(grid_f)
+        _rc.pack(anchor=tk.W)
+        ttk.Label(_rc, text='Rows:', font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
+        rows_var = tk.IntVar(value=_rows0)
+        ttk.Spinbox(_rc, from_=1, to=8, increment=1, width=4, textvariable=rows_var
+                    ).grid(row=0, column=1, padx=(4, 10))
+        ttk.Label(_rc, text='Cols:', font=('Arial', 8)).grid(row=0, column=2, sticky=tk.W)
+        cols_var = tk.IntVar(value=_cols0)
+        ttk.Spinbox(_rc, from_=1, to=8, increment=1, width=4, textvariable=cols_var
+                    ).grid(row=0, column=3, padx=4)
+        rows_var.trace_add('write', lambda *a: _refresh_counter())
+        cols_var.trace_add('write', lambda *a: _refresh_counter())
+
+        ttk.Label(grid_f, text='Panel size (cm):',
+                  font=('Arial', 8)).pack(anchor=tk.W, pady=(6, 0))
+        _sz = ttk.Frame(grid_f)
+        _sz.pack(anchor=tk.W)
+        ttk.Label(_sz, text='W:', font=('Arial', 8)).grid(row=0, column=0, sticky=tk.W)
+        panelw_var = tk.DoubleVar(value=float(cfg.get('panel_w', 6.5)))
+        ttk.Spinbox(_sz, from_=2.5, to=20.0, increment=0.5, format='%.1f', width=5,
+                    textvariable=panelw_var).grid(row=0, column=1, padx=(4, 10))
+        ttk.Label(_sz, text='H:', font=('Arial', 8)).grid(row=0, column=2, sticky=tk.W)
+        panelh_var = tk.DoubleVar(value=float(cfg.get('panel_h', 6.0)))
+        ttk.Spinbox(_sz, from_=2.5, to=20.0, increment=0.5, format='%.1f', width=5,
+                    textvariable=panelh_var).grid(row=0, column=3, padx=4)
+        ttk.Label(grid_f, text='(figure is capped to one A4 page)',
+                  font=('Arial', 7), foreground='#666').pack(anchor=tk.W)
+
+        opt_f = ttk.LabelFrame(right, text='Options', padding=6)
+        opt_f.pack(fill=tk.X, pady=(0, 6))
+        points_var = tk.BooleanVar(value=cfg.get('points', True))
+        _psize_row = ttk.Frame(opt_f)
+        ttk.Checkbutton(opt_f, text='Overlay data points', variable=points_var,
+                        command=lambda: _toggle_points()).pack(anchor=tk.W)
+        _psize_row.pack(anchor=tk.W, fill=tk.X, pady=(0, 2))
+        ttk.Label(_psize_row, text='Point size:',
+                  font=('Arial', 8)).pack(side=tk.LEFT)
+        psize_var = tk.IntVar(value=int(cfg.get('point_size', 24)))
+        _psize_sb = ttk.Spinbox(_psize_row, from_=4, to=80, increment=2,
+                                textvariable=psize_var, width=5)
+        _psize_sb.pack(side=tk.LEFT, padx=4)
+        mean_var = tk.BooleanVar(value=cfg.get('mean', False))
+        _mean_cb = ttk.Checkbutton(opt_f, text='Show means', variable=mean_var)
+        _mean_cb.pack(anchor=tk.W)
+        _inner_row = ttk.Frame(opt_f)
+        _inner_row.pack(anchor=tk.W, fill=tk.X, pady=(2, 0))
+        ttk.Label(_inner_row, text='Violin inner:',
+                  font=('Arial', 8)).pack(side=tk.LEFT)
+        inner_var = tk.StringVar(value=cfg.get('inner', 'box'))
+        _inner_cb = ttk.Combobox(_inner_row, textvariable=inner_var, width=9,
+                                 state='readonly',
+                                 values=['box', 'quartile', 'point', 'stick', 'none'])
+        _inner_cb.pack(side=tk.LEFT, padx=4)
+
+        # ── Significance testing ──────────────────────────────────────────────
+        sig_f = ttk.LabelFrame(right, text='Significance', padding=6)
+        sig_f.pack(fill=tk.X, pady=(0, 6))
+        _test_row = ttk.Frame(sig_f)
+        _test_row.pack(anchor=tk.W, fill=tk.X)
+        ttk.Label(_test_row, text='Test:', font=('Arial', 8)).pack(side=tk.LEFT)
+        _test_labels = {'None': 'none', 't-test (Welch)': 't',
+                        'Mann-Whitney': 'mann'}
+        _test_rev = {v: k for k, v in _test_labels.items()}
+        test_disp_var = tk.StringVar(
+            value=_test_rev.get(cfg.get('test', 'none'), 'None'))
+        ttk.Combobox(_test_row, textvariable=test_disp_var, width=14,
+                     state='readonly', values=list(_test_labels)
+                     ).pack(side=tk.LEFT, padx=4)
+        sig_line_var = tk.BooleanVar(value=cfg.get('sig_line', False))
+        ttk.Checkbutton(sig_f, text='Connect groups with significance bars',
+                        variable=sig_line_var).pack(anchor=tk.W, pady=(2, 0))
+
+        counter_lbl = ttk.Label(right, text='', font=('Arial', 8), foreground='#333')
+        counter_lbl.pack(anchor=tk.W, pady=(2, 4))
+
+        def _toggle_points():
+            _psize_sb.state(['!disabled'] if points_var.get() else ['disabled'])
+
+        def _rc_dims():
+            try:
+                r = max(int(rows_var.get()), 1)
+            except (tk.TclError, ValueError):
+                r = 1
+            try:
+                c = max(int(cols_var.get()), 1)
+            except (tk.TclError, ValueError):
+                c = 1
+            return r, c
+
+        def _n_checked():
+            return sum(1 for v in check_vars.values() if v.get())
+
+        def _refresh_counter():
+            r, c = _rc_dims()
+            cap = r * c
+            n = _n_checked()
+            over = '  (over capacity — extras ignored)' if n > cap else ''
+            counter_lbl.config(text=f'Selected: {n} / {cap}{over}')
+
+        def _toggle_type():
+            is_box = kind_var.get() == 'box'
+            _mean_cb.state(['!disabled'] if is_box else ['disabled'])
+            _inner_cb.state(['disabled'] if is_box else ['!disabled'])
+
+        # Select all / none (respect current search filter)
+        sel_row = ttk.Frame(left)
+        sel_row.pack(fill=tk.X, pady=(4, 0))
+        def _visible_mets():
+            ft = search_var.get().lower()
+            return [m for m in all_mets if not ft or ft in m.lower()]
+        def _sel_all():
+            for m in _visible_mets():
+                check_vars[m].set(True)
+            _refresh_counter()
+        def _sel_none():
+            for m in _visible_mets():
+                check_vars[m].set(False)
+            _refresh_counter()
+        ttk.Button(sel_row, text='All',  command=_sel_all ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(sel_row, text='None', command=_sel_none).pack(side=tk.LEFT, padx=2)
+
+        # ── Bottom buttons (btn_row created up front, populated here) ──────────
+        def _apply():
+            rows, cols = _rc_dims()
+            selected = [m for m in all_mets if check_vars[m].get()]
+            if not selected:
+                messagebox.showinfo(
+                    'No metabolites',
+                    'No metabolites selected — auto-picking by significance '
+                    '(when a test is active) or abundance.', parent=dlg)
+            cap = rows * cols
+            if len(selected) > cap:
+                messagebox.showwarning(
+                    'Too many selected',
+                    f'{len(selected)} metabolites selected but the {rows}×{cols} '
+                    f'grid holds {cap}. Only the first {cap} will be plotted.',
+                    parent=dlg)
+            cfg['kind']       = kind_var.get()
+            cfg['rows']       = rows
+            cfg['cols']       = cols
+            cfg.pop('grid', None)          # migrate off the legacy square key
+            cfg['panel_w']    = round(float(panelw_var.get()), 2)
+            cfg['panel_h']    = round(float(panelh_var.get()), 2)
+            cfg['selected']   = selected
+            cfg['points']     = points_var.get()
+            cfg['point_size'] = int(psize_var.get())
+            cfg['mean']       = mean_var.get()
+            cfg['inner']      = inner_var.get()
+            cfg['test']       = _test_labels.get(test_disp_var.get(), 'none')
+            cfg['sig_line']   = sig_line_var.get()
+            self._update_box_cfg_status()
+            if hasattr(self, '_method_var'):
+                self._method_var.set('Box / Violin')
+            self._run()
+
+        ttk.Button(btn_row, text='Edit Style…',
+                   command=self._open_box_style_dialog).pack(side=tk.LEFT)
+        ttk.Button(btn_row, text='Close', command=dlg.destroy).pack(side=tk.RIGHT, padx=4)
+        ttk.Button(btn_row, text='Apply', command=_apply).pack(side=tk.RIGHT, padx=2)
+
+        _populate()
+        _toggle_type()
+        _toggle_points()
+        _refresh_counter()
+
+    # ── Box / Violin plot (grid of per-metabolite panels) ──────────────────────
+
+    def _plot_box_violin_grid(self):
         import matplotlib.cm as cm
+        from matplotlib.colors import to_rgba as _to_rgba
 
-        top_n      = int(getattr(self, '_box_topn_var',      tk.IntVar(value=15)).get())
-        sort_by    = getattr(self, '_box_sort_var',           None)
-        sort_by    = sort_by.get() if sort_by else 'variance'
-        show_pts   = getattr(self, '_box_points_var',         None)
-        show_pts   = show_pts.get() if show_pts else True
+        cfg       = self._box_config
+        kind      = cfg.get('kind', 'box')
+        rows, cols = self._box_dims()
+        panel_w   = float(cfg.get('panel_w', 6.5)) / _CM_PER_IN   # cm -> inches
+        panel_h   = float(cfg.get('panel_h', 6.0)) / _CM_PER_IN
+        selected  = list(cfg.get('selected', []))
+        show_pts  = bool(cfg.get('points', True))
+        pt_size   = int(cfg.get('point_size', 24))
+        show_mean = bool(cfg.get('mean', False))
+        vio_inner = cfg.get('inner', 'box')
+        vio_inner = None if vio_inner == 'none' else vio_inner
+        test      = cfg.get('test', 'none')
+        sig_line  = bool(cfg.get('sig_line', False))
+        st        = self._box_style
 
-        notch      = getattr(self, '_box_notch_var',          None)
-        notch      = notch.get() if notch else False
-        show_mean  = getattr(self, '_box_mean_var',           None)
-        show_mean  = show_mean.get() if show_mean else False
-        vio_inner  = getattr(self, '_violin_inner_var',       None)
-        vio_inner  = vio_inner.get() if vio_inner else 'box'
-        if vio_inner == 'none':
-            vio_inner = None
-
-        st = self._box_style
-        y, unique_groups = _group_to_int(group_labels)
+        # Fetch raw concentrations and apply the active sample/metabolite filters
+        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
+        if X_raw is None:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No quantification data available.',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
+        # Drop all-NaN columns only. Do NOT mean-impute (as _remove_nan does):
+        # imputing a not-detected value with the column mean fabricates data and
+        # pulls both groups toward a shared mean, which flattens every group test
+        # to non-significant. Missing entries stay NaN and are excluded per group.
+        X_raw = np.asarray(X_raw, dtype=float)
+        _valid = ~np.all(np.isnan(X_raw), axis=0)
+        X_raw    = X_raw[:, _valid]
+        feat_raw = [f for f, v in zip(feat_raw, _valid) if v]
+        if self._excluded_samples:
+            _si = getattr(self.app, 'samples_info', []) or []
+            _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
+            _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
+            X_raw  = X_raw[_kr, :]
+            gl_raw = [gl_raw[i] for i in _kr]
+        if self._excluded_metabolites:
+            _kc = [i for i, f in enumerate(feat_raw)
+                   if f not in self._excluded_metabolites]
+            X_raw    = X_raw[:, _kc]
+            feat_raw = [feat_raw[i] for i in _kc]
+        y_raw, unique_groups = _group_to_int(gl_raw)
         n_groups = len(unique_groups)
 
-        # Re-fetch raw concentrations
-        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
-        if X_raw is not None:
-            X_raw, feat_raw = self._remove_nan(X_raw, feat_raw)
-            if self._excluded_samples:
-                _si = getattr(self.app, 'samples_info', []) or []
-                _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
-                _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
-                X_raw  = X_raw[_kr, :]
-                gl_raw = [gl_raw[i] for i in _kr]
-            if self._excluded_metabolites:
-                _kc = [i for i, f in enumerate(feat_raw) if f not in self._excluded_metabolites]
-                X_raw    = X_raw[:, _kc]
-                feat_raw = [feat_raw[i] for i in _kc]
-            y_raw, _ = _group_to_int(gl_raw)
+        # Auto-pick order when no metabolite is chosen: by significance when a
+        # test is active (most-separated groups first), else by abundance.
+        fallback_order = None
+        if test != 'none' and n_groups >= 2:
+            from processing.group_stats import metabolite_min_pvalues
+            pvals = metabolite_min_pvalues(X_raw, y_raw, test=test)
+            # finite p-values first (ascending), NaN (untestable) last
+            fallback_order = list(np.argsort(
+                np.where(np.isnan(pvals), np.inf, pvals)))
         else:
-            X_raw    = np.abs(X)
-            feat_raw = feature_labels
-            y_raw    = y
-            gl_raw   = group_labels
+            abundance = np.nanmean(X_raw, axis=0)
+            fallback_order = list(np.argsort(
+                np.where(np.isnan(abundance), -np.inf, abundance))[::-1])
 
-        # Select top N metabolites by chosen criterion
-        if sort_by == 'variance':
-            scores = np.nanvar(X_raw, axis=0)
-        elif sort_by == 'mean':
-            scores = np.nanmean(X_raw, axis=0)
-        else:
-            scores = np.array([0.0] * X_raw.shape[1])   # name sort below
-
-        if sort_by == 'name':
-            order = np.array(sorted(range(len(feat_raw)), key=lambda i: feat_raw[i]))
-        else:
-            order = np.argsort(scores)[::-1]
-
-        order    = order[:top_n]
-        feat_sel = [feat_raw[i] for i in order]
-        X_sel    = X_raw[:, order]
+        capacity = rows * cols
+        sel_idx  = _resolve_box_selection(selected, feat_raw, capacity,
+                                          x_raw=X_raw, fallback_order=fallback_order)
+        feat_sel = [feat_raw[i] for i in sel_idx]
         n_mets   = len(feat_sel)
+        if n_mets == 0:
+            ax = self._fig.add_subplot(111)
+            ax.text(0.5, 0.5, 'No metabolites to plot.',
+                    transform=ax.transAxes, ha='center', va='center', color='#a00')
+            ax.set_axis_off()
+            return
 
-        # Group colors
+        # Group colors (user overrides win, else tab10)
         gcmap = cm.get_cmap('tab10', max(n_groups, 1))
         def _auto_grp_hex(i):
             r, g, b, _ = gcmap(i)
             return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
-        grp_colors = [
-            st['group_colors'].get(g, _auto_grp_hex(i))
-            for i, g in enumerate(unique_groups)
-        ]
+        grp_colors = [st['group_colors'].get(g, _auto_grp_hex(i))
+                      for i, g in enumerate(unique_groups)]
+        lw = st.get('linewidth', 1.0)
 
-        # Figure size: scale with number of metabolites, stored for export
-        fig_w = max(1.1 * n_mets * n_groups + 2, 8)
-        fig_h = 5.5
-        self._box_export_figsize = (fig_w, fig_h)
+        # Figure size = panel size × grid, capped to one A4 page. Stored for export.
+        self._box_export_figsize = _fit_page(cols * panel_w, rows * panel_h)
         self._fig.clear()
+        axes = self._fig.subplots(rows, cols, squeeze=False)
+        flat = [ax for row in axes for ax in row]
 
-        ax = self._fig.add_subplot(111)
+        ylabel = st.get('ylabel') or self._concentration_axis_label()
 
-        # Positions: each metabolite group shares a cluster of n_groups boxes
-        spacing   = n_groups + 1.5
-        positions = np.arange(n_mets) * spacing
-        width     = 0.8
+        for k, met_i in enumerate(sel_idx):
+            ax = flat[k]
+            col_all = X_raw[:, met_i]
+            vals_by_group = []
+            for gi in range(n_groups):
+                mask  = (np.asarray(y_raw) == gi)
+                color = grp_colors[gi]
+                vals  = col_all[mask]
+                vals  = vals[np.isfinite(vals)]
+                vals_by_group.append(vals)
+                pos   = gi
 
-        for gi, grp in enumerate(unique_groups):
-            mask  = np.array(y_raw) == gi
-            color = grp_colors[gi]
-            lw    = st.get('linewidth', 1.0)
+                if kind == 'box' and len(vals) >= 1:
+                    # Fill = group color at 60%; edge, whiskers/caps, median all
+                    # solid black. Error bars raised above the box (zorder).
+                    face = _to_rgba(color, 0.60)
+                    bp = ax.boxplot(
+                        [vals], positions=[pos], widths=0.6, patch_artist=True,
+                        showmeans=show_mean,
+                        meanprops=dict(marker='D', markerfacecolor='white',
+                                       markeredgecolor='black', markersize=4),
+                        medianprops=dict(color='black', linewidth=1.4),
+                        boxprops=dict(facecolor=face, edgecolor='black', linewidth=lw),
+                        whiskerprops=dict(color='black', linewidth=lw),
+                        capprops=dict(color='black', linewidth=lw),
+                        flierprops=dict(marker='o', markerfacecolor=color,
+                                        markeredgecolor='black', markersize=3, alpha=0.6),
+                        manage_ticks=False)
+                    for _b in bp['boxes']:
+                        _b.set_zorder(2)
+                    for _key in ('whiskers', 'caps', 'medians', 'means'):
+                        for _art in bp.get(_key, []):
+                            _art.set_zorder(3)
+                elif kind == 'violin' and len(vals) >= 2:
+                    # violinplot needs ≥2 points; groups with fewer are shown
+                    # only as scatter below — never padded with fake values.
+                    vp = ax.violinplot([vals], positions=[pos], widths=0.6,
+                                       showmedians=True, showextrema=True)
+                    for pc in vp['bodies']:
+                        pc.set_facecolor(_to_rgba(color, 0.60))
+                        pc.set_edgecolor('black'); pc.set_linewidth(lw)
+                    for part in ('cmedians', 'cmaxes', 'cmins', 'cbars'):
+                        if part in vp:
+                            vp[part].set_color('black'); vp[part].set_linewidth(lw)
 
-            grp_pos = positions + (gi - (n_groups - 1) / 2) * width
+                if show_pts and len(vals):
+                    # Marker fill = group color at full opacity, black edge to
+                    # separate overlapping points; box/violin fill stays at 80%.
+                    jit = np.random.default_rng(seed=met_i * 97 + gi
+                          ).uniform(-0.12, 0.12, len(vals))
+                    ax.scatter(pos + jit, vals, color=color, s=pt_size, alpha=1.0,
+                               edgecolors='black', linewidths=0.4, zorder=3)
 
-            data_cols = [X_sel[mask, mi] for mi in range(n_mets)]
-            data_cols = [col[np.isfinite(col)] for col in data_cols]
+            # Significance brackets between groups (explicit test, never faked)
+            if sig_line and test != 'none' and n_groups >= 2:
+                self._draw_significance(ax, vals_by_group, test)
 
-            if kind == 'box':
-                bp = ax.boxplot(
-                    data_cols,
-                    positions=grp_pos,
-                    widths=width * 0.85,
-                    patch_artist=True,
-                    notch=notch,
-                    showmeans=show_mean,
-                    meanprops=dict(marker='D', markerfacecolor='white',
-                                   markeredgecolor=color, markersize=5),
-                    medianprops=dict(color='white', linewidth=1.5),
-                    boxprops=dict(facecolor=color, color=color, linewidth=lw, alpha=0.80),
-                    whiskerprops=dict(color=color, linewidth=lw),
-                    capprops=dict(color=color, linewidth=lw),
-                    flierprops=dict(marker='o', markerfacecolor=color,
-                                    markeredgecolor=color, markersize=3, alpha=0.5),
-                    manage_ticks=False,
-                )
-            else:  # violin
-                valid_cols = [(col if len(col) >= 2 else np.array([0.0, 0.0]))
-                              for col in data_cols]
-                vp = ax.violinplot(
-                    valid_cols,
-                    positions=grp_pos,
-                    widths=width * 0.85,
-                    showmedians=True,
-                    showextrema=True,
-                )
-                for pc in vp['bodies']:
-                    pc.set_facecolor(color)
-                    pc.set_edgecolor(color)
-                    pc.set_alpha(0.75)
-                    pc.set_linewidth(lw)
-                for part in ('cmedians', 'cmeans', 'cmaxes', 'cmins', 'cbars'):
-                    if part in vp:
-                        vp[part].set_color(color)
-                        vp[part].set_linewidth(lw)
+            ax.set_title(feat_sel[k], fontsize=st.get('tick_size', 7) + 1)
+            ax.set_ylabel(ylabel, fontsize=max(st.get('label_size', 9) - 1, 6))
+            ax.set_xticks(range(n_groups))
+            ax.set_xticklabels(unique_groups,
+                               rotation=st.get('xlabel_rot', 45),
+                               ha='right' if st.get('xlabel_rot', 45) > 0 else 'center',
+                               fontsize=st.get('tick_size', 7))
+            ax.tick_params(axis='y', labelsize=st.get('tick_size', 7))
+            ax.grid(axis='y', linestyle='--', linewidth=0.5, alpha=0.5)
+            # Only left (Y) and bottom (X) spines; drop the top/right frame lines.
+            for _sp in ('top', 'right'):
+                ax.spines[_sp].set_visible(False)
+            for _sp in ('left', 'bottom'):
+                ax.spines[_sp].set_color('black')
+                ax.spines[_sp].set_linewidth(0.8)
 
-            if show_pts:
-                for mi, col in enumerate(data_cols):
-                    if len(col) == 0:
-                        continue
-                    jitter = np.random.default_rng(seed=mi + gi * 1000
-                             ).uniform(-width * 0.18, width * 0.18, len(col))
-                    ax.scatter(grp_pos[mi] + jitter, col,
-                               color=color, s=14, alpha=0.6,
-                               edgecolors='white', linewidths=0.3, zorder=3)
+        # Turn off unused cells
+        for k in range(n_mets, len(flat)):
+            flat[k].set_axis_off()
 
-            # Invisible scatter for legend
-            ax.scatter([], [], color=color, label=grp, s=60)
+        # Reserve a bottom strip for the shared legend (constrained_layout does
+        # not account for figure legends) and a top strip for the title.
+        try:
+            self._fig.get_layout_engine().set(rect=(0.0, 0.07, 1.0, 0.94))
+        except Exception:
+            pass
 
-        ax.set_xticks(positions)
-        ax.set_xticklabels(feat_sel,
-                           rotation=st.get('xlabel_rot', 45),
-                           ha='right' if st.get('xlabel_rot', 45) > 0 else 'center',
-                           fontsize=st.get('tick_size', 7))
-        ax.tick_params(axis='y', labelsize=st.get('tick_size', 7))
-        ax.set_xlabel(st.get('xlabel', 'Metabolite'), fontsize=st.get('label_size', 9))
-        ax.set_ylabel(st.get('ylabel', 'Concentration'), fontsize=st.get('label_size', 9))
-        ax.legend(fontsize=8, framealpha=0.85, loc='upper right')
-        ax.grid(axis='y', linestyle='--', linewidth=0.5, alpha=0.5)
+        # Shared group legend at the bottom of the figure
+        from matplotlib.patches import Patch
+        handles = [Patch(facecolor=_to_rgba(grp_colors[i], 0.60),
+                         edgecolor='black', label=g)
+                   for i, g in enumerate(unique_groups)]
+        self._fig.legend(handles=handles, loc='lower center',
+                         ncol=min(n_groups, 6), fontsize=8, framealpha=0.85,
+                         bbox_to_anchor=(0.5, 0.005))
 
         title_w = 'bold' if st.get('title_bold', True) else 'normal'
         self._fig.suptitle(st.get('title', 'Distribution by Group'),
                            fontsize=st.get('title_size', 11), fontweight=title_w)
-        self._fig.tight_layout(pad=st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
+
+    def _draw_significance(self, ax, vals_by_group, test):
+        """Draw stacked significance brackets between group pairs on `ax`.
+
+        Uses processing.group_stats (Welch t or Mann-Whitney). Pairs whose test
+        is undefined (NaN p) are skipped rather than annotated with a fake bar.
+        """
+        from processing.group_stats import pairwise_significance
+        pairs = [pw for pw in pairwise_significance(vals_by_group, test=test)
+                 if np.isfinite(pw[2])]
+        if not pairs:
+            return
+        finite = np.concatenate([v for v in vals_by_group if len(v)]) \
+            if any(len(v) for v in vals_by_group) else np.array([0.0, 1.0])
+        data_max = float(np.max(finite))
+        data_min = float(np.min(finite))
+        span = (data_max - data_min) or (abs(data_max) or 1.0)
+        top = data_max
+        for level, (i, j, p, stars) in enumerate(pairs):
+            y0 = data_max + span * 0.10 * (level + 1)
+            h  = span * 0.02
+            ax.plot([i, i, j, j], [y0, y0 + h, y0 + h, y0],
+                    color='black', linewidth=0.8, clip_on=False)
+            ax.text((i + j) / 2.0, y0 + h, stars,
+                    ha='center', va='bottom', fontsize=8,
+                    fontweight='bold' if stars != 'ns' else 'normal')
+            top = max(top, y0 + h)
+        ax.set_ylim(top=top + span * 0.08)
 
     def _export_csv_result(self):
         """Export the underlying values of the currently displayed plot as CSV
@@ -4083,7 +4612,7 @@ class StatisticsStage:
             # _render_and_display). Forcing _pie_export_figsize made the figure
             # larger than the canvas, so the point-sized legend shrank relative to
             # the donut. Export at the on-screen size keeps legend/donut proportion.
-            _is_box    = (_method in ('Boxplot', 'Violin') and
+            _is_box    = (_method == 'Box / Violin' and
                           getattr(self, '_box_export_figsize', None) is not None)
             _is_db     = (getattr(self, '_mode_var', None)
                           and self._mode_var.get() == 'pathway'
@@ -4091,9 +4620,9 @@ class StatisticsStage:
                           and self._pw_plot_var.get() == 'Dumbbell'
                           and getattr(self, '_dumbbell_export_figsize', None) is not None)
             if _is_box:
+                # Grid panels use the figure's constrained layout engine; just
+                # resize (tight_layout would clash with it).
                 self._fig.set_size_inches(self._box_export_figsize)
-                _st = self._box_style
-                self._fig.tight_layout(pad=_st.get('tight_pad', 1.2), rect=[0, 0, 1, 0.95])
             elif _is_db:
                 self._fig.set_size_inches(self._dumbbell_export_figsize)
             self._fig.savefig(fn, dpi=dpi, format=fmt,

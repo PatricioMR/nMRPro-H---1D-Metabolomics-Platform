@@ -59,6 +59,22 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         args = getattr(self.annotation_stage, '_last_results_args', None) or {}
         return str(args.get('internal_library_mode', '')) == 'Lipidomics'
 
+    def concentration_unit(self):
+        """Unit of the quantified values, matching the results-table header.
+
+        IS / IS+PQN normalisation gives absolute concentrations in mM; 'Total'
+        gives relative area percent; anything else is arbitrary area units.
+        Lipidomics is semi-quantitative, so never mM."""
+        _nm = getattr(self, 'norm_var', None)
+        _norm = _nm.get() if _nm else 'IS'
+        if self._is_lipidomics_mode():
+            return '%' if _norm == 'Total' else 'a.u.'
+        if _norm in ('IS', 'IS+PQN'):
+            return 'mM'
+        if _norm == 'Total':
+            return '%'
+        return 'a.u.'
+
     _LIPID_DISABLED_MSG = (
         'Desativado em modo Lipidomica:\n'
         'integração por região (trapz), semi-quantitativa — sem deteção de\n'

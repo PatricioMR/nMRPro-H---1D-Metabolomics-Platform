@@ -244,10 +244,16 @@ class ProjectManager:
                 'method':              _safe_var(st, '_method_var'),
                 'mode':                _safe_var(st, '_mode_var'),
                 'scale':               _safe_var(st, '_scale_var'),
+                'log_pre':             _safe_var(st, '_log_pre_var'),
+                'corr_method':         _safe_var(st, '_corr_method_var'),
+                'corr_plot':           _safe_var(st, '_corr_plot_var'),
+                'corr_x':              _safe_var(st, '_corr_x_var'),
+                'corr_y':              _safe_var(st, '_corr_y_var'),
                 'excluded_samples':    list(getattr(st, '_excluded_samples', set())),
                 'excluded_metabolites': list(getattr(st, '_excluded_metabolites', set())),
                 'pie_style':           dict(getattr(st, '_pie_style', {})),
                 'box_style':           dict(getattr(st, '_box_style', {})),
+                'box_config':          dict(getattr(st, '_box_config', {})),
                 'volcano_style':       dict(getattr(st, '_volcano_style', {})),
                 'pathway': {
                     'plot':     _safe_var(st, '_pw_plot_var'),
@@ -623,6 +629,7 @@ class ProjectManager:
             try:
                 _set_var(st, '_method_var', st_state.get('method'))
                 _set_var(st, '_scale_var',  st_state.get('scale'))
+                _set_var(st, '_log_pre_var', st_state.get('log_pre'))
                 st._excluded_samples    = set(st_state.get('excluded_samples', []))
                 st._excluded_metabolites = set(st_state.get('excluded_metabolites', []))
                 # Pathway-mode params: stash so the lazily-built panel seeds from
@@ -640,6 +647,17 @@ class ProjectManager:
                     st._pie_style.update(st_state['pie_style'])
                 if st_state.get('box_style'):
                     st._box_style.update(st_state['box_style'])
+                if st_state.get('box_config'):
+                    st._box_config.update(st_state['box_config'])
+                    if hasattr(st, '_update_box_cfg_status'):
+                        st._update_box_cfg_status()
+                # Correlation selectors (set after the panel rebuild so the
+                # freshly-created vars are not left at their defaults)
+                for _attr, _key in (('_corr_method_var', 'corr_method'),
+                                    ('_corr_plot_var',   'corr_plot'),
+                                    ('_corr_x_var',      'corr_x'),
+                                    ('_corr_y_var',      'corr_y')):
+                    _set_var(st, _attr, st_state.get(_key))
                 if st_state.get('volcano_style'):
                     try:
                         st._ensure_volcano_style().update(st_state['volcano_style'])
