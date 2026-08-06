@@ -25,9 +25,30 @@ _QUANT_DEBUG_PATH = os.path.join(
     'quant_debug.log')
 
 def _dbg_open():
+    """Open the debug log without allowing logging to break quantification."""
     if not _QUANT_DEBUG:
         return None
-    return open(_QUANT_DEBUG_PATH, 'w', encoding='utf-8')
+
+    # The frozen application may live under Program Files, which is normally
+    # read-only. Try the project/bundle path first for development, then the
+    # per-user nMRPipe data directory used by installed builds.
+    candidates = [_QUANT_DEBUG_PATH]
+    try:
+        from app_paths import user_data_dir
+        candidates.insert(
+            0, os.path.join(user_data_dir(), 'logs', 'quant_debug.log'))
+    except Exception:
+        pass
+
+    for path in candidates:
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            return open(path, 'w', encoding='utf-8')
+        except (OSError, PermissionError):
+            continue
+
+    # Debug logging is optional; a read-only installation must still quantify.
+    return None
 
 def _dbg(f, *args):
     if f is None:
@@ -607,6 +628,19 @@ class _QuantCompMixin:
             pr = r.get('peak_rank')
             by_peak.setdefault(pr, []).append(r)
 
+        try:
+            from gui.stages._annotation_helpers import ambiguous_peak_ranks
+            _ann_for_amb = getattr(self, 'annotation_stage', None)
+            _mets_for_amb = getattr(_ann_for_amb, '_metabolites', []) or []
+            _manual_for_amb = {
+                (str(k[0]), k[1]): v for k, v in (quality_marks or {}).items()
+            }
+            _ambiguous_ranks = ambiguous_peak_ranks(
+                _mets_for_amb, manual_quality=_manual_for_amb)
+        except Exception as _amb_exc:
+            print(f'[Quant] ambiguity detection unavailable: {_amb_exc}')
+            _ambiguous_ranks = set()
+
         def _effective_quality(h):
             """Return the quality for a result hit.
             Manual mark (quality_marks) takes priority over auto_quality_marks
@@ -614,8 +648,12 @@ class _QuantCompMixin:
             is NOT used — it is stale (set before post-processing overwrites the
             matched_peak dicts via _group_by_metabolite)."""
             manual = quality_marks.get((h['_mid'], h.get('peak_rank')))
+            if manual is None:
+                manual = quality_marks.get((str(h['_mid']), h.get('peak_rank')))
             if manual is not None:
                 return manual
+            if h.get('peak_rank') in _ambiguous_ranks:
+                return 'ambiguous'
             return auto_quality_marks.get((str(h['_mid']), h.get('peak_rank')))
 
         _SINGLET_MULTS = {'s', 'br s', 'brs', 'bs', ''}
@@ -655,7 +693,8 @@ class _QuantCompMixin:
                             _mp.get('anchor_status') == 'clean'
                             and _mp.get('j_met_confirmed')):
                         _eff_q = 'good'
-                    if _eff_q == 'good':
+                    if (_eff_q == 'good'
+                            and _pr not in _ambiguous_ranks):
                         _peak_assignments[_pr] = (_met, _mp)
 
         winning_hits = []
@@ -1354,7 +1393,20 @@ class _QuantCompMixin:
                     nh = max(1.0, float(hit.get('protons', 1) or 1))
                 nh = max(0.01, nh)
 
-                if use_multiplet:
+                _mcr_aps = p.get('area_per_sample')
+                if p.get('mcr_component_idx') is not None and _mcr_aps is not None \
+                        and len(_mcr_aps) == n_s:
+                    # This peak is an MCR Deconvolution sub-peak the user
+                    # Accepted for an overlapping region (K>=2). area_per_sample
+                    # was integrated from the MCR-isolated component (S[:,k]*C
+                    # per sample) — a raw start_idx/end_idx reintegration of the
+                    # shared window would mix this analyte back with whatever
+                    # neighbour caused the overlap, exactly what MCR was run to
+                    # separate. Use it as-is instead of any of the branches below.
+                    a_vec = np.asarray(_mcr_aps, dtype=float)
+                    _dbg(_dbg_f, f'    integ(mcr sub-peak): component #{p.get("mcr_component_idx")}'
+                                 f'  areas={[f"{v:.3e}" for v in a_vec.tolist()]}')
+                elif use_multiplet:
                     # predicted_lines holds the observed ppm of every line of
                     # the multiplet (already shifted to the spectrum reference
                     # frame). Use min/max directly — no peak lookup needed.
@@ -2587,6 +2639,12 @@ class _QuantCompMixin:
                 str(r.get('hmdb_id') or r.get('bmrb_id') or '')
                 for r in self._quant_results
             }
+            _ambiguous_mids = {
+                str(m.get('id', ''))
+                for m in (getattr(self.annotation_stage, '_metabolites', []) or [])
+                if any(mp.get('peak_rank') in _ambiguous_ranks
+                       for mp in m.get('matched_peaks', []))
+            }
             _n_lost = 0
             for _lost_mid in sorted(good_met_ids):
                 if str(_lost_mid) in _quantified_mids:
@@ -2603,7 +2661,10 @@ class _QuantCompMixin:
                     'snr':               0.0,
                     'status':            'n.q.',
                     '_confidence':       0,
-                    '_status_reasons':   [NQ_REASON_LOST_COMPETITION],
+                    '_status_reasons':   (
+                        ['Ambiguous annotation - manual confirmation required']
+                        if str(_lost_mid) in _ambiguous_mids
+                        else [NQ_REASON_LOST_COMPETITION]),
                     '_peak':             None,
                     '_areas_per_sample': [],
                     '_concs_per_sample': [],

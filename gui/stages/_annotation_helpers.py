@@ -81,7 +81,7 @@ def _assignment_sort_key(score, mp):
     return float(score) + j_anchor_bonus + singlet_j_bonus
 
 
-def select_metabolite_per_rank(metabolites):
+def select_metabolite_per_rank(metabolites, manual_quality=None):
     """Canonical peak_rank → metabolite-name map (1 peak → 1 metabolite).
 
     Mirrors AnnotationResultsWindow._build_peak_assignments candidate selection:
@@ -108,12 +108,56 @@ def select_metabolite_per_rank(metabolites):
                 name,
                 mp.get('annotation_quality') == 'good',
             ))
+    # Keep the fallback consistent with the annotation window: close
+    # candidates are evidence, not an identity decision.
+    ambiguous = ambiguous_peak_ranks(
+        metabolites, manual_quality=manual_quality or {})
     out = {}
     for rank, lst in cands.items():
+        if rank in ambiguous:
+            continue
         good = [c for c in lst if c[2]]
         pool = good if good else lst
         out[rank] = max(pool, key=lambda c: c[0])[1]
     return out
+
+
+def ambiguous_peak_ranks(metabolites, margin=0.08, manual_quality=None):
+    """Return peak ranks whose top candidates are too close to resolve safely.
+
+    Manual Good on a specific (metabolite, rank) pair is an explicit identity
+    decision and therefore resolves that rank. Automatic quality marks alone do
+    not resolve competition between metabolites.
+    """
+    manual_quality = manual_quality or {}
+    by_rank = {}
+    for met in metabolites or []:
+        mid = str(met.get("id", met.get("name", "")))
+        for mp in met.get("matched_peaks", []):
+            rank = mp.get("peak_rank")
+            if rank is None or mp.get("annotation_quality") == "bad":
+                continue
+            score = float(mp.get("composite_score",
+                                 mp.get("multiplet_score", 0.0)) or 0.0)
+            by_rank.setdefault(rank, []).append((score, mid, mp))
+
+    ambiguous = set()
+    for rank, cands in by_rank.items():
+        if any(manual_quality.get((mid, rank)) == "good"
+               for _, mid, _ in cands):
+            continue
+        unique = {}
+        for score, mid, mp in cands:
+            if mid not in unique or score > unique[mid][0]:
+                unique[mid] = (score, mp)
+        ordered = sorted(unique.items(), key=lambda item: item[1][0],
+                         reverse=True)
+        if len(ordered) >= 2:
+            top = ordered[0][1][0]
+            second = ordered[1][1][0]
+            if top - second < float(margin):
+                ambiguous.add(rank)
+    return ambiguous
 
 
 def _ppm_score(exp_ppm, db_ppm, tolerance):
@@ -443,54 +487,45 @@ def _pick_database(parent_widget):
 
 
 def _multi_peak_coherence(met_id, all_peaks_by_id, observed_peaks, tolerance):
-    """
-    Soft multi-peak coherence score for complex biological samples.
+    """Score candidate coherence with one-to-one line matching.
 
-    Penalises candidates whose sibling peaks are absent or have wrong
-    relative intensities, without eliminating them entirely.
-
-    Parameters
-    ----------
-    met_id          : str  — metabolite ID key into all_peaks_by_id
-    all_peaks_by_id : dict — {met_id: [(ppm, intensity), ...]} pre-fetched
-    observed_peaks  : list — detected peaks, each with 'ppm' and 'height'
-    tolerance       : float — ppm matching window
-
-    Returns
-    -------
-    (coherence, coverage, ratio_match) — all floats in [0, 1]
+    This is candidate evidence, not ownership: the same observed peak may
+    remain a candidate for multiple metabolites. Only lines belonging to one
+    candidate are prevented from reusing the same observed peak.
     """
     db_peaks = all_peaks_by_id.get(met_id, [])
     if len(db_peaks) <= 1:
-        return 1.0, 1.0, 1.0  # single-peak metabolite: no inter-peak context
+        return 1.0, 1.0, 1.0
 
-    total_db_int = sum(i for _, i in db_peaks) or 1.0
-    db_ratios = [(ppm, max(i, 0.0) / total_db_int) for ppm, i in db_peaks]
+    db_max = max((max(float(i), 0.0) for _, i in db_peaks), default=0.0) or 1.0
+    db_sticks = [(float(ppm), max(float(intensity), 0.0) / db_max)
+                  for ppm, intensity in db_peaks]
+    obs = [p for p in (observed_peaks or []) if p.get("ppm") is not None]
+    if not obs:
+        return 0.0, 0.0, 0.0
 
-    obs_ppms    = [p['ppm'] for p in observed_peaks]
-    obs_heights = [max(p.get('height', 1.0), 0.0) for p in observed_peaks]
-    total_obs   = sum(obs_heights) or 1.0
+    try:
+        from gui.notation.multiplet_scorer import _hungarian_line_matches
+        matches = _hungarian_line_matches(
+            db_sticks, obs, max_distance=float(tolerance))
+    except Exception:
+        matches = []
 
-    matched_pairs = []
-    for db_ppm, db_ratio in db_ratios:
-        if not obs_ppms:
-            break
-        dists = [abs(op - db_ppm) for op in obs_ppms]
-        min_dist = min(dists)
-        if min_dist <= tolerance:
-            idx = dists.index(min_dist)
-            obs_ratio = obs_heights[idx] / total_obs
-            matched_pairs.append((db_ratio, obs_ratio))
+    coverage = len(matches) / len(db_sticks)
+    if not matches:
+        return coverage, coverage, 0.0
 
-    coverage = len(matched_pairs) / len(db_ratios)
-
-    if not matched_pairs:
-        ratio_match = 0.0
-    else:
-        errors = [min(abs(db_r - obs_r) / max(db_r, 1e-6), 1.0)
-                  for db_r, obs_r in matched_pairs]
-        ratio_match = max(0.0, 1.0 - float(np.mean(errors)))
-
+    matched_heights = [
+        max(float(m.get("peak", {}).get("height", 0.0)), 0.0)
+        for m in matches
+    ]
+    obs_max = max(matched_heights, default=0.0) or 1.0
+    errors = []
+    for i, m in enumerate(matches):
+        expected = float(m.get("pred_rel", 0.0))
+        observed = float(matched_heights[i] / obs_max)
+        errors.append(min(abs(expected - observed) / max(expected, 1e-6), 1.0))
+    ratio_match = max(0.0, 1.0 - float(np.mean(errors))) if errors else 0.0
     coherence = 0.6 * coverage + 0.4 * ratio_match
     return coherence, coverage, ratio_match
 

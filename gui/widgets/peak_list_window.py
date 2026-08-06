@@ -340,7 +340,9 @@ class PeakListWindow:
             _metabolites = getattr(_ann, '_metabolites', None)
             if _metabolites:
                 from gui.stages._annotation_helpers import select_metabolite_per_rank
-                _met_by_rank = select_metabolite_per_rank(_metabolites)
+                _qm_peak = getattr(_ann, '_quality_marks', {}) or {}
+                _met_by_rank = select_metabolite_per_rank(
+                    _metabolites, manual_quality=_qm_peak)
             else:
                 # Fallback: raw results list (no ΔJ filtering possible)
                 _last = getattr(_ann, '_last_results_args', None) or {}
@@ -416,7 +418,9 @@ class PeakListWindow:
         _met_by_rank = {}
         if _metabolites_rr:
             from gui.stages._annotation_helpers import select_metabolite_per_rank
-            _met_by_rank = select_metabolite_per_rank(_metabolites_rr)
+            _qm_peak_rr = getattr(ann, '_quality_marks', {}) or {}
+            _met_by_rank = select_metabolite_per_rank(
+                _metabolites_rr, manual_quality=_qm_peak_rr)
         met_name = (peak.get('assigned_metabolite')
                     or peak.get('metabolite')
                     or _met_by_rank.get(peak.get('rank'), '—'))

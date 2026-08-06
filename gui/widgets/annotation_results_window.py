@@ -193,11 +193,14 @@ def _build_stick_positions(ppm_center, mult_type, protons, j_coupling_hz=None,
 
     if mt in _COMPOSITE:
         parts = _COMPOSITE[mt]
+        if not j_list_hz:
+            return [(ppm_center, 1.0)]
 
-        # Pad J list: repeat last value if too few couplings given
-        j_padded = list(j_list_hz) if j_list_hz else [7.0]
-        while len(j_padded) < len(parts):
-            j_padded.append(j_padded[-1])
+        # Require every coupling needed by the declared composite pattern;
+        # never repeat one known J as a fabricated second/third J.
+        if len(j_list_hz) < len(parts):
+            return [(ppm_center, 1.0)]
+        j_padded = list(j_list_hz)
 
         # Recursive splitting: start with a single line at offset 0
         offsets = [0.0]
@@ -231,7 +234,8 @@ def _build_stick_positions(ppm_center, mult_type, protons, j_coupling_hz=None,
     elif ppm_span and ppm_span > 1e-4 and n > 1:
         spacing_ppm = ppm_span / (n - 1)
     else:
-        spacing_ppm = 7.0 / max(field_mhz, 1.0)
+        # No J and no explicit transition span: keep the centre only.
+        return [(ppm_center, intensities[0])]
 
     total_span = spacing_ppm * (n - 1)
     start_ppm  = ppm_center - total_span / 2
@@ -720,6 +724,7 @@ class AnnotationResultsWindow:
                 'mcr_pearson_r':   r.get('mcr_pearson_r'),
                 'mcr_confirmed':   r.get('mcr_confirmed'),
                 'mcr_cross_corr':  r.get('mcr_cross_corr'),
+                'mcr_delta_j_hz':  r.get('mcr_delta_j_hz'),
                 'stocsy_coherence':r.get('stocsy_coherence'),
             })
             # Track best composite score for metabolite sorting
@@ -1331,11 +1336,11 @@ class AnnotationResultsWindow:
         self._q_labels = {}
         for i, (key, label, hint) in enumerate([
             ('confidence', 'Confidence', 'Composite score 0–1 (≥0.75 good · ≤0.50 bad) — informative'),
-            ('coverage',  'Coverage',    '% DB peaks matched — informative'),
-            ('cosine',    'Similarity',  'Cosine similarity (0–1) — informative'),
-            ('n_matched', 'Matched',     'peaks found / total — informative'),
             ('j_obs',     'J / ΔJ',      'J obs vs DB (Hz) · right-drag to reselect'),
             ('mcr',       'MCR',         'R²  Pearson r  cross-sample corr (overlap tiebreaker)'),
+            ('n_matched', 'Matched',     'peaks found / total — informative'),
+            ('coverage',  'Coverage',    '% DB peaks matched — informative'),
+            ('cosine',    'Similarity',  'Cosine similarity (0–1) — informative'),
         ]):
             ttk.Label(qf, text=f"{label}:",
                       font=("Arial", 8, "bold")).grid(
@@ -2164,6 +2169,27 @@ class AnnotationResultsWindow:
                         else:
                             s_dj = 0.0
 
+                # MCR override — only when the user ran MCR Deconvolution and it
+                # resolved this peak_rank as a genuine overlap (K>=2) with a good
+                # shape match for this candidate (see _run_mcr_on_results). The
+                # raw ΔJ measured above comes from lines snapped on the merged,
+                # non-deconvolved spectrum — unreliable by construction in an
+                # overlap. MCR's J is measured on the isolated component instead,
+                # so it replaces the raw value here (Δppm/everything else is
+                # unaffected — MCR doesn't resolve position, only shape/J).
+                _mcr_dj = mp.get('mcr_delta_j_hz')
+                if _mcr_dj is not None:
+                    if _mcr_dj < self._params['dj_gold_hz']:
+                        s_dj = 1.0
+                    elif _mcr_dj < self._params['dj_bad_hz']:
+                        _rng = self._params['dj_bad_hz'] - self._params['dj_gold_hz']
+                        s_dj = 1.0 - (_mcr_dj - self._params['dj_gold_hz']) / _rng
+                    else:
+                        s_dj = 0.0
+                    _dj_conf = 1.0
+                    mp['delta_j_hz'] = float(_mcr_dj)
+                    mp['_dj_source'] = 'mcr'
+
                 # Hierarchical score mirroring how the spectrum is read by hand:
                 #   singlet     → only Δppm proximity matters (no J to validate)
                 #   non-singlet → Δppm + ΔJ agreement; s_dj already encodes the
@@ -2322,6 +2348,10 @@ class AnnotationResultsWindow:
             for mp in met['matched_peaks']:
                 mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
                 if mult in SINGLET_TYPES:
+                    continue
+                # A complete observed pattern is not J validation when the
+                # database supplied no J. The analyst must confirm that case.
+                if not str(mp.get('j_coupling') or '').strip():
                     continue
                 dj = mp.get('delta_j_hz')
                 # Criterion A: J measured and within 2.0 Hz of DB value
@@ -2937,6 +2967,25 @@ class AnnotationResultsWindow:
                 float(mp.get('composite_score', 0) or 0),
                 self._params['good_score_thresh'])
 
+    def _rank_score_map(self):
+        """rank -> {met_id: best composite_score of that metabolite's non-BDL
+        matched_peak at that rank}. Used to weigh competition by strength
+        instead of raw headcount (see _promote_corroborated_singlets)."""
+        m = {}
+        for met in self.metabolites:
+            met_id = met.get('id', met.get('name'))
+            for mp in met['matched_peaks']:
+                if mp.get('below_detection_limit'):
+                    continue
+                rank = mp.get('peak_rank')
+                if rank is None:
+                    continue
+                sc = float(mp.get('composite_score', 0) or 0)
+                d = m.setdefault(rank, {})
+                if met_id not in d or sc > d[met_id]:
+                    d[met_id] = sc
+        return m
+
     def _promote_corroborated_singlets(self):
         """
         ≥3-singlet corroboration: a metabolite with ≥3 of its singlets matched at
@@ -2944,9 +2993,15 @@ class AnnotationResultsWindow:
         — is corroborated by multiple independent signals → promote those singlets
         to 'good' + high score. A lone (or 2-singlet) match stays yellow.
 
-        "Not heavily contested" reuses the overlap map: a singlet rank shared by
-        ≤2 metabolites still counts (mild overlap is normal in crowded spectra);
-        more-contested ranks are skipped from the corroboration count.
+        "Not heavily contested" is score-weighted, not a raw headcount: a
+        competing metabolite only counts against corroboration if its own
+        score at that rank is at least _STRONG_COMPETITOR_FRAC of this
+        singlet's score. A rank crowded with several weak/unlikely candidates
+        (e.g. a busy sugar region) no longer blocks corroboration just by
+        volume — only genuinely competitive candidates do. Was previously a
+        flat headcount (≤2 metabolites at the rank, including self), which
+        penalised legitimate matches in dense spectral regions regardless of
+        how weak the crowd was.
 
         Manual quality marks are always preserved.
         """
@@ -2962,10 +3017,12 @@ class AnnotationResultsWindow:
         _dppm_gold = float(self._params.get('dppm_gold_hz', 0.50)) / max(_mhz, 1.0)
         _dppm_gold = min(_dppm_gold, float(self._params.get('dppm_gold', 0.05)))
 
-        _overlap = getattr(self, '_peak_overlap', {}) or {}
-        _MAX_COMPETITORS = 2  # singlet rank shared by ≤2 metabolites still counts
+        _rank_scores = self._rank_score_map()
+        _MAX_STRONG_COMPETITORS = 1     # ≤1 score-competitive rival still counts
+        _STRONG_COMPETITOR_FRAC = 0.5   # rival must score ≥50% of this candidate
 
         for met in self.metabolites:
+            met_id = met.get('id', met.get('name'))
             valid = {}   # round(db_ppm, 3) -> best-Δppm singlet mp at that position
             for mp in met['matched_peaks']:
                 if mp.get('below_detection_limit'):
@@ -2975,9 +3032,15 @@ class AnnotationResultsWindow:
                 if float(mp.get('ppm_diff', 0) or 0) >= _dppm_gold:
                     continue  # not gold-quality Δppm
                 rank = mp.get('peak_rank')
-                if (rank is not None
-                        and len(_overlap.get(rank, [])) > _MAX_COMPETITORS):
-                    continue  # heavily contested signal
+                if rank is not None:
+                    mp_score = float(mp.get('composite_score', 0) or 0)
+                    strong_rivals = sum(
+                        1 for other_id, other_score
+                        in _rank_scores.get(rank, {}).items()
+                        if other_id != met_id
+                        and other_score >= _STRONG_COMPETITOR_FRAC * mp_score)
+                    if strong_rivals > _MAX_STRONG_COMPETITORS:
+                        continue  # heavily contested by score-competitive rivals
                 key  = round(float(mp.get('db_ppm', 0) or 0), 3)
                 prev = valid.get(key)
                 if (prev is None
@@ -3212,8 +3275,16 @@ class AnnotationResultsWindow:
                                 all_cands.setdefault(other_rank, []).append(
                                     (score, met, mp))
 
-        self._peak_candidates = {}   # rank → [(score, met, mp)] sorted desc
-        self._peak_assignments = {}  # rank → (met, mp)
+        self._peak_candidates = {}   # rank -> [(score, met, mp)] sorted desc
+        self._peak_assignments = {}  # rank -> (met, mp)
+        self._peak_assignment_status = {}
+        _ann_for_q = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        _qm_for_q = getattr(_ann_for_q, '_quality_marks', {}) if _ann_for_q else {}
+        _manual_for_q = {(str(k[0]), k[1]): v
+                         for k, v in (_qm_for_q or {}).items()}
+        from gui.stages._annotation_helpers import ambiguous_peak_ranks
+        self._ambiguous_peak_ranks = ambiguous_peak_ranks(
+            self.metabolites, manual_quality=_manual_for_q)
 
         for rank, cands in all_cands.items():
             # Sort: J-confirmed match wins over a higher-scoring singlet when both
@@ -3222,11 +3293,18 @@ class AnnotationResultsWindow:
             cands.sort(key=lambda x: _assignment_sort_key(x[0], x[2]),
                        reverse=True)
             self._peak_candidates[rank] = cands
-            # Prefer a manually-assigned 'good' match, otherwise take best score
+            _has_manual = any(
+                _manual_for_q.get((str(m.get('id', m.get('name', ''))), rank))
+                == 'good'
+                for _, m, _ in cands)
             manual = next(
                 ((m, mp2) for _, m, mp2 in cands
-                 if mp2.get('annotation_quality') == 'good'),
+                 if _manual_for_q.get(
+                     (str(m.get('id', m.get('name', ''))), rank)) == 'good'),
                 None)
+            self._peak_assignment_status[rank] = (
+                'resolved' if (_has_manual or rank not in self._ambiguous_peak_ranks)
+                else 'ambiguous')
             self._peak_assignments[rank] = manual if manual else (
                 cands[0][1], cands[0][2])
 
@@ -3329,6 +3407,9 @@ class AnnotationResultsWindow:
                 continue
             pk = pk_by_rank.get(rank)
             if pk is None:
+                continue
+            if getattr(self, '_peak_assignment_status', {}).get(rank) == 'ambiguous':
+                # Candidates remain visible, but no false ownership is published.
                 continue
             pk['assigned_metabolite'] = met.get('name', '')
 
@@ -3884,7 +3965,7 @@ class AnnotationResultsWindow:
                             'start_ppm': _ppm - 0.015,
                             'end_ppm':   _ppm + 0.015}
                 # mp_ref can be None when no matched peak was recorded yet —
-                # build a minimal stub so AnnotationMCRWindow can proceed
+                # build a minimal stub so MCRWindow can proceed
                 mp = _mp_ref if _mp_ref is not None else {
                     'db_ppm':    _ppm,
                     'peak_ppm':  _ppm,
@@ -3893,10 +3974,10 @@ class AnnotationResultsWindow:
                     'protons':   _dp.get('protons', 1),
                     'composite_score': 0.0,
                 }
-                from gui.widgets.annotation_mcr_window import AnnotationMCRWindow
-                AnnotationMCRWindow(
+                from gui.widgets.mcr_window import MCRWindow
+                MCRWindow(
                     self.win,
-                    [(_met, mp, peak)],
+                    [{'kind': 'undef', 'met': _met, 'mp': mp, 'peak': peak}],
                     app,
                     ann_stage=ann_stage,
                     ann_results=self)
@@ -4153,6 +4234,14 @@ class AnnotationResultsWindow:
             else:
                 qual = None
                 qual_mark = '—'
+
+            _met_ambiguous = any(
+                mp2.get('peak_rank') in getattr(self, '_ambiguous_peak_ranks', set())
+                for mp2 in met.get('matched_peaks', [])
+            )
+            if _met_ambiguous and qual != 'bad':
+                # Ambiguity remains undefined; row colour still follows score.
+                qual_mark = 'Indef'
 
             # Overlap: matched peaks with ≥1 valid competitor
             n_ovlp = sum(
@@ -6525,7 +6614,7 @@ class AnnotationResultsWindow:
     # ── MCR Deconvolution for Undef peaks ────────────────────────────────────
 
     def _open_mcr_deconv(self):
-        """Collect all Undef peaks and open AnnotationMCRWindow."""
+        """Collect all Undef peaks and open MCRWindow."""
         # Gather (met_dict, mp_dict, peak_dict) for every Undef matched peak
         app        = getattr(self, 'app', None)
         pd_stage   = getattr(app, 'stages', {}).get('peak_detection') if app else None
@@ -6558,10 +6647,12 @@ class AnnotationResultsWindow:
                 parent=self.win)
             return
 
-        from gui.widgets.annotation_mcr_window import AnnotationMCRWindow
-        AnnotationMCRWindow(
+        from gui.widgets.mcr_window import MCRWindow
+        items = [{'kind': 'undef', 'met': met, 'mp': mp, 'peak': peak}
+                 for met, mp, peak in undef_items]
+        MCRWindow(
             self.win,
-            undef_items,
+            items,
             app,
             ann_stage=ann_stage,
             ann_results=self)

@@ -159,7 +159,7 @@ class _AnnotationSearchMixin:
                         " FROM shifts_1h s"
                         " JOIN metabolites met ON s.bmrb_id = met.bmrb_id"
                         " WHERE s.ppm BETWEEN ? AND ?"
-                        " ORDER BY ABS(s.ppm - ?) LIMIT 25",
+                        " ORDER BY ABS(s.ppm - ?)",
                         (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
@@ -174,7 +174,7 @@ class _AnnotationSearchMixin:
                         FROM multiplets m
                         JOIN metabolites met ON m.hmdb_id = met.hmdb_id
                         WHERE m.ppm_center BETWEEN ? AND ?
-                        ORDER BY ABS(m.ppm_center - ?) LIMIT 25
+                        ORDER BY ABS(m.ppm_center - ?)
                     """, (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
@@ -365,7 +365,12 @@ class _AnnotationSearchMixin:
                 'validated': True,
             }
 
-            mcr_r2 = mcr_m.get('r2', None)
+            # r2_median: per-sample R² (each sample scored against its own
+            # mean), not the pooled 'r2' which uses one grand mean across all
+            # samples and can hide a compound that only fits a few of them.
+            mcr_r2 = mcr_m.get('r2_median', None)
+            if mcr_r2 is None or (isinstance(mcr_r2, float) and np.isnan(mcr_r2)):
+                mcr_r2 = mcr_m.get('r2', None)
             if mcr_r2 is None or (isinstance(mcr_r2, float) and np.isnan(mcr_r2)):
                 mcr_confirmed = None
             else:
@@ -382,12 +387,26 @@ class _AnnotationSearchMixin:
                 else:
                     mcr_confirmed = None    # inconclusive
 
-            for c in cands:
-                c['mcr_r2']        = mcr_r2
-                c['mcr_confirmed'] = mcr_confirmed
-                c_idx = cands.index(c)
-                c['mcr_pearson_r'] = next(
-                    (a[1] for a in assignments if a[0] == c_idx), None)
+            for c_idx, c in enumerate(cands):
+                c['mcr_r2']             = mcr_r2
+                c['mcr_r2_pooled']      = mcr_m.get('r2', None)
+                c['mcr_r2_per_sample']  = mcr_m.get('r2_per_sample', None)
+                c['mcr_confirmed']      = mcr_confirmed
+                c_assign = next((a for a in assignments if a[0] == c_idx), None)
+                c['mcr_pearson_r'] = c_assign[1] if c_assign else None
+
+                # Post-deconvolution ΔJ: measured on this candidate's own MCR
+                # component (S column), not on the raw/merged detected peak.
+                # Only meaningful in genuine overlaps (K>=2) with a decent
+                # shape match — otherwise MCR isolated nothing worth trusting
+                # over the raw measurement.
+                c['mcr_delta_j_hz'] = None
+                if (c_assign is not None and K >= 2
+                        and c_assign[1] is not None and c_assign[1] >= 0.70):
+                    meas_j = c_assign[4] if len(c_assign) > 4 else None
+                    exp_j  = c_assign[5] if len(c_assign) > 5 else None
+                    if meas_j is not None and exp_j is not None:
+                        c['mcr_delta_j_hz'] = float(abs(meas_j - exp_j))
 
             n_validated += 1
 
@@ -1007,8 +1026,10 @@ class _AnnotationSearchMixin:
                         half_width = max(half_width,
                                          (max(_sp) - min(_sp)) / 2.0 + tolerance)
                     else:
-                        sticks = _build_stick_positions(
+                        # No database J: do not invent line positions.
+                        sticks = (_build_stick_positions(
                             db_ppm, mult_raw, protons, j_raw)
+                                  if j_hz > 0 else [])
                     if not sticks:
                         sticks = [(db_ppm, 1.0)]
 
@@ -1096,10 +1117,9 @@ class _AnnotationSearchMixin:
                     peak_rank = nearest.get('rank')   # None for spectrum-derived peaks
                     peak_ppm  = float(nearest['ppm'])
 
-                    _eff_j_ppm = j_ppm
-                    if _eff_j_ppm <= 0 and not is_singlet:
-                        _obs_j_fb = nearest.get('_obs_j_hz', 0) or 0
-                        _eff_j_ppm = float(_obs_j_fb) / mhz if (_obs_j_fb > 0 and mhz > 0) else 0.0
+                    # A missing database J is intentionally not inferred from
+                    # the observed spectrum. The analyst must confirm it.
+                    _eff_j_ppm = j_ppm if j_hz > 0 else 0.0
 
                     multiplet_centre = peak_ppm
                     if not is_singlet and _eff_j_ppm > 0 and n_lns >= 2:
@@ -1168,6 +1188,9 @@ class _AnnotationSearchMixin:
                         j_ratio       = abs(j_hz - obs_j_pk) / max(j_hz, obs_j_pk, 0.1)
                         j_compat      = float(max(0.0, 1.0 - 2.0 * j_ratio))
                         j_conf        = 1.0  # J was measurable
+                    elif j_hz <= 0:
+                        j_compat      = 0.0   # J absent in DB: no J evidence
+                        j_conf        = 0.0
                     elif obs_mult_pk in ('s',) and not is_singlet:
                         j_compat      = 0.4   # wrong mult type — valid penalty
                         j_conf        = 1.0

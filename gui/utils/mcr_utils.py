@@ -2,6 +2,13 @@
 """
 Shared MCR-ALS implementation used by AnnotationStage, QuantificationStage,
 and FullSpectrumMCRStage.
+
+Reference: Tauler, R. "Multivariate curve resolution applied to second order
+data." Chemometrics and Intelligent Laboratory Systems, 30(1), 133-146 (1995).
+DOI: 10.1016/0169-7439(95)00047-X
+See also: de Juan, A.; Tauler, R. "Multivariate Curve Resolution (MCR) from
+2000: Progress in Concepts and Applications." Critical Reviews in Analytical
+Chemistry, 36(3-4), 163-176 (2006). DOI: 10.1080/10408340600970005
 """
 import numpy as np
 
@@ -102,8 +109,36 @@ def mcr_als(X, n_components=1, max_iter=200, tol=1e-6, S_init=None,
         r2 = float('nan')
     else:
         r2 = float(1.0 - ss_res / ss_tot)
-    metrics = {'lof': float(lof), 'r2': r2, 'n_iter': n_iter, 'flat': ss_tot < 1e-20}
+
+    # Pooled 'r2' above uses a single grand mean (X.mean()) across every point
+    # AND every sample — a compound that fits 2/10 samples well and 8/10 poorly
+    # can still look "confirmed". r2_per_sample fits each sample column against
+    # its own mean instead, so per-sample quality is not diluted by the pool.
+    r2_per_sample = _per_sample_r2(X, S, C)
+    _finite = r2_per_sample[np.isfinite(r2_per_sample)]
+    r2_median = float(np.median(_finite)) if _finite.size else float('nan')
+
+    metrics = {'lof': float(lof), 'r2': r2, 'n_iter': n_iter, 'flat': ss_tot < 1e-20,
+               'r2_per_sample': r2_per_sample.tolist(), 'r2_median': r2_median}
     return C, S, metrics
+
+
+def _per_sample_r2(X, S, C):
+    """R² of the MCR reconstruction for each sample column independently.
+
+    Each sample is scored against its own mean (unlike the pooled 'r2' in
+    mcr_als, which uses a single grand mean over the whole X matrix).
+    """
+    X_hat = S @ C.T
+    n_samples = X.shape[1]
+    r2s = np.full(n_samples, np.nan)
+    for j in range(n_samples):
+        xj, xhj = X[:, j], X_hat[:, j]
+        ss_tot_j = float(np.sum((xj - xj.mean()) ** 2))
+        if ss_tot_j > 1e-20:
+            ss_res_j = float(np.sum((xj - xhj) ** 2))
+            r2s[j] = 1.0 - ss_res_j / ss_tot_j
+    return r2s
 
 
 def simulate_lorentzian_profile(sticks, ppm_arr, hwhm=0.003):

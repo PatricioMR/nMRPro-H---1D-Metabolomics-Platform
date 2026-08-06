@@ -663,6 +663,9 @@ class JResolveStage(BaseStage):
                     continue
                 if self._mp_is_singlet(mp):
                     continue
+                # J validation requires a J value supplied by the database.
+                if not str(mp.get('j_coupling') or '').strip():
+                    continue
                 delta_j = mp.get('delta_j_hz')
                 # Strict J-validation: only confirm when ΔJ was actually measured
                 # AND falls within tolerance.  An unmeasured ΔJ (None) is NOT

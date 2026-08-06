@@ -3,7 +3,11 @@
 Notation module for peak processing and database searches.
 """
 from .peak_processing import PeakProcessor
-from .bmrb_search import BMRBSearcher
+try:
+    from .bmrb_search import BMRBSearcher
+except ImportError:
+    # Online BMRB search is optional; local annotation must still start.
+    BMRBSearcher = None
 from .noise_estimation import NoiseEstimator
 from .results_display import ResultsDisplay
 

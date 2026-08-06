@@ -16,10 +16,14 @@ Algorithm
 import tkinter as tk
 from tkinter import ttk, messagebox
 import os
-import certifi
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
-os.environ['SSL_CERT_FILE']      = certifi.where()
-os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+if certifi is not None:
+    os.environ['SSL_CERT_FILE']      = certifi.where()
+    os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from .base_stage import BaseStage
 from ._annotation_search import _AnnotationSearchMixin

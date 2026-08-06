@@ -11,10 +11,14 @@ import os
 import time
 import threading
 import queue
-import certifi
+try:
+    import certifi
+except ImportError:
+    certifi = None
 
-os.environ['SSL_CERT_FILE']      = certifi.where()
-os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
+if certifi is not None:
+    os.environ['SSL_CERT_FILE']      = certifi.where()
+    os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from processing.noise_estimation import estimate_noise_from_region
 from .base_stage import BaseStage

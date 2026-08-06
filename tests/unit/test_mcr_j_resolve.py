@@ -106,6 +106,40 @@ class TestMCRALSBasic:
         assert metrics['lof'] < 5.0, f"LOF={metrics['lof']:.2f}% esperado < 5%"
         assert metrics['r2'] > 0.95, f"R²={metrics['r2']:.3f} esperado > 0.95"
 
+    def test_r2_per_sample_matches_individual_reconstruction(self):
+        """r2_per_sample[j] deve refletir a qualidade do ajuste APENAS da
+        amostra j (contra a própria média), não a média global do pool —
+        varia sample a sample quando o SNR varia entre amostras."""
+        n_samples = 8
+        rng = np.random.default_rng(3)
+        C_A = rng.uniform(1.0, 3.0, n_samples)
+        # Ruído crescente por amostra — amostras finais devem ajustar pior.
+        X = np.zeros((len(self.ppm), n_samples))
+        for j in range(n_samples):
+            noise_std = 0.01 + 0.15 * (j / (n_samples - 1))
+            col = self.S_A * C_A[j] + rng.normal(0, noise_std, len(self.ppm))
+            X[:, j] = np.clip(col, 0, None)
+
+        S_init = self.S_A[:, np.newaxis]
+        C, S, metrics = mcr_als(X, n_components=1, S_init=S_init,
+                                max_iter=300, tol=1e-8)
+
+        assert 'r2_per_sample' in metrics and 'r2_median' in metrics
+        r2_ps = np.asarray(metrics['r2_per_sample'])
+        assert r2_ps.shape == (n_samples,)
+        assert np.all(np.isfinite(r2_ps))
+        # Recomputar R² da amostra 0 (baixo ruído) manualmente e comparar —
+        # confirma que cada entrada usa a própria média da amostra, não a
+        # média global usada pelo 'r2' agregado.
+        X_hat = S @ C.T
+        x0, xh0 = X[:, 0], X_hat[:, 0]
+        expected_r2_0 = 1.0 - np.sum((x0 - xh0) ** 2) / np.sum((x0 - x0.mean()) ** 2)
+        assert r2_ps[0] == pytest.approx(expected_r2_0, abs=1e-9)
+        # r2_median deve ser um valor intermediário do array por amostra.
+        assert r2_ps.min() - 1e-9 <= metrics['r2_median'] <= r2_ps.max() + 1e-9
+        # Amostra de baixo ruído deve ajustar melhor que a de alto ruído.
+        assert r2_ps[0] > r2_ps[-1]
+
 
 # ---------------------------------------------------------------------------
 # Testes: robustez

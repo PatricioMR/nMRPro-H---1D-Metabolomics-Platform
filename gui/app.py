@@ -576,7 +576,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.btn_peak_list.pack(side=tk.LEFT, padx=4)
 
         self.btn_deconv_shortcut = ttk.Button(
-            _btn_bar, text="🔀 Deconvolution Tool",
+            _btn_bar, text="🔀 MCR Deconvolution",
             command=self.open_deconv_shortcut, state="disabled")
         self.btn_deconv_shortcut.pack(side=tk.LEFT, padx=4)
 
@@ -1602,10 +1602,14 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                      setattr(self, '_peak_list_win', None)))
 
     def open_deconv_shortcut(self):
-        """Open Deconvolution window.
+        """Open the unified MCR Deconvolution window (singleton).
 
-        After annotation: opens MCRDeconvWindow (MCR results).
-        Before annotation: opens legacy DeconvWindow (peak fitting).
+        Gathers every peak/region that already has 'mcr_annotation' data
+        (full-spectrum MCR regions take priority, then annotation-stage
+        peaks) and opens MCRWindow. The generic Lorentzian/Gaussian/Onion
+        Deconvolution Tool no longer lives behind this button — it is
+        still reachable from the Peak List's right-click
+        "View in Deconvolution Tool".
         """
         ann_stage  = self.stages.get('annotation')
         pk_stage   = self.stages.get('peak_detection')
@@ -1615,46 +1619,42 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         _fs_regions = getattr(fs_stage, '_mcr_regions', [])
         # Priority 2: annotation-stage MCR peaks
         _peaks   = pk_stage.peaks if pk_stage else []
-        _ann_mcr = [p for p in _peaks
-                    if p.get('mcr_annotation', {}).get('K', 1) >= 2]
+        _ann_mcr = [p for p in _peaks if p.get('mcr_annotation')]
 
         if _fs_regions:
             _source_peaks = _fs_regions
             _source_stage = fs_stage
         elif _ann_mcr:
-            _source_peaks = _peaks
+            _source_peaks = _ann_mcr
             _source_stage = ann_stage
         else:
             _source_peaks = None
             _source_stage = None
 
-        if _source_peaks:
-            # Singleton MCR window
-            if self._deconv_win is not None:
-                try:
-                    w = self._deconv_win.win
-                    if w.winfo_exists():
-                        w.deiconify(); w.lift(); w.focus_force()
-                        return
-                except Exception:
-                    pass
-            from gui.widgets.mcr_deconv_window import MCRDeconvWindow
-            self._deconv_win = MCRDeconvWindow(
-                self.root, _source_peaks, self, ann_stage=_source_stage)
-        else:
-            # Per-peak resolve deconvolution: reopen the aggregate window only if
-            # the user has already resolved at least one peak (controller exists).
-            ctrl = getattr(pk_stage, '_deconv_controller', None) if pk_stage else None
-            if ctrl is not None and getattr(ctrl, 'peaks', None):
-                from gui.notation.deconvolution import DeconvWindow
-                DeconvWindow(self.root, ctrl, pk_stage)
-            else:
-                from tkinter import messagebox
-                messagebox.showinfo(
-                    'Deconvolution',
-                    'No deconvolution available.\n\n'
-                    'Resolve a peak first from the Peak List '
-                    '(right-click a peak → Resolve).')
+        if not _source_peaks:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                'MCR Deconvolution',
+                'No MCR deconvolution available yet.\n\n'
+                'Run Annotation or Full-Spectrum MCR first, or use the '
+                'Peak List → right-click → "View in Deconvolution Tool" '
+                'for manual peak-fitting.')
+            return
+
+        # Singleton MCR window
+        if self._deconv_win is not None:
+            try:
+                w = self._deconv_win.win
+                if w.winfo_exists():
+                    w.deiconify(); w.lift(); w.focus_force()
+                    return
+            except Exception:
+                pass
+        from gui.widgets.mcr_window import MCRWindow
+        items = [{'kind': 'region', 'met': None, 'mp': None, 'peak': p}
+                 for p in _source_peaks]
+        self._deconv_win = MCRWindow(
+            self.root, items, self, ann_stage=_source_stage)
 
     def open_annot_shortcut(self):
         """Open Annotation Results — singleton.
