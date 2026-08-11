@@ -675,44 +675,17 @@ class MCRWindow:
                      color='#333333', lw=1.1, alpha=0.75,
                      label='Experimental (mean)', zorder=2)
 
-        db_profiles = mcr.get('db_profiles', [])
-        drawn_db: set = set()
-        for k, sk, lbl, color, alpha, lw_c, ci in components:
-            if ci in drawn_db or ci >= len(db_profiles):
-                continue
-            prof = db_profiles[ci]
-            if len(prof) != len(ppm_reg):
-                continue
-            sk_sorted  = np.clip(_sort(sk), 0, None)
-            db_sorted  = np.clip(_sort(np.asarray(prof)), 0, None)
-            db_alpha   = 0.85 if (focused_k is None or focused_k == k) else 0.22
-            comp_peak  = float(sk_sorted.max()) if sk_sorted.max() > 0 else e_max
-            db_peak    = float(db_sorted.max()) if db_sorted.max() > 0 else 1.0
-            ax1.plot(ppm_sorted, db_sorted * comp_peak / db_peak,
-                     color=color, lw=1.5, ls=':', alpha=db_alpha, zorder=3,
-                     label=f'DB: {lbl.split(":")[1].strip().split()[0]}')
-            drawn_db.add(ci)
-
-        if self._preview_candidate is not None:
-            prev_ci, prev_peak = self._preview_candidate
-            if prev_peak is peak and prev_ci < len(db_profiles):
-                prev_prof = db_profiles[prev_ci]
-                if len(prev_prof) == len(ppm_reg):
-                    prev_sorted = np.clip(_sort(np.asarray(prev_prof)), 0, None)
-                    prev_pk     = float(prev_sorted.max()) if prev_sorted.max() > 0 else 1.0
-                    pname = (cands[prev_ci].get('name', '?')
-                             if prev_ci < len(cands) else '?')
-                    ax1.plot(ppm_sorted, prev_sorted * e_max / prev_pk,
-                             color='#555555', lw=1.4, ls='--', alpha=0.80,
-                             label=f'Preview: {pname}', zorder=4)
-
+        # The deconvolved component itself IS the answer to "which analyte is
+        # this, what's its shape" — S[:,k]*C_mean[k], the actual MCR-ALS
+        # output spectrum for this analyte. No separate DB/apex markers —
+        # just draw this curve clearly (filled + solid line).
         for k, sk, lbl, color, alpha, lw_c, ci in components:
             sk_sorted = np.clip(_sort(sk), 0, None)
             ax1.fill_between(ppm_sorted, sk_sorted,
-                             alpha=max(0.04, alpha * 0.22),
+                             alpha=max(0.10, alpha * 0.35),
                              color=color, zorder=2)
             ax1.plot(ppm_sorted, sk_sorted,
-                     color=color, lw=lw_c, alpha=alpha,
+                     color=color, lw=max(lw_c, 2.2), alpha=alpha,
                      label=lbl, zorder=4)
 
         fit_in_reg = np.clip(
@@ -795,16 +768,26 @@ class MCRWindow:
         sep.pack(fill=tk.X, pady=1)
         self._comp_rows.append(sep)
 
-        # Rows are shown ranked by combined confidence (descending), not by
-        # raw MCR component index — rank 0 is what the algorithm would pick
-        # first; the rest is the reliability-ordered list of alternatives.
-        # C{k+1} labels still reference the true MCR/S,C column index k, since
-        # Accept/Reject/_promote_candidate key off it (confirmed_assignments,
-        # assigns[k]) — only the display ORDER changes, not the identity.
+        # Rows are shown ranked by (1) ΔJ quality tier — good J / singlet
+        # first, then ok, then bad — and (2) combined confidence descending
+        # within each tier. A candidate with a valid, in-spec J is preferred
+        # over one with a slightly higher Pearson r but a bad/unmeasurable J,
+        # mirroring Annotation's Rule 0 gate. Rank 0 is what the algorithm
+        # would pick first; the rest is the reliability-ordered list of
+        # alternatives. C{k+1} labels still reference the true MCR/S,C column
+        # index k, since Accept/Reject/_promote_candidate key off it
+        # (confirmed_assignments, assigns[k]) — only display ORDER changes.
         def _conf_key(kk):
             a = assigns[kk]
-            v = a[6] if len(a) > 6 else None
-            return v if v is not None else -1.0
+            combined = a[6] if len(a) > 6 else None
+            j_sc     = a[3] if len(a) > 3 else None
+            meas_j   = a[4] if len(a) > 4 else None
+            exp_j    = a[5] if len(a) > 5 else None
+            ci_      = a[0]
+            cand_    = cands[ci_] if ci_ < len(cands) else {}
+            mult_    = (cand_.get('type') or cand_.get('multiplicity') or 's').lower()
+            tier, _, _ = self._j_grade(j_sc, meas_j, exp_j, mult_)
+            return (-tier, combined if combined is not None else -1.0)
         order = sorted(range(len(assigns)), key=_conf_key, reverse=True)
 
         for rank_pos, k in enumerate(order):
@@ -854,18 +837,10 @@ class MCRWindow:
             tk.Label(row, text=shift_txt, font=('Arial', 9),
                      fg=shift_fg, bg=row_bg, width=6,
                      anchor='w').pack(side=tk.LEFT)
-            if j_score is None:
-                j_txt, j_fg = '—', '#888888'
-            else:
-                mult = (cand.get('type') or cand.get('multiplicity') or 's').lower()
-                if mult == 's':
-                    j_txt, j_fg = 's', '#888888'
-                else:
-                    j_txt = f'{j_score:.2f}'
-                    j_fg  = ('#1a7a1a' if j_score >= 0.75 else
-                              '#856404' if j_score >= 0.45 else '#9a0000')
-                    if meas_j and exp_j:
-                        j_txt = f'{j_score:.2f}\n({meas_j:.1f}/{exp_j:.1f}Hz)'
+            mult = (cand.get('type') or cand.get('multiplicity') or 's').lower()
+            _tier, j_txt, j_fg = self._j_grade(j_score, meas_j, exp_j, mult)
+            if meas_j is not None and exp_j is not None and mult != 's':
+                j_txt = f'{j_txt}\n({meas_j:.1f}/{exp_j:.1f}Hz)'
             tk.Label(row, text=j_txt, font=('Arial', 8),
                      fg=j_fg, bg=row_bg, width=5, anchor='w',
                      justify='left').pack(side=tk.LEFT)
@@ -921,6 +896,19 @@ class MCRWindow:
         assigned_cis = {a[0] for a in assigns}
         other_cands  = [(ci, cands[ci]) for ci in range(len(cands))
                         if ci not in assigned_cis]
+        # Same J-quality-first, then combined-score ordering as the assigned
+        # components above — a candidate with valid in-spec J surfaces before
+        # one with better raw correlation but bad/unmeasurable J.
+        cand_scores = mcr.get('cand_scores', [])
+        def _other_key(pair):
+            ci_, cand_ = pair
+            sc = cand_scores[ci_] if ci_ < len(cand_scores) else {}
+            mult_ = (cand_.get('type') or cand_.get('multiplicity') or 's').lower()
+            tier, _, _ = self._j_grade(sc.get('j_score'), sc.get('meas_j'),
+                                       sc.get('exp_j'), mult_)
+            combined_ = sc.get('combined')
+            return (-tier, combined_ if combined_ is not None else -1.0)
+        other_cands.sort(key=_other_key, reverse=True)
         if other_cands:
             sep2 = ttk.Separator(parent, orient=tk.HORIZONTAL)
             sep2.pack(fill=tk.X, pady=(6, 2))
@@ -972,14 +960,9 @@ class MCRWindow:
         shift_fg  = '#c62828' if abs(shift_ppm) > 0.015 else '#444444'
         tk.Label(row, text=shift_txt, font=('Arial', 9),
                  fg=shift_fg, bg=row_bg, width=6, anchor='w').pack(side=tk.LEFT)
-        if j_score is None or mult == 's':
-            j_txt, j_fg = ('s' if mult == 's' else '—'), '#888888'
-        else:
-            j_fg  = ('#1a7a1a' if j_score >= 0.75 else
-                     '#856404' if j_score >= 0.45 else '#9a0000')
-            j_txt = f'{j_score:.2f}'
-            if meas_j and exp_j:
-                j_txt = f'{j_score:.2f}\n({meas_j:.1f}/{exp_j:.1f}Hz)'
+        _tier, j_txt, j_fg = self._j_grade(j_score, meas_j, exp_j, mult)
+        if meas_j is not None and exp_j is not None and mult != 's':
+            j_txt = f'{j_txt}\n({meas_j:.1f}/{exp_j:.1f}Hz)'
         tk.Label(row, text=j_txt, font=('Arial', 8),
                  fg=j_fg, bg=row_bg, width=5, anchor='w',
                  justify='left').pack(side=tk.LEFT)
@@ -1048,6 +1031,50 @@ class MCRWindow:
         self._draw_plot(item)
         self._draw_comp_table(item)
         self._populate_tree()
+
+    def _dj_thresholds(self):
+        """(gold_hz, bad_hz) — same ΔJ gate Annotation uses (self._params in
+        annotation_results_window.py: dj_gold_hz/dj_bad_hz), so 'good J' (green)
+        means the same thing here as in Annotation. Reads the live per-project
+        override (ann_stage._annotation_params) when the user customised it,
+        else the same defaults annotation_results_window.py falls back to."""
+        gold, bad = 0.20, 0.50
+        ann = self.ann_stage
+        params = getattr(ann, '_annotation_params', None)
+        if not params:
+            params = getattr(getattr(ann, 'annotation_stage', None),
+                             '_annotation_params', None)
+        if params:
+            gold = float(params.get('dj_gold_hz', gold))
+            bad  = float(params.get('dj_bad_hz', bad))
+        return gold, bad
+
+    def _j_grade(self, j_score, meas_j, exp_j, mult):
+        """Tier (0=good/neutral, 1=ok, 2=bad) + display text/color for a J
+        measurement. Uses the SAME ΔJ-in-Hz gate as Annotation whenever a real
+        Hz deviation is available (meas_j/exp_j), so 'green' means the same
+        thing in both windows — not MCR's own independent 0-1 score scale.
+        Falls back to the MCR gaussian j_score only when Hz values are
+        unavailable. Tier 0 is used both for 'good J' and for singlets
+        (no J to validate) — neither should be penalised vs. a bad-J
+        multiplet when ranking candidates."""
+        if mult == 's':
+            return 0, 's', '#888888'
+        if meas_j is not None and exp_j is not None:
+            gold, bad = self._dj_thresholds()
+            dj = abs(float(meas_j) - float(exp_j))
+            if dj < gold:
+                return 0, f'{dj:.2f}Hz', '#1a7a1a'
+            if dj < bad:
+                return 1, f'{dj:.2f}Hz', '#856404'
+            return 2, f'{dj:.2f}Hz', '#9a0000'
+        if j_score is None:
+            return 2, '—', '#888888'
+        if j_score >= 0.75:
+            return 0, f'{j_score:.2f}', '#1a7a1a'
+        if j_score >= 0.45:
+            return 1, f'{j_score:.2f}', '#856404'
+        return 2, f'{j_score:.2f}', '#9a0000'
 
     def _bind_wheel(self, widget):
         _wf = getattr(self, '_wheel_fn', None)
@@ -1136,11 +1163,45 @@ class MCRWindow:
                     pass
 
     def _set_component_region(self, item, k, cand, accepted):
-        peak = item['peak']
-        mcr  = peak['mcr_annotation']
+        """Accept/Reject one MCR component of an overlap region.
+
+        Each component is judged independently — an overlap region can
+        genuinely contain 2+ real analytes, so accepting one must NOT mark
+        the others bad (no forced single-winner exclusivity, unlike the
+        'undef' primary/promote flow). Sets annotation_quality so the
+        candidate actually becomes eligible for Quantification (previously
+        Accept only recorded local bookkeeping and never touched
+        annotation_quality — a real gap).
+        """
+        peak      = item['peak']
+        mcr       = peak['mcr_annotation']
+        peak_rank = peak.get('rank')
+        assigns   = mcr.get('assignments', [])
+        corr      = assigns[k][1] if k < len(assigns) else 0.0
+        quality   = 'good' if accepted else 'bad'
+
+        y_met, y_mp = self._find_candidate_mp(cand, peak_rank)
+        if y_mp is None and accepted:
+            y_met, y_mp = self._add_candidate_to_results(cand, peak)
+        if y_mp is not None:
+            y_mp['annotation_quality'] = quality
+            self._sync_ann_quality(y_mp, quality)
+            try:
+                ann = self.ann_stage
+                if ann is not None and not hasattr(ann, '_quality_marks'):
+                    ann = getattr(self.ann_stage, 'annotation_stage', None)
+                if ann is not None and y_met is not None:
+                    if not hasattr(ann, '_quality_marks') or ann._quality_marks is None:
+                        ann._quality_marks = {}
+                    ann._quality_marks[(y_met['id'], peak_rank)] = quality
+                pm = getattr(self.app, 'project_manager', None)
+                if pm is not None:
+                    pm.mark_dirty()
+            except Exception:
+                pass
+
         if accepted:
-            self._push_to_annotation(peak, k, cand, mcr['assignments'][k][1]
-                                      if k < len(mcr.get('assignments', [])) else 0.0)
+            self._push_to_annotation(peak, k, cand, corr)
             if int(mcr.get('K', 1)) <= 1:
                 peak['assigned_metabolite'] = cand.get('name', f'Component {k+1}')
             self._sync_peak_list_from_mcr(peak)
@@ -1307,15 +1368,19 @@ class MCRWindow:
         # Snapshot ranks BEFORE the resort/renumber below — only for peaks that
         # already existed (the new sub_peaks have no prior rank to remap from).
         old_rank_of = {id(p): p.get('rank') for p in kept_existing}
+        sub_peak_ids = {id(sp) for sp in sub_peaks}
 
         kept = kept_existing + sub_peaks
         kept.sort(key=lambda p: abs(float(p.get('ppm', 0.0))))
         rank_map = {}
+        new_rank_by_k = {}   # mcr_component_idx -> this sub-peak's final rank
         for i, p in enumerate(kept, 1):
             old_r = old_rank_of.get(id(p))
             if old_r is not None and old_r != i:
                 rank_map[old_r] = i
             p['rank'] = i
+            if id(p) in sub_peak_ids:
+                new_rank_by_k[p['mcr_component_idx']] = i
 
         peak_list.clear()
         peak_list.extend(kept)
@@ -1324,6 +1389,67 @@ class MCRWindow:
 
         if rank_map:
             self._remap_peak_ranks(rank_map)
+        if new_rank_by_k:
+            # 2+ accepted analytes at this region all shared parent_rank before
+            # the split — point each one's OWN matched_peak/result entry at its
+            # dedicated sub-peak rank, otherwise Quantification's rank-based
+            # lookup can't tell which analyte a hit belongs to (it would just
+            # grab whichever sub-peak happens to land on the old rank number).
+            self._remap_accepted_component_ranks(parent_rank, cands, assigns, new_rank_by_k)
+
+    def _remap_accepted_component_ranks(self, parent_rank, cands, assigns, new_rank_by_k):
+        """Point each accepted candidate's own matched_peak/result entry at
+        its dedicated sub-peak rank instead of the old shared parent_rank.
+
+        _sync_peak_list_from_mcr rebuilds ALL accepted sub-peaks from scratch
+        on every call (e.g. accepting a 2nd analyte after a 1st one is already
+        linked), so an already-remapped candidate's peak_rank may no longer
+        equal parent_rank by the time this runs again. '_mcr_parent_rank' is
+        a persistent marker (set here, never reset) so it can still be found
+        by identity across repeated re-syncs, regardless of intermediate rank
+        churn from other components joining/leaving the same overlap.
+        """
+        mets = self._metabolites_list()
+        ann = self.ann_stage
+        if ann is not None and not hasattr(ann, '_last_results_args'):
+            ann = getattr(self.ann_stage, 'annotation_stage', None)
+        args = getattr(ann, '_last_results_args', None) if ann is not None else None
+
+        for k, new_rank in new_rank_by_k.items():
+            a = assigns[k] if k < len(assigns) else None
+            if a is None:
+                continue
+            ci = a[0]
+            cand = cands[ci] if ci < len(cands) else None
+            if cand is None:
+                continue
+            hmdb_id = cand.get('hmdb_id') or cand.get('bmrb_id', '')
+            cname   = (cand.get('name') or '').strip().lower()
+
+            def _matches(_id, _name):
+                return (hmdb_id and _id == hmdb_id) or (cname and cname == _name)
+
+            try:
+                for met in mets:
+                    if not _matches(met.get('id', ''),
+                                     met.get('name', '').strip().lower()):
+                        continue
+                    for mp in met.get('matched_peaks', []):
+                        if (mp.get('peak_rank') == parent_rank
+                                or mp.get('_mcr_parent_rank') == parent_rank):
+                            mp['peak_rank'] = new_rank
+                            mp['_mcr_parent_rank'] = parent_rank
+                if args:
+                    for r in args.get('results', []):
+                        if not _matches(r.get('hmdb_id') or r.get('bmrb_id', ''),
+                                        str(r.get('name') or r.get('metabolite') or '').strip().lower()):
+                            continue
+                        if (r.get('peak_rank') == parent_rank
+                                or r.get('_mcr_parent_rank') == parent_rank):
+                            r['peak_rank'] = new_rank
+                            r['_mcr_parent_rank'] = parent_rank
+            except Exception as e:
+                print(f'   _remap_accepted_component_ranks error: {e}')
 
     def _remap_peak_ranks(self, rank_map):
         """Fix up every structure keyed by peak_rank after the renumbering
@@ -1366,13 +1492,31 @@ class MCRWindow:
         except Exception as e:
             print(f'   _remap_peak_ranks (quant overrides) error: {e}')
 
-    def _find_candidate_mp(self, cand, peak_rank):
+    def _metabolites_list(self):
+        """Metabolite list to search for existing matched_peak entries.
+
+        Prefers the live AnnotationResultsWindow.metabolites when the window
+        is open (kept in sync with the UI); otherwise falls back to
+        ann_stage._metabolites, which is the SAME list object once the
+        results window has been opened at least once this session
+        (gui/stages/_annotation_search.py: `self._metabolites = _win.metabolites`).
+        This is what lets 'region' items (opened from the main MCR
+        Deconvolution button / Full-Spectrum MCR, where ann_results is None)
+        still resolve/update the real matched_peak entries.
+        """
         arw = self.ann_results
-        if arw is None:
-            return None, None
+        if arw is not None and getattr(arw, 'metabolites', None) is not None:
+            return arw.metabolites
+        ann = self.ann_stage
+        mets = getattr(ann, '_metabolites', None)
+        if mets is None:
+            mets = getattr(getattr(ann, 'annotation_stage', None), '_metabolites', None)
+        return mets or []
+
+    def _find_candidate_mp(self, cand, peak_rank):
         hmdb_id   = cand.get('hmdb_id', cand.get('bmrb_id', ''))
         cand_name = cand.get('name', '').strip().lower()
-        for met in getattr(arw, 'metabolites', []):
+        for met in self._metabolites_list():
             met_id   = met.get('id', '')
             met_name = met.get('name', '').strip().lower()
             id_match   = hmdb_id and met_id == hmdb_id
@@ -1385,9 +1529,7 @@ class MCRWindow:
         return None, None
 
     def _add_candidate_to_results(self, cand, peak):
-        arw = self.ann_results
-        if arw is None:
-            return None, None
+        mets = self._metabolites_list()
 
         hmdb_id   = cand.get('hmdb_id', cand.get('bmrb_id', ''))
         cand_name = cand.get('name', '').strip().lower()
@@ -1396,7 +1538,7 @@ class MCRWindow:
         dp_ppm    = float(cand.get('ppm_center', peak_ppm))
 
         target_met = None
-        for met in getattr(arw, 'metabolites', []):
+        for met in mets:
             mid  = met.get('id', '')
             mnam = met.get('name', '').strip().lower()
             if (hmdb_id and mid == hmdb_id) or (cand_name and cand_name == mnam):
@@ -1440,7 +1582,7 @@ class MCRWindow:
                                 for r in rows]
             except Exception:
                 pass
-            arw.metabolites.append(target_met)
+            mets.append(target_met)
 
         existing_mp = next(
             (m for m in target_met['matched_peaks']

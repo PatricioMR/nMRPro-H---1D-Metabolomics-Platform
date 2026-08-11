@@ -162,6 +162,7 @@ class TestSyncPeakListFromMCR:
             stages={'quantification': SimpleNamespace(_quant_peak_overrides={'HMDBPOST': 3})},
         )
         win.ann_stage = ann_stage
+        win.ann_results = None
 
         win._sync_peak_list_from_mcr(parent)
 
@@ -183,3 +184,79 @@ class TestSyncPeakListFromMCR:
         for sp in subpeaks:
             assert 'area_per_sample' in sp and len(sp['area_per_sample']) == 3
             assert 'start_idx' in sp and 'end_idx' in sp
+
+    def test_accepting_two_analytes_marks_both_good_with_distinct_ranks(self):
+        """Two real analytes overlapping at the same peak_rank: accepting
+        BOTH must mark both 'good' (independently — no forced single winner)
+        and give each its OWN peak_rank pointing at its dedicated sub-peak,
+        so Quantification's rank-based lookup doesn't collide the two hits."""
+        ppm_reg = np.linspace(1.8, 2.2, 60)
+        s0 = np.exp(-0.5 * ((ppm_reg - 1.95) / 0.02) ** 2)
+        s1 = np.exp(-0.5 * ((ppm_reg - 2.05) / 0.02) ** 2)
+        S = np.column_stack([s0, s1])
+        C = np.array([[1.0, 0.8], [2.0, 0.4], [0.5, 0.6]])
+
+        mp_a = {'peak_rank': 2, 'db_ppm': 1.95, 'annotation_quality': None}
+        mp_b = {'peak_rank': 2, 'db_ppm': 2.05, 'annotation_quality': None}
+        met_a = {'id': 'HMDB_A', 'name': 'MetA', 'matched_peaks': [mp_a]}
+        met_b = {'id': 'HMDB_B', 'name': 'MetB', 'matched_peaks': [mp_b]}
+
+        parent = {
+            'rank': 2, 'ppm': 2.0,
+            'mcr_annotation': {
+                'K': 2, 'confirmed_assignments': {},
+                'assignments': [
+                    (0, 0.90, 0.0, None, None, None, 0.90),
+                    (1, 0.85, 0.0, None, None, None, 0.85),
+                ],
+                'candidates': [{'name': 'MetA', 'hmdb_id': 'HMDB_A'},
+                              {'name': 'MetB', 'hmdb_id': 'HMDB_B'}],
+                'S': S, 'C': C, 'ppm_region': ppm_reg,
+            },
+        }
+        peaks = [parent]
+        peak_stage = SimpleNamespace(peaks=peaks, processor=SimpleNamespace())
+        ann_stage = SimpleNamespace(
+            peak_stage=peak_stage,
+            _metabolites=[met_a, met_b],
+            _quality_marks={}, _anchor_lines={}, _subline_quality_marks={},
+            _last_results_args={'results': [
+                {'peak_rank': 2, 'hmdb_id': 'HMDB_A', 'name': 'MetA'},
+                {'peak_rank': 2, 'hmdb_id': 'HMDB_B', 'name': 'MetB'},
+            ]},
+            annotations={},
+        )
+
+        win = _bare_window()
+        win.app = SimpleNamespace(ppm=np.linspace(0.0, 5.0, 5001), stages={})
+        win.ann_stage = ann_stage
+        win.ann_results = None
+
+        # Drive the same logic _set_component uses (confirmed_assignments +
+        # dispatch to _set_component_region), without the Tkinter UI refresh
+        # calls _set_component also makes (_populate_tree/_draw_plot/...).
+        item = {'kind': 'region', 'met': None, 'mp': None, 'peak': parent}
+        conf = parent['mcr_annotation']['confirmed_assignments']
+        for k in (0, 1):
+            conf[k] = {'accepted': True}
+            cand = parent['mcr_annotation']['candidates'][k]
+            win._set_component_region(item, k, cand, accepted=True)
+
+        # Both analytes marked good — no forced single-winner exclusivity.
+        assert mp_a['annotation_quality'] == 'good'
+        assert mp_b['annotation_quality'] == 'good'
+
+        # Each now has its OWN rank (no longer both sharing the old rank 2),
+        # and it must match a real, distinct sub-peak in the peak list.
+        subpeaks = {p['mcr_component_idx']: p for p in peak_stage.peaks
+                   if p.get('is_sub_peak')}
+        assert len(subpeaks) == 2
+        assert mp_a['peak_rank'] == subpeaks[0]['rank']
+        assert mp_b['peak_rank'] == subpeaks[1]['rank']
+        assert mp_a['peak_rank'] != mp_b['peak_rank']
+
+        results = ann_stage._last_results_args['results']
+        r_a = next(r for r in results if r['hmdb_id'] == 'HMDB_A')
+        r_b = next(r for r in results if r['hmdb_id'] == 'HMDB_B')
+        assert r_a['peak_rank'] == mp_a['peak_rank']
+        assert r_b['peak_rank'] == mp_b['peak_rank']
