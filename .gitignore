@@ -47,3 +47,4 @@ hmdb_api_download/chebi/*.gz
 /pytest.ini
 /run_tests.bat
 /ParseHMDBNames.py
+.tmp.driveupload/
