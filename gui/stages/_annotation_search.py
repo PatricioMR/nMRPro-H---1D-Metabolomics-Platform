@@ -51,10 +51,10 @@ class _AnnotationSearchMixin:
     def _rescue_unassigned_with_mcr(self):
         """Rescue Good peaks that remained unassigned after annotation."""
         if not self.peaks:
-            messagebox.showinfo('Info', 'No peaks detected.')
+            messagebox.showinfo('Info', 'No signals detected.')
             return
         if not self._last_results_args:
-            messagebox.showinfo('Info', 'Run annotation first, then rescue unassigned peaks.')
+            messagebox.showinfo('Info', 'Run annotation first, then rescue unassigned signals.')
             return
 
         db_path = (self._last_results_args.get('db_path')
@@ -84,7 +84,7 @@ class _AnnotationSearchMixin:
             [p for p in self.peaks if p.get('status', 'Undefined') == 'Good'])
         unassigned = [p for p in good_peaks if int(p.get('rank', -1)) not in already_matched]
         if not unassigned:
-            messagebox.showinfo('Rescue', 'No unassigned Good peaks to rescue.')
+            messagebox.showinfo('Rescue', 'No unassigned Good signals to rescue.')
             return
 
         # Mirror the main search alignment: shift DB entries by the in-app
@@ -106,7 +106,7 @@ class _AnnotationSearchMixin:
         aligned_unassigned = [p for p in aligned_good if int(p.get('rank', -1)) in
                               {int(u.get('rank', -1)) for u in unassigned}]
 
-        self._status(f'Rescue pass: scanning {len(aligned_unassigned)} unassigned peaks…')
+        self._status(f'Rescue pass: scanning {len(aligned_unassigned)} unassigned signals…')
         t0 = time.monotonic()
         conn = None
         rescued = []
@@ -489,7 +489,7 @@ class _AnnotationSearchMixin:
     def search_internal_db(self):
         if not self.peaks:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
 
         has_prev = (bool(self._quality_marks)
@@ -621,9 +621,9 @@ class _AnnotationSearchMixin:
 
         if not all_peaks:
             messagebox.showinfo(
-                'No Peaks',
-                'No detected peaks found.\n\n'
-                'Run Peak Detection first.')
+                'No Signals',
+                'No detected signals found.\n\n'
+                'Run Signal Detection first.')
             return
 
         if incremental and self._last_results_args:
@@ -642,7 +642,7 @@ class _AnnotationSearchMixin:
             if not peaks_to_search:
                 messagebox.showinfo(
                     'Nothing to update',
-                    'All peaks already have confirmed annotations.\n'
+                    'All signals already have confirmed annotations.\n'
                     'Use "Reset & start over" to redo everything.')
                 return
             carry_results = [r for r in prev_results
@@ -1602,7 +1602,7 @@ class _AnnotationSearchMixin:
 
         if not self.peaks and not is_lipidomics:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
 
         from app_paths import asset_path
@@ -1631,9 +1631,9 @@ class _AnnotationSearchMixin:
         good_peaks = self._exclude_water_peaks(
             [p for p in self.peaks if p.get('rank') is not None])
         if (not is_lipidomics) and (not good_peaks):
-            messagebox.showinfo('No Peaks',
-                'No detected peaks found.\n\n'
-                'Run Peak Detection first.')
+            messagebox.showinfo('No Signals',
+                'No detected signals found.\n\n'
+                'Run Signal Detection first.')
             return
 
         self.hmdb_status.config(text='Internal DB: searching…', foreground='blue')
@@ -1729,7 +1729,7 @@ class _AnnotationSearchMixin:
                             foreground='green')
                     else:
                         self.hmdb_status.config(
-                            text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} peaks)',
+                            text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} signals)',
                             foreground='green')
                     self._open_results_window(all_results, pw, len(good_peaks), None, elapsed)
                     if self._last_results_args is not None:
@@ -1751,7 +1751,7 @@ class _AnnotationSearchMixin:
     def search_hmdb_online(self):
         if not self.peaks:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
         messagebox.showinfo('BMRB Online',
             'Online search not implemented in this version.\n'
@@ -1771,7 +1771,7 @@ class _AnnotationSearchMixin:
             with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
                 w = csv.writer(f)
                 w.writerow(['ID', 'Name', 'Match Type', 'DB PPM',
-                            'Peak PPM', 'Peak Rank', 'PPM Score',
+                            'Signal PPM', 'Signal Rank', 'PPM Score',
                             'Multiplet Score', 'Composite Score',
                             'Multiplet Detail'])
                 for r in results:

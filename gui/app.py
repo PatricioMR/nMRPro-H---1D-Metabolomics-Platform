@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from processing.baseline_model import BaselineModel, BaselineCache
 from data.loader import load_all_samples
 from data.bruker_loader import load_bruker_dataset
 from gui._bruker_import_dialog import _BrukerImportDialog
@@ -79,6 +80,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.all_intensities = None
         self.ppm = None
         self._ppm_calibration = None
+        # The project's single baseline decision. all_intensities stays raw —
+        # every step reads corrected_intensities() instead, so detection,
+        # quantification, statistics and MCR can never disagree about whether
+        # (or how) the baseline was removed.
+        self.baseline_model = BaselineModel()
+        self._bl_cache = BaselineCache()
         self.baseline_corrected  = False
         self.alignment_corrected = False
         self.eligible_overrides = {}   # {f'{met_id}__{peak_rank}': bool}
@@ -316,7 +323,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                                   command=self.toggle_legend)
         view_menu.add_separator()
         view_menu.add_command(label="Axes Settings...",     command=self.open_axes_settings)
-        view_menu.add_command(label="Show/Hide Peak Areas", command=self.toggle_peak_areas)
+        view_menu.add_command(label="Show/Hide Signal Areas", command=self.toggle_peak_areas)
         view_menu.add_separator()
 
         plot_settings_menu = _menu(view_menu)
@@ -372,7 +379,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.btn_visualization.pack(side=tk.LEFT, padx=2)
 
         self.btn_peak_detection = ttk.Button(
-            stage_frame, text="2. 🔍 Peak Detection",
+            stage_frame, text="2. 🔍 Signal Detection",
             command=lambda: self.switch_stage('peak_detection'),
             style='Stage.TButton'
         )
@@ -571,7 +578,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         _btn_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=4)
 
         self.btn_peak_list = ttk.Button(
-            _btn_bar, text="📋 Peak List",
+            _btn_bar, text="📋 Signal List",
             command=self.open_peak_list, state="disabled")
         self.btn_peak_list.pack(side=tk.LEFT, padx=4)
 
@@ -877,6 +884,24 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.update_plot()
 
     # ---------- Plot Update ----------
+    # ── Baseline ──────────────────────────────────────────────────────────────
+
+    def corrected_intensities(self):
+        """Intensities with the project's baseline model applied.
+
+        This is what every processing step should read.  ``all_intensities``
+        stays as loaded, so the correction is recomputed rather than baked in
+        and can be changed or undone at any point.  Caching and the "is any
+        work needed" decision live in processing/baseline_model.py.
+        """
+        return self._bl_cache.corrected(
+            self.ppm, self.all_intensities, getattr(self, 'baseline_model', None),
+            already_corrected=getattr(self, 'baseline_corrected', False))
+
+    def invalidate_baseline_cache(self):
+        """Drop the cached correction — call after changing the model or data."""
+        self._bl_cache.invalidate()
+
     def update_plot(self):
         """Update plot based on current stage and settings."""
         # Dados 2D têm precedência quando estamos na visualização
@@ -1637,8 +1662,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 'MCR Deconvolution',
                 'No MCR deconvolution available yet.\n\n'
                 'Run Annotation or Full-Spectrum MCR first, or use the '
-                'Peak List → right-click → "View in Deconvolution Tool" '
-                'for manual peak-fitting.')
+                'Signal List → right-click → "View in Deconvolution Tool" '
+                'for manual signal-fitting.')
             return
 
         # Singleton MCR window

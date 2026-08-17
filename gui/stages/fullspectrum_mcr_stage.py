@@ -360,9 +360,9 @@ class FullSpectrumMCRStage(BaseStage):
                   text='Region gap: DB signals within this distance are grouped.\n'
                        'Max width: hard upper limit for any region (safety net).\n'
                        'Valley threshold: split two DB signals if the spectrum between\n'
-                       '  them drops below this fraction of the local peak (0=off, 1=always).\n'
+                       '  them drops below this fraction of the local signal (0=off, 1=always).\n'
                        'PPM shift tol: each DB profile is shifted ±tol before MCR (0=off).\n'
-                       'Region mode: peak_bounded (detected peaks), db_driven (DB only),\n'
+                       'Region mode: peak_bounded (detected signals), db_driven (DB only),\n'
                        '  hybrid_adaptive (recommended).',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W, pady=2)
 
@@ -474,7 +474,7 @@ class FullSpectrumMCRStage(BaseStage):
             self.btn_run.config(state='normal')
         # Show data info
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
         if ppm_arr is not None and all_int is not None:
             n_s = all_int.shape[1] if all_int.ndim == 2 else 1
             self._set_status(
@@ -497,10 +497,22 @@ class FullSpectrumMCRStage(BaseStage):
         import os
         self._blank_label.config(text=os.path.basename(path), foreground='black')
 
+    def _corrected_intensities(self):
+        """Spectra with the project's baseline model applied.
+
+        MCR-ALS is a bilinear decomposition: an uncorrected baseline drift is a
+        strong, smooth, sample-varying feature and the solver will happily
+        resolve it as if it were a chemical component. Reading the corrected
+        matrix keeps the components chemical.
+        """
+        if hasattr(self.app, 'corrected_intensities'):
+            return self.app.corrected_intensities()
+        return getattr(self.app, 'all_intensities', None)
+
     def _get_blank_spectrum(self, ppm_arr):
         """Return blank intensity vector (n_pts,) on ppm_arr grid, or None."""
         samples_info = getattr(self.app, 'samples_info', []) or []
-        all_int      = getattr(self.app, 'all_intensities', None)
+        all_int      = self._corrected_intensities()
 
         # Option 1: use BLK samples already loaded
         if self._blank_use_loaded.get() and all_int is not None:
@@ -595,7 +607,7 @@ class FullSpectrumMCRStage(BaseStage):
             messagebox.showinfo('Info', 'Select a database first.')
             return
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
         if ppm_arr is None or all_int is None:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
@@ -683,12 +695,12 @@ class FullSpectrumMCRStage(BaseStage):
             preproc.append(self._norm_method.get())
         preproc_str = f'  [{", ".join(preproc)}]' if preproc else ''
         self._result_label.config(
-            text=(f'{len(regions)} region(s) — {n_k1} single (→ Peak List), '
+            text=(f'{len(regions)} region(s) — {n_k1} single (→ Signal List), '
                   f'{n_k2} overlapping (→ Deconvolution).{preproc_str}'),
             foreground='black')
         self.btn_run.config(state='normal')
         self._set_status(
-            f'Done. {n_k1} peak(s) in Peak List — {n_k2} overlapping region(s) to review.',
+            f'Done. {n_k1} signal(s) in Signal List — {n_k2} overlapping region(s) to review.',
             'green')
         try:
             self.app.btn_peak_list.config(state='normal')
@@ -712,7 +724,7 @@ class FullSpectrumMCRStage(BaseStage):
                     if not p.get('_from_mcr')]
 
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
 
         new_peaks = []
         for r in regions:
@@ -1156,7 +1168,7 @@ class FullSpectrumMCRStage(BaseStage):
         ppm_lo   = float(peak['start_ppm'])
         ppm_hi   = float(peak['end_ppm'])
         ppm_arr  = getattr(self.app, 'ppm', None)
-        all_int  = getattr(self.app, 'all_intensities', None)
+        all_int  = self._corrected_intensities()
         if ppm_arr is None or all_int is None:
             return
         mean_int = (np.mean(all_int, axis=1) if all_int.ndim == 2 else all_int)

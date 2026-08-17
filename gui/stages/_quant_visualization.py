@@ -235,7 +235,7 @@ class _QuantVisMixin:
                 _y_raw_mean = (np.mean(all_int[lo_e:hi_e + 1, :], axis=1)
                                if all_int.ndim > 1 else all_int[lo_e:hi_e + 1])
                 ax1.plot(x_view, _y_raw_mean, color='#aaaaaa', lw=1.0,
-                         alpha=0.45, ls='--', zorder=1, label='Raw (shared peak)')
+                         alpha=0.45, ls='--', zorder=1, label='Raw (shared signal)')
 
             for g, idxs in groups.items():
                 col = g_colors[g]
@@ -391,7 +391,7 @@ class _QuantVisMixin:
 
             if _show_deconv:
                 ax1.text(0.02, 0.93,
-                         f'JG-Deconv: {_jr_frac * 100:.1f}% of peak',
+                         f'JG-Deconv: {_jr_frac * 100:.1f}% of signal',
                          transform=ax1.transAxes, fontsize=7,
                          va='top', color='#1565C0',
                          bbox=dict(fc='white', alpha=0.75, lw=0))
@@ -531,7 +531,7 @@ class _QuantVisMixin:
             integ_lbl = 'MCR-ALS'
         bg = '#f0fff0' if stat == 'good' else '#fffde7' if stat == 'warn' else '#fff0f0'
         ax3.set_facecolor(bg)
-        ax3.set_title('Peak Info', fontsize=8, fontweight='bold', pad=3)
+        ax3.set_title('Signal Info', fontsize=8, fontweight='bold', pad=3)
 
         ann_score = r.get('_ann_score', 0.0)
         ann_score_col = ('#1a7a1a' if ann_score >= 0.8
@@ -562,7 +562,7 @@ class _QuantVisMixin:
         if r.get('_used_j_resolve') and r.get('_j_resolve_frac') is not None:
             _jr_f = r['_j_resolve_frac']
             _jr_col = '#1565C0'
-            top_card.append(('JG-Deconv', f'{_jr_f * 100:.1f}% of peak', _jr_col))
+            top_card.append(('JG-Deconv', f'{_jr_f * 100:.1f}% of signal', _jr_col))
         if r.get('_used_mcr') and r.get('_mcr'):
             mcr_m   = r['_mcr'].get('metrics', {})
             lof     = mcr_m.get('lof', float('nan'))
@@ -591,14 +591,14 @@ class _QuantVisMixin:
             'Region':       'Multiplet integration window [lo–hi] ppm.\n'
                             'Area is integrated across this entire region,\n'
                             'covering all predicted multiplet lines.',
-            'Width':        'Peak width at half-maximum (ppm).',
+            'Width':        'Signal width at half-maximum (ppm).',
             'Annot. Score': 'Composite annotation score (0–1).\n'
                             'Combines multiplet pattern match + chemical shift\n'
                             'deviation + database confidence.',
-            'Integration':  'Method used to compute peak area per sample.',
+            'Integration':  'Method used to compute signal area per sample.',
             'Norm':         'Normalisation applied before concentration calculation.',
             'Mean SNR':     'Mean signal-to-noise ratio across non-BLK samples.\n'
-                            'SNR = peak max / noise level estimated at detection.',
+                            'SNR = signal max / noise level estimated at detection.',
             'LOF':          'Lack-of-Fit (MCR-ALS).\n'
                             'LOF = 100 × √(Σ(X−X̂)² / ΣX²)\n'
                             'Measures how well the model reconstructs the data.\n'

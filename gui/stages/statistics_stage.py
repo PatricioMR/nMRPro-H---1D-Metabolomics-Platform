@@ -51,7 +51,12 @@ def _get_quantification_matrix(app):
 
     # ── Path 2: Good-status peaks from peak detection ─────────────────────────
     ppm_arr = getattr(app, 'ppm', None)
-    all_int = getattr(app, 'all_intensities', None)
+    # Baseline-corrected: drift is uncorrelated noise in a multivariate model
+    # and swamps real group differences (measured: a genuine +10% effect goes
+    # from p<0.001 to p=0.35 when the drift is left in).
+    all_int = (app.corrected_intensities()
+               if hasattr(app, 'corrected_intensities')
+               else getattr(app, 'all_intensities', None))
     if ppm_arr is None or all_int is None:
         return None, None, None, None
 
@@ -1939,7 +1944,7 @@ class StatisticsStage:
             messagebox.showwarning(
                 'No data',
                 'Not enough data.\n'
-                'Run Annotation (mark peaks as Good) or Quantification first.',
+                'Run Annotation (mark signals as Good) or Quantification first.',
                 parent=self.frame)
             return
 
@@ -2149,7 +2154,7 @@ class StatisticsStage:
             _get_quantification_matrix(self.app)
         if X is None or X.shape[0] < 2 or X.shape[1] < 2:
             messagebox.showwarning('No data',
-                'Not enough data. Run Quantification (or mark Good peaks) first.',
+                'Not enough data. Run Quantification (or mark Good signals) first.',
                 parent=self.frame)
             return
 

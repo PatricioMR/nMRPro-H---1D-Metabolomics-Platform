@@ -335,14 +335,14 @@ class VisualizationStage(BaseStage):
         right = ttk.Frame(dlg); right.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         ttk.Label(left, text="Removes the lineshape distortion common to all\n"
-                            "peaks (imperfect shim) using one clean reference\n"
+                            "signals (imperfect shim) using one clean reference\n"
                             "signal. Areas are conserved.",
                   font=("Arial", 8), foreground="gray", justify=tk.LEFT
                   ).pack(anchor=tk.W, pady=(0, 6))
 
         rf = ttk.LabelFrame(left, text="Reference signal (ppm)", padding=6)
         rf.pack(fill=tk.X, pady=4)
-        ttk.Label(rf, text="One sharp isolated peak (TSP/DSS 0.00, formate 8.46).",
+        ttk.Label(rf, text="One sharp isolated signal (TSP/DSS 0.00, formate 8.46).",
                   font=("Arial", 8), foreground="gray", wraplength=210).pack(anchor=tk.W)
         r1 = ttk.Frame(rf); r1.pack(fill=tk.X, pady=2)
         ttk.Label(r1, text="Center (ppm):", width=14).pack(side=tk.LEFT)
@@ -524,7 +524,7 @@ class VisualizationStage(BaseStage):
                   font=('Arial', 10, 'bold')).pack(padx=16, pady=(12, 2))
         ttk.Label(dlg,
                   text='TSP / DSS-d4 is a singlet → diagonal peak at (0,0).\n'
-                       'Auto-detects the reference peak and shifts F2 and F1.',
+                       'Auto-detects the reference signal and shifts F2 and F1.',
                   font=('Arial', 8), foreground='gray',
                   justify=tk.LEFT).pack(padx=16, pady=(0, 8))
 
@@ -553,7 +553,7 @@ class VisualizationStage(BaseStage):
                                  ref=ref, window=win)
             if cal is None:
                 status.config(
-                    text='Reference peak not found in window. '
+                    text='Reference signal not found in window. '
                          'Widen the search window.', foreground='red')
                 return
             cd['f2_ppm'] = cal['f2_ppm']
@@ -647,7 +647,7 @@ class VisualizationStage(BaseStage):
 
         mode_frame = ttk.LabelFrame(sf_l, text="Alignment Mode", padding=6)
         mode_frame.pack(fill=tk.X, padx=6, pady=(6, 2))
-        ttk.Radiobutton(mode_frame, text="Single peak  (global shift)",
+        ttk.Radiobutton(mode_frame, text="Single signal  (global shift)",
                         variable=mode_var, value='single',
                         command=_toggle_mode).pack(anchor=tk.W)
         ttk.Radiobutton(mode_frame, text="Segment-wise  (icoshift)",
@@ -660,7 +660,7 @@ class VisualizationStage(BaseStage):
         rf = ttk.LabelFrame(sf_l, text="Reference Region (ppm)", padding=6)
         rf.pack(fill=tk.X, padx=6, pady=6)
         ttk.Label(rf,
-                  text="Must contain one sharp peak (e.g. TSP/DSS 0.00, formate 8.46).",
+                  text="Must contain one sharp signal (e.g. TSP/DSS 0.00, formate 8.46).",
                   font=("Arial", 8), foreground="gray").pack(anchor=tk.W)
         r1 = ttk.Frame(rf);
         r1.pack(fill=tk.X, pady=2)
@@ -1033,7 +1033,7 @@ class VisualizationStage(BaseStage):
                   foreground="gray").pack(side=tk.LEFT, padx=2)
 
         ttk.Label(params_frame,
-                  text="λ: larger = smoother.  p: smaller = stays below peaks.",
+                  text="λ: larger = smoother.  p: smaller = stays below signals.",
                   font=("Arial", 8), foreground="gray").pack(anchor=tk.W)
 
         def _toggle_params():
@@ -1075,37 +1075,15 @@ class VisualizationStage(BaseStage):
         canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         # ── Algorithms ────────────────────────────────────────────────────────
+        # Both come from processing/baseline_correction.py. This dialog used to
+        # carry its own inline copies, which drifted: the local SNIP was missing
+        # the -1 of the inverse LLS transform and zeroed any spectrum whose
+        # intensities were of order 1 (normalised data), while the shared one
+        # had been fixed.
+        from processing.baseline_correction import snip as _snip_baseline
+        from processing.baseline_correction import arPLS as _arPLS_baseline
+
         _state = {'corrected': None}
-
-        def _snip_baseline(y, n_iter=40):
-            y_shift = y - y.min()
-            z = np.log(np.log(np.sqrt(y_shift + 1) + 1) + 1)
-            n = len(z)
-            for p in range(1, n_iter + 1):
-                z_new = z.copy()
-                z_new[p:-p] = np.minimum(z[p:-p], (z[:n - 2 * p] + z[2 * p:]) / 2)
-                z = z_new
-            base = (np.exp(np.exp(z) - 1) - 1) ** 2 + y.min()
-            return np.minimum(base, y)
-
-        def _arPLS_baseline(y, lam=1e5, p=0.01, n_iter=100):
-            from scipy.sparse import diags
-            from scipy.sparse.linalg import spsolve
-            n = len(y)
-            D = diags([1, -2, 1], [0, 1, 2], shape=(n - 2, n), format='csc')
-            H = lam * D.T @ D
-            w = np.ones(n)
-            for _ in range(n_iter):
-                W = diags(w, 0, shape=(n, n), format='csc')
-                z = spsolve(W + H, w * y)
-                d = y - z
-                d_neg = d[d < 0]
-                if len(d_neg) < 2:
-                    break
-                sigma = max(d_neg.std(), 1e-10)
-                w = np.clip(np.where(d >= 0, p,
-                                     (1 - p) * np.exp(2 * d / sigma)), 1e-8, 1.0)
-            return np.minimum(z, y)
 
         def _preview():
             method = method_var.get()
@@ -1205,14 +1183,37 @@ class VisualizationStage(BaseStage):
             if _state['corrected'] is None:
                 status_lbl.config(text="Run Preview first.", foreground="red")
                 return
-            self.app.all_intensities = _state['corrected']
-            self.app.baseline_corrected = True
-            self.app.update_plot()
+            # Records the CHOICE, not the corrected numbers. all_intensities
+            # stays as loaded and every step reads app.corrected_intensities(),
+            # so detection, quantification, statistics and MCR all see the same
+            # baseline and the decision can still be changed or undone.
+            from processing.baseline_model import BaselineModel
+            method = method_var.get()
             try:
-                self.btn_revert.config(state='normal')
+                if method == 'SNIP':
+                    model = BaselineModel(
+                        method='snip',
+                        params={'niter': int(float(snip_iter_var.get()))})
+                else:
+                    model = BaselineModel(
+                        method='arPLS',
+                        params={'lam': float(lam_var.get())})
+            except ValueError as ve:
+                status_lbl.config(text=f"Invalid parameter: {ve}",
+                                  foreground="red")
+                return
+
+            self.app.baseline_model = model
+            self.app.invalidate_baseline_cache()
+            # Keep the Signal Detection panel showing the same choice.
+            try:
+                self.app.stages['peak_detection'].pull_baseline_model()
             except Exception:
                 pass
-            status_lbl.config(text="✓ Applied.", foreground="green")
+            self.app.update_plot()
+            status_lbl.config(
+                text=f"✓ Applied to the whole project ({model.describe()}).",
+                foreground="green")
             dlg.after(900, dlg.destroy)
 
         btn_prev.config(command=_preview)

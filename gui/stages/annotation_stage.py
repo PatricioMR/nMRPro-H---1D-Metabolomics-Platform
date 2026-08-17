@@ -166,13 +166,13 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self.hmdb_status.pack(anchor=tk.W, pady=2)
 
         info_frame = ttk.LabelFrame(
-            self.frame, text='📊 Current Peaks', padding=5)
+            self.frame, text='📊 Current Signals', padding=5)
         info_frame.pack(fill=tk.X, padx=5, pady=5)
         self.peaks_info_label = ttk.Label(
-            info_frame, text='No peaks detected yet.', foreground='gray')
+            info_frame, text='No signals detected yet.', foreground='gray')
         self.peaks_info_label.pack(anchor=tk.W)
         ttk.Label(info_frame,
-                  text='All detected peaks are annotated regardless of quality.',
+                  text='All detected signals are annotated regardless of quality.',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         mf = ttk.LabelFrame(self.frame, text='🐭 Mouse Controls', padding=5)
@@ -273,14 +273,14 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
                      if p.get('status', 'Undefined') == 'Good')
         if n == 0:
             self.peaks_info_label.config(
-                text='No peaks detected yet.', foreground='gray')
+                text='No signals detected yet.', foreground='gray')
         elif n_good == 0:
             self.peaks_info_label.config(
-                text=f'{n} peaks — 0 marked Good. Mark in Peak List first.',
+                text=f'{n} signals — 0 marked Good. Mark in Signal List first.',
                 foreground='orange')
         else:
             self.peaks_info_label.config(
-                text=f'{n} peaks loaded — {n_good} Good ({n - n_good} other quality).',
+                text=f'{n} signals loaded — {n_good} Good ({n - n_good} other quality).',
                 foreground='blue')
 
     def on_deactivate(self):

@@ -769,7 +769,7 @@ class JResolveStage(BaseStage):
         ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         self._log_line(f'JG-Deconv run  {ts}')
         self._log_line(f'Metabolites   : {len(self._metabolites)}')
-        self._log_line(f'Peaks         : {len(self._peaks)}')
+        self._log_line(f'Signals         : {len(self._peaks)}')
         self._log_line(f'Anchor tol    : {self._anchor_tol.get():.3f} ppm')
         self._log_line(f'Phase 3 iter  : {self._iterate_var.get()}')
         self._log_line(f'ΔJ filter     : {self._dj_filter_var.get()} '
@@ -780,11 +780,11 @@ class JResolveStage(BaseStage):
 
         # Overlap map summary
         ovlp = {r: ns for r, ns in self._peak_overlap.items() if len(ns) > 1}
-        self._log_line(f'=== Overlap map ({len(ovlp)} overlapping peaks) ===')
+        self._log_line(f'=== Overlap map ({len(ovlp)} overlapping signals) ===')
         for r, ns in sorted(ovlp.items()):
             pk  = self._peak_by_rank(r)
             ppm = pk['ppm'] if pk else '?'
-            self._log_line(f'  Peak #{r:>4}  {ppm:.4f} ppm  →  {", ".join(ns)}')
+            self._log_line(f'  Signal #{r:>4}  {ppm:.4f} ppm  →  {", ".join(ns)}')
         self._log_line()
 
         # Log filter summary
@@ -847,7 +847,7 @@ class JResolveStage(BaseStage):
                 f'  {st:<14}  {met["name"]:<35}  rel.conc={ce_s}  '
                 f'anchors={anch}')
         self._log_line()
-        self._log_line('=== Contributions per peak ===')
+        self._log_line('=== Contributions per signal ===')
         for rank, info in sorted(self._contributions.items()):
             pk  = self._peak_by_rank(rank)
             ppm = pk['ppm'] if pk else '?'
@@ -858,7 +858,7 @@ class JResolveStage(BaseStage):
                      if not str(n).startswith('_')]
             _over = '  ⚠ OVER-PREDICTED' if info.get('_overpredicted') else ''
             self._log_line(
-                f'  Peak #{rank:>4}  {ppm:.4f} ppm  obs={obs:.4g}'
+                f'  Signal #{rank:>4}  {ppm:.4f} ppm  obs={obs:.4g}'
                 f'  [{", ".join(parts)}]  residual={res:.1f}%{_over}')
 
         self._write_log()
@@ -935,7 +935,7 @@ class JResolveStage(BaseStage):
         measured — intensities and let several analytes claim the same shared
         signal, producing >100% peak contributions.  Removed.)
         """
-        self._log_line('--- Phase 1: user-marked Good peaks → conc_est (unique clean peaks only) ---')
+        self._log_line('--- Phase 1: user-marked Good signals → conc_est (unique clean signals only) ---')
         for met in self._metabolites:
             mid = met['id']
             probes, anchors, effs = [], [], []
@@ -946,7 +946,7 @@ class JResolveStage(BaseStage):
                 rank = mp.get('peak_rank')
                 peak = self._peak_by_rank(rank)
                 if peak is None:
-                    self._log_line(f'  SKIP {met["name"]} rank={rank}: peak not found')
+                    self._log_line(f'  SKIP {met["name"]} rank={rank}: signal not found')
                     continue
                 # ── Anchors must be unique: reject any peak shared with another
                 # analyte.  Mixed-area peaks cannot anchor a concentration. ──────
@@ -991,7 +991,7 @@ class JResolveStage(BaseStage):
     def _phase1b(self):
         tol           = float(self._anchor_tol.get())
         entries, ppms = self._build_line_index()
-        self._log_line(f'--- Phase 1b: auto-anchor (clean peaks, tol={tol:.3f} ppm) ---')
+        self._log_line(f'--- Phase 1b: auto-anchor (clean signals, tol={tol:.3f} ppm) ---')
 
         # Ranks already claimed in Phase 1 — cannot be reused for a different met
         claimed_ranks = {r for ranks in self._anchor_peaks.values() for r in ranks}
@@ -1049,7 +1049,7 @@ class JResolveStage(BaseStage):
                 if ovl_competitors:
                     self._log_line(
                         f'  SKIP_OVL {met["name"]:35} rank={rank:>4}  '
-                        f'ppm={peak["ppm"]:.4f}  — shared peak with: '
+                        f'ppm={peak["ppm"]:.4f}  — shared signal with: '
                         f'{", ".join(ovl_competitors[:3])}')
                     continue
                 # DB line index competitor check (predicted-position level)
@@ -1113,9 +1113,9 @@ class JResolveStage(BaseStage):
                 continue
             if not any(mp.get('peak_rank') is not None
                        for mp in met['matched_peaks']):
-                self._log_line(f'  → no matched peaks for {met["name"]}')
+                self._log_line(f'  → no matched signals for {met["name"]}')
             else:
-                self._log_line(f'  → all peaks of {met["name"]} have competitors or were claimed')
+                self._log_line(f'  → all signals of {met["name"]} have competitors or were claimed')
         self._log_line()
 
     def _phase2(self, _cascade_iter=None):
@@ -1179,7 +1179,7 @@ class JResolveStage(BaseStage):
                 f'→ renormalised to 100%)'
                 if _overpred else '')
             self._log_line(
-                f'  Peak #{rank:>4}  {pk_ppm:.4f} ppm  obs={obs_area:.4g}'
+                f'  Signal #{rank:>4}  {pk_ppm:.4f} ppm  obs={obs_area:.4g}'
                 f'  known=[{known_str}]'
                 f'  residual={residual/obs_area*100:.1f}%'
                 f'  unknowns={unknown_names}{_over_warn}')
@@ -1319,17 +1319,17 @@ class JResolveStage(BaseStage):
                                 d['attributed'] = True
                         changed = True
                         self._log_line(
-                            f'  Peak #{rank:>4}  {peak["ppm"]:.4f} ppm  '
+                            f'  Signal #{rank:>4}  {peak["ppm"]:.4f} ppm  '
                             f'residual={resid_pct:.1f}%  → ATTRIBUTE {m["name"]} '
                             f'[{ev}]  conc_est={self._conc_est[m["id"]]:.4g}')
                 elif len(evidenced) >= 2:
                     self._log_line(
-                        f'  Peak #{rank:>4}  {peak["ppm"]:.4f} ppm  '
+                        f'  Signal #{rank:>4}  {peak["ppm"]:.4f} ppm  '
                         f'residual={resid_pct:.1f}%  — {len(evidenced)} evidence-backed '
                         f'candidates; not split (needs NNLS/E4)')
                 else:
                     self._log_line(
-                        f'  Peak #{rank:>4}  {peak["ppm"]:.4f} ppm  '
+                        f'  Signal #{rank:>4}  {peak["ppm"]:.4f} ppm  '
                         f'residual={resid_pct:.1f}%  — no corroborated candidate; '
                         f'left unexplained')
             if changed:
@@ -1357,7 +1357,7 @@ class JResolveStage(BaseStage):
                 if len(unknowns) != 1:
                     if unknowns:
                         self._log_line(
-                            f'    Peak #{rank}: residual={resid_pct:.1f}%  '
+                            f'    Signal #{rank}: residual={resid_pct:.1f}%  '
                             f'{len(unknowns)} unknowns still — cannot resolve yet')
                     continue
                 met = unknowns[0]
@@ -1405,14 +1405,14 @@ class JResolveStage(BaseStage):
                            if prev else '  (first estimate)'))
                 else:
                     self._log_line(
-                        f'    Peak #{rank}: single unknown={met["name"]} '
+                        f'    Signal #{rank}: single unknown={met["name"]} '
                         f'but eff={eff:.3f} or residual_area={residual_area:.4g} ≤ 0')
             if changed:
                 self._phase2(_cascade_iter=_iter)
         if _iter >= _MAX_CASCADE:
             self._log_line(f'  AVISO: cascata atingiu limite de {_MAX_CASCADE} iterações — verificar dependências circulares')
         if _iter == 1 and not changed:
-            self._log_line('  No cascade possible (no single-unknown peaks with residual ≥2%)')
+            self._log_line('  No cascade possible (no single-unknown signals with residual ≥2%)')
         self._log_line()
 
     def _calibrate_nnls_thresholds(self):
@@ -1494,7 +1494,7 @@ class JResolveStage(BaseStage):
         else:
             self._calib_cv_thresh = user_cv
             self._log_line(
-                f'  Too few anchors with ≥2 peaks ({len(anchor_cvs)})'
+                f'  Too few anchors with ≥2 signals ({len(anchor_cvs)})'
                 f' — using user value {user_cv:.2f}')
 
         if len(anchor_covs) >= 3:
@@ -1511,7 +1511,7 @@ class JResolveStage(BaseStage):
         else:
             self._calib_cov_thresh = user_cov
             self._log_line(
-                f'  Too few anchor peak coverages ({len(anchor_covs)})'
+                f'  Too few anchor signal coverages ({len(anchor_covs)})'
                 f' — using user value {user_cov:.2f}')
 
         # Update UI labels to show calibrated values
@@ -1543,7 +1543,7 @@ class JResolveStage(BaseStage):
         overlap_ranks = sorted(
             r for r, ns in self._peak_overlap.items() if len(ns) > 1)
         if not overlap_ranks:
-            self._log_line('  No overlapping peaks — nothing to do.')
+            self._log_line('  No overlapping signals — nothing to do.')
             self._log_line()
             return
 
@@ -1594,7 +1594,7 @@ class JResolveStage(BaseStage):
         n_peaks = len(overlap_ranks)
         n_mets  = len(unknown_mets)
         self._log_line(
-            f'  Matrix: {n_peaks} peaks × {n_mets} unknown metabolites')
+            f'  Matrix: {n_peaks} signals × {n_mets} unknown metabolites')
 
         met_idx = {met['id']: j for j, met in enumerate(unknown_mets)}
         overlap_ranks_set = set(overlap_ranks)
@@ -1673,7 +1673,7 @@ class JResolveStage(BaseStage):
             A = np.vstack([A, np.array(excl_rows_A)])
             b = np.concatenate([b, np.array(excl_rows_b)])
             self._log_line(
-                f'  + {len(excl_rows_A)} exclusive-peak equations added')
+                f'  + {len(excl_rows_A)} exclusive-signal equations added')
 
         # Remove all-zero rows (peaks with no unknown candidates)
         nonzero_rows = np.any(A > 0, axis=1)
@@ -2290,7 +2290,7 @@ class JResolveStage(BaseStage):
             ax_t.set_xlim(0, 105)
             ax_t.axvline(100, color='#ccc', linewidth=0.8, linestyle='--')
             ax_t.set_xlabel('Explained  (%  of observed area)', fontsize=8)
-            ax_t.set_title('JG-Deconv — Overview: signal explanation per peak', fontsize=9, pad=6)
+            ax_t.set_title('JG-Deconv — Overview: intensity explained per signal', fontsize=9, pad=6)
             for spine in ('top', 'right'):
                 ax_t.spines[spine].set_visible(False)
             ax_t.legend(fontsize=7, loc='lower right', framealpha=0.8,
@@ -2309,7 +2309,7 @@ class JResolveStage(BaseStage):
                             '  ⚠' if self._nnls_cond < 1000 else '  ✗ (near-singular)'))
         if self._nnls_coverage:
             mean_cov = np.mean(list(self._nnls_coverage.values()))
-            lines.append(f'Mean peak coverage:  {mean_cov:.2f}'
+            lines.append(f'Mean signal coverage:  {mean_cov:.2f}'
                          + ('  ✓' if 0.7 <= mean_cov <= 1.3 else '  ⚠'))
         n_res = sum(1 for s in self._status_map.values() if s == 'resolved_nnls')
         if n_res:
@@ -2606,8 +2606,8 @@ class JResolveStage(BaseStage):
             ax_bar.set_yticklabels(labels, fontsize=7)
             ax_bar.set_xlim(0, 115)
             ax_bar.axvline(100, color='#ccc', linewidth=0.8, linestyle='--')
-            ax_bar.set_xlabel('Contribution to peak  (%)', fontsize=8)
-            ax_bar.set_title('Peak contributions & residuals', fontsize=8, pad=4)
+            ax_bar.set_xlabel('Contribution to signal  (%)', fontsize=8)
+            ax_bar.set_title('Signal contributions & residuals', fontsize=8, pad=4)
             ax_bar.tick_params(axis='y', length=0)
             for spine in ('top', 'right'):
                 ax_bar.spines[spine].set_visible(False)
@@ -2649,7 +2649,7 @@ class JResolveStage(BaseStage):
             if len(per_peak_c) >= 2:
                 fr = fold_range(per_peak_c)
                 flag = '✓' if fr < 1.5 else ('⚠' if fr < _FOLDRANGE_MAX else '✗')
-                q_lines.append(f'Multi-peak fold-range: {fr:.2f}  {flag}')
+                q_lines.append(f'Multi-signal fold-range: {fr:.2f}  {flag}')
 
             # ΔJ values from matched peaks
             dj_lines = []
@@ -2766,7 +2766,7 @@ class JResolveStage(BaseStage):
         }
 
         n = len(stored)
-        self._apply_lbl.config(text=f'✓ Applied ({n} peaks)')
+        self._apply_lbl.config(text=f'✓ Applied ({n} signals)')
 
         # Refresh label in quantification stage if it's built
         q_stage = getattr(self.app, 'stages', {}).get('quantification')
@@ -2775,7 +2775,7 @@ class JResolveStage(BaseStage):
 
         messagebox.showinfo(
             'JG-Deconv applied',
-            f'{n} overlapping peak(s) registered.\n\n'
+            f'{n} overlapping signal(s) registered.\n\n'
             'Enable "JG-Deconv correction" in Quantification (step 5)\n'
             'to use these fractional areas.')
 
@@ -2794,8 +2794,8 @@ class JResolveStage(BaseStage):
                 w.writerow(['Metabolite', 'ID', 'Status',
                             'Anchor confidence', 'Anchor fold-range',
                             'conc CI95 low', 'conc CI95 high',
-                            'Anchor peaks', 'Rel. conc estimate',
-                            'Peak rank', 'Peak PPM',
+                            'Anchor signals', 'Rel. conc estimate',
+                            'Signal rank', 'Signal PPM',
                             'Contribution %', 'Residual %', 'Over-predicted'])
                 for met in self._metabolites:
                     mid    = met['id']
@@ -2847,7 +2847,7 @@ class JResolveStage(BaseStage):
         name = met['name']
         shared_ranks = [r for r, ns in self._peak_overlap.items() if name in ns]
         if not shared_ranks:
-            messagebox.showinfo('Deconvolve', 'No overlapping peaks for this metabolite.')
+            messagebox.showinfo('Deconvolve', 'No overlapping signals for this metabolite.')
             return
         related_mets = []
         seen_ids = set()
@@ -2942,7 +2942,7 @@ class NNLSDeconvolutionDialog:
                  text=(
                      'Metabolite row: color = JG-Deconv status  |  ☑ = include in model\n'
                      'Multiplet lines: d/t/q L1 L2… = individual lines of that multiplet\n'
-                     'Source: pk#N = detected by peak picker  |  NNLS = deconvolved only\n'
+                     'Source: pk#N = detected by signal picker  |  NNLS = deconvolved only\n'
                      'J≈X.XHz = predicted spacing  |  J=X→YHz = predicted→measured after NNLS\n'
                      'J: ✓ ΔJ<0.5Hz  ✗ fail  · singlet  |  Cov ideal 0.8–1.2'
                  ),
@@ -3802,7 +3802,7 @@ class NNLSDeconvolutionDialog:
             _sp_met, _sp_mp = self._selected_peak
             _sp_mult = (_sp_mp.get('multiplicity') or 's').lower()
             _sp_ppm  = float(_sp_mp.get('ppm_center') or _sp_mp.get('db_ppm') or 0)
-            _title_obs = (f'Peak zoom: {_sp_met["name"]}  {_sp_mult} {_sp_ppm:.3f} ppm'
+            _title_obs = (f'Signal zoom: {_sp_met["name"]}  {_sp_mult} {_sp_ppm:.3f} ppm'
                           f'  (— J-valid  · · J-fail  – – singlet)')
         elif self._zoomed_met:
             _title_obs = (f'Zoom: {self._zoomed_met["name"]}'
@@ -4107,5 +4107,5 @@ class NNLSDeconvolutionDialog:
         if n_mets:
             messagebox.showinfo(
                 'Deconvolution applied',
-                f'{n_mets} metabolite(s), {n_peaks} peak(s) written to JG-Deconv.\n'
+                f'{n_mets} metabolite(s), {n_peaks} signal(s) written to JG-Deconv.\n'
                 'Press "Apply to Quantification" to use them.')

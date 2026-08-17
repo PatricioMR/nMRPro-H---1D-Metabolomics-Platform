@@ -312,35 +312,39 @@ class _QuantCompMixin:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
 
-        # ── Global arPLS baseline (faithful qNMR integration) ─────────────────
+        # ── Global baseline (faithful qNMR integration) ───────────────────────
         # qNMR integrates the signal above a flat baseline. Integrating raw data
         # from 0 biases regions sitting on a sloping/elevated baseline (valleys,
-        # macromolecule humps, residual-water wings). arPLS (Baek 2015) estimates
-        # the true baseline globally per sample; the local-linear per-window
-        # option is an inferior fallback that can subtract real signal when a
-        # window edge lands on a neighbour's skirt.
+        # macromolecule humps, residual-water wings). The global per-sample
+        # estimate is the honest one; the local-linear per-window option is an
+        # inferior fallback that can subtract real signal when a window edge
+        # lands on a neighbour's skirt.
+        #
+        # The method and λ are INHERITED from Signal Detection. Hard-coding
+        # arPLS here meant the areas in the Signal List and the areas being
+        # quantified could come from two different baseline models for the same
+        # signal, with nothing saying so.
         #
         # Applied to a WORKING COPY only (app state untouched, reversible).
         # Skipped when the spectrum was already globally baseline-corrected
         # upstream (Visualization step) to avoid double correction.
-        _arpls_applied = False
-        if not getattr(self.app, 'baseline_corrected', False):
+        _global_baseline_applied = False
+        _bl_model = getattr(self.app, 'baseline_model', None)
+        if _bl_model is not None and _bl_model.enabled:
             try:
-                from processing.baseline_correction import airPLS
-                _ai   = np.asarray(all_int, dtype=float)
-                _corr = np.empty_like(_ai)
-                for _s in range(_ai.shape[1]):
-                    _corr[:, _s] = _ai[:, _s] - airPLS(
-                        _ai[:, _s], lam=1e5, p=0.01, niter=100)
-                all_int = _corr
-                _arpls_applied = True
+                _corr = self.app.corrected_intensities()
+                if _corr is not None and _corr is not all_int:
+                    all_int = np.asarray(_corr, dtype=float)
+                    _global_baseline_applied = True
+                    print(f'[Quant] baseline: {_bl_model.describe()} '
+                          f'— project model')
             except Exception as _bl_e:
-                print(f'[Quant] arPLS global baseline skipped: {_bl_e}')
+                print(f'[Quant] global baseline skipped: {_bl_e}')
 
         # Global arPLS already flattened the baseline → the per-window local
         # linear subtraction would double-correct (and remove real signal at
         # edges). Disable it whenever a global baseline is in effect.
-        if _arpls_applied or getattr(self.app, 'baseline_corrected', False):
+        if _global_baseline_applied or getattr(self.app, 'baseline_corrected', False):
             local_baseline = False
 
         # Expose the exact matrix the integration uses so the quant visualizer
@@ -402,7 +406,7 @@ class _QuantCompMixin:
         _dbg(_dbg_f, f'integ_mode   : {_integ}')
         _dbg(_dbg_f, f'use_multiplet: {use_multiplet}')
         _dbg(_dbg_f, f'local_baseline:{local_baseline}')
-        _dbg(_dbg_f, f'arPLS global : applied={_arpls_applied}  '
+        _dbg(_dbg_f, f'global baseline: applied={_global_baseline_applied}  '
                      f'already_corrected={getattr(self.app, "baseline_corrected", False)}')
         _dbg(_dbg_f, f'proton_corr  : {proton_corr}')
         _dbg(_dbg_f, f'use_blk_sub  : {use_blk_sub}')
@@ -416,7 +420,7 @@ class _QuantCompMixin:
         # Per-peak alignment is applied per integration window in the main loop
         # (use_per_peak_align).  Global icoshift is no longer run here.
         if use_per_peak_align:
-            self._status('Pre-align: per-peak window alignment active', 'blue')
+            self._status('Pre-align: per-signal window alignment active', 'blue')
 
         n_s = all_int.shape[1]
 
@@ -740,9 +744,9 @@ class _QuantCompMixin:
         if (not winning_hits) and (not _fs_mode) and (not is_lipidomics_mode):
             messagebox.showwarning(
                 'No Good Assignments',
-                'No peaks are marked as Good in Annotation Results.\n\n'
+                'No signals are marked as Good in Annotation Results.\n\n'
                 'Open Annotation Results, select the correct metabolite '
-                'for each peak and press Ctrl+1 (Good) before quantifying.')
+                'for each signal and press Ctrl+1 (Good) before quantifying.')
             return
 
         peak_competitor_count = {}
@@ -1832,7 +1836,7 @@ class _QuantCompMixin:
                     'Open the MCR Deconvolution window, select the regions,\n'
                     'and click "✓ Accept" on the desired components.')
             else:
-                messagebox.showinfo('Info', 'No peaks matched annotation results.')
+                messagebox.showinfo('Info', 'No signals matched annotation results.')
             return
 
         if norm_mode == 'PQN':
@@ -2836,7 +2840,7 @@ class _QuantCompMixin:
                     'Multiplet J-quality scores (s_dj) were not available for this '
                     'run.\n\n'
                     'Quantification could NOT prioritise confirmed multiplets over '
-                    'singlets when two analytes competed for the same peak — '
+                    'singlets when two analytes competed for the same signal — '
                     'candidates were ranked by ppm proximity only.\n\n'
                     'Open Annotation Results once (so scores are computed) and '
                     're-run Quantification for the full multiplet-aware selection.')

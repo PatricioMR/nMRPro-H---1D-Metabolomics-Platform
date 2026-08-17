@@ -369,14 +369,14 @@ def _ask_search_mode(parent_widget):
 
     tk.Button(
         bf,
-        text='🔍  Search only new / unmarked peaks',
+        text='🔍  Search only new / unmarked signals',
         font=('TkDefaultFont', 9),
         width=28,
         relief='groove',
         command=lambda: _choose('incremental')).pack(pady=4)
     tk.Label(
         bf,
-        text='Keeps existing Good annotations.\nSearches peaks without a confirmed Good match.',
+        text='Keeps existing Good annotations.\nSearches signals without a confirmed Good match.',
         font=('TkDefaultFont', 8), foreground='#666',
         justify='left').pack(anchor='w', padx=4)
 

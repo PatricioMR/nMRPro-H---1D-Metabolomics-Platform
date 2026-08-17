@@ -3,7 +3,7 @@
 Baseline correction algorithms for NMR spectroscopy.
 
 Implements:
-  - airPLS / arPLS (adaptive iteratively reweighted Penalized Least Squares)
+  - arPLS (asymmetrically reweighted Penalized Least Squares, Baek 2015)
   - SNIP (Statistics-sensitive Non-linear Iterative Peak-clipping, Ryan 1988)
   - Rolling ball minimum
 """
@@ -12,9 +12,9 @@ from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
 
-def airPLS(y, lam=1e5, p=0.01, niter=100, return_weights=False):
+def arPLS(y, lam=1e5, p=0.01, niter=100, return_weights=False):
     """
-    arPLS baseline — adaptive iteratively reweighted Penalized Least Squares.
+    arPLS baseline — asymmetrically reweighted Penalized Least Squares.
 
     Parameters
     ----------
@@ -37,7 +37,8 @@ def airPLS(y, lam=1e5, p=0.01, niter=100, return_weights=False):
         z = np.zeros(n)
         return (z, np.ones(n)) if return_weights else z
 
-    D = sparse.diags([1, -2, 1], [0, 1, 2], shape=(n - 2, n), format='csc')
+    D = sparse.diags([1.0, -2.0, 1.0], [0, 1, 2], shape=(n - 2, n),
+                     format='csc', dtype=float)
     H = lam * D.T @ D
     w = np.ones(n)
 
@@ -62,6 +63,31 @@ def airPLS(y, lam=1e5, p=0.01, niter=100, return_weights=False):
     # baseline must not exceed signal
     z = np.minimum(z, y)
     return (z, w) if return_weights else z
+
+
+# This function was called airPLS for years, but the implementation is arPLS
+# (Baek 2015, asymmetrically reweighted) — a different algorithm from Zhang's
+# airPLS (2010, adaptive iteratively reweighted). The alias keeps old imports
+# and saved projects working.
+airPLS = arPLS
+
+# Canonical method names, and the spellings accepted for them.
+_METHOD_ALIASES = {
+    'arpls':    'arPLS',
+    'airpls':   'arPLS',      # historical misnomer
+    'snip':     'snip',
+    'rolling':  'rolling',
+    'constant': 'constant',
+}
+
+
+def normalize_method(method):
+    """Canonical spelling of a baseline method name.
+
+    Accepts the historical 'airPLS' spelling so projects saved before the
+    rename still open on the method they were built with.
+    """
+    return _METHOD_ALIASES.get(str(method or '').strip().lower(), 'snip')
 
 
 def snip(y, niter=40, **_kwargs):
@@ -96,7 +122,13 @@ def snip(y, niter=40, **_kwargs):
         z_new[p:-p] = np.minimum(z[p:-p], (z[:n - 2 * p] + z[2 * p:]) / 2)
         z = z_new
 
-    baseline = (np.exp(np.exp(z) - 1) - 1) ** 2 + y.min()
+    # Exact inverse of the LLS transform above:
+    #   z = log(log(sqrt(v + 1) + 1) + 1)  ⇒  v = (exp(exp(z) - 1) - 1)² - 1
+    # The trailing -1 is not optional. Dropping it inflates the baseline by one
+    # intensity unit, which the clamp below then turns into baseline == y — the
+    # correction returns an all-zero spectrum. Invisible on raw spectra with
+    # large counts, fatal on normalised ones where 1 is the full scale.
+    baseline = (np.exp(np.exp(z) - 1) - 1) ** 2 - 1 + y.min()
     return np.minimum(baseline, y)
 
 
@@ -152,7 +184,7 @@ def estimate_baseline_level(y, method='median', edge_fraction=0.1):
     return 0.0
 
 
-def correct_baseline(ppm, intensity, method='airPLS', **kwargs):
+def correct_baseline(ppm, intensity, method='arPLS', **kwargs):
     """
     Apply baseline correction to an NMR spectrum.
 
@@ -160,7 +192,8 @@ def correct_baseline(ppm, intensity, method='airPLS', **kwargs):
     ----------
     ppm       : ndarray (n,)
     intensity : ndarray (n,)
-    method    : 'airPLS', 'snip', 'rolling', or 'constant'
+    method    : 'arPLS', 'snip', 'rolling', or 'constant'
+                ('airPLS' is accepted as a historical alias of 'arPLS')
     **kwargs  : forwarded to the chosen method
 
     Returns
@@ -172,12 +205,13 @@ def correct_baseline(ppm, intensity, method='airPLS', **kwargs):
         raise ValueError("ppm and intensity must have the same length")
 
     intensity = np.asarray(intensity, dtype=float)
+    method = normalize_method(method)
 
-    if method == 'airPLS':
+    if method == 'arPLS':
         lam   = kwargs.get('lam',   1e5)
         p     = kwargs.get('p',     0.01)
         niter = kwargs.get('niter', 100)
-        baseline = airPLS(intensity, lam=lam, p=p, niter=niter)
+        baseline = arPLS(intensity, lam=lam, p=p, niter=niter)
     elif method == 'snip':
         niter    = kwargs.get('niter', kwargs.get('window', 40))
         baseline = snip(intensity, niter=niter)

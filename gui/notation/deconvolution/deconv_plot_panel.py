@@ -104,7 +104,7 @@ class DeconvPlotPanel:
         ef.pack(fill=tk.X, padx=6, pady=(0, 2))
         self._edit_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
-            ef, text='✏ Edit peak boundaries (drag)',
+            ef, text='✏ Edit signal boundaries (drag)',
             variable=self._edit_var,
             command=self._toggle_edit_bounds
         ).pack(side=tk.LEFT, padx=4)
@@ -123,9 +123,9 @@ class DeconvPlotPanel:
         metrics = [
             ('r_squared', 'R²',        'Higher is better  (≥0.98 = good)'),
             ('bic',       'BIC',       'Lower is better'),
-            ('snr',       'SNR',       'Per-peak SNR  (≥10 = good)'),
+            ('snr',       'SNR',       'Per-signal SNR  (≥10 = good)'),
             ('linewidth', 'Linewidth', 'ppm  (≤0.02 = good for 1H)'),
-            ('model',     'Model',     'Peak shape model used'),
+            ('model',     'Model',     'Lineshape model used'),
         ]
         ROWS_PER_COL = 3
         for i, (key, label, hint) in enumerate(metrics):
@@ -152,7 +152,7 @@ class DeconvPlotPanel:
 
         # Peak-level quality (shown when child selected)
         self.peak_quality_frame = ttk.LabelFrame(
-            self.frame, text="Selected Peak Details", padding=6)
+            self.frame, text="Selected Signal Details", padding=6)
         self.peak_quality_frame.pack(fill=tk.X, padx=4, pady=(0, 4))
         self.peak_detail_label = ttk.Label(
             self.peak_quality_frame, text="—",
@@ -258,14 +258,14 @@ class DeconvPlotPanel:
                                      ppm_lo, ppm_hi, shown_groups, g_colors)
             self._plot_residual(results, ppm_lo, ppm_hi)
             self.plot_info.config(
-                text=f"Peak #{pk.get('rank', '?')} @ {pk_ppm:.4f} ppm "
-                     f"— {len(peaks)} sub-peak(s)",
+                text=f"Signal #{pk.get('rank', '?')} @ {pk_ppm:.4f} ppm "
+                     f"— {len(peaks)} sub-signal(s)",
                 foreground='green')
             self._update_quality_card(results, child_index)
         else:
             self._clear_residual()
             self.plot_info.config(
-                text=f"Peak #{pk.get('rank', '?')} @ {pk_ppm:.4f} ppm "
+                text=f"Signal #{pk.get('rank', '?')} @ {pk_ppm:.4f} ppm "
                      f"— pending deconvolution",
                 foreground='blue')
             self._clear_quality_card()
@@ -782,7 +782,7 @@ class DeconvPlotPanel:
             sc = {'Good': '#1a7a1a',
                   'Poor': '#9a0000'}.get(status, '#7a6000')
             self.peak_detail_label.config(
-                text=(f"Peak #{child_index + 1}  ·  {p['ppm']:.4f} ppm\n"
+                text=(f"Signal #{child_index + 1}  ·  {p['ppm']:.4f} ppm\n"
                       f"Height: {p['height']:.4f}  ·  "
                       f"Width: {p.get('width', 0):.4f} ppm\n"
                       f"SNR: {snr:.1f}  ·  "
@@ -800,7 +800,7 @@ class DeconvPlotPanel:
                                  f"{lw_m:.4f} ppm (mean)",
                                  _quality_color('linewidth', lw_m))
             self.peak_detail_label.config(
-                text="Click a child peak to see details", foreground='gray')
+                text="Click a child signal to see details", foreground='gray')
 
     def _clear_quality_card(self):
         for key in self._quality_labels:

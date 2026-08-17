@@ -69,7 +69,7 @@ class DeconvListPanel:
         self.frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         self.frame.pack_propagate(False)
 
-        ttk.Label(self.frame, text="Peaks for Deconvolution",
+        ttk.Label(self.frame, text="Signals for Deconvolution",
                   font=("Arial", 11, "bold")).pack(pady=5)
 
         self.info_label = ttk.Label(self.frame, text="", foreground="gray")
@@ -194,23 +194,23 @@ class DeconvListPanel:
         self.min_snr_var = tk.DoubleVar(value=3.0)
         ttk.Entry(pf, textvariable=self.min_snr_var, width=7).grid(
             row=0, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Minimum SNR to accept a sub-peak (default: 3)",
+        ttk.Label(pf, text="Minimum SNR to accept a sub-signal (default: 3)",
                   font=("Arial", 7), foreground="#888").grid(
             row=0, column=2, columnspan=2, sticky=tk.W, padx=2)
 
         # ── row 1: Max Peaks ──────────────────────────────────────────────────
-        ttk.Label(pf, text="Max Peaks:").grid(
+        ttk.Label(pf, text="Max Signals:").grid(
             row=1, column=0, sticky=tk.W, pady=2, padx=4)
         self.max_peaks_var = tk.IntVar(value=6)
         ttk.Spinbox(pf, from_=1, to=15,
                     textvariable=self.max_peaks_var, width=6).grid(
             row=1, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Maximum sub-peaks per region (default: 6)",
+        ttk.Label(pf, text="Maximum sub-signals per region (default: 6)",
                   font=("Arial", 7), foreground="#888").grid(
             row=1, column=2, columnspan=2, sticky=tk.W, padx=2)
 
         # ── row 2: Peak Model ─────────────────────────────────────────────────
-        ttk.Label(pf, text="Peak Model:").grid(
+        ttk.Label(pf, text="Lineshape Model:").grid(
             row=2, column=0, sticky=tk.W, pady=2, padx=4)
         self.model_var = tk.StringVar(value="Lorentzian")
         cb_model = ttk.Combobox(
@@ -258,7 +258,7 @@ class DeconvListPanel:
         self.max_width_var = tk.DoubleVar(value=0.010)
         ttk.Entry(pf, textvariable=self.max_width_var, width=7).grid(
             row=5, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Maximum peak HWHM (ppm); limits broad fits (default: 0.010)",
+        ttk.Label(pf, text="Maximum signal HWHM (ppm); limits broad fits (default: 0.010)",
                   font=("Arial", 7), foreground="#888").grid(
             row=5, column=2, columnspan=2, sticky=tk.W, padx=2)
 
@@ -330,7 +330,7 @@ class DeconvListPanel:
         self.revert_all_btn.pack(fill=tk.X, padx=5, pady=2)
 
         self.save_btn = ttk.Button(
-            _inner, text="💾 Save Sub-peaks to Peak List",
+            _inner, text="💾 Save Sub-signals to Signal List",
             command=self.on_save, state="disabled")
         self.save_btn.pack(fill=tk.X, padx=5, pady=2)
 
@@ -645,7 +645,7 @@ class DeconvListPanel:
                        regions[region_idx]['status'] == 'deconvolved')
             if done:
                 menu.add_command(
-                    label='↩ Restore original peak',
+                    label='↩ Restore original signal',
                     command=lambda ri=region_idx: self._restore_peak(ri))
             else:
                 menu.add_command(
@@ -674,7 +674,7 @@ class DeconvListPanel:
         self.controller.restore_peak(region_idx)
         self.refresh_list()
         self.status_label.config(
-            text=f'Peak {region_idx+1} restored to original.',
+            text=f'Signal {region_idx+1} restored to original.',
             foreground='#555')
 
     def _remove_peak(self, region_idx):
@@ -710,7 +710,7 @@ class DeconvListPanel:
 
         if len(region_idxs) < 2:
             messagebox.showinfo(
-                'Group Peaks',
+                'Group Signals',
                 'Ctrl+click 2 or more region rows to select,\n'
                 'then press Ctrl+G.')
             return
@@ -774,7 +774,7 @@ class DeconvListPanel:
             self.tree.see(new_iid)
 
         self.status_label.config(
-            text=f'Grouped {len(region_idxs)} peaks → 1 entry. '
+            text=f'Grouped {len(region_idxs)} signals → 1 entry. '
                  f'Now click Deconvolve.',
             foreground='#1565c0')
 

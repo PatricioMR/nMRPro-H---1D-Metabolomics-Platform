@@ -1,6 +1,6 @@
 # gui/stages/peak_detection_stage.py
 """
-Peak Detection Stage — Step 1 (noise) + Step 2 (peaks + deconvolution).
+Signal Detection Stage — noise region + detection parameters.
 The matplotlib canvas is shared with all other stages and is never
 recreated here — only the left-panel menu changes when switching tabs.
 """
@@ -21,6 +21,7 @@ if certifi is not None:
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from processing.noise_estimation import estimate_noise_from_region
+from processing.signal_quality import SIGNAL_AVERAGE
 from .base_stage import BaseStage
 
 
@@ -247,17 +248,18 @@ class PeakDetectionStage(BaseStage):
     def create_widgets(self):
         self.frame = ttk.Frame(self.parent)
 
-        ttk.Label(self.frame, text="Peak Detection",
+        ttk.Label(self.frame, text="Signal Detection",
                   font=("Arial", 12, "bold")).pack(pady=10)
         ttk.Separator(self.frame, orient='horizontal').pack(
             fill=tk.X, padx=5, pady=5)
 
-        # ── STEP 1: Noise region (optional override) ──────────────────────────
-        # Noise is estimated automatically as part of Detect Peaks. These entries
-        # only let the user pin a specific signal-free region; left as-is, the
-        # detector estimates noise from the quietest segment of the spectrum.
-        s1 = ttk.LabelFrame(self.frame,
-                             text="📏 Noise Region (optional)", padding=5)
+        # ── Noise region ──────────────────────────────────────────────────────
+        # σ is measured when signals are detected. These entries pin a specific
+        # signal-free region; left blank, the detector falls back to the
+        # quietest segment it can find. Which of the two was used is reported
+        # below the entries — a silent fallback would hide a mistyped region and
+        # change every SNR downstream.
+        s1 = ttk.LabelFrame(self.frame, text="📏 Noise Region", padding=5)
         s1.pack(fill=tk.X, padx=5, pady=5)
 
         rf = ttk.Frame(s1)
@@ -272,16 +274,18 @@ class PeakDetectionStage(BaseStage):
         ttk.Label(rf, text="to").pack(side=tk.LEFT)
         ttk.Entry(rf, textvariable=self.noise_end_var,
                   width=8).pack(side=tk.LEFT, padx=2)
+        ttk.Label(rf, text="(high → low δ)",
+                  font=('Arial', 7), foreground='#666').pack(side=tk.LEFT, padx=(4, 0))
 
         self.noise_value_label = ttk.Label(s1, text="Noise Std Dev: --")
         self.noise_value_label.pack(anchor=tk.W, pady=2)
-        # Kept for project-load compatibility (no longer a separate UI step).
-        self.step1_status = ttk.Label(s1, text="")
+        # Reports where σ came from, or why the region was rejected.
+        self.step1_status = ttk.Label(s1, text="", font=('Arial', 8),
+                                      foreground='gray')
+        self.step1_status.pack(anchor=tk.W)
 
-        # ── STEP 2: Peak Detection ────────────────────────────────────────────
-        s2 = ttk.LabelFrame(
-            self.frame,
-            text="🔍 STEP 2: Peak Detection & Deconvolution", padding=5)
+        # ── Parameters ────────────────────────────────────────────────────────
+        s2 = ttk.LabelFrame(self.frame, text="🔍 Parameters", padding=5)
         s2.pack(fill=tk.X, padx=5, pady=5)
 
         # Row 1: Baseline Correction Toggle
@@ -291,14 +295,26 @@ class PeakDetectionStage(BaseStage):
         self._baseline_chk = ttk.Checkbutton(bf1, text="Apply Baseline Correction",
                                               variable=self.baseline_correct_var)
         self._baseline_chk.pack(side=tk.LEFT, padx=2)
-        self.baseline_method_var = tk.StringVar(value='airPLS')
+        # SNIP is the default: it preserves ~99% of a sharp apex against ~92%
+        # for arPLS at λ=1e5, which eats the peak skirts and biases integrals
+        # low by roughly 20% of the area.
+        self.baseline_method_var = tk.StringVar(value='snip')
         cb = ttk.Combobox(bf1, textvariable=self.baseline_method_var,
-                          values=['airPLS', 'snip', 'rolling', 'constant'],
+                          values=['snip', 'arPLS', 'rolling', 'constant'],
                           state='readonly', width=8)
         cb.pack(side=tk.LEFT, padx=2)
-        ttk.Label(bf1, text="λ (airPLS):", foreground='gray').pack(side=tk.LEFT, padx=(8, 2))
-        self.baseline_lam_var = tk.DoubleVar(value=1e5)
-        ttk.Entry(bf1, textvariable=self.baseline_lam_var, width=6).pack(side=tk.LEFT, padx=2)
+        cb.bind('<<ComboboxSelected>>', self._on_baseline_method_change)
+
+        # One entry, retargeted per method. Each method's width cutoff has its
+        # own parameter and its own units; a fixed "λ (arPLS)" box would sit
+        # there doing nothing whenever another method is selected.
+        self.baseline_lam_var   = tk.DoubleVar(value=1e5)   # arPLS
+        self.baseline_niter_var = tk.IntVar(value=40)       # snip
+        self._bl_param_lbl = ttk.Label(bf1, text="", foreground='gray')
+        self._bl_param_lbl.pack(side=tk.LEFT, padx=(8, 2))
+        self._bl_param_entry = ttk.Entry(bf1, width=6)
+        self._bl_param_entry.pack(side=tk.LEFT, padx=2)
+        self._on_baseline_method_change()
         self._baseline_applied_lbl = ttk.Label(
             s2, text="⚠ Baseline already corrected — 'Apply Baseline Correction' disabled.",
             foreground='orange', font=('Arial', 8))
@@ -322,7 +338,7 @@ class PeakDetectionStage(BaseStage):
         self.min_group_presence_var = tk.IntVar(value=3)
         ttk.Spinbox(pf1, from_=1, to=50, width=4,
                     textvariable=self.min_group_presence_var).pack(side=tk.LEFT)
-        ttk.Label(pf1, text="(keep peak only if seen in ≥N samples of a group)",
+        ttk.Label(pf1, text="(keep signal only if seen in ≥N samples of a group)",
                   font=('Arial', 7), foreground='#666').pack(side=tk.LEFT, padx=(4, 0))
 
         # Row 2b: shoulder recovery (2nd-derivative) — recovers overlapping
@@ -345,27 +361,28 @@ class PeakDetectionStage(BaseStage):
         ttk.Label(pf1c, text="(lower = more sensitive)",
                   font=('Arial', 7), foreground='#666').pack(side=tk.LEFT)
 
-        # Row 3: Min Width + Prominence
+        # Row 3: minimum separation between apices
         pf2 = ttk.Frame(s2)
         pf2.pack(fill=tk.X, pady=2)
-        ttk.Label(pf2, text="Min Width (ppm):").pack(side=tk.LEFT, padx=2)
+        ttk.Label(pf2, text="Min Distance (ppm):").pack(side=tk.LEFT, padx=2)
+
         self.min_width_var = tk.DoubleVar(value=0.005)
         ttk.Entry(pf2, textvariable=self.min_width_var,
                   width=6).pack(side=tk.LEFT, padx=2)
 
         self.btn_detect = ttk.Button(
-            s2, text="🎯 Detect Peaks",
+            s2, text="🎯 Detect Signals",
             command=self.detect_peaks, state="normal")
         self.btn_detect.pack(fill=tk.X, pady=5)
 
-        self.peaks_count_label = ttk.Label(s2, text="Peaks found: 0")
+        self.peaks_count_label = ttk.Label(s2, text="Signals found: 0")
         self.peaks_count_label.pack(anchor=tk.W, pady=2)
         self.step2_status = ttk.Label(
-            s2, text="⏳ Load data, then detect peaks", foreground="gray")
+            s2, text="⏳ Load data, then detect signals", foreground="gray")
         self.step2_status.pack(anchor=tk.W, pady=2)
 
         self.btn_toggle_peaks = ttk.Button(
-            s2, text="👁 Show/Hide Peak Areas",
+            s2, text="👁 Show/Hide Signal Areas",
             command=self.toggle_peaks, state="disabled")
         self.btn_toggle_peaks.pack(fill=tk.X, pady=2)
 
@@ -375,9 +392,6 @@ class PeakDetectionStage(BaseStage):
         self.btn_show_baseline.pack(fill=tk.X, pady=2)
         self._baseline_drawn = False
         self._baseline_line = None
-
-        # Internal consensus threshold (not exposed in UI)
-        self.consensus_var = tk.DoubleVar(value=50.0)
 
         # ── Mouse Controls ────────────────────────────────────────────────────
         mf = ttk.LabelFrame(self.frame, text="🐭 Mouse Controls", padding=5)
@@ -389,34 +403,132 @@ class PeakDetectionStage(BaseStage):
                   font=("Arial", 8), foreground="blue",
                   justify=tk.LEFT).pack(anchor=tk.W, padx=5)
 
-    # ── Step 1 ────────────────────────────────────────────────────────────────
+    # ── Noise ─────────────────────────────────────────────────────────────────
 
     def _estimate_noise(self):
-        """Estimate σ from the (optional) noise region; return σ or None.
+        """Measure σ from the noise region; return σ, or None to fall back.
 
-        Embedded in Detect Peaks — no separate button. If the region entries are
-        valid, noise is taken there (per-sample std → median across samples);
-        otherwise returns None and the detector falls back to its own quiet-
-        segment estimate.
+        Runs as part of signal detection — there is no separate button.  When
+        the region is usable, σ is its per-sample std reduced by the median
+        across samples; otherwise the detector estimates σ from the quietest
+        segment it can find.
+
+        Every rejection path reports itself in the panel: σ scales every SNR in
+        the run and gates the quality classifier, so a mistyped region that
+        silently reverted to the automatic estimate would move the whole
+        detection without the analyst ever seeing it.
         """
+        raw_start = str(self.noise_start_var.get()).strip()
+        raw_end   = str(self.noise_end_var.get()).strip()
+        if not raw_start and not raw_end:
+            self._set_noise_status(
+                'σ measured automatically (no region set).', 'gray')
+            return None
         try:
-            r_start = float(self.noise_start_var.get())
-            r_end   = float(self.noise_end_var.get())
+            r_start = float(raw_start)
+            r_end   = float(raw_end)
         except (ValueError, TypeError):
+            self._set_noise_status(
+                '⚠ Region is not numeric — σ measured automatically.', 'orange')
             return None
         if r_start <= r_end:
+            self._set_noise_status(
+                f'⚠ Region must run high → low δ (got {r_start:g} to '
+                f'{r_end:g}) — σ measured automatically.', 'orange')
             return None
         try:
             sigma = estimate_noise_from_region(
                 self.app.ppm, self.app.all_intensities, r_start, r_end)
         except Exception as e:
-            print(f"[noise] region estimate failed ({e}); using auto fallback")
+            self._set_noise_status(
+                f'⚠ {e} — σ measured automatically.', 'orange')
             return None
+        if not np.isfinite(sigma) or sigma <= 0:
+            self._set_noise_status(
+                '⚠ Region gave σ ≤ 0 (flat or empty) — '
+                'σ measured automatically.', 'orange')
+            return None
+
         self.noise_std    = float(sigma)
         self.noise_source = 'ppm'
         self.step1_completed = True
         self.noise_value_label.config(text=f"Noise Std Dev: {self.noise_std:.4f}")
+        self._set_noise_status(f'✅ σ from {r_start:g} → {r_end:g} ppm.', 'green')
         return self.noise_std
+
+    def _set_noise_status(self, msg, colour):
+        """Report where σ came from — or why the typed region was rejected."""
+        try:
+            self.step1_status.config(text=msg, foreground=colour)
+        except Exception:
+            pass
+
+    # Parameter that sets each method's width cutoff — what counts as "broad
+    # enough to be baseline". Label, units and default all differ, so the shared
+    # entry is retargeted rather than mislabelled.
+    _BASELINE_PARAMS = {
+        'arPLS':    ('λ (smoothness):', 'baseline_lam_var'),
+        'snip':     ('Iterations:',     'baseline_niter_var'),
+        'rolling':  ('',                None),
+        'constant': ('',                None),
+    }
+
+    def push_baseline_model(self):
+        """Write the panel's choice into the project's single baseline model.
+
+        The model is what every step reads, so editing it here changes
+        detection, quantification, statistics and MCR together instead of only
+        this panel's own working copy.
+        """
+        try:
+            from processing.baseline_model import BaselineModel, METHOD_PARAMS
+            method = self.baseline_method_var.get()
+            name, _ = METHOD_PARAMS.get(method, (None, None))
+            params = {}
+            if name == 'lam':
+                params = {'lam': float(self.baseline_lam_var.get())}
+            elif name == 'niter':
+                params = {'niter': int(self.baseline_niter_var.get())}
+            self.app.baseline_model = BaselineModel(
+                enabled=bool(self.baseline_correct_var.get()),
+                method=method, params=params)
+            self.app.invalidate_baseline_cache()
+        except Exception as e:
+            print(f'[baseline] model not updated: {e}')
+
+    def pull_baseline_model(self):
+        """Load the project's baseline model into the panel's widgets."""
+        model = getattr(self.app, 'baseline_model', None)
+        if model is None:
+            return
+        try:
+            self.baseline_correct_var.set(model.enabled)
+            self.baseline_method_var.set(model.method)
+            if 'lam' in model.params:
+                self.baseline_lam_var.set(float(model.params['lam']))
+            if 'niter' in model.params:
+                self.baseline_niter_var.set(int(model.params['niter']))
+            self._on_baseline_method_change(push=False)
+        except Exception as e:
+            print(f'[baseline] panel not synced: {e}')
+
+    def _on_baseline_method_change(self, _event=None, push=True):
+        """Point the parameter entry at the selected method's variable."""
+        method = self.baseline_method_var.get()
+        label, var_name = self._BASELINE_PARAMS.get(method, ('', None))
+        self._bl_param_lbl.config(text=label)
+        if var_name is None:
+            # Detaching the variable leaves the previous method's value on
+            # screen; clear it so a greyed box never shows a number that is not
+            # being used.
+            self._bl_param_entry.config(state='normal', textvariable='')
+            self._bl_param_entry.delete(0, tk.END)
+            self._bl_param_entry.config(state='disabled')
+        else:
+            self._bl_param_entry.config(
+                state='normal', textvariable=getattr(self, var_name))
+        if push:
+            self.push_baseline_model()
 
     def _sync_baseline_corrected_ui(self):
         """Reflect baseline_corrected and alignment_corrected flags in Step 2 UI."""
@@ -438,24 +550,25 @@ class PeakDetectionStage(BaseStage):
         except Exception:
             pass
 
-    # ── Step 2 ────────────────────────────────────────────────────────────────
+    # ── Detection ─────────────────────────────────────────────────────────────
 
     def detect_peaks(self):
         if self.app.all_intensities is None or self.app.ppm is None:
             messagebox.showinfo("Info", "Please load data first.")
             return
         if self.processor is None:
-            messagebox.showerror("Error", "Peak processor not initialized.")
+            messagebox.showerror("Error", "Signal processor not initialized.")
             return
 
         # Noise is now estimated here (no separate button). Use the optional
         # region if set; otherwise detect_peaks() estimates it internally from
         # the quietest segment (noise_std=None).
+        self.push_baseline_model()
         self._estimate_noise()
 
         # ── Loading overlay ───────────────────────────────────────────────────
         overlay = tk.Toplevel(self.app.root)
-        overlay.title("Peak Detection")
+        overlay.title("Signal Detection")
         overlay.resizable(False, False)
         overlay.transient(self.app.root)
         overlay.grab_set()
@@ -484,7 +597,7 @@ class PeakDetectionStage(BaseStage):
         outer = ttk.Frame(overlay, padding=12)
         outer.pack(fill=tk.BOTH, expand=True)
 
-        ttk.Label(outer, text="🔍  Peak Detection",
+        ttk.Label(outer, text="🔍  Signal Detection",
                   font=('Arial', 12, 'bold')).pack(pady=(4, 4))
 
         _lbl = ttk.Label(outer, text="Initialising…",
@@ -517,18 +630,34 @@ class PeakDetectionStage(BaseStage):
                     baseline_lam = float(self.baseline_lam_var.get())
                 except (ValueError, TypeError):
                     baseline_lam = 1e5
+                try:
+                    baseline_niter = int(self.baseline_niter_var.get())
+                except (ValueError, TypeError):
+                    baseline_niter = 40
 
                 # Skip pipeline alignment if already done via Alignment dialog
                 _run_align = not getattr(self.app, 'alignment_corrected', False)
 
+                # One correction for the whole project: take the already
+                # corrected matrix from the app and hand detect_peaks the
+                # baselines that were removed, so it does not redo the work and
+                # the audit trail still knows what was subtracted.
+                _raw  = np.asarray(self.app.all_intensities, dtype=float)
+                _corr = self.app.corrected_intensities()
+                _corr = (np.asarray(_corr, dtype=float)
+                         if _corr is not None else _raw)
+                _bl2d = (_raw - _corr) if _corr is not _raw else None
+
                 details = detect_peaks(
-                    self.app.ppm, self.app.all_intensities,
+                    self.app.ppm, _corr,
                     noise_std=self.noise_std,
                     min_snr=self.min_snr_var.get(),
                     min_distance=self.min_width_var.get(),
-                    baseline_correct=self.baseline_correct_var.get(),
+                    baseline_correct=False,   # already applied above
+                    baseline_2d=_bl2d,
                     baseline_method=self.baseline_method_var.get(),
                     baseline_lam=baseline_lam,
+                    baseline_niter=baseline_niter,
                     global_align=_run_align,
                     samples_info=self.app.samples_info,
                     progress_callback=_push_progress,
@@ -592,7 +721,7 @@ class PeakDetectionStage(BaseStage):
                 _destroy_overlay()
                 self._status_err(f"Peak detection failed: {_result['error']}")
                 messagebox.showerror("Error",
-                                     f"Peak detection failed:\n{_result['error']}")
+                                     f"Signal detection failed:\n{_result['error']}")
                 import traceback; traceback.print_exc()
                 return
 
@@ -639,11 +768,21 @@ class PeakDetectionStage(BaseStage):
                     'gaussian_r2':       p.get('gaussian_r2',      float('nan')),
                     'symmetry_score':    p.get('symmetry_score',    float('nan')),
                     'gaussian_quality':  p.get('gaussian_quality',  'unknown'),
-                    # Shape-based 3-tier quality (green/yellow/red + score).
-                    'peak_quality':       p.get('peak_quality', 'yellow'),
-                    'peak_quality_score': p.get('peak_quality_score', float('nan')),
+                    # Automatic signal quality: Good / Average / Poor, plus the
+                    # score and the per-component breakdown that justifies it.
+                    'signal_quality':        p.get('signal_quality', SIGNAL_AVERAGE),
+                    'signal_quality_score':  p.get('signal_quality_score', float('nan')),
+                    'signal_quality_detail': p.get('signal_quality_detail', {}),
+                    'fwhm_pts':              p.get('fwhm_pts', float('nan')),
+                    # Fraction of this window's raw area that was broad
+                    # component (macromolecule envelope) removed by the
+                    # baseline model — real NMR signal, so its removal is
+                    # recorded rather than assumed.
+                    'broad_removed_frac':    p.get('broad_removed_frac', 0.0),
+                    'broad_removed_frac_per_sample':
+                        p.get('broad_removed_frac_per_sample', np.array([])),
                     # Manual annotation status starts unset — the user marks
-                    # Good/Average/Poor; it is NOT derived from the shape quality.
+                    # Good/Average/Poor; it is NOT derived from the signal quality.
                     'status': None,
                     'left_grounded':     p.get('left_grounded',     False),
                     'right_grounded':    p.get('right_grounded',    False),
@@ -664,7 +803,7 @@ class PeakDetectionStage(BaseStage):
                 p['overlapping'] = False
             self._deconv_controller = None
             self._overlaps = []
-            self.peaks_count_label.config(text=f"Found {len(self.peaks)} peaks")
+            self.peaks_count_label.config(text=f"Found {len(self.peaks)} signals")
             try:
                 self.app.btn_peak_list.config(state="normal")
             except Exception:
@@ -679,7 +818,7 @@ class PeakDetectionStage(BaseStage):
             self.btn_toggle_peaks.config(state="normal")
             self.btn_show_baseline.config(state="normal")
             _overlay_step("Drawing peak areas…")
-            self._status("Drawing peak areas…")
+            self._status("Drawing signal areas…")
             self.color_peaks(force=True)
             self._status_ok(f"Found {len(self.peaks)} peaks  ({elapsed:.2f}s)")
 
@@ -699,7 +838,7 @@ class PeakDetectionStage(BaseStage):
             _destroy_overlay()
             messagebox.showinfo(
                 "Success",
-                f"Detected {len(self.peaks)} peaks")
+                f"Detected {len(self.peaks)} signals")
 
         overlay.after(100, _poll)
 
@@ -710,7 +849,7 @@ class PeakDetectionStage(BaseStage):
     def toggle_baseline(self):
         """Toggle display of estimated baseline on spectrum."""
         if not hasattr(self, '_last_baseline') or self._last_baseline is None:
-            messagebox.showinfo("Info", "Run peak detection first to estimate baseline.")
+            messagebox.showinfo("Info", "Run signal detection first to estimate baseline.")
             return
 
         ax = self.app.ax

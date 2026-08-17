@@ -24,7 +24,7 @@ class ResultsDisplay:
 
         # Summary
         summary = f"Region: {results['region_ppm'][0]:.3f} - {results['region_ppm'][-1]:.3f} ppm\n"
-        summary += f"Peaks found: {len(results['peaks'])}\n"
+        summary += f"Signals found: {len(results['peaks'])}\n"
         summary += f"BIC: {results['bic']:.1f}"
 
         ttk.Label(main_frame, text=summary, font=("Arial", 10)).pack(anchor=tk.W, pady=5)

@@ -1139,7 +1139,7 @@ class AnnotationResultsWindow:
         n_met = len(self.metabolites)
         self._summary_lbl = ttk.Label(
             frame_a,
-            text=f"{n_pk} peaks assigned  ·  {n_met} metabolites",
+            text=f"{n_pk} signals assigned  ·  {n_met} metabolites",
             font=("Arial", 9, "italic"), foreground="gray")
         self._summary_lbl.pack(anchor=tk.W, padx=4, pady=(4, 2))
         ttk.Label(frame_a,
@@ -1277,7 +1277,7 @@ class AnnotationResultsWindow:
             font=("Arial", 8), foreground="gray")
         self.match_info.pack(anchor=tk.W, padx=4)
         ttk.Label(frame_b,
-                  text="Tip: right-drag on zoom view to select peak region",
+                  text="Tip: right-drag on zoom view to select signal region",
                   font=("Arial", 7), foreground="#999").pack(anchor=tk.W, padx=4)
 
         self.fig = plt.Figure(figsize=(6, 4), dpi=100)
@@ -1358,7 +1358,7 @@ class AnnotationResultsWindow:
         reset_row = ttk.Frame(qf)
         reset_row.grid(row=8, column=0, columnspan=4, sticky=tk.EW, pady=(4, 2))
         self._reset_btn = tk.Button(
-            reset_row, text='↺ Reset peaks to original',
+            reset_row, text='↺ Reset signals to original',
             font=('Arial', 8), fg='#cc5500', bg='#fff8f0',
             relief='groove', cursor='hand2', command=self._rc_reset)
         self._reset_btn.pack(side=tk.LEFT, padx=4)
@@ -3634,7 +3634,7 @@ class AnnotationResultsWindow:
                         'sub_peak_matched' if nearest_pk is not None else 'sub_peak_unmatched',
                         'qual_bad')
         else:
-            qual_lbl  = f'Peak #{nearest_pk["rank"]}' if nearest_pk else ''
+            qual_lbl  = f'Signal #{nearest_pk["rank"]}' if nearest_pk else ''
             new_tags = ('sub_peak',
                         'sub_peak_matched' if nearest_pk is not None else 'sub_peak_unmatched')
         if this_is_anchor:
@@ -3901,10 +3901,10 @@ class AnnotationResultsWindow:
 
             menu = tk.Menu(self.win, tearoff=0)
             menu.add_command(
-                label=f'📋 Open Peak #{rank} in Peak List',
+                label=f'📋 Open Signal #{rank} in Signal List',
                 command=_open_peak_list)
             menu.add_command(
-                label=f'🧅 Send Peak #{rank} to Deconvolution Tool',
+                label=f'🧅 Send Signal #{rank} to Deconvolution Tool',
                 command=_open_deconv)
             menu.add_separator()
             menu.add_command(
@@ -3984,7 +3984,7 @@ class AnnotationResultsWindow:
 
             menu = tk.Menu(self.win, tearoff=0)
             menu.add_command(
-                label=f'DB peak @ {dp_ppm:.4f} ppm  [{dp.get("type","?")}]  —  {met["name"]}',
+                label=f'DB signal @ {dp_ppm:.4f} ppm  [{dp.get("type","?")}]  —  {met["name"]}',
                 state='disabled')
             if cands_raw:
                 menu.add_separator()
@@ -4183,7 +4183,7 @@ class AnnotationResultsWindow:
         lbl = getattr(self, '_summary_lbl', None)
         if lbl:
             lbl.config(
-                text=f"{n_matched}/{n_total_peaks} peaks annotated  ·  "
+                text=f"{n_matched}/{n_total_peaks} signals annotated  ·  "
                      f"{n_matched} matched in DB  ·  "
                      f"{len(visible_mets)} metabolites visible")
 
@@ -4581,7 +4581,7 @@ class AnnotationResultsWindow:
                             qual_lbl  = '✗ Bad'
                         else:
                             sci_color = ('sub_peak', 'sub_peak_matched')
-                            qual_lbl  = f'Peak #{pk_rank}'
+                            qual_lbl  = f'Signal #{pk_rank}'
                         if is_anchor:
                             sci_color = sci_color + ('anchor_line',)
 
@@ -5793,7 +5793,7 @@ class AnnotationResultsWindow:
         self.ax.set_xlim(span_hi + 0.05, span_lo - 0.05)   # NMR inverted
         self.ax.set_ylim(bottom=-0.20, top=1.15)
         self.ax.set_xlabel('δ (ppm)', fontsize=9)
-        self.ax.set_ylabel('Intensity (normalised to peak max)', fontsize=8)
+        self.ax.set_ylabel('Intensity (normalised to signal max)', fontsize=8)
         _mean_score_fp = (sum(mp.get('composite_score', 0) or 0
                              for mp in met['matched_peaks'])
                           / max(len(met['matched_peaks']), 1))
@@ -5895,7 +5895,7 @@ class AnnotationResultsWindow:
             self._set_q('mcr', f"{_sym}  {' · '.join(_parts)}", _color)
 
         self.match_info.config(
-            text=(f"{met['name']}  ·  {n_mat}/{n_db} DB peaks matched  "
+            text=(f"{met['name']}  ·  {n_mat}/{n_db} DB signals matched  "
                   f"·  {cov:.0f}% coverage  ·  cosine {cos:.3f}"))
 
     def _plot_peak_zoom(self, met, mp):
@@ -6042,9 +6042,9 @@ class AnnotationResultsWindow:
         # xlim already set above; re-apply to be explicit.
         self.ax.set_ylim(-0.05, 1.25)
         self.ax.set_xlabel('δ (ppm)', fontsize=9)
-        self.ax.set_ylabel('Intensity (normalised to peak max)', fontsize=8)
+        self.ax.set_ylabel('Intensity (normalised to signal max)', fontsize=8)
         self.ax.set_title(
-            f"{met['name']}  ·  Peak #{mp['peak_rank']}",
+            f"{met['name']}  ·  Signal #{mp['peak_rank']}",
             fontsize=9, fontweight='bold')
         self.ax.legend(loc='upper right', fontsize=7)
         self.ax.tick_params(labelsize=8)
@@ -6146,7 +6146,7 @@ class AnnotationResultsWindow:
             self.plot_canvas.draw_idle()
             try:
                 self.match_info.config(
-                    text='Select a peak in the list first, then right-drag.',
+                    text='Select a signal in the list first, then right-drag.',
                     foreground='orange')
             except Exception:
                 pass
@@ -6161,7 +6161,7 @@ class AnnotationResultsWindow:
         """Update the 'modified' indicator next to the reset button."""
         try:
             if modified:
-                self._reset_modified_lbl.config(text='● peaks modified by selection')
+                self._reset_modified_lbl.config(text='● signals modified by selection')
             else:
                 self._reset_modified_lbl.config(text='')
         except Exception:
@@ -6218,7 +6218,7 @@ class AnnotationResultsWindow:
         if self._current_dp is None:
             self.plot_canvas.draw_idle()
             self.match_info.config(
-                text='Select a peak in the list first, then right-drag.',
+                text='Select a signal in the list first, then right-drag.',
                 foreground='orange')
             return
 
@@ -6641,9 +6641,9 @@ class AnnotationResultsWindow:
         if not undef_items:
             from tkinter import messagebox
             messagebox.showinfo(
-                'No Undef Peaks',
-                'No Undefined peaks found.\n\n'
-                'Use Ctrl+2 on a selected peak to mark it as Undef.',
+                'No Undef Signals',
+                'No Undefined signals found.\n\n'
+                'Use Ctrl+2 on a selected signal to mark it as Undef.',
                 parent=self.win)
             return
 
@@ -6674,7 +6674,7 @@ class AnnotationResultsWindow:
             with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
                 w = csv.writer(f)
                 w.writerow([
-                    'Peak #', 'Metabolite', 'Met ID',
+                    'Signal #', 'Metabolite', 'Met ID',
                     'PPM', 'Start PPM', 'End PPM',
                     'Score', 'Quality', 'Candidates',
                     'DB PPM', 'Δ PPM', 'Multiplicity',
