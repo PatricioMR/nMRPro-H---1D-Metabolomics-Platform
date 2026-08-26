@@ -31,7 +31,7 @@ def _dbg_open():
 
     # The frozen application may live under Program Files, which is normally
     # read-only. Try the project/bundle path first for development, then the
-    # per-user nMRPipe data directory used by installed builds.
+    # per-user NMRPro-H data directory used by installed builds.
     candidates = [_QUANT_DEBUG_PATH]
     try:
         from app_paths import user_data_dir
@@ -90,6 +90,7 @@ def _per_sample_snr(p, all_int, n_s):
 
 from ._quant_helpers import (
     _trapz, _pls_vip, _cv, _pqn, _effective_nh, _effective_nh_source,
+    multiplet_nh,
     _mcr_als, _fit_multi_lorentz, _align_sample_center,
     bootstrap_fraction_ci as _bootstrap_fraction_ci,
     jr_pointwise_multiplet_area, jr_analyte_fraction, _anchor_lines_complete,
@@ -98,6 +99,10 @@ from ._quant_helpers import (
 )
 from processing.multiplet_line_selector import (
     select_clean_lines, matched_line_ranks, line_match_tolerance)
+from processing.annotation_scoring import (
+    candidate_key as _ann_candidate_key,
+    is_competitor as _ann_is_competitor,
+    DJ_GOLD_HZ_DEFAULT as _DJ_GOLD_DEFAULT)
 
 
 def _multiplet_line_peaks(hit, pk_by_rank):
@@ -154,6 +159,33 @@ def _multiplet_window_from_peaks(hit, pk_by_rank):
     hi = max(max(float(pk.get('start_ppm', pk.get('ppm', 0))),
                  float(pk.get('end_ppm',   pk.get('ppm', 0)))) for pk in matched)
     return [float(lo), float(hi)]
+
+
+DB_WINDOW_MIN_MARGIN = 0.010   # ppm — same floor as the _margin rule below
+DB_WINDOW_WIDTH_FRAC = 0.7     # ppm — same fraction of the peak width
+
+
+def db_gapfill_window(line_ppms, width_ppm=0.008):
+    """Integration window for a DB-predicted multiplet with no detected peak.
+
+    ``[min(line), max(line)]`` runs from the CENTRE of the outermost left line
+    to the CENTRE of the outermost right line, so half of each outer line's
+    area falls outside — a doublet integrates ~47% of its area while nH stays
+    the full multiplet count, halving the reported concentration. A singlet
+    degenerates further: min == max gives a zero-width window and an area of
+    exactly 0.
+
+    Both are fixed by padding with the same margin the detected-peak branch
+    uses (``max(width_ppm * 0.7, 0.010)`` ppm), so the outer lines' tails are
+    inside the window. Returns ``(lo_ppm, hi_ppm)``; ``None`` when there are no
+    lines to build a window from.
+    """
+    ppms = [float(v) for v in (line_ppms or []) if v is not None]
+    if not ppms:
+        return None
+    margin = max(float(width_ppm or 0.0) * DB_WINDOW_WIDTH_FRAC,
+                 DB_WINDOW_MIN_MARGIN)
+    return (min(ppms) - margin, max(ppms) + margin)
 
 
 class _QuantCompMixin:
@@ -393,7 +425,10 @@ class _QuantCompMixin:
                     for _row in _cur.execute(
                             f'SELECT {_id_c}, ppm, protons FROM shifts_1h'
                             ' WHERE protons IS NOT NULL').fetchall():
-                        _db_protons[(str(_row[0]), round(float(_row[1]), 3))] = int(_row[2])
+                        # float, not int: BMRB stores fractional per-signal nH
+                        # (0.5, 0.75, 1.55…). int() truncated 0.75 → 0, and the
+                        # falsy-0 guard below then dropped the fallback entirely.
+                        _db_protons[(str(_row[0]), round(float(_row[1]), 3))] = float(_row[2])
                 _conn.close()
         except Exception:
             pass
@@ -504,15 +539,11 @@ class _QuantCompMixin:
                         continue
                     if qv is not None:
                         auto_quality_marks[(mid, pr)] = qv
-                    elif (mp.get('anchor_status') == 'clean'
-                          and mp.get('j_met_confirmed')
-                          and _anchor_lines_complete(mp)):
-                        # This specific peak is J-anchor-confirmed (clean + j_met_confirmed).
-                        # Treat it as good even if annotation_quality is None, mirroring
-                        # the has_anchor condition in annotation_results_window._met_parent_qual.
-                        # Multiplets must have ALL predicted lines found — a partial
-                        # multiplet has no confirmed J and must not be quantified.
-                        auto_quality_marks[(mid, pr)] = 'good'
+                    # A peak with no verdict is no longer promoted here. It used
+                    # to pass on the strength of a companion multiplet (RANSY
+                    # area ratio + predicted position), which proved too variable
+                    # to carry a quantification decision; such peaks now need an
+                    # explicit Good, manual or automatic.
         except Exception as _aqm_exc:
             import traceback
             print(f'[Quant] auto_quality_marks build failed: {_aqm_exc}')
@@ -530,23 +561,19 @@ class _QuantCompMixin:
             for _met_gmi in _all_mets_gmi:
                 _mid_gmi = str(_met_gmi.get('id', ''))
                 _mps_gmi = _met_gmi.get('matched_peaks', [])
-                _is_bdl_gmi = bool(_mps_gmi) and all(
-                    mp.get('below_detection_limit', False) for mp in _mps_gmi)
+
                 # Mirror _met_parent_qual: an anchor only makes the metabolite
                 # Good when the anchoring peak is itself quality-'good'. This
                 # blocks an incomplete multiplet (J unconfirmed, not all lines
                 # found → marked 'bad' upstream) from being quantified via a
-                # stale clean/auto_anchor flag.
+                # stale auto_anchor flag.
                 _has_anchor_gmi = (
                     _mid_gmi in _anchor_met_ids
-                    or any(
-                        mp.get('annotation_quality') == 'good'
-                        and ((mp.get('anchor_status') == 'clean'
-                              and mp.get('j_met_confirmed'))
-                             or mp.get('auto_anchor'))
-                        for mp in _mps_gmi)
+                    or any(mp.get('annotation_quality') == 'good'
+                           and mp.get('auto_anchor')
+                           for mp in _mps_gmi)
                 )
-                if _has_anchor_gmi and not _is_bdl_gmi:
+                if _has_anchor_gmi and not False:
                     good_met_ids.add(_mid_gmi)
                     continue
                 for _mp_gmi in _mps_gmi:
@@ -640,7 +667,11 @@ class _QuantCompMixin:
                 (str(k[0]), k[1]): v for k, v in (quality_marks or {}).items()
             }
             _ambiguous_ranks = ambiguous_peak_ranks(
-                _mets_for_amb, manual_quality=_manual_for_amb)
+                _mets_for_amb, manual_quality=_manual_for_amb,
+                dj_gold_hz=float(
+                    (getattr(self.annotation_stage, '_annotation_params', None)
+                     or {}).get('dj_gold_hz', _DJ_GOLD_DEFAULT)
+                    or _DJ_GOLD_DEFAULT))
         except Exception as _amb_exc:
             print(f'[Quant] ambiguity detection unavailable: {_amb_exc}')
             _ambiguous_ranks = set()
@@ -693,10 +724,6 @@ class _QuantCompMixin:
                         continue
                     _manual_q = quality_marks.get((_mid_fb, _pr))
                     _eff_q = _manual_q if _manual_q else _mp.get('annotation_quality')
-                    if _eff_q is None and (
-                            _mp.get('anchor_status') == 'clean'
-                            and _mp.get('j_met_confirmed')):
-                        _eff_q = 'good'
                     if (_eff_q == 'good'
                             and _pr not in _ambiguous_ranks):
                         _peak_assignments[_pr] = (_met, _mp)
@@ -858,36 +885,55 @@ class _QuantCompMixin:
             # those peaks cannot be reused by another metabolite. A metabolite
             # that loses a multiplicity falls to its next candidate automatically;
             # one that wins nothing is discarded (never enters met_map).
+            # ΔJ band width: the user's Annotation Parameters value when set,
+            # otherwise the scoring core's default. Never a literal here — the
+            # threshold must have one owner.
+            _DJ_GOLD_HZ = float(
+                (getattr(self.annotation_stage, '_annotation_params', None) or {})
+                .get('dj_gold_hz', _DJ_GOLD_DEFAULT) or _DJ_GOLD_DEFAULT)
+
+            def _ann_candidate(h, mid_str):
+                """Merge a search hit with the Annotation Results verdict.
+
+                The raw hit never carried the cosine fingerprint similarity or
+                the confirmed line count — those are computed by the Annotation
+                Results window. Reading them here is what makes quantification
+                elect the same winner the user is looking at, manual marks
+                included.
+                """
+                _mp = _ann_mp.get((mid_str, h.get('peak_rank'))) or {}
+                _manual = quality_marks.get((h.get('_mid'), h.get('peak_rank')))
+                if _manual is None:
+                    _manual = quality_marks.get((mid_str, h.get('peak_rank')))
+                _dj = h.get('delta_j_hz')
+                if _dj is None:
+                    _dj = _mp.get('delta_j_hz')
+                return {
+                    'multiplicity': h.get('multiplicity') or _mp.get('type'),
+                    'delta_j_hz':   _dj,
+                    'ppm_diff':     h.get('ppm_diff', h.get('ppm_error')),
+                    'n_found':      _mp.get('_n_found_lines'),
+                    'n_expected':   _mp.get('_n_exp_lines'),
+                    'cosine':       _mp.get('_s_cosine'),
+                    'manual_quality': _manual,
+                    'quality':      _effective_quality(h),
+                    'score':        _mp.get('composite_score',
+                                            h.get('composite_score', 0.0)),
+                }
+
             def _compete_key(h, mid_str):
-                # ── Multiplicity selection rule (which signal to quantify) ──────
-                # PRIMARY:
-                #   • multiplet → smallest |ΔJ| (J match), then smallest Δppm
-                #   • singlet   → smallest Δppm only (no J to match)
-                # A J-confirmed multiplet outranks a singlet (tier). Everything
-                # else — quality, NNLS purity, contamination, competitors, width,
-                # score (_hit_sort_key) — is TIE-BREAK only.
-                _mult = (h.get('multiplicity') or '').strip().lower()
-                _is_singlet = _mult in _SINGLET_MULTS
-                _s_dj_v = float(_s_dj_map.get(
-                    (mid_str, h.get('peak_rank')), h.get('s_dj', 0)) or 0)
-                # Continuous tier penalty (lower = better): a near-perfect
-                # multiplet degrades smoothly toward the singlet boundary instead
-                # of falling off the old binary s_dj>=1.0 cliff. s_dj is monotonic
-                # in |ΔJ|, so this stays consistent with the ΔJ tie-break below.
-                _tier = multiplet_tier_penalty(_is_singlet, _s_dj_v)
-
-                _ppm_diff = float(h.get('ppm_diff', h.get('ppm_error', 999)) or 999)
-                if _is_singlet:
-                    _dj_key = 999.0                     # ΔJ not applicable
-                else:
-                    _dj = h.get('delta_j_hz')
-                    _dj_key = float(_dj) if _dj is not None else 999.0
-
-                _h_q = _effective_quality(h)
-                _q_rank = 0 if _h_q == 'good' else 1
-                # (_tier, ΔJ, Δppm) = primary; (_q_rank, _hit_sort_key) = tie-break.
-                return (_tier, _dj_key, _ppm_diff, _q_rank,
-                        _hit_sort_key(h, mid_str))
+                # ── Which signal quantifies this metabolite ────────────────────
+                # Delegates to the single ranking rule shared with annotation
+                # (processing.annotation_scoring.candidate_key): manual mark →
+                # evidence tier → ΔJ band → Δppm band → cosine. Banding is what
+                # makes a technical tie a tie instead of a coin toss decided by
+                # noise. _hit_sort_key (NNLS purity, contamination, competitor
+                # count, width, SNR, score) is appended only to keep the order
+                # deterministic once every physical criterion has tied.
+                _key = _ann_candidate_key(
+                    _ann_candidate(h, mid_str),
+                    dj_gold_hz=_DJ_GOLD_HZ)
+                return _key + (_hit_sort_key(h, mid_str),)
 
             # s_dj drives the multiplet/singlet tier in _compete_key. When it is
             # missing (project loaded before scores were computed, or the
@@ -897,6 +943,7 @@ class _QuantCompMixin:
             # never silence data warnings). Such multiplet hits are blocked below
             # (singlets need no J and are unaffected); the blocked set is surfaced.
             _blocked_no_sdj: set = set()
+            _blocked_unverified: set = set()
 
             # Annotation-assigned (metabolite, peak_rank) pairs — exactly the
             # peaks the Annotation Results window shows for each metabolite.
@@ -906,6 +953,12 @@ class _QuantCompMixin:
             # annotated doublet (peaks 49/51).
             _assigned_pairs = set()
             _mids_with_assign = set()
+            # Evidence the Annotation Results window computed but the raw search
+            # hits never carried — cosine above all, plus the line-count that
+            # decides whether a multiplet is confirmed. Quantification must read
+            # the annotation's verdict rather than re-deriving its own, so that
+            # what the user sees and what gets quantified are the same decision.
+            _ann_mp = {}
             for _met_a in (getattr(self.annotation_stage, '_metabolites', []) or []):
                 _mid_a = str(_met_a.get('id', ''))
                 for _mp_a in _met_a.get('matched_peaks', []):
@@ -913,6 +966,7 @@ class _QuantCompMixin:
                     if _r_a is not None:
                         _assigned_pairs.add((_mid_a, _r_a))
                         _mids_with_assign.add(_mid_a)
+                        _ann_mp[(_mid_a, _r_a)] = _mp_a
 
             _all_non_bad = []
             for _h in results:
@@ -939,8 +993,22 @@ class _QuantCompMixin:
                         _SINGLET_MULTS):
                     _blocked_no_sdj.add(_h_mid)
                     continue
+                # An unverified multiplet (expected lines not all found, so J
+                # was never measured) did not identify a signal and must not
+                # compete for the peak — see annotation_scoring.is_competitor.
+                _cand_h = _ann_candidate(_h, _h_mid)
+                if not _ann_is_competitor(_cand_h):
+                    _blocked_unverified.add(_h_mid)
+                    continue
                 _all_non_bad.append((_compete_key(_h, _h_mid), _h_mid, _h))
             _all_non_bad.sort(key=lambda x: x[0])
+
+            if _blocked_unverified:
+                print(f'[Quant] {len(_blocked_unverified)} multiplet(s) withdrawn '
+                      f'— expected lines not all found, J unverified: '
+                      f'{sorted(_blocked_unverified)}')
+                _dbg(_dbg_f, f'blocked (unverified multiplet): '
+                             f'{sorted(_blocked_unverified)}')
 
             if _blocked_no_sdj:
                 self._warn_no_sdj = True
@@ -1209,57 +1277,25 @@ class _QuantCompMixin:
         _mcr_info        = {}
         _align_shifts    = {}   # mid → list[float] per-sample ppm shift
 
-        # ── Multiplet window pre-pass ─────────────────────────────────────────
-        # The integration window is the UNION of the Peak-List boundaries of the
-        # peaks composing the multiplet (left foot of the leftmost line … right
-        # foot of the rightmost) — see _multiplet_window_from_peaks. When two
-        # metabolites' windows overlap (shared region) the lower-priority one is
-        # clipped at the overlap boundary so the area is not double-counted.
-        # Priority = composite_score of the selected hit (higher = keeps full window).
-        _mult_windows_precomp = {}   # mid → [lo_ppm, hi_ppm]  (mutable)
-        if use_multiplet and not is_lipidomics_mode:
-            for _mid_pw, _info_pw in met_map.items():
-                if not _info_pw.get('hits'):
-                    continue
-                _hit_pw = _info_pw['hits'][0]
-                _p_pw = _pk_by_rank.get(_hit_pw.get('peak_rank'))
-                if _p_pw is None:
-                    continue
-                _win_pw = _multiplet_window_from_peaks(_hit_pw, _pk_by_rank)
-                if _win_pw is None:
-                    _li_pw   = min(_p_pw.get('start_idx', 0), _p_pw.get('end_idx', 0))
-                    _hii_pw  = max(_p_pw.get('start_idx', 0), _p_pw.get('end_idx', 0))
-                    _win_pw  = [float(min(ppm_arr[_li_pw], ppm_arr[_hii_pw])),
-                                float(max(ppm_arr[_li_pw], ppm_arr[_hii_pw]))]
-                _mult_windows_precomp[_mid_pw] = _win_pw
-
-            # Sort descending by composite_score; higher score keeps full window.
-            _sorted_pw = sorted(
-                _mult_windows_precomp,
-                key=lambda m: -float(
-                    (met_map[m]['hits'][0] if met_map[m].get('hits') else {})
-                    .get('composite_score', 0) or 0))
-
-            for _i_pw, _ma in enumerate(_sorted_pw):
-                _wa = _mult_windows_precomp[_ma]
-                for _mb in _sorted_pw[_i_pw + 1:]:
-                    _wb = _mult_windows_precomp.get(_mb)
-                    if _wb is None:
-                        continue
-                    _ovlp_lo = max(_wa[0], _wb[0])
-                    _ovlp_hi = min(_wa[1], _wb[1])
-                    if _ovlp_lo >= _ovlp_hi:
-                        continue  # no overlap
-                    # _ma has higher priority — clip _mb
-                    if _wb[0] < _wa[0] and _wb[1] > _wa[1]:
-                        # _mb spans both sides of _ma — keep left portion
-                        _mult_windows_precomp[_mb] = [_wb[0], _wa[0]]
-                    elif _wb[1] > _wa[1]:
-                        # overlap on left side of _mb
-                        _mult_windows_precomp[_mb] = [_wa[1], _wb[1]]
-                    else:
-                        # overlap on right side of _mb (or _mb fully inside _ma)
-                        _mult_windows_precomp[_mb] = [_wb[0], _wa[0]]
+        # ── Multiplet integration window ──────────────────────────────────
+        # The window is the UNION of the Peak-List boundaries of the peaks
+        # composing the multiplet (left foot of the leftmost line … right foot
+        # of the rightmost) — see _multiplet_window_from_peaks. It is NOT
+        # clipped against neighbouring analytes.
+        #
+        # A clipping pre-pass used to cut the window of whichever metabolite had
+        # the lower composite_score. It was wrong three ways: it re-ran the
+        # candidate competition with a criterion (composite_score, 45% Δppm)
+        # that contradicts the ΔJ-first rule used to elect the winner; it cut
+        # the geometry while leaving nH untouched, so a partial area was divided
+        # by the full proton count; and when the loser's window sat inside the
+        # winner's it collapsed to zero width and fell back to the anchor peak —
+        # which for a multiplet is documented as unreliable, and in practice was
+        # often not one of the multiplet's own lines at all.
+        #
+        # There is nothing left to clip: only one metabolite wins a contested
+        # peak (the ranking is shared with annotation), and an ambiguous contest
+        # elects nobody, so the shared region is never double-counted.
 
         print(f'[Quant] FINAL met_map={len(met_map)} analytes going to integration')
         _p_total = len(met_map)
@@ -1326,6 +1362,7 @@ class _QuantCompMixin:
 
             s_areas = np.zeros(n_s)
             found   = False
+            _area_ok = False   # a hit produced a real integrated area
             _hit_has_anchor = False
             _met_synthetic_db = False   # quantified from DB window (no detected peak)
             _j_frac_this_met = None
@@ -1349,11 +1386,15 @@ class _QuantCompMixin:
                     if use_multiplet and _pl0_ppms:
                         _cen = float(hit.get('peak_ppm') or hit.get('ppm')
                                      or float(np.mean(_pl0_ppms)))
-                        _si = int(np.argmin(np.abs(ppm_arr - max(_pl0_ppms))))
-                        _ei = int(np.argmin(np.abs(ppm_arr - min(_pl0_ppms))))
+                        # Pad past the outer line centres, otherwise half of each
+                        # outer line sits outside the window (and a singlet gets
+                        # a zero-width window integrating to exactly 0).
+                        _gf_lo, _gf_hi = db_gapfill_window(_pl0_ppms, 0.008)
+                        _si = int(np.argmin(np.abs(ppm_arr - _gf_hi)))
+                        _ei = int(np.argmin(np.abs(ppm_arr - _gf_lo)))
                         p = {'ppm': _cen,
-                             'start_ppm': float(min(_pl0_ppms)),
-                             'end_ppm':   float(max(_pl0_ppms)),
+                             'start_ppm': float(_gf_lo),
+                             'end_ppm':   float(_gf_hi),
                              'start_idx': min(_si, _ei),
                              'end_idx':   max(_si, _ei),
                              'width_ppm': 0.008,
@@ -1383,14 +1424,20 @@ class _QuantCompMixin:
                         hit.get('ppm_center') or hit.get('db_ppm') or
                         hit.get('ppm') or 0), 3)
                     _p_fb = _db_protons.get((_h_id, _h_ppm))
-                    if _p_fb:
+                    if _p_fb is not None and _p_fb > 0:
                         hit['protons'] = _p_fb
-                # use_multiplet integrates the whole multiplet window → full nH.
+                # use_multiplet integrates the whole multiplet window → the nH
+                # of that DB signal, which may be FRACTIONAL: BMRB splits a
+                # group's protons across the signals it is observed in (e.g.
+                # D-Fructose H13-H16 = 4 H over 5 signals → 0.8 each; they sum
+                # back to total_protons). Flooring at 1.0 reports D-Glucose at
+                # 0.47× its true concentration — the window's area really does
+                # correspond to 0.5 H, not 1.
                 # Otherwise, use fractional nH whenever predicted_lines > 1:
                 # each annotation hit corresponds to one specific DB line, and
                 # _effective_nh matches detected ppm to the closest predicted line.
                 if use_multiplet:
-                    nh = max(1.0, float(hit.get('protons', 1) or 1))
+                    nh = multiplet_nh(hit)
                 elif len(hit.get('predicted_lines', [])) > 1:
                     nh = _effective_nh(hit, detected_ppm, _spec_mhz)
                 else:
@@ -1429,46 +1476,32 @@ class _QuantCompMixin:
 
                     # Integration window = union of the Peak-List boundaries of
                     # the multiplet's peaks (left foot of the leftmost line …
-                    # right foot of the rightmost), possibly clipped by the
-                    # overlap pre-pass to avoid double-counting shared regions.
-                    if mid in _mult_windows_precomp:
-                        _m_lo, _m_hi = _mult_windows_precomp[mid]
-                        # Overlap clipping can produce a degenerate window
-                        # (lo >= hi) when this metabolite lost the shared region
-                        # to a higher-scoring one. If the detected peak sits
-                        # OUTSIDE that clipped window, restore the un-clipped
-                        # union of boundaries (the peak_rank points elsewhere,
-                        # e.g. after ppm calibration); otherwise keep degenerate
-                        # so the _sm_mult.sum()<2 fallback integrates just this
-                        # metabolite's own detected sub-peak.
-                        if _m_hi <= _m_lo + 1e-5:
-                            _full = _multiplet_window_from_peaks(hit, _pk_by_rank)
-                            if _full is not None:
-                                _actual_det_ppm = float(p.get('ppm', detected_ppm))
-                                if not (_full[0] - _margin <= _actual_det_ppm
-                                        <= _full[1] + _margin):
-                                    _m_lo, _m_hi = _full
+                    # right foot of the rightmost). Never clipped: only one
+                    # metabolite wins a contested peak, so there is no shared
+                    # region left to double-count.
+                    _full = _multiplet_window_from_peaks(hit, _pk_by_rank)
+                    if _full is not None:
+                        _m_lo, _m_hi = _full
                     else:
-                        _full = _multiplet_window_from_peaks(hit, _pk_by_rank)
-                        if _full is not None:
-                            _m_lo, _m_hi = _full
-                        else:
-                            _m_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
-                            _m_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
+                        _m_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
+                        _m_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
                     _dbg(_dbg_f, f'    integ window  : [{_m_lo:.4f}, {_m_hi:.4f}] ppm  (margin={_margin:.4f})')
                     # Store multiplet window for visualization/export
                     hit['_multiplet_window'] = (_m_lo, _m_hi)
                     _sm_mult = (ppm_arr >= _m_lo) & (ppm_arr <= _m_hi)
-                    if _sm_mult.sum() < 2:
-                        # Degenerate window (clipped by overlap or too narrow):
-                        # fall back to the detected peak's index range.
-                        _sm_mult = np.zeros(len(ppm_arr), dtype=bool)
-                        _sm_mult[lo_i:hi_i + 1] = True
-                        # Update stored window so table/visualization reflect the
-                        # actual integration range, not the zero-width overlap result.
-                        _fb_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
-                        _fb_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
-                        hit['_multiplet_window'] = (_fb_lo, _fb_hi)
+                    # A window too narrow to integrate, or one holding none of
+                    # the multiplet's own predicted lines, cannot yield this
+                    # analyte's area. The old code fell back to the anchor peak
+                    # here — but for a multiplet the anchor is the CENTRE and
+                    # frequently a stray peak, so that fallback reported a
+                    # concentration measured on somebody else's signal. Report
+                    # nothing instead (CLAUDE.md: never fabricate data).
+                    _lines_in_win = [_lp for _lp in _pl_ppms
+                                     if _m_lo <= _lp <= _m_hi]
+                    if _sm_mult.sum() < 2 or (_pl_ppms and not _lines_in_win):
+                        _dbg(_dbg_f, '    SKIP: window holds no predicted line '
+                                     f'({len(_lines_in_win)}/{len(_pl_ppms)})')
+                        continue
                     _x_mult = ppm_arr[_sm_mult]
                     _seg_m  = all_int[_sm_mult, :].astype(float).copy()   # (m, n_s)
                     if local_baseline and _seg_m.shape[0] >= 2:
@@ -1790,6 +1823,7 @@ class _QuantCompMixin:
                         _dbg(_dbg_f, f'    j_frac     : {_j_frac_this_met:.4f}')
                 # ──────────────────────────────────────────────────────────────
                 s_areas += a_vec
+                _area_ok = True
                 _ann_score = _mid_ann_score.get(str(mid))
                 if _ann_score is None:
                     _ann_score = max(
@@ -1824,7 +1858,11 @@ class _QuantCompMixin:
                                   '_jr_line_fracs':   _jr_line_fracs_store,
                                   '_synthetic_db':    _met_synthetic_db}
 
-            if not found:
+            # `found` only means a detected peak was located. An analyte whose
+            # every hit was skipped (window holding none of its predicted lines)
+            # has no area of its own — it must fall through to the not-quantified
+            # list, not be reported with a zero.
+            if not found or not _area_ok:
                 continue
             raw_areas[mid] = s_areas
 
@@ -1874,7 +1912,7 @@ class _QuantCompMixin:
 
         # Precompute Good-only competition count per peak_rank.
         # Used for confidence level — only Good metabolites are considered valid
-        # competitors after filtering; Undef/Bad don't affect quantification.
+        # competitors after filtering; Average/Poor don't affect quantification.
         _good_peak_comp: dict = {}
         for _r_gpc in results:
             _gpc_mid = str(_r_gpc.get('_mid', ''))
@@ -2040,7 +2078,7 @@ class _QuantCompMixin:
             _used_jr      = m.get('_used_j_resolve', False)
 
             # Count Good-metabolite competitors for this peak_rank.
-            # Undef/Bad metabolites excluded — only Good-level competitors matter.
+            # Average/Poor metabolites excluded — only Good competitors matter.
             _jr_stage      = getattr(getattr(self, 'app', None),
                                      'stages', {}).get('j_resolve')
             _peak_overlap  = getattr(_jr_stage, '_peak_overlap', {})

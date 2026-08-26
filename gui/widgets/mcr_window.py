@@ -2,7 +2,7 @@
 """
 Unified MCR Deconvolution window.
 
-Replaces the former AnnotationMCRWindow (Undef-peak deconvolution) and
+Replaces the former AnnotationMCRWindow (Average-peak deconvolution) and
 MCRDeconvWindow (overlapping-region results) with a single window that
 handles both cases, since MCR-ALS produces enough diagnostic values
 (R², LOF%, Pearson r per component, ppm shift, J-coupling score,
@@ -15,7 +15,7 @@ Items
 -----
 Each entry in `items` is a dict with a 'kind' key:
   {'kind': 'undef',  'met': met_dict, 'mp': mp_dict, 'peak': peak_dict}
-      A peak marked Undef in annotation — MCR may not have run yet.
+      A peak marked Average in annotation — MCR may not have run yet.
       Accept/Reject on the primary (annotated) component promotes/demotes
       mp['annotation_quality']; accepting a different candidate promotes it
       instead (creates/reuses its own metabolite entry in AnnotationResultsWindow).

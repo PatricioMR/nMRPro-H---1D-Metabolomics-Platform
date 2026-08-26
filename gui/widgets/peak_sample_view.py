@@ -24,6 +24,8 @@ import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
+from processing.signal_quality import (
+    SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR)
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 
@@ -188,9 +190,9 @@ class PeakSampleView:
                 lppm = (float(self.ppm[pk_m][np.argmax(lint)])
                         if lint.size else p['ppm'])
 
-            bg = {'Good':      '#f0fff0',
-                  'Poor':      '#fff0f0',
-                  'Undefined': '#fffce0'}.get(p.get('status'), '#ffffff')
+            bg = {SIGNAL_GOOD:    '#f0fff0',
+                  SIGNAL_POOR:    '#fff0f0',
+                  SIGNAL_AVERAGE: '#fffce0'}.get(p.get('status'), '#ffffff')
             if stype == 'BLK':
                 bg = '#f5f5f5'
 
@@ -445,8 +447,8 @@ class PeakSampleView:
     def _populate(self):
         status = self.peak.get('status')
         for d in self._sample_data:
-            tag = {'Good': 'good', 'Poor': 'poor',
-                   'Undefined': 'undef'}.get(status, 'none')
+            tag = {SIGNAL_GOOD: 'good', SIGNAL_POOR: 'poor',
+                   SIGNAL_AVERAGE: 'undef'}.get(status, 'none')
             if d['type'] == 'BLK':
                 tag = 'blk'
             self.tree.insert('', tk.END, iid=str(d['idx']),

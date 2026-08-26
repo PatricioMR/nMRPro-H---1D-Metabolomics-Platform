@@ -24,6 +24,8 @@ from matplotlib.widgets import SpanSelector
 from .peak_sample_view import PeakSampleView
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_AVERAGE, SIGNAL_POOR)
+from gui.utils.quality_palette import (
+    QUALITY_BG, QUALITY_FG, build_tier_filter_row, update_tier_counts)
 
 # Status definitions — the manual marks share their vocabulary with the
 # automatic signal grade, so a row reads the same whoever assigned it.
@@ -31,16 +33,9 @@ STATUS_GOOD      = SIGNAL_GOOD
 STATUS_UNDEFINED = SIGNAL_AVERAGE
 STATUS_POOR      = SIGNAL_POOR
 
-STATUS_COLORS = {
-    STATUS_GOOD:      '#c8f7c5',  # light green
-    STATUS_UNDEFINED: '#fef9c3',  # light yellow (Average)
-    STATUS_POOR:      '#ffd6d6',  # light red
-}
-STATUS_FG = {
-    STATUS_GOOD:      '#1a7a1a',
-    STATUS_UNDEFINED: '#7a6000',
-    STATUS_POOR:      '#9a0000',
-}
+# Palette shared with the annotation window so one colour means one thing.
+STATUS_COLORS = dict(QUALITY_BG)
+STATUS_FG     = dict(QUALITY_FG)
 
 
 class PeakListWindow:
@@ -100,25 +95,16 @@ class PeakListWindow:
         # grade, so hiding a grade also tells you how many were hidden.
         filt_row = ttk.Frame(frame_a)
         filt_row.pack(fill=tk.X, padx=4, pady=(2, 0))
-        ttk.Label(filt_row, text='Show:', font=('Arial', 8)).pack(side=tk.LEFT, padx=(0, 4))
         _fs = getattr(self.app, '_peak_list_filters', {})
         self._filt_good  = tk.BooleanVar(value=_fs.get('good',  True))
         self._filt_undef = tk.BooleanVar(value=_fs.get('undef', True))
         self._filt_poor  = tk.BooleanVar(value=_fs.get('poor',  True))
-        self._filt_cbs   = {}
-        for grade, prefix, var in [
-            (STATUS_GOOD,      '✓', self._filt_good),
-            (STATUS_UNDEFINED, '~', self._filt_undef),
-            (STATUS_POOR,      '✗', self._filt_poor),
-        ]:
-            bg = STATUS_COLORS[grade]
-            cb = tk.Checkbutton(filt_row, text=f'{prefix} {grade}', variable=var,
-                                bg=bg, fg=STATUS_FG[grade], selectcolor=bg,
-                                activebackground=bg,
-                                font=('Arial', 8),
-                                command=self._on_filter_change)
-            cb.pack(side=tk.LEFT, padx=2)
-            self._filt_cbs[grade] = (cb, prefix)
+        self._filt_cbs   = build_tier_filter_row(
+            filt_row,
+            {STATUS_GOOD:      self._filt_good,
+             STATUS_UNDEFINED: self._filt_undef,
+             STATUS_POOR:      self._filt_poor},
+            self._on_filter_change)
 
         # Treeview
         cols = ('rank', 'ppm', 'start', 'end', 'width', 'snr', 'area', 'metabolite', 'status')
@@ -397,9 +383,8 @@ class PeakListWindow:
 
     def _refresh_counts(self, n_shown):
         """Filter labels carry their own count; the summary carries the total."""
-        counts = self._grade_counts()
-        for grade, (cb, prefix) in getattr(self, '_filt_cbs', {}).items():
-            cb.config(text=f'{prefix} {grade} ({counts.get(grade, 0)})')
+        update_tier_counts(getattr(self, '_filt_cbs', {}),
+                           self._grade_counts())
         total = len(self.peaks)
         lbl = getattr(self, '_summary_lbl', None)
         if lbl is not None:
@@ -574,7 +559,7 @@ class PeakListWindow:
         # Update info bar
         if self._current_peak and self._current_peak['rank'] == rank:
             self._update_info_bar(peak)
-        # Undefined/Poor → queue for deconvolution
+        # Average/Poor → queue for deconvolution
         if status in (STATUS_UNDEFINED, STATUS_POOR):
             self._queue_for_deconv(peak)
         # Good → remove from deconv queue if present
@@ -985,7 +970,7 @@ class PeakListWindow:
             r2   = peak.get('r_squared', None)
             bic  = peak.get('bic', None)
             unc  = peak.get('cen_uncertainty', None)
-            stat = peak.get('status', 'Undefined')
+            stat = peak.get('status', STATUS_UNDEFINED)
             snr_q = '● Good' if snr>=10 else ('◐ OK' if snr>=3 else '○ Low')
             lines = [f'Model : {model}',
                      f'SNR   : {snr:.1f}  {snr_q}',
@@ -996,8 +981,7 @@ class PeakListWindow:
             if bic is not None: lines.append(f'BIC   : {bic:.1f}')
             if unc is not None: lines.append(f'Δppm  : ±{unc:.4f}')
             lines.append(f'Status: {stat}')
-            bc = ('#e8f5e9' if stat=='Good' else
-                  '#fff3cd' if stat=='Undefined' else '#ffd6d6')
+            bc = STATUS_COLORS.get(stat, STATUS_COLORS[STATUS_UNDEFINED])
             self.ax.text(0.02, 0.97, '\n'.join(lines),
                          transform=self.ax.transAxes, va='top', ha='left',
                          fontsize=7.5, fontfamily='monospace',

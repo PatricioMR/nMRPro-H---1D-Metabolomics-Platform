@@ -7,40 +7,40 @@ Tree layout (show='tree headings'):
   data cols  = #  |  PPM  |  Start  |  End  |  SNR  |  W  |  Status
 
   ▼ ⚠ Region 1                     (parent — collapsible)
-        3   3.2100  3.2050  3.2150  12.4  0.005  ⚠ Undef
+        3   3.2100  3.2050  3.2150  12.4  0.005  ~ Average
   ▼ Region 2
-        7   1.3950  1.3900  1.4000   8.1  0.006  Undef
+        7   1.3950  1.3900  1.4000   8.1  0.006  ~ Average
   ▼ ✅ Region 1  (after deconv)
-        —   3.2180  ...                    ⚠ Undef
+        —   3.2180  ...                    ~ Average
         —   3.2040  ...                    ● Good
 
 Rules:
   • Parent #0 text = "Region N"  (no number in the # column)
   • Parent data columns are ALL EMPTY except Status = n peaks
-  • ⚠ on parent  → region contains a manually-Undef peak (from Peak List)
-  • ⚠ on child   → child status is Undefined (not yet resolved)
+  • ⚠ on parent  → region contains a manually-Average peak (from Peak List)
+  • ⚠ on child   → child status is Average (not yet resolved)
   • Green child  → only after marking Good (Ctrl+1)
-  • Ctrl+1/2/3   → Good / Undefined / Poor on selected child
+  • Ctrl+1/2/3   → Good / Average / Poor on selected child
   • Ctrl+click   → multi-select regions
   • Ctrl+G       → group selected regions into one merged entry
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-STATUS_GOOD      = 'Good'
-STATUS_UNDEFINED = 'Undefined'
-STATUS_POOR      = 'Poor'
+from gui.utils.quality_palette import (
+    QUALITY_FG, QUALITY_LABEL, SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR)
 
-STATUS_COLORS = {
-    STATUS_GOOD:      '#1a7a1a',
-    STATUS_UNDEFINED: '#7a6000',
-    STATUS_POOR:      '#9a0000',
-}
-STATUS_SYMBOL = {
-    STATUS_GOOD:      '● Good',
-    STATUS_UNDEFINED: '⚠ Undef',
-    STATUS_POOR:      '✗ Poor',
-}
+# Same three tiers as the Peak List and the annotation window.
+STATUS_GOOD      = SIGNAL_GOOD
+STATUS_UNDEFINED = SIGNAL_AVERAGE
+STATUS_POOR      = SIGNAL_POOR
+
+# Projects saved before the vocabulary was unified stored this literal. It still
+# means "no verdict reached", so it must keep counting as a status.
+LEGACY_UNDEFINED = 'Undefined'
+
+STATUS_COLORS = dict(QUALITY_FG)
+STATUS_SYMBOL = dict(QUALITY_LABEL)
 
 
 class DeconvListPanel:
@@ -336,7 +336,7 @@ class DeconvListPanel:
 
         ttk.Label(
             _inner,
-            text="Ctrl+1 Good  ·  Ctrl+2 Undefined  ·  Ctrl+3 Poor\n"
+            text="Ctrl+1 Good  ·  Ctrl+2 Average  ·  Ctrl+3 Poor\n"
                  "Ctrl+R Reset view  ·  Enter Deconvolve",
             font=("Arial", 7), foreground="gray").pack(pady=4)
 
@@ -463,13 +463,13 @@ class DeconvListPanel:
                     status = p.get('status', STATUS_UNDEFINED)
                     if status == STATUS_GOOD:
                         c_tag   = 'child_good'
-                        st_cell = '● Good'
+                        st_cell = STATUS_SYMBOL[STATUS_GOOD]
                     elif status == STATUS_POOR:
                         c_tag   = 'child_poor'
-                        st_cell = '✗ Poor'
+                        st_cell = STATUS_SYMBOL[STATUS_POOR]
                     else:
                         c_tag   = 'child_undefined'
-                        st_cell = '⚠ Undef'
+                        st_cell = STATUS_SYMBOL[STATUS_UNDEFINED]
 
                     pk_num = p.get('rank', f'{valid_count}.{j+1}')
                     try:
@@ -514,7 +514,8 @@ class DeconvListPanel:
                     pass
 
         has_any = any(
-            p.get('status') in (STATUS_GOOD, STATUS_UNDEFINED, STATUS_POOR)
+            p.get('status') in (STATUS_GOOD, STATUS_UNDEFINED, STATUS_POOR,
+                                LEGACY_UNDEFINED)
             for res in self.controller.results.values()
             for p in res.get('peaks', []))
         self.save_btn.config(state='normal' if has_any else 'disabled')
@@ -659,7 +660,7 @@ class DeconvListPanel:
         elif row_type == 'child':
             menu.add_command(label='● Mark Good',
                 command=lambda: self.set_child_status(STATUS_GOOD))
-            menu.add_command(label='⚠ Mark Undefined',
+            menu.add_command(label=f'{STATUS_SYMBOL[STATUS_UNDEFINED]}',
                 command=lambda: self.set_child_status(STATUS_UNDEFINED))
             menu.add_command(label='✗ Mark Poor',
                 command=lambda: self.set_child_status(STATUS_POOR))

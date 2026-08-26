@@ -409,3 +409,58 @@ def classify_signal_quality(intensity, *, start_idx, end_idx,
         tier = SIGNAL_POOR
 
     return tier, float(score), detail
+
+
+# ── Annotation eligibility ────────────────────────────────────────────────────
+# A Poor signal failed a hard gate (SNR below the detection limit, or too few
+# points across the FWHM) or is badly distorted. Its apex position and its line
+# spacings are unreliable, so matching it against a database shift or coupling
+# constant produces a chemical-shift agreement that the data does not support.
+# Annotation therefore reads Good and Average signals only; Poor signals stay
+# visible in the peak list and are reported as skipped, never silently dropped.
+ANNOTATABLE_TIERS = frozenset({SIGNAL_GOOD, SIGNAL_AVERAGE})
+
+
+def normalize_tiers(tiers) -> frozenset:
+    """Coerce a user/serialized tier selection into a tier set.
+
+    Accepts any iterable of tier names in any case. An empty or unrecognised
+    selection falls back to the default rather than annotating nothing — a
+    typo in a saved project must not silently produce zero annotations.
+    """
+    if not tiers:
+        return ANNOTATABLE_TIERS
+    wanted = {str(t).strip().lower() for t in tiers}
+    picked = frozenset(t for t in SIGNAL_TIERS if t.lower() in wanted)
+    return picked or ANNOTATABLE_TIERS
+
+
+def effective_tier(peak) -> str:
+    """Grade that governs a peak's use downstream.
+
+    A manual status set by the analyst in the peak list overrides the automatic
+    grade. An unrecognised or missing value falls back to Average so a
+    vocabulary mismatch can never silently discard a signal.
+    """
+    raw = str(peak.get('status') or peak.get('signal_quality') or '').strip()
+    for tier in SIGNAL_TIERS:
+        if raw.lower() == tier.lower():
+            return tier
+    return SIGNAL_AVERAGE
+
+
+def is_annotatable(peak, tiers=None) -> bool:
+    """True when the signal's grade is one the analyst allows for annotation."""
+    return effective_tier(peak) in normalize_tiers(tiers)
+
+
+def filter_annotatable(peaks, tiers=None):
+    """Split peaks into (usable, rejected) for annotation.
+
+    Returns both halves so the caller can warn the user with the exact count
+    instead of losing signals without trace.
+    """
+    peaks = list(peaks or [])
+    usable   = [p for p in peaks if is_annotatable(p, tiers)]
+    rejected = [p for p in peaks if not is_annotatable(p, tiers)]
+    return usable, rejected

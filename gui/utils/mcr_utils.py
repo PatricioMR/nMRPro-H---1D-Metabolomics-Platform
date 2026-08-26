@@ -12,6 +12,35 @@ Chemistry, 36(3-4), 163-176 (2006). DOI: 10.1080/10408340600970005
 """
 import numpy as np
 
+# ── When a resolved component may replace the raw measurement ─────────────────
+# Two conditions decide whether MCR resolved something worth trusting over the
+# detected peak itself, for scoring and for display alike:
+#
+#   K >= MCR_MIN_OVERLAP_K — MCR settled on more than one component, so there
+#       was a genuine overlap to separate. With a single component the "resolved
+#       component" is the peak itself and nothing was deconvolved.
+#   pearson_r >= MCR_MIN_SHAPE_R — the component's shape matches this
+#       candidate's database profile, so the separated signal is that compound's
+#       and not a neighbour's.
+#
+# Kept here, next to the algorithm, so the scoring path and the fingerprint view
+# cannot drift into two different definitions of "trustworthy component".
+MCR_MIN_OVERLAP_K = 2
+MCR_MIN_SHAPE_R   = 0.70
+
+# Alignment freedom is searched wide (shift_tol_ppm) to absorb genuine pH and
+# temperature drift. What matters is not how far the profile moved, but WHERE it
+# landed: the annotation already matched this database peak to a detected signal
+# at a known offset, so a component is consistent evidence when MCR's own shift
+# reproduces that same offset — it worked on the same signal. When the two
+# disagree by more than this window, MCR aligned onto something else and its
+# metrics describe that other signal, not this match.
+#
+# An absolute cap on the shift was tried first and was wrong: it rejected the
+# cases where MCR agreed exactly with the annotation, because a large but
+# CORRECT shift simply mirrors a peak that sits far from its database position.
+MCR_SHIFT_AGREEMENT_PPM = 0.01
+
 
 def _is_singlet_multiplicity(mult_raw):
     """Return True when DB multiplicity denotes a singlet."""

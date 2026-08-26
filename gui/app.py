@@ -36,17 +36,20 @@ from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
 from app_paths import APP_VERSION
+from gui.utils.quality_palette import (
+    SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
+from gui.widgets.annotation_results_window import _TIER_NOTE
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin):
     def _set_app_icon(self, win):
-        """Apply the app icon (utils/nmrpipe.ico — same as the .exe/installer)
+        """Apply the app icon (utils/nmrpro_h.ico — same as the .exe/installer)
         to *win*. Using iconbitmap(default=...) makes it the icon for the root
         AND every Toplevel/dialog opened afterwards, so the whole app is
         consistent. Falls back to the PNG via iconphoto on non-Windows."""
         from app_paths import asset_path
         try:
-            ico = asset_path('utils', 'nmrpipe.ico')
+            ico = asset_path('utils', 'nmrpro_h.ico')
             if os.path.isfile(ico):
                 win.iconbitmap(default=ico)
                 return
@@ -54,7 +57,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             pass
         try:
             from PIL import Image, ImageTk
-            png = asset_path('utils', 'Logo_nMRPipe.png')
+            png = asset_path('utils', 'Logo_NMRPro-H.png')
             self._app_icon_img = ImageTk.PhotoImage(Image.open(png))
             win.iconphoto(True, self._app_icon_img)
         except Exception:
@@ -154,7 +157,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         try:
             from PIL import Image, ImageTk
             from app_paths import asset_path
-            logo_path = asset_path('utils', 'Logo_nMRPipe.png')
+            logo_path = asset_path('utils', 'Logo_NMRPro-H.png')
             img = Image.open(logo_path).convert('RGBA')
             img = img.resize((300, 300), Image.LANCZOS)
             self._splash_logo = ImageTk.PhotoImage(img)
@@ -1461,11 +1464,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             messagebox.showinfo("Info", "Please switch to Metabolites Notation stage first.")
 
     def _open_annotation_params(self):
-        """Open Annotation Parameters dialog.
+        """Open the Annotation Parameters dialog.
 
-        If an AnnotationResultsWindow is active, delegates to it (enables
-        live recompute).  Otherwise opens a standalone pre-annotation dialog
-        that persists params on the annotation stage for the next run.
+        If a results window is up, delegate to it so edits recompute live;
+        otherwise edit the params the annotation stage will use on its next run.
+        Both paths open the same dialog — they used to be two implementations
+        with their own copies of the parameter list, which had already drifted.
         """
         win = getattr(self, '_annot_win', None)
         if win is not None and getattr(win, 'win', None):
@@ -1477,7 +1481,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             win._open_param_dialog()
             return
 
-        # ── Pre-annotation: standalone dialog ────────────────────────────────
         ann_stage = self.stages.get('annotation')
         if ann_stage is None:
             messagebox.showinfo("Annotation Parameters",
@@ -1485,106 +1488,18 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                                 parent=self.root)
             return
 
-        _DEFAULTS = {
-            'good_score_thresh': 0.80, 'bad_score_thresh': 0.50,
-            'dj_gold_hz': 0.20, 'dj_bad_hz': 0.50, 'dj_neutral': 0.00,
-            'dppm_gold_hz': 0.50, 'dppm_gold': 0.05,
-            'fp_coverage_pct': 50.0, 'nnls_min_frac': 0.03,
-            'anchor_clean_lo': 0.35, 'anchor_clean_hi': 2.50,
-            'anchor_snr_bdl': 3.0,
-            'w_dj': 0.57, 'w_cosine_ns': 0.14, 'w_ppm_ns': 0.10,
-            'w_found_ns': 0.05, 'w_rri_ns': 0.09, 'w_reverse_ns': 0.05,
-            'w_cosine_s': 0.32, 'w_ppm_s': 0.27,
-            'w_found_s': 0.13, 'w_rri_s': 0.18, 'w_reverse_s': 0.10,
-        }
-        current = dict(_DEFAULTS)
-        if ann_stage._annotation_params:
-            current.update(ann_stage._annotation_params)
+        from gui.widgets.annotation_params_dialog import open_annotation_params
 
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Annotation Parameters")
-        dlg.resizable(False, False)
-        dlg.transient(self.root)
-        dlg.grab_set()
+        def _apply(new_params):
+            ann_stage._annotation_params = new_params
 
-        nb = ttk.Notebook(dlg)
-        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        _vars = {}
-
-        def _tab(title, rows):
-            frm = ttk.Frame(nb, padding=10)
-            nb.add(frm, text=title)
-            for r, (lbl, key, tip) in enumerate(rows):
-                ttk.Label(frm, text=lbl, anchor=tk.W).grid(
-                    row=r, column=0, sticky=tk.W, padx=(0, 10), pady=3)
-                var = tk.StringVar(value=str(current[key]))
-                _vars[key] = var
-                ttk.Entry(frm, textvariable=var, width=10).grid(
-                    row=r, column=1, sticky=tk.W, pady=3)
-                if tip:
-                    ttk.Label(frm, text=tip, foreground='gray',
-                              font=('Arial', 8)).grid(
-                        row=r, column=2, sticky=tk.W, padx=(6, 0))
-
-        _tab("Score & Quality", [
-            ("Good score threshold",   'good_score_thresh', "Rules 3/4/5 — min score → Good"),
-            ("Bad score threshold",    'bad_score_thresh',  "Rule 1 — singlets only"),
-            ("Fingerprint coverage %", 'fp_coverage_pct',   "≥2 DB peaks: min coverage %"),
-            ("NNLS min fraction",      'nnls_min_frac',     "< this → downgrade to yellow"),
-        ])
-        _tab("ΔJ Criteria (Hz)", [
-            ("Gold standard ΔJ", 'dj_gold_hz', "ΔJ < this → s_dj=1.0 (binary)"),
-            ("Bad ΔJ threshold", 'dj_bad_hz',  "ΔJ ≥ this → Bad (non-singlet gate)"),
-            ("s_dj neutral",     'dj_neutral', "s_dj when ΔJ unmeasurable"),
-        ])
-        _tab("Δppm Criteria", [
-            ("Gold standard Δppm (Hz)",  'dppm_gold_hz', "Max Δppm in Hz (field-independent)"),
-            ("Gold standard Δppm (ppm)", 'dppm_gold',    "Max Δppm in ppm"),
-        ])
-        _tab("RANSY Anchor", [
-            ("Clean ratio low",   'anchor_clean_lo',  "Min area ratio → clean"),
-            ("Clean ratio high",  'anchor_clean_hi',  "Max area ratio → clean"),
-            ("SNR BDL threshold", 'anchor_snr_bdl',   "SNR < this → below detection limit"),
-        ])
-        _tab("Score Weights", [
-            ("w_dj (non-singlet)",      'w_dj',         "ΔJ score weight"),
-            ("w_cosine (non-singlet)",  'w_cosine_ns',  ""),
-            ("w_ppm (non-singlet)",     'w_ppm_ns',     ""),
-            ("w_found (non-singlet)",   'w_found_ns',   ""),
-            ("w_rri (non-singlet)",     'w_rri_ns',     ""),
-            ("w_reverse (non-singlet)", 'w_reverse_ns', "Reverse-match weight"),
-            ("w_cosine (singlet)",      'w_cosine_s',   ""),
-            ("w_ppm (singlet)",         'w_ppm_s',      ""),
-            ("w_found (singlet)",       'w_found_s',    ""),
-            ("w_rri (singlet)",         'w_rri_s',      ""),
-            ("w_reverse (singlet)",     'w_reverse_s',  "Reverse-match weight"),
-        ])
-
-        bf = ttk.Frame(dlg)
-        bf.pack(fill=tk.X, padx=8, pady=(0, 8))
-
-        def _apply():
-            errs, new_p = [], {}
-            for key, var in _vars.items():
-                try:
-                    new_p[key] = float(var.get())
-                except ValueError:
-                    errs.append(key)
-            if errs:
-                messagebox.showerror("Invalid value",
-                                     f"Not a number: {', '.join(errs)}",
-                                     parent=dlg)
-                return
-            ann_stage._annotation_params = new_p
-            dlg.destroy()
-
-        def _reset():
-            for key, var in _vars.items():
-                var.set(str(_DEFAULTS.get(key, current[key])))
-
-        ttk.Button(bf, text="Reset Defaults", command=_reset).pack(side=tk.LEFT)
-        ttk.Button(bf, text="Apply",  command=_apply).pack(side=tk.RIGHT)
-        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT, padx=6)
+        open_annotation_params(
+            self.root,
+            getattr(ann_stage, '_annotation_params', None),
+            _apply,
+            tier_builder=build_tier_choice,
+            tier_reader=read_tier_choice,
+            tier_note=_TIER_NOTE)
 
     def toggle_peak_areas(self):
         """Show or hide peak highlight areas from the Edit menu."""

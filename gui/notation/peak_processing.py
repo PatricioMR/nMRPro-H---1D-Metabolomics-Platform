@@ -378,7 +378,7 @@ class PeakProcessor:
 
         # All peaks are kept — shape_r2 carries the quality score.
         # Peaks with r2 < r2_min or r2 == -1 (fit failed) → status 'Poor'
-        # Peaks with r2 >= r2_min → status left as None (user assigns Good/Undef)
+        # Peaks with r2 >= r2_min → status left as None (user assigns the tier)
         n_total    = len(shape_r2)
         n_good     = int(np.sum(shape_r2 >= r2_min))
         n_poor_r2  = int(np.sum((shape_r2 >= 0) & (shape_r2 < r2_min)))

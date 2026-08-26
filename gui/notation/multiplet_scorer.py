@@ -35,6 +35,7 @@ For each DB candidate (with known multiplicity and J):
 """
 
 import numpy as np
+from processing.signal_quality import SIGNAL_AVERAGE
 import re as _re
 from itertools import combinations
 from scipy.optimize import linear_sum_assignment
@@ -1016,7 +1017,7 @@ def merge_multiplet_peaks(peaks, results, spectrometer_mhz=600.0,
             'component_peaks': component_peaks_list,
             'predicted_lines': pl,
             'rank':            min(component_ranks),
-            'status':          component_peaks_list[0].get('status', 'Undefined'),
+            'status':          component_peaks_list[0].get('status', SIGNAL_AVERAGE),
             'snr':             max(p.get('snr', 0) for p in component_peaks_list),
         }
         new_peaks.append(merged)

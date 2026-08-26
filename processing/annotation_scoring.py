@@ -1,0 +1,1039 @@
+# processing/annotation_scoring.py
+"""
+Pure scoring core for metabolite annotation.
+
+Extracted from ``gui/widgets/annotation_results_window.py`` so the scoring
+model can be unit-tested without a Tk window and so the decision logic lives
+in ``processing/`` rather than in the view layer.
+
+The model mirrors how a spectrum is read by hand:
+
+  1. Snap the DB multiplet's predicted lines onto detected peaks.
+  2. Count how many expected lines were actually found.
+  3. Measure J from the confirmed line spacings and compare with the DB value.
+  4. Score = agreement in chemical shift (Δppm) and coupling constant (ΔJ).
+
+Singlets carry no J evidence, so they are scored on Δppm alone and capped
+below the Good band — a lone singlet is never sufficient identification.
+
+References
+----------
+Confidence bands follow the Metabolomics Standards Initiative reporting
+levels: Sumner et al., "Proposed minimum reporting standards for chemical
+analysis", Metabolomics 3(3):211-221, 2007.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Iterable, Sequence
+
+import numpy as np
+
+from processing.signal_quality import SIGNAL_AVERAGE, SIGNAL_GOOD
+
+# ── Multiplicity vocabulary ───────────────────────────────────────────────────
+# Broad set: everything that carries no usable J evidence for scoring.
+# 'm'/'multiplet' are unresolvable in practice, so they score like singlets.
+SINGLET_TYPES_BROAD = frozenset(
+    {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'})
+
+# Strict set: literal singlets only. Used where an unresolved 'm' must still be
+# treated as a multiplet (candidate exclusion rules).
+SINGLET_TYPES_STRICT = frozenset({'s', 'singlet', ''})
+
+# Expected line count per multiplicity label.
+# Two multiplicity vocabularies reach this table: BMRB writes quint/sext/sept,
+# HMDB writes p/h/hept. Both must resolve, or the expected line count silently
+# falls back to 2 and a quintet is judged complete once two of its five lines
+# are found — with J then measured from an incomplete set.
+LINE_COUNTS: dict[str, int] = {
+    'd': 2, 'doublet': 2, 't': 3, 'triplet': 3,
+    'q': 4, 'quartet': 4,
+    'p': 5, 'pentet': 5, 'quint': 5, 'quintet': 5, 'quin': 5,
+    'h': 6, 'sext': 6, 'sextet': 6,
+    'sept': 7, 'septet': 7, 'hept': 7, 'heptet': 7,
+    'dd': 4, 'dt': 6, 'td': 6, 'tt': 9, 'ddd': 8,
+    'dq': 8, 'tq': 12,
+}
+
+# A parent peak and its sub-peak describe the same physical signal. Collapse
+# positions closer than a quarter linewidth; genuine multiplet lines
+# (J ≈ 6 Hz → ~0.01 ppm at 600 MHz) stay separate.
+COINCIDENT_LINE_PPM = 0.003
+
+# Per-spacing tolerance when validating that snapped lines form one multiplet.
+J_SPACING_TOL_HZ = 2.0
+
+
+def normalize_mult(value) -> str:
+    """Lower-cased, stripped multiplicity label ('' when absent)."""
+    return str(value or '').lower().strip()
+
+
+def is_singlet_like(mult, *, strict: bool = False) -> bool:
+    """True when the multiplicity carries no usable J evidence."""
+    types = SINGLET_TYPES_STRICT if strict else SINGLET_TYPES_BROAD
+    return normalize_mult(mult) in types
+
+
+def parse_first_j(j_coupling) -> float | None:
+    """First positive J value (Hz) in a DB coupling string, else None."""
+    nums = [float(x) for x in re.findall(r'\d+\.?\d*', str(j_coupling or ''))
+            if float(x) > 0]
+    return nums[0] if nums else None
+
+
+def expected_line_count(mult, fallback: int = 2) -> int:
+    """Number of lines the DB multiplicity predicts."""
+    return LINE_COUNTS.get(normalize_mult(mult), fallback)
+
+
+def ppm_score(ppm_diff: float, sigma_ppm: float) -> float:
+    """Gaussian agreement in chemical shift; 1.0 at a perfect match."""
+    if sigma_ppm <= 0:
+        return 0.0
+    return float(np.exp(-0.5 * (float(ppm_diff) / float(sigma_ppm)) ** 2))
+
+
+def dj_score(delta_j_hz: float | None, gold_hz: float, bad_hz: float,
+             neutral: float = 0.0) -> float:
+    """Score the coupling-constant agreement.
+
+    ΔJ < gold_hz → 1.0; linear decay to 0.0 at bad_hz; 0.0 beyond.
+    Returns ``neutral`` when ΔJ could not be measured.
+    """
+    if delta_j_hz is None:
+        return float(neutral)
+    dj = float(delta_j_hz)
+    if dj < gold_hz:
+        return 1.0
+    if dj < bad_hz:
+        span = bad_hz - gold_hz
+        return 1.0 - (dj - gold_hz) / span if span > 0 else 0.0
+    return 0.0
+
+
+def synthetic_lines(centre_ppm: float, j_hz: float, n_lines: int,
+                    field_mhz: float) -> list[dict]:
+    """Evenly spaced line positions for a first-order multiplet.
+
+    Used when the stored ``predicted_lines`` are missing or truncated, so the
+    line count check still has targets to snap onto.
+    """
+    if not (centre_ppm and j_hz and field_mhz > 0 and n_lines >= 2):
+        return []
+    j_ppm = j_hz / field_mhz
+    half = (n_lines - 1) / 2.0
+    return [{'ppm': centre_ppm + (k - half) * j_ppm, 'rel_intensity': 1.0}
+            for k in range(n_lines)]
+
+
+def snap_lines_to_peaks(pred_lines: Sequence[dict], peaks: Iterable[dict],
+                        tolerance: float) -> list[float]:
+    """Match each predicted line to its nearest unused detected peak.
+
+    Returns the ppm positions of the confirmed peaks. A peak is consumed by at
+    most one line, so a single detected peak cannot satisfy a whole multiplet.
+    """
+    peaks = list(peaks or [])
+    used: set = set()
+    found: list[float] = []
+    for line in pred_lines or []:
+        target = float(line.get('ppm', 0))
+        best_pk, best_d = None, float(tolerance)
+        for pk in peaks:
+            if pk.get('rank') in used:
+                continue
+            d = abs(float(pk.get('ppm', 0)) - target)
+            if d <= best_d:
+                best_d, best_pk = d, pk
+        if best_pk is not None:
+            used.add(best_pk.get('rank'))
+            found.append(float(best_pk['ppm']))
+    return found
+
+
+def dedup_coincident(positions: Sequence[float],
+                     threshold: float = COINCIDENT_LINE_PPM) -> list[float]:
+    """Collapse positions that describe the same physical line."""
+    out: list[float] = []
+    for p in positions:
+        if not any(abs(p - kept) < threshold for kept in out):
+            out.append(float(p))
+    return out
+
+
+def spacings_hz(positions: Sequence[float], field_mhz: float) -> list[float]:
+    """Consecutive line separations in Hz, ascending ppm order."""
+    srt = sorted(positions)
+    return [abs(srt[k + 1] - srt[k]) * field_mhz for k in range(len(srt) - 1)]
+
+
+def drop_worst_j_outlier(positions: Sequence[float], j_db_hz: float,
+                         field_mhz: float,
+                         tol_hz: float = J_SPACING_TOL_HZ) -> list[float]:
+    """Remove one spurious line when a single spacing breaks the pattern.
+
+    Every consecutive spacing must sit within ``tol_hz`` of the DB J. A nearby
+    unrelated peak makes exactly one spacing wildly wrong while the others hold;
+    dropping the line that minimises the worst spacing deviation recovers the
+    genuine multiplet at the cost of one missing line.
+    """
+    positions = list(positions)
+    if len(positions) < 2 or not j_db_hz or field_mhz <= 0:
+        return positions
+    seps = spacings_hz(positions, field_mhz)
+    if not any(abs(s - j_db_hz) > tol_hz for s in seps):
+        return positions
+
+    best_drop, best_worst = None, max(abs(s - j_db_hz) for s in seps)
+    for i in range(len(positions)):
+        cand = [p for j, p in enumerate(positions) if j != i]
+        if len(cand) < 2:
+            continue
+        worst = max(abs(s - j_db_hz) for s in spacings_hz(cand, field_mhz))
+        if worst < best_worst:
+            best_worst, best_drop = worst, i
+    if best_drop is None:
+        return positions
+    return [p for j, p in enumerate(positions) if j != best_drop]
+
+
+def sync_predicted_lines(original: Sequence[dict],
+                         found_ppms: Sequence[float],
+                         tolerance: float) -> list[dict]:
+    """Re-anchor predicted lines onto the confirmed peak positions.
+
+    Keeps the fingerprint arrows drawn in the UI identical to the lines counted
+    as found, so the displayed evidence and the score share one source.
+    """
+    if not found_ppms:
+        return list(original or [])
+    used: set = set()
+    snapped: list[dict] = []
+    for line in sorted(original or [], key=lambda l: float(l.get('ppm', 0))):
+        target = float(line.get('ppm', 0))
+        avail = [fp for fp in found_ppms if fp not in used]
+        best = min(avail, key=lambda fp: abs(fp - target), default=None)
+        if best is not None and abs(best - target) <= tolerance:
+            used.add(best)
+            snapped.append({'ppm': best,
+                            'rel_intensity': line.get('rel_intensity', 1.0)})
+    for fp in sorted(found_ppms):
+        if fp not in used:
+            snapped.append({'ppm': fp, 'rel_intensity': 1.0})
+    if not snapped:
+        return list(original or [])
+    max_ri = max(l['rel_intensity'] for l in snapped) or 1.0
+    for l in snapped:
+        l['rel_intensity'] /= max_ri
+    return sorted(snapped, key=lambda l: l['ppm'])
+
+
+@dataclass
+class LineMeasurement:
+    """What the spectrum actually shows for one DB multiplet."""
+    n_expected: int | None = None
+    n_found: int | None = None
+    found_ppms: list[float] = field(default_factory=list)
+    observed_j_hz: float | None = None
+    delta_j_hz: float | None = None
+    centre_ppm: float | None = None
+    predicted_lines: list[dict] = field(default_factory=list)
+    measured: bool = False          # False → no lines to snap; caller keeps old data
+
+    @property
+    def complete(self) -> bool:
+        """True when every expected line was confirmed in the spectrum."""
+        return (self.n_found is not None and self.n_expected is not None
+                and self.n_found >= self.n_expected)
+
+
+def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
+                      *, mult, j_coupling, db_ppm: float, centre_hint: float,
+                      n_expected: int, tolerance: float,
+                      field_mhz: float) -> LineMeasurement:
+    """Snap a DB multiplet onto detected peaks and measure J from the result.
+
+    ``centre_hint`` is the previously observed centre (falls back to db_ppm)
+    and is only used to build synthetic line targets when the stored
+    ``predicted_lines`` are missing or truncated.
+    """
+    j_db = parse_first_j(j_coupling)
+    pred = list(predicted_lines or [])
+    if len(pred) < n_expected and field_mhz > 0 and j_db:
+        pred = synthetic_lines(float(centre_hint or db_ppm or 0), j_db,
+                               n_expected, field_mhz) or pred
+
+    if not pred or n_expected < 2:
+        return LineMeasurement(measured=False)
+
+    found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
+    if j_db is not None and len(found) == n_expected:
+        found = drop_worst_j_outlier(found, j_db, field_mhz)
+
+    m = LineMeasurement(n_expected=n_expected, n_found=len(found),
+                        found_ppms=found, measured=True)
+    m.predicted_lines = sync_predicted_lines(predicted_lines, found, tolerance)
+
+    if not m.complete:
+        # Missing lines: any stored ΔJ describes a different set of peaks and
+        # must not be reused. Report it as unmeasured rather than stale.
+        return m
+
+    seps = spacings_hz(found, field_mhz) if field_mhz > 0 else []
+    if seps:
+        m.observed_j_hz = float(np.median(seps))
+        if j_db is not None:
+            m.delta_j_hz = float(abs(m.observed_j_hz - j_db))
+        m.centre_ppm = float(np.mean(found))
+    return m
+
+
+# ── Candidate ranking (shared by annotation and quantification) ───────────────
+# One decision function, two consumers: the Annotation Results window uses it to
+# classify/sort, quantification uses it to elect the single winner of a contested
+# peak. Both therefore see the same verdict — previously each computed its own
+# composite_score under the same key name and they disagreed.
+#
+# The decision is LEXICOGRAPHIC, not a weighted sum. A weighted blend lets a
+# strong Δppm compensate a bad ΔJ, which inverts the analytically correct answer:
+# in a real dataset the CH3 doublet at ~1.0 ppm went to a candidate with
+# Δppm = 0.043 over one with Δppm = 0.001 because the blend was 45% Δppm.
+#
+# Priority of the evidence follows how a spectrum is read by hand, and the order
+# is not arbitrary — chemical shift drifts with pH, ionic strength, temperature
+# and metal-ion content, while the scalar coupling is a property of the bonding
+# path and is far more stable:
+#   • Dona et al., "A guide to the identification of metabolites in NMR-based
+#     metabonomics/metabolomics experiments", Comput Struct Biotechnol J
+#     14:135-153, 2016. doi:10.1016/j.csbj.2016.02.005
+#   • Wermter, Bock & Dreher, "1H NMR Chemical Shifts and J-Coupling Constants
+#     Dependence on Temperature and pH", NMR Biomed, 2026. doi:10.1002/nbm.70239
+#     (shifts strongly T/pH-dependent; only moderate changes in J)
+#   • Govindaraju, Young & Maudsley, "Proton NMR chemical shifts and coupling
+#     constants for brain metabolites", NMR Biomed 13:129-153, 2000.
+
+# Δppm band width (ppm). Deliberately COARSE. Within one contested peak every
+# candidate sees the same observed ppm, but that ppm drifts between samples, so
+# when two candidates' DB shifts are closer than the drift the Δppm ordering
+# flips with the drift. Measured drift in a 37-sample mouse study: 0.030 ppm
+# median peak-position amplitude (18 Hz at 600 MHz) — larger than the 0.017 ppm
+# that separates valine from isoleucine. Ordering those by Δppm is ordering
+# noise. A per-project value derived from the observed drift is the eventual
+# goal; this fixed band is the conservative stand-in.
+PPM_BAND_PPM = 0.020
+
+# Defaults for the scoring parameters the Annotation Parameters dialog exposes.
+# The dialog's values win whenever it has been opened; these exist so the search
+# worker can score before any window is created. Same keys, one owner.
+SCORING_DEFAULTS: dict = {
+    # Signal grades annotation is allowed to use. Lives here with the rest so a
+    # dialog built from these defaults cannot open with every box unticked.
+    'annotatable_tiers': [SIGNAL_GOOD, SIGNAL_AVERAGE],
+    'good_score_thresh': 0.75,
+    'bad_score_thresh':  0.50,
+    'dj_gold_hz':        0.20,
+    'dj_bad_hz':         0.50,
+    'dj_neutral':        0.00,
+    'dppm_gold':         0.05,   # mirrors 'Tolerance (ppm)'; one input owns it
+    'w_dj':              0.57,
+    'w_cosine_ns':       0.14,
+    'w_ppm_ns':          0.10,
+    'w_cosine_s':        0.32,
+    'w_ppm_s':           0.27,
+    'w_coverage':        0.05,   # analyte level: penalty for signals not found
+    'w_corroboration':   0.09,   # analyte level: lift from the other signals
+    'nnls_min_frac':     0.03,
+}
+
+# Deprecated keys kept readable so saved projects still load. w_found_ns and
+# w_rri_ns were reused as the analyte-level coverage and corroboration weights
+# when those terms were introduced, which left their labels describing something
+# they no longer did. The rest were weights of a scoring model that no longer
+# exists — nothing read them.
+LEGACY_PARAM_KEYS: dict[str, str | None] = {
+    'w_found_ns':   'w_coverage',
+    'w_rri_ns':     'w_corroboration',
+    'w_reverse_ns':  None,
+    'w_found_s':     None,
+    'w_rri_s':       None,
+    'w_reverse_s':   None,
+    'dppm_gold_hz':  None,       # collapsed into the Tolerance (ppm) input
+}
+
+
+def migrate_params(params: dict) -> dict:
+    """Map a saved parameter dict onto the current keys, dropping dead ones."""
+    out = {}
+    for k, v in (params or {}).items():
+        if k in LEGACY_PARAM_KEYS:
+            new_key = LEGACY_PARAM_KEYS[k]
+            if new_key is not None:
+                out.setdefault(new_key, v)
+            continue
+        out[k] = v
+    return out
+
+
+# One description of the Annotation Parameters, shared by every dialog that
+# shows them. Two dialogs used to carry their own copy of this list and had
+# already drifted apart.  (group, label, key, help)
+PARAMETER_SPEC: list[tuple[str, str, str, str]] = [
+    ('Coupling (ΔJ)', 'Gold standard ΔJ (Hz)', 'dj_gold_hz',
+     'ΔJ below this is a perfect match — also the tie band between candidates'),
+    ('Coupling (ΔJ)', 'Bad ΔJ threshold (Hz)', 'dj_bad_hz',
+     'ΔJ at or above this rejects the signal, with no exceptions'),
+    ('Coupling (ΔJ)', 's_dj when ΔJ unmeasurable', 'dj_neutral',
+     'Score given when J could not be measured; the term is excluded instead'),
+
+    ('Evidence weight — signal', 'ΔJ', 'w_dj',
+     'Coupling agreement — the strongest evidence a multiplet carries'),
+    ('Evidence weight — signal', 'Δppm', 'w_ppm_ns',
+     'Chemical-shift agreement (multiplet)'),
+    ('Evidence weight — signal', 'Shape', 'w_cosine_ns',
+     "Cosine of the predicted pattern against this signal's own window"),
+    ('Evidence weight — signal', 'Δppm (singlet)', 'w_ppm_s',
+     'A singlet has no J, so position carries more of the decision'),
+    ('Evidence weight — signal', 'Shape (singlet)', 'w_cosine_s',
+     'Shape agreement for a singlet'),
+
+    ('Evidence weight — analyte', 'Coverage penalty', 'w_coverage',
+     'How much a missing signal lowers the analyte score. Keep it gentle: '
+     'signals go missing through overlap and water suppression'),
+    ('Evidence weight — analyte', 'Corroboration lift', 'w_corroboration',
+     "How much the analyte's other signals raise its score"),
+
+    ('Decision bands', 'Good score threshold', 'good_score_thresh',
+     'At or above this a signal is Good (green)'),
+    ('Decision bands', 'Bad score threshold', 'bad_score_thresh',
+     'Below this a signal is Bad (red); between the two it is Average'),
+
+    ('Other', 'NNLS min fraction', 'nnls_min_frac',
+     'Below this fraction of the largest NNLS amplitude, downgrade to Average'),
+]
+
+# ΔJ band width (Hz). Mirrors 'dj_gold_hz' in the Annotation Parameters dialog:
+# below it the coupling agreement is already perfect, so two candidates there are
+# indistinguishable. Used only when the caller has no user-set value.
+DJ_GOLD_HZ_DEFAULT = 0.20
+
+# Two candidates whose cosine differs by less than this are not separated by it.
+# From the same study: across the contested peaks that ΔJ and Δppm could not
+# resolve, cosine separated the top two by more than 0.05 in 59% of cases.
+COSINE_TIE = 0.05
+
+# Annotation-score difference below which the score has not separated anything.
+# Kept at the margin the previous ambiguity check used, so ranks that were
+# resolved by score before stay resolved.
+SCORE_TIE = 0.08
+
+# Tier of the evidence a candidate carries (lower = stronger).
+TIER_CONFIRMED_MULTIPLET = 0   # every expected line found, J measured
+TIER_UNCONFIRMED_MULTIPLET = 1 # multiplet with missing lines or unmeasured J
+TIER_SINGLET = 2               # no J evidence by construction
+
+_BIG_BAND = 10 ** 6
+
+
+def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None) -> int:
+    """Evidence tier of one candidate — the first key of the ranking."""
+    if is_singlet_like(mult):
+        return TIER_SINGLET
+    complete = (n_found is None or n_expected is None
+                or (n_found >= n_expected >= 2))
+    if delta_j_hz is None or not complete:
+        return TIER_UNCONFIRMED_MULTIPLET
+    return TIER_CONFIRMED_MULTIPLET
+
+
+def dj_band(delta_j_hz, gold_hz: float) -> int:
+    """ΔJ bucketed by ``gold_hz``; unmeasured ΔJ sorts last.
+
+    Banding is what makes a technical tie a tie: ΔJ of 0.046 and 0.096 Hz differ
+    by far less than J can be measured (0.28-0.78 Hz between-sample SD in the
+    reference study), so both land in band 0 and the decision falls through to
+    the next key instead of being settled by noise.
+    """
+    if delta_j_hz is None or gold_hz <= 0:
+        return _BIG_BAND
+    return int(abs(float(delta_j_hz)) / float(gold_hz))
+
+
+def ppm_band(ppm_diff, band_ppm: float = PPM_BAND_PPM) -> int:
+    """Δppm bucketed by ``band_ppm`` — see PPM_BAND_PPM for why it is coarse."""
+    if ppm_diff is None or band_ppm <= 0:
+        return _BIG_BAND
+    return int(abs(float(ppm_diff)) / float(band_ppm))
+
+
+def is_competitor(cand) -> bool:
+    """True when this candidate may compete for a peak at all.
+
+    A multiplet whose expected lines were not all found in the spectrum is not
+    weak evidence — it is *absent* evidence. J cannot be measured from lines
+    that are missing, so the multiplicity claim was never verified and the
+    signal was, in effect, not identified. Letting it compete would let an
+    unverified claim take a peak away from a verified one.
+
+    The metabolite is not discarded: it remains free to win on any of its other
+    signals, and a peak whose every candidate is unverified simply has no
+    winner. Singlets carry no J by construction and are unaffected.
+    """
+    mult = cand.get('multiplicity') or cand.get('type')
+    if is_singlet_like(mult):
+        return True
+    return candidate_tier(mult, cand.get('delta_j_hz'),
+                          cand.get('n_found'),
+                          cand.get('n_expected')) != TIER_UNCONFIRMED_MULTIPLET
+
+
+def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
+    """Lexicographic ranking key for one candidate (lower = better).
+
+    ``cand`` keys used: ``multiplicity``/``type``, ``delta_j_hz``, ``ppm_diff``,
+    ``n_found``, ``n_expected``, ``cosine``, ``manual_quality``, ``quality``,
+    ``score``.
+
+    Order of the evidence, strongest first:
+
+    1. ``manual_quality == 'good'`` — the user looked at the spectrum and
+       decided. That judgement is evidence the pipeline does not have, so it
+       outranks every computed criterion. Manual 'bad' is handled by the
+       caller, which drops the candidate before ranking.
+    2. evidence tier — a confirmed multiplet beats an unconfirmed one, which
+       beats a singlet.
+    3. ΔJ band, then Δppm band — see the module notes on why this order.
+    4. annotation quality — a candidate the annotation pipeline did not accept
+       as Good must not beat one it did on a similarity tie-break.
+    5. cosine — fingerprint similarity, the only orthogonal evidence measured
+       to separate contests the criteria above leave tied.
+    6. the annotation score — last resort. It is a Δppm-weighted blend, so it
+       must never outrank the criteria above; it only orders what nothing else
+       can.
+    """
+    manual = str(cand.get('manual_quality') or '').lower().strip()
+    quality = str(cand.get('quality') or
+                  cand.get('annotation_quality') or '').lower().strip()
+    mult = cand.get('multiplicity') or cand.get('type')
+    return (
+        0 if manual == 'good' else 1,
+        candidate_tier(mult, cand.get('delta_j_hz'),
+                       cand.get('n_found'), cand.get('n_expected')),
+        dj_band(cand.get('delta_j_hz'), dj_gold_hz),
+        ppm_band(cand.get('ppm_diff'), band_ppm),
+        0 if quality == 'good' else 1,
+        -float(cand.get('cosine') or 0.0),
+        -float(cand.get('score') or cand.get('composite_score') or 0.0),
+    )
+
+
+def rank_candidates(candidates, *, dj_gold_hz: float,
+                    band_ppm: float = PPM_BAND_PPM):
+    """Rank the candidates competing for one peak, best first.
+
+    Candidates that are not competitors (see ``is_competitor``) are dropped
+    before ranking, so an unverified multiplet never takes a peak from a
+    verified one and never creates an ambiguity of its own.
+
+    Returns ``(ordered, ambiguous)``. ``ambiguous`` is True when the top two are
+    indistinguishable on every criterion — same manual mark, same tier, same ΔJ
+    band, same Δppm band, and cosine within ``COSINE_TIE``. An ambiguous contest
+    has no winner: the caller must not quantify any of them from this peak.
+    Reporting a number there would be inventing a decision the data does not
+    support (a competitor may still win elsewhere on one of its other signals).
+    """
+    ordered = sorted(
+        [c for c in candidates if is_competitor(c)],
+        key=lambda c: candidate_key(c, dj_gold_hz=dj_gold_hz,
+                                    band_ppm=band_ppm))
+    if len(ordered) < 2:
+        return ordered, False
+    k0 = candidate_key(ordered[0], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
+    k1 = candidate_key(ordered[1], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
+    ambiguous = (k0[:5] == k1[:5]                    # manual, tier, ΔJ, Δppm, quality
+                 and abs(k0[5] - k1[5]) < COSINE_TIE # cosine
+                 and abs(k0[6] - k1[6]) < SCORE_TIE) # annotation score
+    return ordered, ambiguous
+
+
+# ── Two scores, two questions ────────────────────────────────────────────────
+# They were one number, and that conflated two things:
+#
+#   signal score  — "can I trust THIS signal to quantify with?"
+#                   ΔJ, Δppm and the shape agreement measured in this signal's
+#                   own window. Nothing about the analyte's other signals: the
+#                   evidence carried by alanine's CH3 doublet does not change
+#                   because its CH quartet sits under the water suppression.
+#
+#   analyte score — "is this analyte present at all?"
+#                   Built from the signal scores, then softened by how much of
+#                   the expected fingerprint was actually found. Missing signals
+#                   are normal (overlap, water suppression, below detection), so
+#                   the coverage term is deliberately gentle: a single confirmed
+#                   multiplet must stay well inside the Good band.
+#
+# Both return the terms they used, so the UI can show the equation behind the
+# number instead of an opaque value. Two different scores lived under the same
+# key for a long time precisely because nobody could see how either was built.
+
+
+@dataclass
+class ScoreBreakdown:
+    """A score plus the terms that produced it, for display and audit."""
+    value: float
+    terms: dict = field(default_factory=dict)      # name → contribution
+    weights: dict = field(default_factory=dict)    # name → weight applied
+    note: str = ''                                 # rule that capped/floored it
+
+    def equation(self) -> str:
+        """Human-readable reconstruction, e.g. '0.57·ΔJ(1.00) + 0.10·Δppm(0.88)'."""
+        parts = [f'{self.weights[k]:.2f}·{k}({self.terms[k]:.2f})'
+                 for k in self.terms if k in self.weights]
+        eq = ' + '.join(parts) if parts else f'{self.value:.3f}'
+        return f'{eq} = {self.value:.3f}' + (f'  [{self.note}]' if self.note else '')
+
+
+def signal_score(*, s_ppm: float, s_dj: float | None, s_cosine: float | None,
+                 is_singlet: bool, params: dict) -> ScoreBreakdown:
+    """Confidence in ONE signal, from its own evidence only.
+
+    ``s_dj`` is None when J could not be measured (component excluded and the
+    remaining weights renormalised); ``s_cosine`` is None when the shape could
+    not be measured in this signal's window — never substitute a Δppm-derived
+    value there, or the term stops being independent of Δppm.
+
+    Weights come from ``params`` (the Annotation Parameters dialog): ``w_dj``,
+    ``w_ppm_ns``/``w_ppm_s``, ``w_cosine_ns``/``w_cosine_s``. They are not
+    reinvented here.
+    """
+    if is_singlet:
+        # A lone singlet carries no J. It must not reach the Good band on Δppm
+        # alone — promotion is left to the corroboration rules, which need
+        # evidence a single line cannot provide.
+        w = {'Δppm': float(params.get('w_ppm_s', 0.27)),
+             'shape': float(params.get('w_cosine_s', 0.32))}
+        scores = {'Δppm': float(s_ppm)}
+        if s_cosine is not None:
+            scores['shape'] = float(s_cosine)
+        total_w = sum(w[k] for k in scores) or 1.0
+        raw = sum(scores[k] * w[k] for k in scores) / total_w
+        cap = float(params.get('bad_score_thresh', 0.50))
+        return ScoreBreakdown(value=float(np.clip(raw * cap, 0.0, 1.0)),
+                              terms=scores,
+                              weights={k: w[k] / total_w for k in scores},
+                              note=f'singlet cap ×{cap:g}')
+
+    w = {'ΔJ':    float(params.get('w_dj', 0.57)),
+         'Δppm':  float(params.get('w_ppm_ns', 0.10)),
+         'shape': float(params.get('w_cosine_ns', 0.14))}
+    scores = {'Δppm': float(s_ppm)}
+    if s_dj is not None:
+        scores['ΔJ'] = float(s_dj)
+    if s_cosine is not None:
+        scores['shape'] = float(s_cosine)
+    total_w = sum(w[k] for k in scores) or 1.0
+    raw = sum(scores[k] * w[k] for k in scores) / total_w
+    return ScoreBreakdown(value=float(np.clip(raw, 0.0, 1.0)), terms=scores,
+                          weights={k: w[k] / total_w for k in scores})
+
+
+def analyte_score(signal_values, *, coverage: float, params: dict,
+                  floor: float | None = None) -> ScoreBreakdown:
+    """Confidence that the analyte is present, from its signals' scores.
+
+    ``signal_values`` are the per-signal scores; ``coverage`` is the fraction of
+    the analyte's expected DB signals that were matched (0-1). ``floor`` is the
+    value the result may not fall below — pass the Good threshold when at least
+    one of the analyte's signals satisfied the confirmation rule.
+
+    The best signal is the base: one confirmed multiplet already identifies the
+    analyte, and no other resonance can undo that. The remaining signals only
+    LIFT the score, never drag it — a weak second signal almost always means
+    that resonance is overlapped or suppressed, not that the assignment is
+    wrong. (Averaging them in dropped lactate, of all things, out of the Good
+    band in a real mouse dataset.)
+
+    The coverage term then applies a gentle penalty weighted by ``w_coverage``
+    (0.05 by default), so an analyte seen through a single signal loses a few
+    percent, not a band.
+    """
+    vals = [float(v) for v in (signal_values or []) if v is not None]
+    if not vals:
+        return ScoreBreakdown(value=0.0, note='no signal')
+    best = max(vals)
+    others = sorted(vals, reverse=True)[1:]
+    mean_others = float(np.mean(others)) if others else 0.0
+    # Bounded lift toward 1.0: corroboration helps, and helps less the closer
+    # the best signal already is to certainty.
+    w_corr = float(params.get('w_corroboration', 0.09))
+    lifted = best + (1.0 - best) * w_corr * mean_others
+
+    w_cov = float(params.get('w_coverage', 0.05))
+    cov = float(np.clip(coverage, 0.0, 1.0))
+    factor = 1.0 - w_cov * (1.0 - cov)
+    value = float(np.clip(lifted * factor, 0.0, 1.0))
+
+    note = f'coverage ×{factor:.3f}'
+    # A confirmed signal (every expected line found, ΔJ and Δppm within gold)
+    # is an identification. The coverage penalty must not undo it — otherwise an
+    # analyte confirmed on one resonance is demoted for resonances that are
+    # merely hidden. Without this, 13 confirmed analytes in the reference
+    # dataset fell from Good to yellow by two thousandths.
+    if floor is not None and value < float(floor):
+        value = float(floor)
+        note += f', floored to {float(floor):.2f} (confirmed signal)'
+    return ScoreBreakdown(
+        value=value,
+        terms={'best': best, 'others': mean_others, 'coverage': cov},
+        weights={'best': 1.0, 'others': w_corr, 'coverage': w_cov},
+        note=note)
+
+
+def peak_shape_score(ppm_arr, intensity_arr, shifted_sticks,
+                      center_ppm, db_entry, hwhm_default=0.004):
+    """
+    Compute how well the experimental spectrum shape overlaps the
+    simulated DB multiplet (sum of Lorentzianas at shifted_sticks).
+
+    Returns a score 0-1 (1.0 = perfect overlap), or None when the window holds
+    too few points to judge. The score is the cosine similarity between the
+    experimental slice and the simulated DB shape over a +-6xHWHM window.
+
+    This is the SHAPE term of the signal score, and the only one independent of
+    both chemical shift and coupling: it asks whether the predicted pattern of
+    line positions and relative intensities is what the spectrum actually shows
+    at this signal. Measured in the signal's own window, so it stays local — an
+    analyte-wide value cannot separate two candidates competing for one peak.
+    """
+    if not shifted_sticks:
+        return None
+
+    db_width = max(
+        abs(db_entry.get('ppm_end', center_ppm) -
+            db_entry.get('ppm_start', center_ppm)),
+        0.002)
+    hwhm = max(db_width / 2, hwhm_default)
+    # Window: wide enough to contain the full multiplet + ~4 hwhm of shoulder,
+    # but not so wide that neighbouring peaks or broad baseline contaminate the
+    # cosine.  hwhm * 8 gives ≈ 4 × linewidth padding on each side.
+    win  = hwhm * 8
+
+    lo = center_ppm - win
+    hi = center_ppm + win
+    mask = (ppm_arr >= lo) & (ppm_arr <= hi)
+    if mask.sum() < 3:
+        return None
+
+    x   = ppm_arr[mask]
+    y_e = intensity_arr[mask].astype(float)
+
+    # Remove linear baseline from experimental slice so that the broad baseline
+    # hump doesn't dominate and drag the cosine similarity down.
+    # Estimate from the 15% edge samples on each side.
+    n = len(y_e)
+    edge_n = max(2, int(n * 0.15))
+    xl = float(np.mean(x[:edge_n]));   yl = float(np.mean(y_e[:edge_n]))
+    xr = float(np.mean(x[-edge_n:]));  yr = float(np.mean(y_e[-edge_n:]))
+    if abs(xr - xl) > 1e-9:
+        slope = (yr - yl) / (xr - xl)
+        y_e   = y_e - (yl + slope * (x - xl))
+    y_e = np.clip(y_e, 0, None)   # only positive signal contributes
+
+    # Simulated DB shape at same x points
+    y_db = np.zeros_like(x)
+    for st_ppm, st_rel in shifted_sticks:
+        y_db += st_rel * hwhm**2 / ((x - st_ppm)**2 + hwhm**2)
+
+    # Normalise both to unit vectors
+    ne = np.linalg.norm(y_e)
+    nd = np.linalg.norm(y_db)
+    if ne == 0 or nd == 0:
+        return 0.0
+    return float(np.dot(y_e / ne, y_db / nd))
+
+
+# Per-spacing tolerance for the window search. Tied to the ΔJ rejection gate:
+# a spacing this search accepts must be one the gate would accept.
+SEARCH_SPACING_TOL_HZ = 0.50
+
+
+def search_multiplet_in_window(peak_ppms, *, centre_ppm: float, j_hz: float,
+                               n_expected: int, field_mhz: float,
+                               half_width_ppm: float,
+                               spacing_tol_hz: float = SEARCH_SPACING_TOL_HZ):
+    """Look for a multiplet's comb of lines among the detected peaks.
+
+    A multiplet is an equally spaced comb: ``n_expected`` lines separated by
+    ``j_hz``. So the search is a template match — try each peak in the window as
+    the leftmost line and ask whether peaks sit at every subsequent position.
+    Returns the matched line positions (ascending), or None.
+
+    This replaces an earlier attempt that took the ``n_expected`` TALLEST peaks
+    inside the window, ordered them by ppm, and accepted the set when the MEAN
+    of their spacings matched the DB J. The mean is blind to the failure it had
+    to catch: three peaks spaced 1.2 and 12.8 Hz — two different signals, plainly
+    not a triplet — give a mean of exactly 7.0 Hz and were accepted with a
+    perfect score. Validating EVERY spacing is what distinguishes one spin
+    system from a crowd of neighbours.
+
+    Two geometric conditions, both necessary:
+      * every spacing agrees with the DB J within ``spacing_tol_hz``;
+      * the spacings agree with EACH OTHER within ``spacing_tol_hz`` — a real
+        multiplet is equally spaced, and a set whose spacings drift (11.7, 14.2,
+        16.1 Hz for a J of 13.3) is a run of neighbouring signals, not a
+        quartet.
+
+    The default tolerance is deliberately tighter than ``J_SPACING_TOL_HZ``: at
+    2 Hz the search recovered ten multiplets in a real dataset and most were
+    wrong — five different metabolites in one crowded region all matched the
+    same peak triple. It is set from ``dj_bad_hz``, the same threshold that
+    rejects a ΔJ, so a spacing this search accepts is one the gate would accept.
+
+    No assumption is made about relative intensities; the caller may check the
+    pattern separately.
+    """
+    if n_expected < 2 or j_hz <= 0 or field_mhz <= 0:
+        return None
+    ppms = sorted(float(p) for p in (peak_ppms or [])
+                  if abs(float(p) - centre_ppm) <= half_width_ppm)
+    if len(ppms) < n_expected:
+        return None
+
+    j_ppm = j_hz / field_mhz
+    tol_ppm = spacing_tol_hz / field_mhz
+    best = None
+    for i, first in enumerate(ppms):
+        comb = [first]
+        for k in range(1, n_expected):
+            target = first + k * j_ppm
+            nearest = min((p for p in ppms if p not in comb),
+                          key=lambda p: abs(p - target), default=None)
+            if nearest is None or abs(nearest - target) > tol_ppm:
+                comb = None
+                break
+            comb.append(nearest)
+        if comb is None:
+            continue
+        seps = [(comb[k + 1] - comb[k]) * field_mhz
+                for k in range(len(comb) - 1)]
+        # Equally spaced: the spacings must agree with each other, not merely
+        # each with the DB J. Without this, a drifting run of neighbouring
+        # peaks passes as a multiplet.
+        if len(seps) > 1 and (max(seps) - min(seps)) > spacing_tol_hz:
+            continue
+        # Prefer the comb whose spacings sit closest to the DB J.
+        err = sum(abs(sep - j_hz) for sep in seps)
+        if best is None or err < best[0]:
+            best = (err, comb)
+    return sorted(best[1]) if best else None
+
+
+def coverage_fraction(met, *, dj_bad_hz: float) -> float:
+    """Fraction of the analyte's DB signals that were matched in the spectrum.
+
+    A DB signal counts as found when some matched peak sits at its position and
+    that peak's J agrees with the database — a multiplet matched at the right
+    place with the wrong coupling has not found the signal, it has found
+    something else there.
+
+    Unresolved multiplets ('m') are excluded from both sides: the database gives
+    them no J and no line pattern, so their absence says nothing.
+
+    Every other unmatched signal lowers the fraction. Signals were once excused
+    when their expected SNR fell below the noise floor, which let a metabolite
+    look fully covered while most of its fingerprint was missing; that estimate
+    is now reported to the analyst instead of quietly rewriting the coverage.
+    """
+    db_signals = [p for p in (met.get('db_peaks') or [])
+                  if normalize_mult(p.get('type')) not in ('m', 'multiplet')]
+    if not db_signals:
+        return 0.0
+
+    def _j_agrees(mp) -> bool:
+        if is_singlet_like(mp.get('type') or mp.get('multiplicity') or 's'):
+            return True                      # no J to disagree with
+        dj = mp.get('delta_j_hz')
+        return dj is None or float(dj) < dj_bad_hz   # None = not measured yet
+
+    matched_at = {round(float(mp.get('db_ppm', 0)), 3)
+                  for mp in (met.get('matched_peaks') or []) if _j_agrees(mp)}
+    found = sum(1 for p in db_signals
+                if round(float(p.get('ppm_center', p.get('ppm', 0))), 3)
+                in matched_at)
+    return found / len(db_signals)
+
+
+def expected_lines_for(mp, met, *, mult) -> int:
+    """How many lines this multiplet should show.
+
+    The DB fingerprint entry is authoritative: ``mp['predicted_lines']`` may
+    have been truncated to the lines that were actually found, and asking a
+    truncated list how many lines to expect concludes that every one is present.
+    """
+    stored = mp.get('predicted_lines') or []
+    db_entry = next(
+        (p for p in (met.get('db_peaks') or [])
+         if round(float(p.get('ppm_center', p.get('ppm', 0))), 3)
+         == round(float(mp.get('db_ppm', 0)), 3)), None)
+    db_lines = (db_entry.get('predicted_lines') or []) if db_entry else []
+    return max(expected_line_count(mult, fallback=len(stored) or 2),
+               len(db_lines))
+
+
+def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
+               tolerance: float, remeasure: bool) -> tuple[float, float]:
+    """Settle this signal's ΔJ and return ``(s_dj, dj_confidence)``.
+
+    Writes the measurement back onto *mp* — line counts, observed J, ΔJ, and
+    the multiplet centre when it moved.
+
+    ``remeasure`` is False in the normal case: the annotation search already
+    snapped the lines and measured J, which is what decided whether the signal
+    was identified at all. It is True only when an input has changed since (ppm
+    calibration moved the axis, the tolerance changed) or when the search never
+    ran for this candidate.
+
+    An incomplete multiplet yields no ΔJ — a coupling measured from a subset
+    describes a different set of peaks — and scores on the fraction of lines it
+    did find, capped below the singlet boundary.
+    """
+    if is_singlet_like(mult):
+        return 1.0, 1.0                       # no J to validate
+
+    n_expected = expected_lines_for(mp, met, mult=mult)
+    stored_lines = mp.get('predicted_lines') or []
+
+    if (not remeasure and mp.get('_n_found_lines') is not None
+            and mp.get('_n_exp_lines') is not None):
+        meas = LineMeasurement(
+            n_expected=int(mp['_n_exp_lines']),
+            n_found=int(mp['_n_found_lines']),
+            observed_j_hz=mp.get('observed_j_hz'),
+            delta_j_hz=mp.get('delta_j_hz'),
+            predicted_lines=list(stored_lines),
+            measured=True)
+    else:
+        meas = measure_multiplet(
+            stored_lines, peaks, mult=mult,
+            j_coupling=mp.get('j_coupling'),
+            db_ppm=float(mp.get('db_ppm') or 0),
+            centre_hint=float(mp.get('peak_ppm') or 0),
+            n_expected=n_expected, tolerance=tolerance, field_mhz=field_mhz)
+
+    def _score(dj):
+        return dj_score(dj, params['dj_gold_hz'], params['dj_bad_hz'],
+                        params['dj_neutral'])
+
+    if not meas.measured:
+        # Nothing to snap — fall back to whatever ΔJ was stored.
+        stored_dj = mp.get('delta_j_hz')
+        return _score(stored_dj), (0.0 if stored_dj is None else 1.0)
+
+    mp['_n_found_lines'] = meas.n_found
+    mp['_n_exp_lines'] = meas.n_expected
+    if meas.found_ppms:
+        mp['predicted_lines'] = meas.predicted_lines
+
+    if not meas.complete:
+        mp['delta_j_hz'] = None
+        mp['observed_j_hz'] = None
+        return float(meas.n_found) / float(meas.n_expected) * 0.5, 1.0
+
+    if meas.observed_j_hz is not None:
+        mp['observed_j_hz'] = meas.observed_j_hz
+    if meas.delta_j_hz is not None:
+        mp['delta_j_hz'] = meas.delta_j_hz
+    db_ppm = float(mp.get('db_ppm') or 0)
+    if meas.centre_ppm is not None and db_ppm != 0:
+        mp['ppm_diff'] = float(abs(meas.centre_ppm - db_ppm))
+        mp['peak_ppm'] = float(meas.centre_ppm)
+    # Every line found but J still not computable (the DB gave none): the term
+    # is excluded rather than scored as a disagreement.
+    return _score(meas.delta_j_hz), (0.0 if meas.delta_j_hz is None else 1.0)
+
+
+def apply_mcr_dj(mp, *, params):
+    """Replace ΔJ with the value measured on the deconvolved component.
+
+    Returns ``(s_dj, dj_confidence)`` when MCR resolved this peak, else None.
+
+    The ΔJ measured from lines snapped on the merged spectrum is unreliable by
+    construction inside an overlap — the lines belong to more than one analyte.
+    MCR measures J on the isolated component instead. Position is untouched:
+    deconvolution resolves shape and coupling, not chemical shift.
+    """
+    mcr_dj = mp.get('mcr_delta_j_hz')
+    if mcr_dj is None:
+        return None
+    mp['delta_j_hz'] = float(mcr_dj)
+    mp['_dj_source'] = 'mcr'
+    return dj_score(mcr_dj, params['dj_gold_hz'], params['dj_bad_hz'],
+                    params['dj_neutral']), 1.0
+
+
+def is_confirmed(mp, *, dj_conf: float, params) -> bool:
+    """True when three independent agreements line up on one signal.
+
+    Every expected line found (a quintet needs five, not three), the coupling of
+    those lines matching the database, and the shift within tolerance. That is
+    an identification, and a composite number should not be able to rank it
+    below a signal with less evidence.
+    """
+    n_found, n_expected = mp.get('_n_found_lines'), mp.get('_n_exp_lines')
+    dj = mp.get('delta_j_hz')
+    return bool(
+        n_found is not None and n_expected is not None
+        and int(n_found) >= int(n_expected) >= 2
+        and float(mp.get('ppm_diff', 0) or 0) < params['dppm_gold']
+        and dj_conf > 0 and dj is not None
+        and float(dj) < params['dj_bad_hz'])
+
+
+def score_signal(mp, *, s_ppm: float, s_dj: float, dj_conf: float,
+                 coverage: float, params) -> ScoreBreakdown:
+    """Score one signal and write the result onto *mp*.
+
+    Stores ``composite_score``, the terms behind it, ``_score_breakdown`` and
+    ``_confirmed``. Returns the breakdown.
+
+    A signal whose analyte matched nothing at all scores zero: ``coverage`` of
+    zero means not one of its database signals was found, so there is no
+    fingerprint to have recognised. That gate used to be applied by the caller,
+    which left the equation shown to the analyst describing a number the caller
+    had since overwritten.
+    """
+    singlet = is_singlet_like(mp.get('type') or mp.get('multiplicity') or 's')
+    breakdown = signal_score(
+        s_ppm=s_ppm,
+        s_dj=(s_dj if (dj_conf > 0 and not singlet) else None),
+        s_cosine=mp.get('_s_cosine_local'),
+        is_singlet=singlet, params=params)
+
+    score = breakdown.value
+    equation = breakdown.equation()
+    note = breakdown.note
+
+    if not singlet and is_confirmed(mp, dj_conf=dj_conf, params=params):
+        mp['_confirmed'] = True
+        floor = params['good_score_thresh']
+        if score < floor:
+            score = floor
+            note = (f'floored to {floor:.2f} — all lines found, '
+                    f'ΔJ and Δppm within gold')
+            equation = f'{breakdown.equation()}  → {note}'
+
+    gate = 0.0 if coverage == 0.0 else 1.0
+    if gate == 0.0:
+        note = 'no database signal of this analyte was matched'
+        equation = f'{breakdown.equation()}  → 0.000 ({note})'
+
+    mp['_s_ppm'] = s_ppm
+    mp['_s_dj'] = s_dj
+    mp['_s_found'] = coverage
+    mp['_score_gate'] = gate
+    mp['composite_score'] = float(np.clip(score * gate, 0.0, 1.0))
+    mp['_score_breakdown'] = equation
+    return ScoreBreakdown(value=mp['composite_score'], terms=breakdown.terms,
+                          weights=breakdown.weights, note=note)

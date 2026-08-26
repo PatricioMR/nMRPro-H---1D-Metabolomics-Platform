@@ -48,3 +48,6 @@ hmdb_api_download/chebi/*.gz
 /run_tests.bat
 /ParseHMDBNames.py
 .tmp.driveupload/
+
+# Working notes, not part of the repo
+PENDENCIAS.md

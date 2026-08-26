@@ -203,6 +203,28 @@ def _pqn(areas_dict, ref_dict):
     return {k: v / f for k, v in areas_dict.items()}, f
 
 
+def multiplet_nh(hit):
+    """nH for Multiplet integration: the DB signal's own proton count.
+
+    Multiplet mode integrates the whole multiplet window, so the area belongs to
+    exactly one ``shifts_1h`` row and the divisor is that row's ``protons`` —
+    fractional included. BMRB stores fractional per-signal nH whenever a group's
+    protons are observed across several signals (D-Fructose H13-H16 = 4 H over 5
+    signals → 0.8 each; they sum back to ``total_protons``). 24% of the DB's
+    quantifiable signals are fractional, and for D-Glucose, D-Fructose,
+    D-Galactose, D-Mannose and D-xylose *every* quantifiable signal is.
+
+    Flooring the divisor at 1.0 therefore under-reports those metabolites in
+    direct proportion (D-Glucose, nH=0.5 → 0.47× the true concentration).
+    Only a missing/zero nH falls back to 1.0.
+    """
+    try:
+        nh = float(hit.get('protons', 1) or 1)
+    except (TypeError, ValueError):
+        return 1.0
+    return nh if nh > 0 else 1.0
+
+
 def _effective_nh(hit, detected_ppm, spectrometer_mhz=600.0):
     """Return the effective nH for the specific detected line of a multiplet."""
     import re as _re

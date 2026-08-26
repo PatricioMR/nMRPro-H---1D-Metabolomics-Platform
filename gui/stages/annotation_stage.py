@@ -25,6 +25,7 @@ if certifi is not None:
     os.environ['SSL_CERT_FILE']      = certifi.where()
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
+from processing.signal_quality import SIGNAL_GOOD, normalize_tiers
 from .base_stage import BaseStage
 from ._annotation_search import _AnnotationSearchMixin
 
@@ -44,6 +45,15 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self.mcr_r2_threshold   = 0.95   # used by annotation MCR deconvolution
         self._annotation_params = None   # pre-annotation params; None = use defaults
         self.create_widgets()
+
+    def annotatable_tiers(self):
+        """Signal-quality grades the analyst allows annotation to use.
+
+        Configured in the Annotation Parameters dialog. Defaults to Good and
+        Average — a Poor signal has an unreliable apex, so it is opt-in.
+        """
+        params = self._annotation_params or {}
+        return normalize_tiers(params.get('annotatable_tiers'))
 
     # ── Status helpers ────────────────────────────────────────────────────────
 
@@ -270,7 +280,7 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self._apply_lipidomics_ui_state()
         n      = len(self.peaks)
         n_good = sum(1 for p in self.peaks
-                     if p.get('status', 'Undefined') == 'Good')
+                     if p.get('status') == SIGNAL_GOOD)
         if n == 0:
             self.peaks_info_label.config(
                 text='No signals detected yet.', foreground='gray')

@@ -6,7 +6,7 @@ Left  : DeconvListPanel  — hierarchical Treeview of regions + deconvolved chil
 Right : DeconvPlotPanel  — spectrum plot + quality card
 
 Keyboard shortcuts:
-  Ctrl+1/2/3  → Good / Undefined / Poor on selected child peak
+  Ctrl+1/2/3  → Good / Average / Poor on selected child peak
   Ctrl+R      → Reset zoom / view
   Enter       → Deconvolve selected region
 """

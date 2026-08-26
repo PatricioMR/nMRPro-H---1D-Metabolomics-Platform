@@ -342,10 +342,12 @@ class PeakDetectionStage(BaseStage):
                   font=('Arial', 7), foreground='#666').pack(side=tk.LEFT, padx=(4, 0))
 
         # Row 2b: shoulder recovery (2nd-derivative) — recovers overlapping
-        # lines that have no intensity maximum of their own.
+        # lines that have no intensity maximum of their own. Off by default: a
+        # recovered shoulder has no apex of its own, so its position and area
+        # carry more uncertainty than a resolved line; it is opt-in.
         pf1b = ttk.Frame(s2)
         pf1b.pack(fill=tk.X, pady=2)
-        self.detect_shoulders_var = tk.BooleanVar(value=True)
+        self.detect_shoulders_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             pf1b, text="Recover shoulders (2nd-deriv)",
             variable=self.detect_shoulders_var).pack(side=tk.LEFT, padx=2)

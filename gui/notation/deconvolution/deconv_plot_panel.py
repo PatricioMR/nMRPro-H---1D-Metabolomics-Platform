@@ -10,6 +10,8 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import SpanSelector
 import numpy as np
 
+from gui.utils.quality_palette import QUALITY_FG, SIGNAL_AVERAGE
+
 # Literature thresholds (NMR metabolomics, AlpsNMR / NMR-Onion)
 QUALITY_THRESHOLDS = {
     'r_squared': {'good': 0.98, 'ok': 0.90},
@@ -388,7 +390,7 @@ class DeconvPlotPanel:
                     best_mean_y   = gm
 
         for i, peak in enumerate(results['peaks']):
-            status = peak.get('status', 'Undefined')
+            status = peak.get('status', SIGNAL_AVERAGE)
             is_hl = (highlight_child == i)
             color = colors[i]
 
@@ -778,9 +780,8 @@ class DeconvPlotPanel:
             self._set_metric('linewidth', f"{lw:.4f} ppm",
                              _quality_color('linewidth', lw))
             # Peak detail card
-            status = p.get('status', 'Undefined')
-            sc = {'Good': '#1a7a1a',
-                  'Poor': '#9a0000'}.get(status, '#7a6000')
+            status = p.get('status', SIGNAL_AVERAGE)
+            sc = QUALITY_FG.get(status, QUALITY_FG[SIGNAL_AVERAGE])
             self.peak_detail_label.config(
                 text=(f"Signal #{child_index + 1}  ·  {p['ppm']:.4f} ppm\n"
                       f"Height: {p['height']:.4f}  ·  "

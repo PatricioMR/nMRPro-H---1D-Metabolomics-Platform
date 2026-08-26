@@ -214,3 +214,104 @@ def test_degraded_signal_lands_in_average():
          + np.linspace(0.0, 0.35, 201))
     tier, score, detail = _grade(y, shape_r2=0.55)
     assert tier == SIGNAL_AVERAGE, (score, detail)
+
+
+# ── Annotation eligibility ────────────────────────────────────────────────────
+
+from processing.signal_quality import (  # noqa: E402
+    ANNOTATABLE_TIERS,
+    effective_tier,
+    filter_annotatable,
+    is_annotatable,
+)
+
+
+def test_annotatable_tiers_exclude_poor():
+    assert ANNOTATABLE_TIERS == {SIGNAL_GOOD, SIGNAL_AVERAGE}
+    assert SIGNAL_POOR not in ANNOTATABLE_TIERS
+
+
+@pytest.mark.parametrize('tier,expected', [
+    (SIGNAL_GOOD, True), (SIGNAL_AVERAGE, True), (SIGNAL_POOR, False)])
+def test_is_annotatable_by_automatic_grade(tier, expected):
+    assert is_annotatable({'signal_quality': tier}) is expected
+
+
+def test_manual_status_overrides_automatic_grade():
+    """The analyst's call in the peak list wins over the computed tier."""
+    assert is_annotatable({'status': 'Good', 'signal_quality': SIGNAL_POOR})
+    assert not is_annotatable({'status': 'Poor', 'signal_quality': SIGNAL_GOOD})
+
+
+def test_unknown_status_falls_back_to_average():
+    """A vocabulary mismatch must never silently discard a signal."""
+    assert effective_tier({'status': 'Undefined'}) == SIGNAL_AVERAGE
+    assert effective_tier({}) == SIGNAL_AVERAGE
+    assert is_annotatable({'status': 'Undefined'})
+
+
+def test_effective_tier_is_case_insensitive():
+    assert effective_tier({'signal_quality': 'poor'}) == SIGNAL_POOR
+    assert effective_tier({'status': 'GOOD'}) == SIGNAL_GOOD
+
+
+def test_filter_annotatable_splits_and_preserves_order():
+    peaks = [{'ppm': 1.0, 'signal_quality': SIGNAL_GOOD},
+             {'ppm': 2.0, 'signal_quality': SIGNAL_POOR},
+             {'ppm': 3.0, 'signal_quality': SIGNAL_AVERAGE}]
+    usable, rejected = filter_annotatable(peaks)
+    assert [p['ppm'] for p in usable] == [1.0, 3.0]
+    assert [p['ppm'] for p in rejected] == [2.0]
+
+
+def test_filter_annotatable_empty_input():
+    assert filter_annotatable(None) == ([], [])
+
+
+# ── configurable annotation grades ────────────────────────────────────────────
+
+from processing.signal_quality import normalize_tiers  # noqa: E402
+
+
+def test_default_selection_is_good_and_average():
+    assert normalize_tiers(None) == ANNOTATABLE_TIERS
+
+
+@pytest.mark.parametrize('choice,expected', [
+    (['Good'],                    {SIGNAL_GOOD}),
+    (['Average'],                 {SIGNAL_AVERAGE}),
+    (['Good', 'Poor'],            {SIGNAL_GOOD, SIGNAL_POOR}),
+    (['good', 'average', 'poor'], {SIGNAL_GOOD, SIGNAL_AVERAGE, SIGNAL_POOR}),
+])
+def test_selection_is_honoured_case_insensitively(choice, expected):
+    assert set(normalize_tiers(choice)) == expected
+
+
+@pytest.mark.parametrize('bad', [[], (), None, ['typo'], ['']])
+def test_unusable_selection_falls_back_instead_of_annotating_nothing(bad):
+    """A typo in a saved project must not silently produce zero annotations."""
+    assert normalize_tiers(bad) == ANNOTATABLE_TIERS
+
+
+def test_only_good_excludes_average_signals():
+    peaks = [{'ppm': 1.0, 'signal_quality': SIGNAL_GOOD},
+             {'ppm': 2.0, 'signal_quality': SIGNAL_AVERAGE},
+             {'ppm': 3.0, 'signal_quality': SIGNAL_POOR}]
+    usable, rejected = filter_annotatable(peaks, ['Good'])
+    assert [p['ppm'] for p in usable] == [1.0]
+    assert [p['ppm'] for p in rejected] == [2.0, 3.0]
+
+
+def test_only_average_excludes_good_signals():
+    """The selection is a set, not a floor — 'Average only' means only Average."""
+    peaks = [{'ppm': 1.0, 'signal_quality': SIGNAL_GOOD},
+             {'ppm': 2.0, 'signal_quality': SIGNAL_AVERAGE}]
+    usable, _ = filter_annotatable(peaks, [SIGNAL_AVERAGE])
+    assert [p['ppm'] for p in usable] == [2.0]
+
+
+def test_manual_status_still_wins_under_a_restricted_selection():
+    assert is_annotatable({'status': 'Good', 'signal_quality': SIGNAL_POOR},
+                          ['Good'])
+    assert not is_annotatable({'status': 'Poor', 'signal_quality': SIGNAL_GOOD},
+                              ['Good'])

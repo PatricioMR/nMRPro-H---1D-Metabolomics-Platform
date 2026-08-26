@@ -14,6 +14,8 @@ from tkinter import ttk, filedialog
 import numpy as np
 import os
 import warnings
+from processing.annotation_scoring import (
+    rank_candidates, DJ_GOLD_HZ_DEFAULT)
 
 
 def _align_peaks_to_reference(peaks, ppm_arr, all_intensities,
@@ -66,19 +68,10 @@ def _assignment_sort_key(score, mp):
 
       • j_anchor_bonus  — a J-confirmed multiplet (ΔJ < 0.5 Hz) beats a higher
                           scoring singlet competing for the same peak.
-      • singlet_j_bonus — a clean singlet whose companion multiplet proves the
-                          metabolite identity outranks an unsupported singlet.
     """
     dj = mp.get('delta_j_hz')
     j_anchor_bonus = 0.20 if (dj is not None and float(dj) < 0.5) else 0.0
-    _mt = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-    singlet_j_bonus = 0.25 if (
-        _mt in ('s', 'singlet', '', 'm', 'multiplet')
-        and mp.get('j_met_confirmed')
-        and mp.get('anchor_status') == 'clean'
-        and mp.get('anchor_pos_confidence') in ('high', 'medium')
-    ) else 0.0
-    return float(score) + j_anchor_bonus + singlet_j_bonus
+    return float(score) + j_anchor_bonus
 
 
 def select_metabolite_per_rank(metabolites, manual_quality=None):
@@ -122,8 +115,17 @@ def select_metabolite_per_rank(metabolites, manual_quality=None):
     return out
 
 
-def ambiguous_peak_ranks(metabolites, margin=0.08, manual_quality=None):
+def ambiguous_peak_ranks(metabolites, manual_quality=None,
+                         dj_gold_hz=DJ_GOLD_HZ_DEFAULT):
     """Return peak ranks whose top candidates are too close to resolve safely.
+
+    Ambiguity is decided by the ranking rule shared with quantification
+    (``processing.annotation_scoring.rank_candidates``): a rank is ambiguous
+    when its top two candidates tie on evidence tier, ΔJ band, Δppm band and
+    cosine. This used to compare ``composite_score`` values within a fixed
+    margin — a blend weighted 45% on Δppm, which drifts by ~18 Hz between
+    samples while J does not, so near-ties in that score were near-ties in the
+    wrong quantity.
 
     Manual Good on a specific (metabolite, rank) pair is an explicit identity
     decision and therefore resolves that rank. Automatic quality marks alone do
@@ -137,26 +139,29 @@ def ambiguous_peak_ranks(metabolites, margin=0.08, manual_quality=None):
             rank = mp.get("peak_rank")
             if rank is None or mp.get("annotation_quality") == "bad":
                 continue
-            score = float(mp.get("composite_score",
-                                 mp.get("multiplet_score", 0.0)) or 0.0)
-            by_rank.setdefault(rank, []).append((score, mid, mp))
+            by_rank.setdefault(rank, {})[mid] = {
+                'multiplicity':   mp.get('type') or mp.get('multiplicity'),
+                'delta_j_hz':     mp.get('delta_j_hz'),
+                'ppm_diff':       mp.get('ppm_diff'),
+                'n_found':        mp.get('_n_found_lines'),
+                'n_expected':     mp.get('_n_exp_lines'),
+                'cosine':         mp.get('_s_cosine'),
+                'manual_quality': manual_quality.get((mid, rank)),
+                'quality':        mp.get('annotation_quality'),
+                'score':          mp.get('composite_score',
+                                         mp.get('multiplet_score', 0.0)),
+            }
 
     ambiguous = set()
-    for rank, cands in by_rank.items():
-        if any(manual_quality.get((mid, rank)) == "good"
-               for _, mid, _ in cands):
+    for rank, by_mid in by_rank.items():
+        if any(manual_quality.get((mid, rank)) == "good" for mid in by_mid):
             continue
-        unique = {}
-        for score, mid, mp in cands:
-            if mid not in unique or score > unique[mid][0]:
-                unique[mid] = (score, mp)
-        ordered = sorted(unique.items(), key=lambda item: item[1][0],
-                         reverse=True)
-        if len(ordered) >= 2:
-            top = ordered[0][1][0]
-            second = ordered[1][1][0]
-            if top - second < float(margin):
-                ambiguous.add(rank)
+        if len(by_mid) < 2:
+            continue
+        _, is_ambiguous = rank_candidates(list(by_mid.values()),
+                                          dj_gold_hz=dj_gold_hz)
+        if is_ambiguous:
+            ambiguous.add(rank)
     return ambiguous
 
 

@@ -2,7 +2,7 @@
 pdf_report.py — Relatório técnico PDF para quantificação NMR.
 
 Estrutura:
-  Pág. 1  : Capa — logo, título (nMRPipe vX), parâmetros, stacked spectrum por grupo
+  Pág. 1  : Capa — logo, título (NMRPro-H vX), parâmetros, stacked spectrum por grupo
   Pág. 2+ : 5 analitos por página — recorte centrado no pico + tabela de resultados
              Lorentz: curva ajustada sobreposta + R² na tabela.
              Ordenados por concentração decrescente.
@@ -668,7 +668,7 @@ def generate_pdf(output_path: str, quant_stage, app,
 
     # Logo
     from app_paths import asset_path
-    logo_path = Path(asset_path('utils', 'Logo_nMRPipe.png'))
+    logo_path = Path(asset_path('utils', 'Logo_NMRPro-H.png'))
     logo_img = None
     if logo_path.exists():
         try:
