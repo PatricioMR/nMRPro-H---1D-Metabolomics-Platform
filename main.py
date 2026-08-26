@@ -7,9 +7,47 @@ import sys
 import os
 import traceback
 
+
+def _make_console_safe():
+    """Keep startup logging from killing the app.
+
+    A frozen build does not get a UTF-8 console: stdout is cp1252 on Windows,
+    or absent entirely when built with console=False. Printing a tick character
+    then raises UnicodeEncodeError, and because the handler below also printed
+    one, the app died after importing successfully — visible only in the
+    packaged build, never when run from a development console.
+    """
+    for stream_name in ('stdout', 'stderr'):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
+
+def _has_console() -> bool:
+    """True when there is a real stdin to wait on.
+
+    A windowed build has none, so a "Press Enter to exit" prompt would raise or
+    hang instead of showing the error it was meant to explain.
+    """
+    return bool(getattr(sys, 'stdin', None)) and sys.stdin.isatty()
+
+
+def _pause_if_interactive():
+    if _has_console():
+        try:
+            input("\nPress Enter to exit...")
+        except Exception:
+            pass
+
+
+_make_console_safe()
+
 print("=" * 50)
 print("NMRPro-H - Starting")
-
 print("=" * 50)
 
 def main():
@@ -52,13 +90,13 @@ def main():
         print("      ├── __init__.py")
         print("      └── spectrum.py")
         traceback.print_exc()
-        input("\nPress Enter to exit...")
+        _pause_if_interactive()
         sys.exit(1)
 
     except Exception as e:
         print(f"✗ Unexpected error: {e}")
         traceback.print_exc()
-        input("\nPress Enter to exit...")
+        _pause_if_interactive()
         sys.exit(1)
 
 if __name__ == "__main__":
