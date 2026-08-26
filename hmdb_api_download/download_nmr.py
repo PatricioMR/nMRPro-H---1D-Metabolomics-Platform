@@ -38,7 +38,7 @@ def fetch(hmdb_id, retries=3):
     url = API.format(hmdb_id)
     for attempt in range(1, retries + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "nMRPipe/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "NMRPro-H/1.0"})
             with urllib.request.urlopen(req, timeout=60) as r:
                 raw = r.read().decode("utf-8-sig")
             return json.loads(raw)

@@ -1,33 +1,38 @@
-; Inno Setup script for nMRPipe
-; Build:  iscc installer\nmrpipe.iss   (after PyInstaller produced dist\nMRPipe)
-; Output: Output\nMRPipe-Setup.exe
+; Inno Setup script for NMRPro-H
+; Build:  iscc installer\nmrpro_h.iss   (after PyInstaller produced dist\NMRPro-H)
+; Output: Output\NMRPro-H-Setup.exe
 ;
-; The app seeds its editable databases to %APPDATA%\nMRPipe on first run, so the
+; The app seeds its editable databases to %APPDATA%\NMRPro-H on first run, so the
 ; install folder (Program Files) can stay read-only.
 
-#define AppName    "nMRPipe"
+#define AppName    "NMRPro-H"
 ; Version is passed by build_windows.bat (iscc /DAppVersion=...), extracted from
 ; app_paths.__version__ — the single source of truth. Fallback kept so a manual
-; `iscc installer\nmrpipe.iss` still compiles; keep it matching app_paths.
+; `iscc installer\nmrpro_h.iss` still compiles; keep it matching app_paths.
 #ifndef AppVersion
   #define AppVersion "0.2"
 #endif
-#define AppExe     "nMRPipe.exe"
+#define AppExe     "NMRPro-H.exe"
 
 [Setup]
+; Stable identity, independent of the display name. Without it Inno derives the
+; AppId from AppName, so renaming the product turns every future release into a
+; separate install: no upgrade, and the previous entry left behind in Add/Remove
+; Programs. Never change this GUID.
+AppId={{cbda7d6b-6c59-53ea-b354-f28c59c0a6b5}}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=nMRPipe
+AppPublisher=NMRPro-H
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 OutputDir=..\Output
-OutputBaseFilename=nMRPipe-Setup
+OutputBaseFilename=NMRPro-H-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
-SetupIconFile=..\utils\nmrpipe.ico
+SetupIconFile=..\utils\nmrpro_h.ico
 UninstallDisplayIcon={app}\{#AppExe}
 
 [Languages]
@@ -37,8 +42,8 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Additional icons:"
 
 [Files]
-; Everything PyInstaller produced in dist\nMRPipe
-Source: "..\dist\nMRPipe\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
+; Everything PyInstaller produced in dist\NMRPro-H
+Source: "..\dist\NMRPro-H\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}";        Filename: "{app}\{#AppExe}"

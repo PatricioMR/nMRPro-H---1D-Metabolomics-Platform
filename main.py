@@ -1,5 +1,5 @@
 """
-nMRPipe
+NMRPro-H
 Main entry point for the application
 """
 
@@ -8,7 +8,7 @@ import os
 import traceback
 
 print("=" * 50)
-print("nMRPipe - Starting")
+print("NMRPro-H - Starting")
 
 print("=" * 50)
 

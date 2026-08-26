@@ -1,6 +1,6 @@
 @echo off
 REM ============================================================================
-REM  Build nMRPipe Windows executable (one-folder) + Inno Setup installer.
+REM  Build NMRPro-H Windows executable (one-folder) + Inno Setup installer.
 REM
 REM  Prereqs:
 REM    * Run from the project root, inside the venv that has the app deps.
@@ -15,8 +15,8 @@ python -m pip install --upgrade pyinstaller pillow || goto :err
 
 echo.
 echo === [2/3] Building one-folder app with PyInstaller ===
-pyinstaller --noconfirm nmrpipe.spec || goto :err
-echo Built: dist\nMRPipe\nMRPipe.exe
+pyinstaller --noconfirm nmrpro_h.spec || goto :err
+echo Built: dist\NMRPro-H\NMRPro-H.exe
 
 echo.
 echo === [3/3] Building installer with Inno Setup (ISCC) ===
@@ -25,11 +25,11 @@ for /f tokens^=2^ delims^=^" %%v in ('findstr /b "__version__" app_paths.py') do
 echo App version: %APPVER%
 where iscc >nul 2>nul
 if %ERRORLEVEL%==0 (
-    iscc /DAppVersion=%APPVER% installer\nmrpipe.iss || goto :err
-    echo Installer: Output\nMRPipe-Setup.exe
+    iscc /DAppVersion=%APPVER% installer\nmrpro_h.iss || goto :err
+    echo Installer: Output\NMRPro-H-Setup.exe
 ) else (
     echo [skip] ISCC not on PATH — install Inno Setup, then run:
-    echo        iscc installer\nmrpipe.iss
+    echo        iscc installer\nmrpro_h.iss
 )
 
 echo.
