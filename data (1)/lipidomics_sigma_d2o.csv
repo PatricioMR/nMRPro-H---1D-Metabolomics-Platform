@@ -1,7 +1,0 @@
-id,name,class,start_ppm,end_ppm,multiplicity,signal,comment,solvent
-2101,Total Lipids (CH3 terminal),TOTAL,0.8,0.9248,m,-CH3 terminal,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
-2102,Total Lipids (CH2 envelope),TOTAL,1.217,1.338,m,-(CH2)n-,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
-2103,"Unsaturated Lipids (bis-allylic, PUFA)",UNSAT,2.74,2.84,m,=C-CH2-C=,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
-2104,Unsaturated Lipids (olefinic =CH),UNSAT,5.2644,5.382,m,=CH- olefinic,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
-2105,Triglycerides (glycerol CHOCOR),TG,5.1489,5.2385,m,CH-O-CO-R glycerol,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
-2106,Cholesterol,STEROL,0.6611,0.75,m,cholesterol angular CH3,SigMa plasma lipid library (aqueous); Khakimov et al. 2020 Anal Chim Acta 1108:142-151,D2O
