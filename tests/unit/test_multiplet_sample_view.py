@@ -61,3 +61,43 @@ def test_measure_sample_dppm_reflects_shift():
     m = measure_sample(ppm, shifted, 0.86, 0.94, 0.90, MHZ, 7.0, 0.005, 3.0)
     assert m['present'] is True
     assert 1.0 < m['dppm_mppm'] < 3.0             # ≈ +2 mppm
+
+
+def test_plot_width_is_derived_from_the_table_columns():
+    """The plot is pinned to the table width so a trace sits above its own row.
+    Deriving it from COLS means adding a column moves both."""
+    from gui.widgets.multiplet_sample_view import COLS, TABLE_WIDTH_PX
+    assert TABLE_WIDTH_PX == sum(c[2] for c in COLS) + 18
+
+
+def test_deltas_come_from_the_annotated_lines_not_the_crop():
+    """δppm and δJ must be read from the signal's own lines.
+
+    The crop is padded by 60% per side — a 50 Hz window for a 7 Hz doublet — so
+    measure_j was returning the spacing of whatever neighbouring resonances fell
+    inside it: three different metabolites in one region all reported the same
+    J. Median |ΔJ| on the reference study was 1.46 Hz that way against 0.77 Hz
+    from the lines.
+    """
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._precompute)
+    assert 'signal_in_sample' in src
+    assert "m['j_obs']" in src and "m['dj']" in src
+
+
+def test_each_group_is_labelled_once():
+    """A per-sample legend over 32 traces covers the plot it explains."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._draw_overlay)
+    assert 'labelled' in src
+    assert 'label=lbl' in src
+
+
+def test_measure_j_still_serves_signals_without_matched_lines():
+    """Kept as the fallback: a signal whose lines never matched a detected peak
+    has nothing else to offer."""
+    ppm = np.linspace(1.40, 1.55, 3000)
+    y = _triplet(ppm, 1.47, 7.0, 1.0)
+    assert measure_j(ppm, y, MHZ) is not None

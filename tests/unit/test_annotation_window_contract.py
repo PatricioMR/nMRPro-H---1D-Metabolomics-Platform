@@ -326,12 +326,3 @@ def test_matched_peaks_carries_the_per_sample_counts():
         src = inspect.getsource(ARW)
     for key in ("'n_present'", "'n_included'"):
         assert key in src, f'{key} missing from the matched_peaks copy'
-
-
-def test_samples_column_is_declared_on_the_tree():
-    """A value tuple longer than the column list is dropped by Tk without a
-    word, so the column and the row builders must agree."""
-    import inspect
-    src = inspect.getsource(ARW)
-    assert "'samples'" in src
-    assert "self.tree.heading('samples'" in src

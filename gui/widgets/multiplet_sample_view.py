@@ -26,7 +26,8 @@ from matplotlib.backends.backend_tkagg import (
 
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.peak_detection import estimate_noise_minimum_segment
-from processing.per_sample_signal import alignment_shifts
+from processing.per_sample_signal import (
+    alignment_shifts, signal_in_sample)
 from processing.sample_selection import included_sample_indices
 
 
@@ -40,6 +41,11 @@ COLS = [
     ('dj',      'δJ (Hz)',       75, tk.CENTER),
     ('area',    'Area',          95, tk.CENTER),
 ]
+
+# The plot is pinned to the table's width so the two read as one figure: a
+# sample's trace sits above its own row's numbers. Derived from the columns
+# themselves, so adding one moves both.
+TABLE_WIDTH_PX = sum(c[2] for c in COLS) + 18     # + vertical scrollbar
 
 
 # ── Module-level math (Tk-free, unit-testable) ────────────────────────────────
@@ -184,6 +190,7 @@ class MultipletSampleView:
          self.mult) = multiplet_window(self.mp_ref, self.peak, self.dp,
                                        self.field_mhz)
 
+        self._lines = self._line_peaks()
         self._precompute()
         self._shifts = self._alignment_shifts()
 
@@ -191,8 +198,8 @@ class MultipletSampleView:
         name = self.met.get('name', '?')
         self.win.title(f"Multiplet {name} @ {self.centre:.4f} ppm "
                        f"[{self.mult}] — per sample")
-        self.win.geometry('1040x720')
-        self.win.minsize(760, 480)
+        self.win.geometry(f'{TABLE_WIDTH_PX + 40}x760')
+        self.win.minsize(TABLE_WIDTH_PX + 20, 520)
         self._build()
         self._populate()
         self._draw_overlay()
@@ -241,6 +248,24 @@ class MultipletSampleView:
             noise = estimate_noise_minimum_segment(col)
             m = measure_sample(self.ppm, col, self.lo, self.hi, self.centre,
                                self.field_mhz, self.db_j, noise, self.min_snr)
+            # δppm and δJ come from the signal's OWN lines, not from whatever
+            # maxima happen to sit in the crop. The crop is padded by 60% on
+            # each side for context, which for a 7 Hz doublet is a 50 Hz window:
+            # measure_sample then reported the spacing of neighbouring
+            # resonances, so three different metabolites in one region all read
+            # the same J. Measured against the reference study, that crop
+            # estimate is off by a median 1.46 Hz against 0.77 Hz here.
+            if self._lines:
+                ls = signal_in_sample(self._lines, s, db_ppm=self.centre,
+                                      db_j_hz=self.db_j,
+                                      field_mhz=self.field_mhz)
+                m['j_obs'] = ls['j_obs_hz']
+                m['dj'] = (ls['j_obs_hz'] - self.db_j
+                           if (ls['j_obs_hz'] is not None and self.db_j)
+                           else None)
+                if ls['ppm_centre'] is not None:
+                    m['dppm_mppm'] = (ls['ppm_centre'] - self.centre) * 1000.0
+                m['collapsed'] = ls['collapsed']
             m.update(
                 idx=s,
                 name=inf.get('name', f'S{s}'),
@@ -252,6 +277,22 @@ class MultipletSampleView:
             )
             self._rows.append(m)
 
+    def _line_peaks(self):
+        """The detected peaks that make up this signal's lines.
+
+        Same mapping the annotation and the quantification use, so the table,
+        the plot and the pipeline are talking about the same lines.
+        """
+        pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
+        peaks = getattr(pd, 'peaks', None) or []
+        if not peaks:
+            return []
+        try:
+            return multiplet_line_peaks(self.mp_ref,
+                                        {p.get('rank'): p for p in peaks})
+        except Exception:
+            return []
+
     def _alignment_shifts(self):
         """Per-sample shift that stacks this multiplet on top of itself.
 
@@ -261,17 +302,11 @@ class MultipletSampleView:
         reads J = 7 Hz after aligning. Used only to draw; the spectra and the
         quantification windows are never touched.
         """
-        pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
-        peaks = getattr(pd, 'peaks', None) or []
-        if not peaks:
+        if not self._lines:
             return {}
         try:
-            line_pks = multiplet_line_peaks(self.mp_ref,
-                                            {p.get('rank'): p for p in peaks})
-            if not line_pks:
-                return {}
             incl = included_sample_indices(self.samples_info, len(self._rows))
-            return alignment_shifts(line_pks, included=incl,
+            return alignment_shifts(self._lines, included=incl,
                                     reference=self.centre)
         except Exception:
             return {}
@@ -322,11 +357,14 @@ class MultipletSampleView:
         # Plot (top)
         plot_fr = ttk.Frame(paned)
         paned.add(plot_fr, weight=3)
-        self._fig = Figure(figsize=(8, 4), dpi=100)
+        holder = ttk.Frame(plot_fr, width=TABLE_WIDTH_PX)
+        holder.pack(side=tk.LEFT, fill=tk.Y, expand=False)
+        holder.pack_propagate(False)      # keep the width, let height follow
+        self._fig = Figure(figsize=(TABLE_WIDTH_PX / 100.0, 4), dpi=100)
         self._ax = self._fig.add_subplot(111)
-        self._canvas = FigureCanvasTkAgg(self._fig, master=plot_fr)
+        self._canvas = FigureCanvasTkAgg(self._fig, master=holder)
         self._canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        NavigationToolbar2Tk(self._canvas, plot_fr)
+        NavigationToolbar2Tk(self._canvas, holder)
 
         # Table (bottom)
         tbl_fr = ttk.Frame(paned)
@@ -375,15 +413,21 @@ class MultipletSampleView:
         aligned = bool(getattr(self, '_align_var', None)
                        and self._align_var.get() and self._shifts)
         present_cols = []
+        # One legend entry per group, not per sample: with 32 traces a
+        # per-sample legend covers the plot it is meant to explain.
+        labelled = set()
         for r in self._rows:
             if r['type'] == 'BLK' or r['excluded']:
                 continue
             y = r['col'][mask]
+            grp = r['group']
+            lbl = None if grp in labelled else str(grp)
+            labelled.add(grp)
             # Shifting the axis, not the data: the sample is drawn where its own
             # lines say it sits. Samples with no shift (absent here) stay put.
             xs = x - self._shifts.get(r['idx'], 0.0) if aligned else x
-            ax.plot(xs, y, color=self._group_color(r['group'], r['idx']),
-                    lw=0.8, alpha=0.45)
+            ax.plot(xs, y, color=self._group_color(grp, r['idx']),
+                    lw=0.8, alpha=0.45, label=lbl)
             if r['present']:
                 # Averaging needs one grid, so the aligned curve is resampled
                 # onto the reference axis. np.interp wants ascending x.
@@ -411,8 +455,10 @@ class MultipletSampleView:
         ax.set_xlim(self.hi, self.lo)            # inverted ppm axis
         ax.set_xlabel('δ (ppm)')
         ax.set_ylabel('Intensity (a.u.)')
-        if present_cols:
-            ax.legend(fontsize=8, loc='upper right')
+        if labelled or present_cols:
+            ax.legend(fontsize=8, loc='upper right', frameon=True,
+                      framealpha=0.85,
+                      ncol=(2 if len(labelled) > 4 else 1))
         self._fig.tight_layout()
         self._canvas.draw_idle()
 
