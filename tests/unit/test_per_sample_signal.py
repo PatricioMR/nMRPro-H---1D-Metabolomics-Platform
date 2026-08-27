@@ -246,3 +246,47 @@ class TestRelativeSD:
     def test_nones_and_nans_are_skipped(self):
         from processing.per_sample_signal import relative_sd_percent
         assert relative_sd_percent([7.0, None, float('nan'), 7.2]) is not None
+
+
+class TestPercentDeviation:
+    def test_distance_from_the_reference(self):
+        from processing.per_sample_signal import percent_deviation
+        assert percent_deviation(7.14, 7.0) == pytest.approx(2.0)
+        assert percent_deviation(6.86, 7.0) == pytest.approx(-2.0)
+
+    def test_a_sample_on_the_mean_is_zero(self):
+        from processing.per_sample_signal import percent_deviation
+        assert percent_deviation(7.0, 7.0) == pytest.approx(0.0)
+
+    def test_sign_survives_a_negative_reference(self):
+        """The magnitude divides, so a value above its reference reads positive
+        whichever side of zero the reference sits."""
+        from processing.per_sample_signal import percent_deviation
+        assert percent_deviation(-0.9, -1.0) == pytest.approx(10.0)
+
+    def test_nothing_to_compare_against(self):
+        from processing.per_sample_signal import percent_deviation
+        assert percent_deviation(7.0, None) is None
+        assert percent_deviation(None, 7.0) is None
+        assert percent_deviation(7.0, 0.0) is None
+
+
+class TestGroupMeans:
+    def _rows(self):
+        return [{'group': 'FL', 'j_obs': 7.0}, {'group': 'FL', 'j_obs': 7.2},
+                {'group': 'HC', 'j_obs': 6.0}, {'group': 'HC', 'j_obs': None}]
+
+    def test_means_are_taken_within_each_group(self):
+        from processing.per_sample_signal import group_means
+        m = group_means(self._rows(), 'j_obs')
+        assert m['FL'] == pytest.approx(7.1)
+        assert m['HC'] == pytest.approx(6.0)
+
+    def test_missing_values_do_not_enter_the_mean(self):
+        from processing.per_sample_signal import group_means
+        assert group_means([{'group': 'A', 'j_obs': None}], 'j_obs') == {}
+
+    def test_non_numeric_is_skipped(self):
+        from processing.per_sample_signal import group_means
+        rows = [{'group': 'A', 'j_obs': 'x'}, {'group': 'A', 'j_obs': 7.0}]
+        assert group_means(rows, 'j_obs')['A'] == pytest.approx(7.0)

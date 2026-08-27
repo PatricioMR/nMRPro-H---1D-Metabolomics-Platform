@@ -89,13 +89,29 @@ def test_the_table_has_a_spread_column_for_each_delta():
     assert keys.index('dj_sd') == keys.index('dj') + 1
 
 
-def test_the_spread_is_taken_on_the_measured_value():
-    """CV of δ and of J_obs, never of the deviation: a deviation sits on zero by
-    construction, so its own CV divides by nothing."""
+def test_the_row_spread_is_distance_from_the_sample_own_group():
+    """Chemical shift moves with pH and ionic strength — what the groups differ
+    in — so a study-wide mean would call an entire group an outlier."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._populate)
+    assert "group_means(present_rows, 'ppm_centre')" in src
+    assert "group_means(present_rows, 'j_obs')" in src
+    assert "percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))" in src
+
+
+def test_the_group_summary_reports_that_group_spread():
+    """A mean's distance from itself is zero; the cell carries the group CV."""
     import inspect
     from gui.widgets.multiplet_sample_view import MultipletSampleView as V
     src = inspect.getsource(V._populate_summary)
-    assert "_cv([r['ppm_centre'] for r in rows])" in src
-    assert '_cv(jobs)' in src
+    assert '_cv(centres)' in src and '_cv(jobs)' in src
     assert '_cv(djs)' not in src
-    assert '_cv(dppm)' not in src
+
+
+def test_delta_columns_use_the_difference_symbol():
+    """Delta is the difference; lowercase delta is the shift itself."""
+    from gui.widgets.multiplet_sample_view import COLS
+    heads = {c[0]: c[1] for c in COLS}
+    assert heads['dppm'].startswith('Δ')
+    assert heads['dj'].startswith('Δ')

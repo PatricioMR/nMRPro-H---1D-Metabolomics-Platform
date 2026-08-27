@@ -22,7 +22,9 @@ import re
 import tkinter as tk
 from tkinter import ttk
 
-from processing.per_sample_signal import relative_sd_percent
+from processing.annotation_scoring import SCORING_DEFAULTS
+from processing.per_sample_signal import (
+    group_means, percent_deviation, relative_sd_percent)
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
@@ -36,11 +38,11 @@ from matplotlib.backends.backend_tkagg import (
 COLS = [
     ('sample',   'Sample',       150, tk.W),
     ('group',    'Group',         80, tk.CENTER),
-    ('present',  'Present',       70, tk.CENTER),
-    ('dppm',     'δppm',          85, tk.CENTER),
+    ('present',  'Annotated',    110, tk.CENTER),
+    ('dppm',     'Δppm',          85, tk.CENTER),
     ('dppm_sd',  'DP %',          65, tk.CENTER),
     ('jobs',     'J_obs (Hz)',    85, tk.CENTER),
-    ('dj',       'δJ (Hz)',       75, tk.CENTER),
+    ('dj',       'ΔJ (Hz)',       75, tk.CENTER),
     ('dj_sd',    'DP %',          65, tk.CENTER),
     ('area',     'Area',          95, tk.CENTER),
 ]
@@ -289,43 +291,85 @@ class MultipletSampleView:
         self._tree.tag_configure('present', background='#eafaea')
         self._tree.tag_configure('absent', background='#fdeaea')
         self._tree.tag_configure('blk', background='#f0f0f0', foreground='#888')
+        self._tree.tag_configure('unverified', background='#fff6e0')
         self._tree.tag_configure('summary', background='#e6e9f5',
                                  font=('Arial', 9, 'bold'))
 
     def _populate(self):
+        # The deviation is read against the samples a sample belongs with: a
+        # chemical shift moves with pH and ionic strength, which is exactly what
+        # the groups differ in, so a study-wide mean would call a whole group an
+        # outlier. Means come from the present samples of each group.
+        present_rows = [r for r in self._counted_rows() if r['present']]
+        ppm_mean = group_means(present_rows, 'ppm_centre')
+        j_mean = group_means(present_rows, 'j_obs')
+
         for r in self._rows:
             jtxt = f"{r['j_obs']:.2f}" if r['j_obs'] is not None else '—'
             djtxt = f"{r['dj']:+.2f}" if r['dj'] is not None else '—'
             dptxt = f"{r['dppm']:+.4f}" if r['dppm'] is not None else '—'
             if r['type'] == 'BLK' or r['excluded']:
-                present_txt, tag = '—', 'blk'
+                ann_txt, tag = '—', 'blk'
             else:
-                present_txt = '✓' if r['present'] else '✗'
-                tag = 'present' if r['present'] else 'absent'
+                ann_txt, tag = self._sample_verdict(r)
+            if r['present']:
+                d_ppm = percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))
+                d_j = percent_deviation(r['j_obs'], j_mean.get(r['group']))
+            else:
+                d_ppm = d_j = None
             self._tree.insert(
                 '', 'end',
-                values=(r['name'], r['group'], present_txt, dptxt, '',
-                        jtxt, djtxt, '',
+                values=(r['name'], r['group'], ann_txt,
+                        dptxt, f'{d_ppm:+.3f}' if d_ppm is not None else '—',
+                        jtxt, djtxt,
+                        f'{d_j:+.2f}' if d_j is not None else '—',
                         f"{r['area']:.3e}" if r['area'] is not None else '—'),
                 tags=(tag,))
         self._populate_summary()
 
-    def _populate_summary(self):
-        """Closing row: the mean of each column, and how much it varied.
+    def _sample_verdict(self, r):
+        """What the annotation concluded about this signal IN THIS SAMPLE.
 
-        The spread is the coefficient of variation of the MEASURED quantity —
-        the signal's δ, its observed J — not of the deviation from the
-        database. A deviation sits on zero by construction, so its own CV
-        divides by nothing and reports hundreds of percent for readings that
-        agree to three decimals.
+        Exploratory. The search reaches one verdict for the study; this reports
+        what its per-sample reading supports, using the pipeline's own ΔJ
+        thresholds rather than any invented here:
+
+          absent                → the lines were not all detected here
+          no ΔJ                 → present, but nothing to verify it with
+                                  (a singlet, or lines the apex search folded)
+          |ΔJ| <= dj_gold_hz    → confirmed in this sample
+          |ΔJ| <= dj_bad_hz     → present, coupling off
+          beyond                → present, coupling wrong
+
+        Returns ``(text, row_tag)``.
+        """
+        if not r['present']:
+            return '✗ absent', 'absent'
+        dj = r['dj']
+        if dj is None:
+            return ('~ folded', 'unverified') if r.get('collapsed') else                    ('~ no ΔJ', 'unverified')
+        a = abs(dj)
+        if a <= SCORING_DEFAULTS['dj_gold_hz']:
+            return '✓ confirmed', 'present'
+        if a <= SCORING_DEFAULTS['dj_bad_hz']:
+            return '✓ ΔJ off', 'unverified'
+        return '✗ ΔJ wrong', 'absent'
+
+    def _populate_summary(self):
+        """One closing row per group: the mean each sample above is measured
+        against, and how tightly that group holds together.
+
+        The DP % cells carry the group's own spread here — the coefficient of
+        variation of the measured δ and J — while the same column above carries
+        each sample's distance from this mean. A mean's distance from itself is
+        zero and would say nothing.
         """
         rows = [r for r in self._counted_rows() if r['present']]
         if not rows:
             return
-        dppm = [r['dppm'] for r in rows if r['dppm'] is not None]
-        jobs = [r['j_obs'] for r in rows if r['j_obs'] is not None]
-        djs = [r['dj'] for r in rows if r['dj'] is not None]
-        areas = [r['area'] for r in rows if r['area'] is not None]
+        by_group: dict = {}
+        for r in rows:
+            by_group.setdefault(r['group'], []).append(r)
 
         def _mean(v, fmt):
             return format(float(np.mean(v)), fmt) if v else '—'
@@ -334,16 +378,19 @@ class MultipletSampleView:
             c = relative_sd_percent(v)
             return f'{c:.2f}' if c is not None else '—'
 
-        self._tree.insert(
-            '', 'end',
-            values=(f'Mean of {len(rows)} present', '', '',
-                    _mean(dppm, '+.4f'),
-                    _cv([r['ppm_centre'] for r in rows]),
-                    _mean(jobs, '.2f'),
-                    _mean(djs, '+.2f'),
-                    _cv(jobs),
-                    _mean(areas, '.3e')),
-            tags=('summary',))
+        for grp, grows in by_group.items():
+            centres = [r['ppm_centre'] for r in grows if r['ppm_centre'] is not None]
+            dppm = [r['dppm'] for r in grows if r['dppm'] is not None]
+            jobs = [r['j_obs'] for r in grows if r['j_obs'] is not None]
+            djs = [r['dj'] for r in grows if r['dj'] is not None]
+            areas = [r['area'] for r in grows if r['area'] is not None]
+            self._tree.insert(
+                '', 'end',
+                values=(f'Mean · n = {len(grows)}', grp, '',
+                        _mean(dppm, '+.4f'), _cv(centres),
+                        _mean(jobs, '.2f'), _mean(djs, '+.2f'), _cv(jobs),
+                        _mean(areas, '.3e')),
+                tags=('summary',))
 
     def _draw_overlay(self):
         ax = self._ax

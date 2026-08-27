@@ -209,6 +209,45 @@ def alignment_shifts(line_peaks, *, included=None, reference=None) -> dict:
     return {i: float(c - ref) for i, c in centres.items()}
 
 
+def percent_deviation(value, reference) -> float | None:
+    """How far one reading sits from its group's mean, in percent.
+
+    Answers the question the table is asked in practice — is THIS sample out of
+    line with the others of its group — which a coefficient of variation over
+    the whole set cannot: the CV says the set is tight, not which member is not.
+    """
+    if value is None or reference is None:
+        return None
+    try:
+        v, r = float(value), float(reference)
+    except (TypeError, ValueError):
+        return None
+    if not (np.isfinite(v) and np.isfinite(r)) or abs(r) < 1e-12:
+        return None
+    return float((v - r) / abs(r) * 100.0)
+
+
+def group_means(rows, key, group_key='group'):
+    """Mean of ``key`` within each group, over the rows that carry a value.
+
+    Groups are the analyst's own — the deviation is meant to be read against
+    the samples a sample belongs with, not against a study-wide average that
+    mixes conditions a chemical shift is expected to separate.
+    """
+    buckets: dict = {}
+    for r in rows or ():
+        v = r.get(key)
+        if v is None:
+            continue
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(v):
+            buckets.setdefault(r.get(group_key), []).append(v)
+    return {g: float(np.mean(v)) for g, v in buckets.items() if v}
+
+
 def relative_sd_percent(values) -> float | None:
     """Coefficient of variation, in percent, of what was measured.
 
