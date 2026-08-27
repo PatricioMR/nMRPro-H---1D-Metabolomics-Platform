@@ -2,8 +2,44 @@
 """
 Shared MCR-ALS implementation used by AnnotationStage, QuantificationStage,
 and FullSpectrumMCRStage.
+
+Reference: Tauler, R. "Multivariate curve resolution applied to second order
+data." Chemometrics and Intelligent Laboratory Systems, 30(1), 133-146 (1995).
+DOI: 10.1016/0169-7439(95)00047-X
+See also: de Juan, A.; Tauler, R. "Multivariate Curve Resolution (MCR) from
+2000: Progress in Concepts and Applications." Critical Reviews in Analytical
+Chemistry, 36(3-4), 163-176 (2006). DOI: 10.1080/10408340600970005
 """
 import numpy as np
+
+# ── When a resolved component may replace the raw measurement ─────────────────
+# Two conditions decide whether MCR resolved something worth trusting over the
+# detected peak itself, for scoring and for display alike:
+#
+#   K >= MCR_MIN_OVERLAP_K — MCR settled on more than one component, so there
+#       was a genuine overlap to separate. With a single component the "resolved
+#       component" is the peak itself and nothing was deconvolved.
+#   pearson_r >= MCR_MIN_SHAPE_R — the component's shape matches this
+#       candidate's database profile, so the separated signal is that compound's
+#       and not a neighbour's.
+#
+# Kept here, next to the algorithm, so the scoring path and the fingerprint view
+# cannot drift into two different definitions of "trustworthy component".
+MCR_MIN_OVERLAP_K = 2
+MCR_MIN_SHAPE_R   = 0.70
+
+# Alignment freedom is searched wide (shift_tol_ppm) to absorb genuine pH and
+# temperature drift. What matters is not how far the profile moved, but WHERE it
+# landed: the annotation already matched this database peak to a detected signal
+# at a known offset, so a component is consistent evidence when MCR's own shift
+# reproduces that same offset — it worked on the same signal. When the two
+# disagree by more than this window, MCR aligned onto something else and its
+# metrics describe that other signal, not this match.
+#
+# An absolute cap on the shift was tried first and was wrong: it rejected the
+# cases where MCR agreed exactly with the annotation, because a large but
+# CORRECT shift simply mirrors a peak that sits far from its database position.
+MCR_SHIFT_AGREEMENT_PPM = 0.01
 
 
 def _is_singlet_multiplicity(mult_raw):
@@ -102,8 +138,36 @@ def mcr_als(X, n_components=1, max_iter=200, tol=1e-6, S_init=None,
         r2 = float('nan')
     else:
         r2 = float(1.0 - ss_res / ss_tot)
-    metrics = {'lof': float(lof), 'r2': r2, 'n_iter': n_iter, 'flat': ss_tot < 1e-20}
+
+    # Pooled 'r2' above uses a single grand mean (X.mean()) across every point
+    # AND every sample — a compound that fits 2/10 samples well and 8/10 poorly
+    # can still look "confirmed". r2_per_sample fits each sample column against
+    # its own mean instead, so per-sample quality is not diluted by the pool.
+    r2_per_sample = _per_sample_r2(X, S, C)
+    _finite = r2_per_sample[np.isfinite(r2_per_sample)]
+    r2_median = float(np.median(_finite)) if _finite.size else float('nan')
+
+    metrics = {'lof': float(lof), 'r2': r2, 'n_iter': n_iter, 'flat': ss_tot < 1e-20,
+               'r2_per_sample': r2_per_sample.tolist(), 'r2_median': r2_median}
     return C, S, metrics
+
+
+def _per_sample_r2(X, S, C):
+    """R² of the MCR reconstruction for each sample column independently.
+
+    Each sample is scored against its own mean (unlike the pooled 'r2' in
+    mcr_als, which uses a single grand mean over the whole X matrix).
+    """
+    X_hat = S @ C.T
+    n_samples = X.shape[1]
+    r2s = np.full(n_samples, np.nan)
+    for j in range(n_samples):
+        xj, xhj = X[:, j], X_hat[:, j]
+        ss_tot_j = float(np.sum((xj - xj.mean()) ** 2))
+        if ss_tot_j > 1e-20:
+            ss_res_j = float(np.sum((xj - xhj) ** 2))
+            r2s[j] = 1.0 - ss_res_j / ss_tot_j
+    return r2s
 
 
 def simulate_lorentzian_profile(sticks, ppm_arr, hwhm=0.003):

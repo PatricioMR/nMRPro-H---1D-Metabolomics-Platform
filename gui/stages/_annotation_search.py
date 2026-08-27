@@ -22,13 +22,55 @@ import csv
 
 from ._annotation_helpers import (
     _ppm_score, _multiplet_score,
-    _baseline_correct_linear, _fit_r2, _observe_j_hz,
+    _baseline_correct_linear, _fit_r2,
     _mult_compat_check, _adaptive_mcr_mask,
     _ask_search_mode, _pick_database,
     _multi_peak_coherence,
     _stocsy_coherence,
 )
-from gui.notation.evidence_weighting import dynamic_composite
+from processing.annotation_scoring import (
+    signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
+    measure_multiplet, expected_line_count, search_multiplet_in_window)
+from processing.signal_quality import (
+    SIGNAL_GOOD, SIGNAL_POOR, effective_tier, filter_annotatable,
+    is_annotatable)
+
+# Everything an MCR pass writes onto a result row. Listed once so a run with
+# MCR switched off cannot leave a single field of the previous one behind.
+MCR_RESULT_KEYS = (
+    'mcr_r2', 'mcr_r2_pooled', 'mcr_r2_per_sample', 'mcr_confirmed',
+    'mcr_pearson_r', 'mcr_delta_j_hz', 'mcr_shift_ppm', 'mcr_cross_corr',
+    'mcr_informative_only', 'mcr_info_reason', 'mcr_shift_disagree_ppm',
+)
+
+
+def clear_stale_mcr(peaks, results=None):
+    """Drop MCR state left by a previous search.
+
+    A new search invalidates any earlier MCR result: the candidate set that
+    produced it no longer exists. Nothing else clears it and the peak dicts
+    outlive the search, so with MCR switched off the results window went on
+    showing components and verdicts from the run before.
+
+    Peaks created BY Full-Spectrum MCR are exempt: for them the annotation is
+    derived from ``mcr_annotation``, not the other way round, so removing it
+    would destroy the peak's own reason for existing.
+
+    Returns (n_peaks_cleared, n_results_cleared).
+    """
+    n_peaks = 0
+    for p in (peaks or []):
+        if p.get('mcr_annotation') is not None and not p.get('_from_mcr'):
+            p.pop('mcr_annotation', None)
+            n_peaks += 1
+
+    n_results = 0
+    for r in (results or []):
+        if any(k in r for k in MCR_RESULT_KEYS):
+            for k in MCR_RESULT_KEYS:
+                r.pop(k, None)
+            n_results += 1
+    return n_peaks, n_results
 
 
 def is_unquantifiable_multiplicity(mult):
@@ -51,10 +93,10 @@ class _AnnotationSearchMixin:
     def _rescue_unassigned_with_mcr(self):
         """Rescue Good peaks that remained unassigned after annotation."""
         if not self.peaks:
-            messagebox.showinfo('Info', 'No peaks detected.')
+            messagebox.showinfo('Info', 'No signals detected.')
             return
         if not self._last_results_args:
-            messagebox.showinfo('Info', 'Run annotation first, then rescue unassigned peaks.')
+            messagebox.showinfo('Info', 'Run annotation first, then rescue unassigned signals.')
             return
 
         db_path = (self._last_results_args.get('db_path')
@@ -81,10 +123,12 @@ class _AnnotationSearchMixin:
         already_matched = {int(r.get('peak_rank')) for r in existing_results
                            if r.get('peak_rank') is not None}
         good_peaks = self._exclude_water_peaks(
-            [p for p in self.peaks if p.get('status', 'Undefined') == 'Good'])
+            [p for p in self.peaks
+             if p.get('status') == SIGNAL_GOOD
+             and is_annotatable(p, self.annotatable_tiers())])
         unassigned = [p for p in good_peaks if int(p.get('rank', -1)) not in already_matched]
         if not unassigned:
-            messagebox.showinfo('Rescue', 'No unassigned Good peaks to rescue.')
+            messagebox.showinfo('Rescue', 'No unassigned Good signals to rescue.')
             return
 
         # Mirror the main search alignment: shift DB entries by the in-app
@@ -106,7 +150,7 @@ class _AnnotationSearchMixin:
         aligned_unassigned = [p for p in aligned_good if int(p.get('rank', -1)) in
                               {int(u.get('rank', -1)) for u in unassigned}]
 
-        self._status(f'Rescue pass: scanning {len(aligned_unassigned)} unassigned peaks…')
+        self._status(f'Rescue pass: scanning {len(aligned_unassigned)} unassigned signals…')
         t0 = time.monotonic()
         conn = None
         rescued = []
@@ -159,7 +203,7 @@ class _AnnotationSearchMixin:
                         " FROM shifts_1h s"
                         " JOIN metabolites met ON s.bmrb_id = met.bmrb_id"
                         " WHERE s.ppm BETWEEN ? AND ?"
-                        " ORDER BY ABS(s.ppm - ?) LIMIT 25",
+                        " ORDER BY ABS(s.ppm - ?)",
                         (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
@@ -174,7 +218,7 @@ class _AnnotationSearchMixin:
                         FROM multiplets m
                         JOIN metabolites met ON m.hmdb_id = met.hmdb_id
                         WHERE m.ppm_center BETWEEN ? AND ?
-                        ORDER BY ABS(m.ppm_center - ?) LIMIT 25
+                        ORDER BY ABS(m.ppm_center - ?)
                     """, (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
@@ -188,20 +232,37 @@ class _AnnotationSearchMixin:
                             if r.get(_k) is not None:
                                 r[_k] = float(r[_k]) + _cal_delta
 
+                _resc_params = dict(SCORING_DEFAULTS)
+                _resc_params['dppm_gold'] = relax_tol
+                _resc_params.update(
+                    getattr(self, '_annotation_params', None) or {})
                 for r in rows:
                     ps = _ppm_score(r.get('peak_ppm', 0), r.get('ppm_center', r.get('ppm', 0)), relax_tol)
                     ms, md, pl = _multiplet_score(r, aligned_good, relax_tol, mhz,
                                                   ppm_array=_ppm_arr, intensity_array=_int_arr)
                     mult_type = (r.get('multiplicity') or r.get('type') or 's').lower().strip()
                     is_singlet = mult_type in ('s', 'singlet', '')
-                    composite = ps if is_singlet else (0.4 * ps + 0.6 * ms)
                     compat, obs_mult = _mult_compat_check(r, aligned_good, relax_tol, mhz)
-                    composite *= compat
+                    # Same signal_score as the main search and the results
+                    # window — this path used to carry its own formula
+                    # (0.4·Δppm + 0.6·multiplet_score), a fourth way of
+                    # producing a number under the key `composite_score`.
+                    # Rescue never measures J, so the ΔJ term is excluded and
+                    # the remaining weights renormalise; the multiplet score
+                    # plays the shape role. Multiplicity disagreement stays a
+                    # multiplicative veto: the model has no term for claiming a
+                    # triplet where the spectrum shows a singlet.
+                    _resc_bd = signal_score(
+                        s_ppm=ps, s_dj=None, s_cosine=ms,
+                        is_singlet=is_singlet, params=_resc_params)
+                    composite = _resc_bd.value * compat
                     r['observed_mult'] = obs_mult
                     r['mult_compat'] = round(compat, 3)
                     r['ppm_score'] = ps
                     r['multiplet_score'] = ms
                     r['composite_score'] = composite
+                    r['_score_breakdown'] = (
+                        f'{_resc_bd.equation()}  x mult_compat({compat:.2f})')
                     r['multiplet_detail'] = md + (f'  |  obs={obs_mult} compat={compat:.2f}' if compat < 0.95 else '')
                     r['predicted_lines'] = pl
                     rescued.append(r)
@@ -307,7 +368,10 @@ class _AnnotationSearchMixin:
         all_ranks = by_rank  # process every rank, not just overlaps
         overlap_ranks = {rk: cands for rk, cands in by_rank.items() if len(cands) >= 2}
 
-        from gui.utils.mcr_utils import mcr_annotation_region, simulate_lorentzian_profile
+        from gui.utils.mcr_utils import (
+            MCR_MIN_OVERLAP_K, MCR_MIN_SHAPE_R, MCR_SHIFT_AGREEMENT_PPM,
+            _is_singlet_multiplicity, mcr_annotation_region,
+            simulate_lorentzian_profile)
         from gui.widgets.annotation_results_window import _build_stick_positions
 
         n_validated = 0
@@ -365,7 +429,12 @@ class _AnnotationSearchMixin:
                 'validated': True,
             }
 
-            mcr_r2 = mcr_m.get('r2', None)
+            # r2_median: per-sample R² (each sample scored against its own
+            # mean), not the pooled 'r2' which uses one grand mean across all
+            # samples and can hide a compound that only fits a few of them.
+            mcr_r2 = mcr_m.get('r2_median', None)
+            if mcr_r2 is None or (isinstance(mcr_r2, float) and np.isnan(mcr_r2)):
+                mcr_r2 = mcr_m.get('r2', None)
             if mcr_r2 is None or (isinstance(mcr_r2, float) and np.isnan(mcr_r2)):
                 mcr_confirmed = None
             else:
@@ -382,12 +451,73 @@ class _AnnotationSearchMixin:
                 else:
                     mcr_confirmed = None    # inconclusive
 
-            for c in cands:
-                c['mcr_r2']        = mcr_r2
-                c['mcr_confirmed'] = mcr_confirmed
-                c_idx = cands.index(c)
-                c['mcr_pearson_r'] = next(
-                    (a[1] for a in assignments if a[0] == c_idx), None)
+            for c_idx, c in enumerate(cands):
+                # A singlet cannot be identified by component shape. After the
+                # +-shift_tol_ppm alignment any isolated line correlates with any
+                # other isolated line (r -> 1.0 by construction), so a high r
+                # carries no information about which compound it is — and the
+                # component may not even be a single line. MCR metrics stay
+                # visible for such candidates, but they do not confirm anything.
+                _c_mult = (c.get('type') or c.get('multiplicity') or 's')
+                _c_is_singlet = _is_singlet_multiplicity(_c_mult)
+
+                _c_assign_pre = next((a for a in assignments if a[0] == c_idx),
+                                     None)
+                _c_shift = (_c_assign_pre[2]
+                            if _c_assign_pre is not None and len(_c_assign_pre) > 2
+                            else None)
+                # Did MCR work on the signal this match is about? The
+                # annotation placed this DB peak at peak_ppm, an offset of
+                # (peak_ppm - db_ppm). If MCR's own alignment reproduces that
+                # offset it resolved the same signal; if it does not, its
+                # metrics describe a different one.
+                try:
+                    _c_own_delta = (float(c.get('peak_ppm'))
+                                    - float(c.get('db_ppm')))
+                except (TypeError, ValueError):
+                    _c_own_delta = None
+                _c_disagree = (abs(float(_c_shift) - _c_own_delta)
+                               if (_c_shift is not None
+                                   and _c_own_delta is not None) else None)
+                _c_far = (_c_disagree is not None
+                          and _c_disagree > MCR_SHIFT_AGREEMENT_PPM)
+                c['mcr_shift_disagree_ppm'] = _c_disagree
+
+                c['mcr_informative_only'] = bool(_c_is_singlet or _c_far)
+                if _c_is_singlet:
+                    c['mcr_info_reason'] = 'singlet — shape carries no identity'
+                elif _c_far:
+                    c['mcr_info_reason'] = (
+                        f'resolved a signal {_c_disagree:.4f} ppm '
+                        f'away from this match')
+                else:
+                    c['mcr_info_reason'] = None
+
+                c['mcr_r2']             = mcr_r2
+                c['mcr_r2_pooled']      = mcr_m.get('r2', None)
+                c['mcr_r2_per_sample']  = mcr_m.get('r2_per_sample', None)
+                c['mcr_confirmed']      = (None if c['mcr_informative_only']
+                                           else mcr_confirmed)
+                c_assign = next((a for a in assignments if a[0] == c_idx), None)
+                c['mcr_pearson_r'] = c_assign[1] if c_assign else None
+
+                # Post-deconvolution ΔJ: measured on this candidate's own MCR
+                # component (S column), not on the raw/merged detected peak.
+                # Only meaningful in genuine overlaps (K>=2) with a decent
+                # shape match — otherwise MCR isolated nothing worth trusting
+                # over the raw measurement.
+                c['mcr_shift_ppm'] = (c_assign[2] if c_assign is not None
+                                      and len(c_assign) > 2 else None)
+
+                c['mcr_delta_j_hz'] = None
+                if (c_assign is not None and not c['mcr_informative_only']
+                        and K >= MCR_MIN_OVERLAP_K
+                        and c_assign[1] is not None
+                        and c_assign[1] >= MCR_MIN_SHAPE_R):
+                    meas_j = c_assign[4] if len(c_assign) > 4 else None
+                    exp_j  = c_assign[5] if len(c_assign) > 5 else None
+                    if meas_j is not None and exp_j is not None:
+                        c['mcr_delta_j_hz'] = float(abs(meas_j - exp_j))
 
             n_validated += 1
 
@@ -470,7 +600,7 @@ class _AnnotationSearchMixin:
     def search_internal_db(self):
         if not self.peaks:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
 
         has_prev = (bool(self._quality_marks)
@@ -597,14 +727,46 @@ class _AnnotationSearchMixin:
         except ValueError:
             mhz = 600.0
 
+        # Poor signals never receive an annotation, but they are still real
+        # lines of the spectrum: a Poor line of a doublet must stay available as
+        # a J-coupling partner. Dropping it here would leave the multiplet one
+        # line short and let the snap pair the survivor with an unrelated
+        # neighbour, fabricating a coupling constant. So the pool keeps
+        # everything and the exclusion is applied to the anchor peak — the one
+        # the annotation is actually attached to.
         all_peaks = self._exclude_water_peaks(
             [p for p in self.peaks if p.get('rank') is not None])
+        # A new search invalidates any MCR result from a previous one — the
+        # candidate set that produced it no longer exists. Nothing else clears
+        # it and the peak dicts outlive the search, so with MCR switched off the
+        # results window kept showing components from the run before.
+        # Peaks created BY Full-Spectrum MCR are their own MCR result: for them
+        # the annotation is the thing derived from mcr_annotation, not the other
+        # way round, so those are left untouched.
+        _stale_mcr, _ = clear_stale_mcr(self.peaks)
+        if _stale_mcr:
+            print(f'[annotation] cleared MCR results from {_stale_mcr} peak(s) '
+                  f'left by a previous search')
 
-        if not all_peaks:
+        _tiers = self.annotatable_tiers()
+        _annotatable, _rejected = filter_annotatable(all_peaks, _tiers)
+        self._poor_skipped = len(_rejected)
+        self._annotatable_tiers_used = _tiers
+        if _rejected:
+            print(f'[annotation] signal quality: skipped {len(_rejected)} '
+                  f'signal(s); annotating '
+                  f'{"/".join(sorted(_tiers))} only')
+
+        if not _annotatable:
             messagebox.showinfo(
-                'No Peaks',
-                'No detected peaks found.\n\n'
-                'Run Peak Detection first.')
+                'No Signals',
+                ('No detected signal has an allowed quality grade.\n\n'
+                 f'Annotation is set to use {"/".join(sorted(_tiers))} only. '
+                 'Widen the selection in Annotation Parameters, review the '
+                 'signal quality in the Peak List, or re-run Signal Detection.')
+                if all_peaks else
+                'No detected signals found.\n\n'
+                'Run Signal Detection first.')
             return
 
         if incremental and self._last_results_args:
@@ -623,12 +785,17 @@ class _AnnotationSearchMixin:
             if not peaks_to_search:
                 messagebox.showinfo(
                     'Nothing to update',
-                    'All peaks already have confirmed annotations.\n'
+                    'All signals already have confirmed annotations.\n'
                     'Use "Reset & start over" to redo everything.')
                 return
             carry_results = [r for r in prev_results
                              if (int(r['peak_rank']) if r.get('peak_rank') is not None else -1) in already_good_ranks
                              and r.get('ppm_diff', float('inf')) <= tolerance]
+            _mcr_on = getattr(self, 'mcr_run_var', None)
+            if not (_mcr_on is not None and _mcr_on.get()):
+                # Carried rows keep their scores, not a verdict from an MCR pass
+                # that is not part of this run.
+                clear_stale_mcr(None, carry_results)
         else:
             peaks_to_search = all_peaks
             carry_results   = []
@@ -663,14 +830,20 @@ class _AnnotationSearchMixin:
                         _res = _ctrl.results.get(_ci, {})
                         if not _res.get('_saved'):
                             break
+                        # A sub-peak inherits the grade of the signal it was
+                        # deconvolved from unless deconvolution graded it
+                        # itself. Stamping every sub-peak 'Good' let a Poor
+                        # parent re-enter annotation through its own sub-peaks.
+                        _parent_tier = effective_tier(_pk)
                         _subs = [sp for sp in _res.get('peaks', [])
-                                 if sp.get('status') != 'Poor']
+                                 if sp.get('status') != SIGNAL_POOR]
                         if _subs:
                             for _sp in _subs:
                                 _pseudo = {
                                     'ppm':         float(_sp['ppm']),
                                     'rank':        _rk,
-                                    'status':      'Good',
+                                    'status':      (_sp.get('status')
+                                                    or _parent_tier),
                                     'height':      float(_sp.get('height', 0)),
                                     'width_ppm':   float(_sp.get('width', _sp.get('width_ppm', 0.004))),
                                     'width_at_half': float(_sp.get('width', _sp.get('width_ppm', 0.004))),
@@ -708,7 +881,7 @@ class _AnnotationSearchMixin:
 
         # Unified progress window — covers all phases (search + build)
         pw = tk.Toplevel(self.app.root)
-        pw.title('nMRPipe — Annotating…')
+        pw.title('NMRPro-H — Annotating…')
         pw.resizable(False, False)
         pw.transient(self.app.root)
         pw.grab_set()
@@ -737,11 +910,10 @@ class _AnnotationSearchMixin:
             all_results, peaks_matched = [], set()
             total_entries = 1
             conn = None
-            _n_lines_map = {
-                's': 1, 'd': 2, 't': 3, 'q': 4, 'quin': 5,
-                'dd': 4, 'ddd': 8, 'dt': 6, 'td': 6, 'tt': 9,
-                'dq': 8, 'tq': 12,
-            }
+            # Line counts come from the scoring core's LINE_COUNTS — one table.
+            # This local copy had 'quin' where BMRB writes 'quint', so every
+            # quintet, sextet and septet fell to the default of 2 lines.
+            _n_lines_map = {'s': 1}
             _ppm_arr = getattr(self.app, 'ppm', None)
             _raw_int = getattr(self.app, 'all_intensities', None)
             has_spec = (
@@ -944,6 +1116,16 @@ class _AnnotationSearchMixin:
 
                 # Source reliability weights — penalise less-curated databases
                 # so well-annotated sources rank above statistically-inferred entries.
+                # Scoring parameters: the user's Annotation Parameters when
+                # they exist, the scoring core's defaults otherwise. One owner.
+                _sc_params = dict(SCORING_DEFAULTS)
+                # The Δppm gate follows the analyst's 'Tolerance (ppm)' — the
+                # same number that defined the search window. An explicit
+                # dppm_gold in the Parameters dialog still wins.
+                _sc_params['dppm_gold'] = tolerance
+                _sc_params.update(
+                    getattr(self, '_annotation_params', None) or {})
+
                 _SOURCE_WEIGHTS = {
                     'internal': 1.00,
                     'COLMAR':   0.90,
@@ -983,7 +1165,8 @@ class _AnnotationSearchMixin:
                     if is_unquantifiable_multiplicity(mult_raw):
                         continue
 
-                    n_lns       = _n_lines_map.get(mult_raw, 2)
+                    n_lns       = _n_lines_map.get(
+                        mult_raw, expected_line_count(mult_raw, 2))
                     j_ppm       = (j_hz / mhz
                                    if j_hz > 0 and mhz > 0 else 0.0)
                     half_width  = max(
@@ -1007,8 +1190,10 @@ class _AnnotationSearchMixin:
                         half_width = max(half_width,
                                          (max(_sp) - min(_sp)) / 2.0 + tolerance)
                     else:
-                        sticks = _build_stick_positions(
+                        # No database J: do not invent line positions.
+                        sticks = (_build_stick_positions(
                             db_ppm, mult_raw, protons, j_raw)
+                                  if j_hz > 0 else [])
                     if not sticks:
                         sticks = [(db_ppm, 1.0)]
 
@@ -1022,10 +1207,20 @@ class _AnnotationSearchMixin:
                         continue
                     # Any detected peak within tolerance can serve as anchor —
                     # quality filtering is left to the composite score.
-                    # Siblings (J-coupling partners) can be any quality.
+                    # Siblings (J-coupling partners) can be any quality; the
+                    # anchor cannot — a Poor signal is not annotated.
                     good_in_tol = [p for p in local_peaks
-                                   if abs(p['ppm'] - db_ppm) <= tolerance]
+                                   if abs(p['ppm'] - db_ppm) <= tolerance
+                                   and is_annotatable(p, _tiers)]
                     if not good_in_tol:
+                        # The fallback below covers a signal peak detection
+                        # missed entirely. It must not cover one that WAS
+                        # detected and then excluded by its quality grade —
+                        # rebuilding it from the raw spectrum would annotate
+                        # exactly the signal the analyst ruled out.
+                        if any(abs(p['ppm'] - db_ppm) <= tolerance
+                               for p in local_peaks):
+                            continue
                         # Spectrum-based fallback: no detected peak within
                         # tolerance, but the signal may still be present in the
                         # raw spectrum (peak missed by detection — sub-threshold,
@@ -1046,10 +1241,13 @@ class _AnnotationSearchMixin:
                         _syn_noise = float(np.percentile(np.abs(_syn_y), 25)) + 1e-12
                         if _syn_h < _syn_noise * 3.0:
                             continue
+                        # A spectrum-derived peak was never graded, so it
+                        # carries no status and reads as Average. Claiming
+                        # 'Good' would let it bypass the grade selection
+                        # entirely — the one thing this filter exists to stop.
                         _syn_peak = {
                             'ppm':           float(_syn_x[_syn_max_i]),
                             'rank':          None,
-                            'status':        'Good',
                             'height':        _syn_h,
                             'width_ppm':     0.010,
                             'width_at_half': 0.010,
@@ -1057,6 +1255,8 @@ class _AnnotationSearchMixin:
                             '_obs_j_hz':     0,
                             '_obs_mult':     mult_raw,
                         }
+                        if not is_annotatable(_syn_peak, _tiers):
+                            continue
                         good_in_tol = [_syn_peak]
                         # Augment local_peaks with spectrum-derived sibling
                         # positions so the sibling loop and _multiplet_score
@@ -1082,7 +1282,6 @@ class _AnnotationSearchMixin:
                                     _syn_aug.append({
                                         'ppm':           _sp,
                                         'rank':          None,
-                                        'status':        'Good',
                                         'height':        float(_sy[_si]),
                                         'width_ppm':     0.010,
                                         'width_at_half': 0.010,
@@ -1096,10 +1295,9 @@ class _AnnotationSearchMixin:
                     peak_rank = nearest.get('rank')   # None for spectrum-derived peaks
                     peak_ppm  = float(nearest['ppm'])
 
-                    _eff_j_ppm = j_ppm
-                    if _eff_j_ppm <= 0 and not is_singlet:
-                        _obs_j_fb = nearest.get('_obs_j_hz', 0) or 0
-                        _eff_j_ppm = float(_obs_j_fb) / mhz if (_obs_j_fb > 0 and mhz > 0) else 0.0
+                    # A missing database J is intentionally not inferred from
+                    # the observed spectrum. The analyst must confirm it.
+                    _eff_j_ppm = j_ppm if j_hz > 0 else 0.0
 
                     multiplet_centre = peak_ppm
                     if not is_singlet and _eff_j_ppm > 0 and n_lns >= 2:
@@ -1128,6 +1326,7 @@ class _AnnotationSearchMixin:
 
                     fitting_r2  = 0.0
                     r2_computed = False
+                    shape_score_val = None
                     if has_spec:
                         _exp_hwhm = max(
                             float(nearest.get('width_ppm',
@@ -1142,6 +1341,12 @@ class _AnnotationSearchMixin:
                                 shifted_sticks, x_win, hwhm=_exp_hwhm)
                             fitting_r2, _ = _fit_r2(sim, y_corr)
                             r2_computed = True
+                        # Shape term of the signal score, measured in this
+                        # signal's own window — the same function the results
+                        # window uses, so both see one number.
+                        shape_score_val = peak_shape_score(
+                            _ppm_arr, _mean_int, shifted_sticks,
+                            multiplet_centre, entry, hwhm_default=_exp_hwhm)
 
                     # peak_rank is None for spectrum-derived/synthetic peaks;
                     # excluding them keeps the "X/Y peaks matched" count honest
@@ -1155,36 +1360,134 @@ class _AnnotationSearchMixin:
                         ppm_score_val = _ppm_score(peak_ppm, _nearest_stick[0], tolerance)
                     else:
                         ppm_score_val = _ppm_score(multiplet_centre, db_ppm, tolerance)
-                    mult_compat, _ = _mult_compat_check(
-                        entry, peaks_to_search, tolerance, mhz)
-                    mult_conf   = 1.0
-
                     obs_mult_pk = nearest.get('_obs_mult', 's')
-                    obs_j_pk    = nearest.get('_obs_j_hz')
-                    if is_singlet:
-                        j_compat      = 0.3 if obs_mult_pk not in ('s', 'unknown') else 1.0
-                        j_conf        = 1.0  # mult-consistency check — always valid for singlets
-                    elif j_hz > 0 and obs_j_pk is not None and obs_j_pk > 0:
-                        j_ratio       = abs(j_hz - obs_j_pk) / max(j_hz, obs_j_pk, 0.1)
-                        j_compat      = float(max(0.0, 1.0 - 2.0 * j_ratio))
-                        j_conf        = 1.0  # J was measurable
-                    elif obs_mult_pk in ('s',) and not is_singlet:
-                        j_compat      = 0.4   # wrong mult type — valid penalty
-                        j_conf        = 1.0
-                    else:
-                        j_compat      = 0.0   # J not measurable — excluded by j_conf
-                        j_conf        = 0.0   # exclude component; do not default to 0.7
 
-                    composite = dynamic_composite(
-                        scores={'ppm':  ppm_score_val,
-                                'r2':   fitting_r2,
-                                'mult': float(mult_compat),
-                                'j':    j_compat},
-                        confidences={'ppm':  1.0,
-                                     'r2':   1.0 if r2_computed else 0.0,
-                                     'mult': mult_conf,
-                                     'j':    j_conf},
-                    )
+                    _scorer_centre = None
+
+                    if nearest.get('is_sub_peak'):
+                        siblings = sorted(
+                            [p for p in peaks_to_search
+                             if p.get('rank') == peak_rank
+                             and p.get('is_sub_peak')],
+                            key=lambda p: p['ppm'], reverse=True)
+                        if siblings:
+                            max_h = max(p.get('height', 1) for p in siblings) or 1
+                            predicted_lines = [
+                                {'ppm': float(p['ppm']),
+                                 'rel_intensity': float(p.get('height', 1)) / max_h}
+                                for p in siblings]
+                        else:
+                            predicted_lines = [
+                                {'ppm': float(s), 'rel_intensity': float(ri)}
+                                for s, ri in shifted_sticks]
+                    else:
+                        # Candidate line positions for the measurement below.
+                        # J and the line count are NOT taken from here — a mean
+                        # of whatever separations the scorer returned is not a
+                        # coupling constant. measure_multiplet owns both.
+                        _score_r = dict(entry)
+                        _score_r['peak_ppm'] = multiplet_centre
+                        _ms_main, _md_main, _pl_main = _multiplet_score(
+                            _score_r, local_peaks, tolerance, mhz,
+                            ppm_array=(_ppm_arr if has_spec else None),
+                            intensity_array=(_mean_int if has_spec else None))
+                        predicted_lines = (_pl_main if _pl_main else
+                                           [{'ppm': float(s), 'rel_intensity': float(ri)}
+                                            for s, ri in shifted_sticks])
+                        if _pl_main:
+                            _srt = sorted(_pl_main, key=lambda l: l['ppm'])
+                            _tot_ri = (sum(l.get('rel_intensity', 1.0) for l in _srt)
+                                       or 1.0)
+                            _scorer_centre = (
+                                sum(l['ppm'] * l.get('rel_intensity', 1.0)
+                                    for l in _srt) / _tot_ri)
+                        else:
+                            _scorer_centre = multiplet_centre
+
+                    # ── Line measurement ─────────────────────────────
+                    # Snap the DB multiplet's predicted lines onto detected
+                    # peaks, count how many were actually found, and measure J
+                    # from their real spacings. This decides whether the signal
+                    # was identified at all, so it belongs here — before the
+                    # score and before the candidate can compete — not in the
+                    # results window, where it used to run.
+                    #
+                    # It replaces _observe_j_hz, which searched the peak
+                    # separations for whichever one best matched the DB J. That
+                    # is circular: ΔJ came out small by construction, because
+                    # the separation minimising it was the one selected. It also
+                    # never counted lines, so a doublet with one leg missing
+                    # reported a confident J measured from unrelated peaks.
+                    _n_exp_sr = max(
+                        expected_line_count(mult_raw,
+                                            fallback=len(predicted_lines) or 2),
+                        n_lns)
+                    _meas_sr = measure_multiplet(
+                        predicted_lines, peaks_to_search,
+                        mult=mult_raw, j_coupling=j_raw,
+                        db_ppm=db_ppm, centre_hint=multiplet_centre,
+                        n_expected=_n_exp_sr, tolerance=tolerance,
+                        field_mhz=mhz)
+                    if _meas_sr.measured and not _meas_sr.complete and j_hz > 0:
+                        # Lines missing: before giving up, look in the window for
+                        # the multiplet's comb — n_exp peaks spaced by J, every
+                        # spacing agreeing with the DB J AND with each other.
+                        # Line-matching works outward from stored positions and
+                        # can miss a multiplet that sits off them; a template
+                        # match does not depend on where it was expected.
+                        _hw_sr = (j_hz / mhz) * (_n_exp_sr - 1) / 2 + tolerance
+                        _comb_sr = search_multiplet_in_window(
+                            [p_.get('ppm') for p_ in peaks_to_search],
+                            centre_ppm=multiplet_centre, j_hz=j_hz,
+                            n_expected=_n_exp_sr, field_mhz=mhz,
+                            half_width_ppm=_hw_sr)
+                        if _comb_sr:
+                            _retry_sr = measure_multiplet(
+                                [{'ppm': v, 'rel_intensity': 1.0} for v in _comb_sr],
+                                peaks_to_search,
+                                mult=mult_raw, j_coupling=j_raw,
+                                db_ppm=db_ppm,
+                                centre_hint=sum(_comb_sr) / len(_comb_sr),
+                                n_expected=_n_exp_sr, tolerance=tolerance,
+                                field_mhz=mhz)
+                            if _retry_sr.complete:
+                                _meas_sr = _retry_sr
+
+                    n_found_sr = _meas_sr.n_found
+                    n_exp_sr   = _meas_sr.n_expected
+                    obs_j_hz   = _meas_sr.observed_j_hz
+                    delta_j_hz = _meas_sr.delta_j_hz
+                    if _meas_sr.measured and _meas_sr.predicted_lines:
+                        predicted_lines = _meas_sr.predicted_lines
+                    if _meas_sr.centre_ppm is not None:
+                        _scorer_centre = float(_meas_sr.centre_ppm)
+
+                    # ── Signal score ────────────────────────────────────────
+                    # Same function the Annotation Results window uses, so the
+                    # number the search produces and the number the user sees
+                    # are the same quantity. They used to be two different
+                    # formulas under one key: a Δppm-weighted blend here (45%
+                    # Δppm, 10% J) and a ΔJ-led one there — the same signal
+                    # scored 0.317 in one and 0.972 in the other.
+                    #
+                    # It is computed ONCE, here, on measured evidence: the
+                    # lines have been snapped and J measured just above. The
+                    # results window does not recompute it — a view shows
+                    # results, it does not produce them.
+                    _dj_sig = (dj_score(delta_j_hz,
+                                        _sc_params['dj_gold_hz'],
+                                        _sc_params['dj_bad_hz'],
+                                        _sc_params['dj_neutral'])
+                               if (not is_singlet and delta_j_hz is not None)
+                               else None)
+                    _shape_sig = (float(shape_score_val)
+                                  if shape_score_val is not None else None)
+                    _sig_bd = signal_score(s_ppm=ppm_score_val,
+                                           s_dj=_dj_sig,
+                                           s_cosine=_shape_sig,
+                                           is_singlet=is_singlet,
+                                           params=_sc_params)
+                    composite = _sig_bd.value
 
                     # Multi-peak coherence: penalise candidates whose sibling
                     # peaks are absent or have inconsistent relative intensities.
@@ -1209,72 +1512,13 @@ class _AnnotationSearchMixin:
                         composite *= np.exp(
                             0.10 * max(0.0, _stocsy_coh) * _w_st)
 
-                    _scorer_centre = None
-                    _j_obs_scorer  = None
-                    _dj_scorer     = None
-
-                    if nearest.get('is_sub_peak'):
-                        siblings = sorted(
-                            [p for p in peaks_to_search
-                             if p.get('rank') == peak_rank
-                             and p.get('is_sub_peak')],
-                            key=lambda p: p['ppm'], reverse=True)
-                        if siblings:
-                            max_h = max(p.get('height', 1) for p in siblings) or 1
-                            predicted_lines = [
-                                {'ppm': float(p['ppm']),
-                                 'rel_intensity': float(p.get('height', 1)) / max_h}
-                                for p in siblings]
-                        else:
-                            predicted_lines = [
-                                {'ppm': float(s), 'rel_intensity': float(ri)}
-                                for s, ri in shifted_sticks]
-                    else:
-                        # Use the scorer to find only confirmed experimental lines.
-                        # Single source of truth: drives fingerprint, quality card,
-                        # peak_ppm, ppm_diff, observed_j_hz, delta_j_hz.
-                        _score_r = dict(entry)
-                        _score_r['peak_ppm'] = multiplet_centre
-                        _ms_main, _md_main, _pl_main = _multiplet_score(
-                            _score_r, local_peaks, tolerance, mhz,
-                            ppm_array=(_ppm_arr if has_spec else None),
-                            intensity_array=(_mean_int if has_spec else None))
-                        predicted_lines = (_pl_main if _pl_main else
-                                           [{'ppm': float(s), 'rel_intensity': float(ri)}
-                                            for s, ri in shifted_sticks])
-                        if _pl_main:
-                            _srt = sorted(_pl_main, key=lambda l: l['ppm'])
-                            _tot_ri = (sum(l.get('rel_intensity', 1.0) for l in _srt)
-                                       or 1.0)
-                            _scorer_centre = (
-                                sum(l['ppm'] * l.get('rel_intensity', 1.0)
-                                    for l in _srt) / _tot_ri)
-                            if len(_srt) >= 2:
-                                _seps_hz = [
-                                    (_srt[i + 1]['ppm'] - _srt[i]['ppm']) * mhz
-                                    for i in range(len(_srt) - 1)]
-                                _j_obs_scorer = sum(_seps_hz) / len(_seps_hz)
-                                _dj_scorer = (float(abs(_j_obs_scorer - j_hz))
-                                              if j_hz > 0 else None)
-                        else:
-                            _scorer_centre = multiplet_centre
-
-                    obs_j_hz   = None
-                    delta_j_hz = None
-                    if not is_singlet and j_hz > 0:
-                        peaks_in_win = [
-                            p for p in peaks_to_search
-                            if win_lo <= p['ppm'] <= win_hi]
-                        obs_j_hz, delta_j_hz = _observe_j_hz(
-                            peaks_in_win, j_hz, mhz, n_lns)
 
                     r = dict(entry)
                     r['fitting_r2']     = float(fitting_r2)
                     r['composite_score']= float(composite)
+                    r['_score_breakdown'] = _sig_bd.equation()
                     r['multiplet_score']= float(fitting_r2)
                     r['ppm_score']      = float(ppm_score_val)
-                    r['mult_compat']    = float(mult_compat)
-                    r['j_compat']       = float(j_compat)
                     r['db_ppm']         = float(db_ppm)
                     _eff_centre = (_scorer_centre if _scorer_centre is not None
                                    else multiplet_centre)
@@ -1283,14 +1527,15 @@ class _AnnotationSearchMixin:
                     r['peak_rank']      = peak_rank
                     r['is_sub_peak']    = bool(nearest.get('is_sub_peak', False))
                     r['predicted_lines']= predicted_lines
-                    r['observed_j_hz']  = (float(_j_obs_scorer)
-                                           if _j_obs_scorer is not None
-                                           else (float(obs_j_hz)
-                                                 if obs_j_hz is not None else None))
-                    r['delta_j_hz']     = (float(_dj_scorer)
-                                           if _dj_scorer is not None
-                                           else (float(delta_j_hz)
-                                                 if delta_j_hz is not None else None))
+                    # Single source: measure_multiplet above. It reports None
+                    # when lines are missing, and None must stay None — a ΔJ
+                    # measured on a different set of peaks is not this signal's.
+                    r['observed_j_hz']  = (float(obs_j_hz)
+                                           if obs_j_hz is not None else None)
+                    r['delta_j_hz']     = (float(delta_j_hz)
+                                           if delta_j_hz is not None else None)
+                    r['_n_found_lines'] = n_found_sr
+                    r['_n_exp_lines']   = n_exp_sr
                     r['j_coupling']     = j_raw
                     r['baseline_corrected'] = has_spec
                     r['multiplet_detail']   = (
@@ -1302,11 +1547,14 @@ class _AnnotationSearchMixin:
                     r['stocsy_coherence']   = (round(_stocsy_coh, 3)
                                                if _stocsy_coh is not None
                                                else None)
+                    # Database provenance is recorded, not multiplied into the
+                    # score. Scaling by 0.82 (BMRB) meant a signal needed a raw
+                    # 0.915 to reach the 0.75 Good threshold, and the Annotation
+                    # Results window never applied the same factor — so the same
+                    # signal read 0.317 here and 0.972 there. Provenance is a
+                    # property of the reference, not evidence about this peak.
                     _db_src      = r.get('database', 'HMDB')
-                    _src_wt      = _SOURCE_WEIGHTS.get(_db_src, 0.70)
-                    r['composite_score']  = round(
-                        float(r['composite_score']) * _src_wt, 4)
-                    r['source_weight']    = _src_wt
+                    r['source_weight']    = _SOURCE_WEIGHTS.get(_db_src, 0.70)
                     # Map detected peak to which predicted line it corresponds to.
                     # Stored as line_idx so _effective_nh can use it directly
                     # without positional estimation at quantification time.
@@ -1353,15 +1601,21 @@ class _AnnotationSearchMixin:
                 if carry_results:
                     all_results = carry_results + all_results
 
-                total_peaks = len(all_peaks)
+                total_peaks = len(_annotatable)
                 elapsed = time.monotonic() - t0
                 nm  = len(all_results)
                 np_ = len(peaks_matched)
+                # Report the Poor signals left out so the denominator above is
+                # never mistaken for the full peak list.
+                _skip = getattr(self, '_poor_skipped', 0)
+                _tier_txt = '/'.join(sorted(_tiers))
+                _skip_txt = (f'  ·  {_skip} signal(s) excluded by quality'
+                             if _skip else '')
                 self.app.root.after(
                     0, lambda: self._status_ok(
                         f'Search complete — {nm} matches '
-                        f'for {np_}/{total_peaks} peaks  '
-                        f'({elapsed:.2f}s)'))
+                        f'for {np_}/{total_peaks} {_tier_txt} peaks  '
+                        f'({elapsed:.2f}s){_skip_txt}'))
                 self.app.root.after(0, lambda: self._open_results_window(
                     all_results, pw, total_peaks, db_path, elapsed))
 
@@ -1495,7 +1749,7 @@ class _AnnotationSearchMixin:
         # ── Phase 2: reuse pw for build progress (55→100%) ───────────────────
         _build_start = 55
         try:
-            pw.title('nMRPipe — Building Results…')
+            pw.title('NMRPro-H — Building Results…')
             self.progress_bar['value'] = _build_start
             self.progress_op_label.config(text='Preparing results…')
             self.progress_time_label.config(text='')
@@ -1579,7 +1833,7 @@ class _AnnotationSearchMixin:
 
         if not self.peaks and not is_lipidomics:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
 
         from app_paths import asset_path
@@ -1608,9 +1862,9 @@ class _AnnotationSearchMixin:
         good_peaks = self._exclude_water_peaks(
             [p for p in self.peaks if p.get('rank') is not None])
         if (not is_lipidomics) and (not good_peaks):
-            messagebox.showinfo('No Peaks',
-                'No detected peaks found.\n\n'
-                'Run Peak Detection first.')
+            messagebox.showinfo('No Signals',
+                'No detected signals found.\n\n'
+                'Run Signal Detection first.')
             return
 
         self.hmdb_status.config(text='Internal DB: searching…', foreground='blue')
@@ -1706,7 +1960,7 @@ class _AnnotationSearchMixin:
                             foreground='green')
                     else:
                         self.hmdb_status.config(
-                            text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} peaks)',
+                            text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} signals)',
                             foreground='green')
                     self._open_results_window(all_results, pw, len(good_peaks), None, elapsed)
                     if self._last_results_args is not None:
@@ -1728,7 +1982,7 @@ class _AnnotationSearchMixin:
     def search_hmdb_online(self):
         if not self.peaks:
             messagebox.showinfo('Info',
-                'No peaks detected.\nRun Peak Detection first.')
+                'No signals detected.\nRun Signal Detection first.')
             return
         messagebox.showinfo('BMRB Online',
             'Online search not implemented in this version.\n'
@@ -1748,7 +2002,7 @@ class _AnnotationSearchMixin:
             with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
                 w = csv.writer(f)
                 w.writerow(['ID', 'Name', 'Match Type', 'DB PPM',
-                            'Peak PPM', 'Peak Rank', 'PPM Score',
+                            'Signal PPM', 'Signal Rank', 'PPM Score',
                             'Multiplet Score', 'Composite Score',
                             'Multiplet Detail'])
                 for r in results:

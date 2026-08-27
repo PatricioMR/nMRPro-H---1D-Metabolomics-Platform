@@ -68,7 +68,7 @@ def fetch(hid, retries=2):
     for k in range(1, retries + 1):
         try:
             req = urllib.request.Request(API.format(hid),
-                                         headers={'User-Agent': 'nMRPipe/1.0'})
+                                         headers={'User-Agent': 'NMRPro-H/1.0'})
             with urllib.request.urlopen(req, timeout=35) as r:
                 return json.loads(r.read().decode('utf-8-sig'))
         except urllib.error.HTTPError as e:

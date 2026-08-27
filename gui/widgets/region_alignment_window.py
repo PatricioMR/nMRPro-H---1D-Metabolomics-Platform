@@ -48,7 +48,7 @@ class RegionAlignmentWindow:
 
         self.win = tk.Toplevel(parent)
         self.win.title(
-            f"Regional Alignment — Peak #{peak['rank']}  "
+            f"Regional Alignment — Signal #{peak['rank']}  "
             f"{peak['ppm']:.4f} ppm")
         self.win.geometry('960x540')
         self._build_ui()
@@ -111,9 +111,9 @@ class RegionAlignmentWindow:
             ttk.Entry(fr, textvariable=var, width=7).pack(side=tk.LEFT)
 
         # Peak detection
-        df = ttk.LabelFrame(parent, text='Peak Detection', padding=4)
+        df = ttk.LabelFrame(parent, text='Signal Detection', padding=4)
         df.pack(fill=tk.X, pady=3)
-        ttk.Button(df, text='🔍 Detect peaks in region',
+        ttk.Button(df, text='🔍 Detect signals in region',
                    command=self._detect_peaks).pack(fill=tk.X)
         self._detect_lbl = ttk.Label(df, text='—', foreground='gray',
                                      font=('Arial', 8), wraplength=200)
@@ -206,7 +206,7 @@ class RegionAlignmentWindow:
         try:
             from scipy.signal import find_peaks
         except ImportError:
-            messagebox.showerror('Error', 'scipy is required for peak detection.')
+            messagebox.showerror('Error', 'scipy is required for signal detection.')
             return
 
         mask     = self._region_mask()
@@ -223,10 +223,10 @@ class RegionAlignmentWindow:
             if len(self._detected_peaks) > 6:
                 shown += f'… (+{len(self._detected_peaks)-6})'
             self._detect_lbl.config(
-                text=f'{len(self._detected_peaks)} peak(s):\n{shown}',
+                text=f'{len(self._detected_peaks)} signal(s):\n{shown}',
                 foreground='black')
         else:
-            self._detect_lbl.config(text='No peaks found.', foreground='orange')
+            self._detect_lbl.config(text='No signals found.', foreground='orange')
 
         self._draw_original()
 

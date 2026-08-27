@@ -111,7 +111,7 @@ class PeakResolveWindow:
 
         self.win = tk.Toplevel(parent)
         self.win.title(
-            f"Resolve Peak #{peak_rank}  @  {peak_ppm:.4f} ppm  "
+            f"Resolve Signal #{peak_rank}  @  {peak_ppm:.4f} ppm  "
             f"—  {len(candidates)} candidates")
         self.win.geometry('1100x520')
         self.win.minsize(800, 400)
@@ -405,7 +405,7 @@ class PeakResolveWindow:
         hdr = ttk.Frame(self.win, padding=(8, 4))
         hdr.pack(side=tk.TOP, fill=tk.X)
         ttk.Label(hdr,
-                  text=(f"Peak #{self.peak_rank}  ·  "
+                  text=(f"Signal #{self.peak_rank}  ·  "
                         f"{self.peak_ppm:.4f} ppm  ·  "
                         f"{len(self._rows)} candidates"),
                   font=('Arial', 10, 'bold')).pack(side=tk.LEFT)
@@ -419,7 +419,7 @@ class PeakResolveWindow:
                                sashwidth=5, sashrelief=tk.RAISED)
         split.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
 
-        spec_frame = ttk.LabelFrame(split, text='Peak region', padding=2)
+        spec_frame = ttk.LabelFrame(split, text='Signal region', padding=2)
         split.add(spec_frame, minsize=360, stretch='always')
         self._build_plot(spec_frame)
 
@@ -485,7 +485,7 @@ class PeakResolveWindow:
                   text=('Δ PPM: shift DB→exp  |  '
                         'ΔJ: |J_obs − J_db| in Hz (green <1, yellow <2.5, red ≥2.5)  |  '
                         '✓ Mult: obs matches DB multiplicity  |  '
-                        'Met peaks: other peaks of this metabolite found  |  '
+                        'Met signals: other signals of this metabolite found  |  '
                         'Fit: shape cosine  |  '
                         'Grey (italic): poor quality — ΔJ ≥ 0.5 Hz, Δppm ≥ 0.05, or marked Bad'),
                   font=('Arial', 7), foreground='#888',
@@ -496,7 +496,7 @@ class PeakResolveWindow:
         bf = ttk.Frame(parent, padding=(4, 4))
         bf.pack(side=tk.BOTTOM, fill=tk.X)
         ttk.Label(bf,
-                  text='Score = 0.35×(1−Δppm/50mDa) + 0.25×(met peaks) + 0.20×fit + 0.20×J_compat  |  singlets penalised',
+                  text='Score = 0.35×(1−Δppm/50mDa) + 0.25×(met signals) + 0.20×fit + 0.20×J_compat  |  singlets penalised',
                   font=('Arial', 7), foreground='#888').pack(side=tk.LEFT)
         ttk.Button(bf, text='Cancel',
                    command=self.win.destroy).pack(side=tk.RIGHT, padx=4)

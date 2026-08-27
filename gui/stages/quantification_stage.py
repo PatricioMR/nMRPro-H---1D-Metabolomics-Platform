@@ -289,8 +289,8 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             mf2, text='(not applied)', font=('Arial', 7), foreground='gray')
         self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         ttk.Label(s2,
-                  text='Multiplicity: integrates the union of the multiplet peaks\' '
-                       'Peak-List boundaries; uses total nH.\n'
+                  text='Multiplicity: integrates the union of the multiplet signals\' '
+                       'Signal-List boundaries; uses total nH.\n'
                        'Baseline: a global arPLS baseline (Baek 2015) is applied per sample '
                        'before integration (skipped if already corrected in Visualization).\n'
                        'Local baseline: inferior linear fallback — ignored when arPLS is active.\n'
@@ -743,15 +743,15 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # competition anchor.
         peak_rank = r.get('_display_peak_rank') or r.get('_peak_rank')
         menu.add_command(
-            label='Quant Peaks',
+            label='Quant Signals',
             command=lambda: self._open_quant_peaks_window(r))
         menu.add_separator()
         if peak_rank is not None:
             menu.add_command(
-                label='Open peak in Peak List',
+                label='Open signal in Signal List',
                 command=lambda: self._open_peak_in_list(peak_rank))
         else:
-            menu.add_command(label='No peak available', state='disabled')
+            menu.add_command(label='No signal available', state='disabled')
         try:
             menu.tk_popup(event.x_root, event.y_root)
         finally:
@@ -906,7 +906,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         if contributions:
             n = len(contributions)
             self._j_resolve_status_lbl.config(
-                text=f'({n} peaks resolved)', foreground='#2e7d32')
+                text=f'({n} signals resolved)', foreground='#2e7d32')
         else:
             self._j_resolve_status_lbl.config(
                 text='(not applied — run JG-Deconv step 4)', foreground='#b71c1c')

@@ -18,6 +18,7 @@ import numpy as np
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from processing.baseline_model import BaselineModel, BaselineCache
 from data.loader import load_all_samples
 from data.bruker_loader import load_bruker_dataset
 from gui._bruker_import_dialog import _BrukerImportDialog
@@ -35,17 +36,20 @@ from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
 from app_paths import APP_VERSION
+from gui.utils.quality_palette import (
+    SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
+from gui.widgets.annotation_results_window import _TIER_NOTE
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin):
     def _set_app_icon(self, win):
-        """Apply the app icon (utils/nmrpipe.ico — same as the .exe/installer)
+        """Apply the app icon (utils/nmrpro_h.ico — same as the .exe/installer)
         to *win*. Using iconbitmap(default=...) makes it the icon for the root
         AND every Toplevel/dialog opened afterwards, so the whole app is
         consistent. Falls back to the PNG via iconphoto on non-Windows."""
         from app_paths import asset_path
         try:
-            ico = asset_path('utils', 'nmrpipe.ico')
+            ico = asset_path('utils', 'nmrpro_h.ico')
             if os.path.isfile(ico):
                 win.iconbitmap(default=ico)
                 return
@@ -53,7 +57,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             pass
         try:
             from PIL import Image, ImageTk
-            png = asset_path('utils', 'Logo_nMRPipe.png')
+            png = asset_path('utils', 'Logo_NMRPro-H.png')
             self._app_icon_img = ImageTk.PhotoImage(Image.open(png))
             win.iconphoto(True, self._app_icon_img)
         except Exception:
@@ -79,6 +83,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.all_intensities = None
         self.ppm = None
         self._ppm_calibration = None
+        # The project's single baseline decision. all_intensities stays raw —
+        # every step reads corrected_intensities() instead, so detection,
+        # quantification, statistics and MCR can never disagree about whether
+        # (or how) the baseline was removed.
+        self.baseline_model = BaselineModel()
+        self._bl_cache = BaselineCache()
         self.baseline_corrected  = False
         self.alignment_corrected = False
         self.eligible_overrides = {}   # {f'{met_id}__{peak_rank}': bool}
@@ -147,7 +157,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         try:
             from PIL import Image, ImageTk
             from app_paths import asset_path
-            logo_path = asset_path('utils', 'Logo_nMRPipe.png')
+            logo_path = asset_path('utils', 'Logo_NMRPro-H.png')
             img = Image.open(logo_path).convert('RGBA')
             img = img.resize((300, 300), Image.LANCZOS)
             self._splash_logo = ImageTk.PhotoImage(img)
@@ -316,7 +326,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                                   command=self.toggle_legend)
         view_menu.add_separator()
         view_menu.add_command(label="Axes Settings...",     command=self.open_axes_settings)
-        view_menu.add_command(label="Show/Hide Peak Areas", command=self.toggle_peak_areas)
+        view_menu.add_command(label="Show/Hide Signal Areas", command=self.toggle_peak_areas)
         view_menu.add_separator()
 
         plot_settings_menu = _menu(view_menu)
@@ -372,7 +382,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.btn_visualization.pack(side=tk.LEFT, padx=2)
 
         self.btn_peak_detection = ttk.Button(
-            stage_frame, text="2. 🔍 Peak Detection",
+            stage_frame, text="2. 🔍 Signal Detection",
             command=lambda: self.switch_stage('peak_detection'),
             style='Stage.TButton'
         )
@@ -571,12 +581,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         _btn_bar.pack(side=tk.BOTTOM, fill=tk.X, padx=4, pady=4)
 
         self.btn_peak_list = ttk.Button(
-            _btn_bar, text="📋 Peak List",
+            _btn_bar, text="📋 Signal List",
             command=self.open_peak_list, state="disabled")
         self.btn_peak_list.pack(side=tk.LEFT, padx=4)
 
         self.btn_deconv_shortcut = ttk.Button(
-            _btn_bar, text="🔀 Deconvolution Tool",
+            _btn_bar, text="🔀 MCR Deconvolution",
             command=self.open_deconv_shortcut, state="disabled")
         self.btn_deconv_shortcut.pack(side=tk.LEFT, padx=4)
 
@@ -877,6 +887,24 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.update_plot()
 
     # ---------- Plot Update ----------
+    # ── Baseline ──────────────────────────────────────────────────────────────
+
+    def corrected_intensities(self):
+        """Intensities with the project's baseline model applied.
+
+        This is what every processing step should read.  ``all_intensities``
+        stays as loaded, so the correction is recomputed rather than baked in
+        and can be changed or undone at any point.  Caching and the "is any
+        work needed" decision live in processing/baseline_model.py.
+        """
+        return self._bl_cache.corrected(
+            self.ppm, self.all_intensities, getattr(self, 'baseline_model', None),
+            already_corrected=getattr(self, 'baseline_corrected', False))
+
+    def invalidate_baseline_cache(self):
+        """Drop the cached correction — call after changing the model or data."""
+        self._bl_cache.invalidate()
+
     def update_plot(self):
         """Update plot based on current stage and settings."""
         # Dados 2D têm precedência quando estamos na visualização
@@ -1436,11 +1464,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             messagebox.showinfo("Info", "Please switch to Metabolites Notation stage first.")
 
     def _open_annotation_params(self):
-        """Open Annotation Parameters dialog.
+        """Open the Annotation Parameters dialog.
 
-        If an AnnotationResultsWindow is active, delegates to it (enables
-        live recompute).  Otherwise opens a standalone pre-annotation dialog
-        that persists params on the annotation stage for the next run.
+        If a results window is up, delegate to it so edits recompute live;
+        otherwise edit the params the annotation stage will use on its next run.
+        Both paths open the same dialog — they used to be two implementations
+        with their own copies of the parameter list, which had already drifted.
         """
         win = getattr(self, '_annot_win', None)
         if win is not None and getattr(win, 'win', None):
@@ -1452,7 +1481,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             win._open_param_dialog()
             return
 
-        # ── Pre-annotation: standalone dialog ────────────────────────────────
         ann_stage = self.stages.get('annotation')
         if ann_stage is None:
             messagebox.showinfo("Annotation Parameters",
@@ -1460,106 +1488,18 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                                 parent=self.root)
             return
 
-        _DEFAULTS = {
-            'good_score_thresh': 0.80, 'bad_score_thresh': 0.50,
-            'dj_gold_hz': 0.20, 'dj_bad_hz': 0.50, 'dj_neutral': 0.00,
-            'dppm_gold_hz': 0.50, 'dppm_gold': 0.05,
-            'fp_coverage_pct': 50.0, 'nnls_min_frac': 0.03,
-            'anchor_clean_lo': 0.35, 'anchor_clean_hi': 2.50,
-            'anchor_snr_bdl': 3.0,
-            'w_dj': 0.57, 'w_cosine_ns': 0.14, 'w_ppm_ns': 0.10,
-            'w_found_ns': 0.05, 'w_rri_ns': 0.09, 'w_reverse_ns': 0.05,
-            'w_cosine_s': 0.32, 'w_ppm_s': 0.27,
-            'w_found_s': 0.13, 'w_rri_s': 0.18, 'w_reverse_s': 0.10,
-        }
-        current = dict(_DEFAULTS)
-        if ann_stage._annotation_params:
-            current.update(ann_stage._annotation_params)
+        from gui.widgets.annotation_params_dialog import open_annotation_params
 
-        dlg = tk.Toplevel(self.root)
-        dlg.title("Annotation Parameters")
-        dlg.resizable(False, False)
-        dlg.transient(self.root)
-        dlg.grab_set()
+        def _apply(new_params):
+            ann_stage._annotation_params = new_params
 
-        nb = ttk.Notebook(dlg)
-        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        _vars = {}
-
-        def _tab(title, rows):
-            frm = ttk.Frame(nb, padding=10)
-            nb.add(frm, text=title)
-            for r, (lbl, key, tip) in enumerate(rows):
-                ttk.Label(frm, text=lbl, anchor=tk.W).grid(
-                    row=r, column=0, sticky=tk.W, padx=(0, 10), pady=3)
-                var = tk.StringVar(value=str(current[key]))
-                _vars[key] = var
-                ttk.Entry(frm, textvariable=var, width=10).grid(
-                    row=r, column=1, sticky=tk.W, pady=3)
-                if tip:
-                    ttk.Label(frm, text=tip, foreground='gray',
-                              font=('Arial', 8)).grid(
-                        row=r, column=2, sticky=tk.W, padx=(6, 0))
-
-        _tab("Score & Quality", [
-            ("Good score threshold",   'good_score_thresh', "Rules 3/4/5 — min score → Good"),
-            ("Bad score threshold",    'bad_score_thresh',  "Rule 1 — singlets only"),
-            ("Fingerprint coverage %", 'fp_coverage_pct',   "≥2 DB peaks: min coverage %"),
-            ("NNLS min fraction",      'nnls_min_frac',     "< this → downgrade to yellow"),
-        ])
-        _tab("ΔJ Criteria (Hz)", [
-            ("Gold standard ΔJ", 'dj_gold_hz', "ΔJ < this → s_dj=1.0 (binary)"),
-            ("Bad ΔJ threshold", 'dj_bad_hz',  "ΔJ ≥ this → Bad (non-singlet gate)"),
-            ("s_dj neutral",     'dj_neutral', "s_dj when ΔJ unmeasurable"),
-        ])
-        _tab("Δppm Criteria", [
-            ("Gold standard Δppm (Hz)",  'dppm_gold_hz', "Max Δppm in Hz (field-independent)"),
-            ("Gold standard Δppm (ppm)", 'dppm_gold',    "Max Δppm in ppm"),
-        ])
-        _tab("RANSY Anchor", [
-            ("Clean ratio low",   'anchor_clean_lo',  "Min area ratio → clean"),
-            ("Clean ratio high",  'anchor_clean_hi',  "Max area ratio → clean"),
-            ("SNR BDL threshold", 'anchor_snr_bdl',   "SNR < this → below detection limit"),
-        ])
-        _tab("Score Weights", [
-            ("w_dj (non-singlet)",      'w_dj',         "ΔJ score weight"),
-            ("w_cosine (non-singlet)",  'w_cosine_ns',  ""),
-            ("w_ppm (non-singlet)",     'w_ppm_ns',     ""),
-            ("w_found (non-singlet)",   'w_found_ns',   ""),
-            ("w_rri (non-singlet)",     'w_rri_ns',     ""),
-            ("w_reverse (non-singlet)", 'w_reverse_ns', "Reverse-match weight"),
-            ("w_cosine (singlet)",      'w_cosine_s',   ""),
-            ("w_ppm (singlet)",         'w_ppm_s',      ""),
-            ("w_found (singlet)",       'w_found_s',    ""),
-            ("w_rri (singlet)",         'w_rri_s',      ""),
-            ("w_reverse (singlet)",     'w_reverse_s',  "Reverse-match weight"),
-        ])
-
-        bf = ttk.Frame(dlg)
-        bf.pack(fill=tk.X, padx=8, pady=(0, 8))
-
-        def _apply():
-            errs, new_p = [], {}
-            for key, var in _vars.items():
-                try:
-                    new_p[key] = float(var.get())
-                except ValueError:
-                    errs.append(key)
-            if errs:
-                messagebox.showerror("Invalid value",
-                                     f"Not a number: {', '.join(errs)}",
-                                     parent=dlg)
-                return
-            ann_stage._annotation_params = new_p
-            dlg.destroy()
-
-        def _reset():
-            for key, var in _vars.items():
-                var.set(str(_DEFAULTS.get(key, current[key])))
-
-        ttk.Button(bf, text="Reset Defaults", command=_reset).pack(side=tk.LEFT)
-        ttk.Button(bf, text="Apply",  command=_apply).pack(side=tk.RIGHT)
-        ttk.Button(bf, text="Cancel", command=dlg.destroy).pack(side=tk.RIGHT, padx=6)
+        open_annotation_params(
+            self.root,
+            getattr(ann_stage, '_annotation_params', None),
+            _apply,
+            tier_builder=build_tier_choice,
+            tier_reader=read_tier_choice,
+            tier_note=_TIER_NOTE)
 
     def toggle_peak_areas(self):
         """Show or hide peak highlight areas from the Edit menu."""
@@ -1602,10 +1542,14 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                      setattr(self, '_peak_list_win', None)))
 
     def open_deconv_shortcut(self):
-        """Open Deconvolution window.
+        """Open the unified MCR Deconvolution window (singleton).
 
-        After annotation: opens MCRDeconvWindow (MCR results).
-        Before annotation: opens legacy DeconvWindow (peak fitting).
+        Gathers every peak/region that already has 'mcr_annotation' data
+        (full-spectrum MCR regions take priority, then annotation-stage
+        peaks) and opens MCRWindow. The generic Lorentzian/Gaussian/Onion
+        Deconvolution Tool no longer lives behind this button — it is
+        still reachable from the Peak List's right-click
+        "View in Deconvolution Tool".
         """
         ann_stage  = self.stages.get('annotation')
         pk_stage   = self.stages.get('peak_detection')
@@ -1615,46 +1559,42 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         _fs_regions = getattr(fs_stage, '_mcr_regions', [])
         # Priority 2: annotation-stage MCR peaks
         _peaks   = pk_stage.peaks if pk_stage else []
-        _ann_mcr = [p for p in _peaks
-                    if p.get('mcr_annotation', {}).get('K', 1) >= 2]
+        _ann_mcr = [p for p in _peaks if p.get('mcr_annotation')]
 
         if _fs_regions:
             _source_peaks = _fs_regions
             _source_stage = fs_stage
         elif _ann_mcr:
-            _source_peaks = _peaks
+            _source_peaks = _ann_mcr
             _source_stage = ann_stage
         else:
             _source_peaks = None
             _source_stage = None
 
-        if _source_peaks:
-            # Singleton MCR window
-            if self._deconv_win is not None:
-                try:
-                    w = self._deconv_win.win
-                    if w.winfo_exists():
-                        w.deiconify(); w.lift(); w.focus_force()
-                        return
-                except Exception:
-                    pass
-            from gui.widgets.mcr_deconv_window import MCRDeconvWindow
-            self._deconv_win = MCRDeconvWindow(
-                self.root, _source_peaks, self, ann_stage=_source_stage)
-        else:
-            # Per-peak resolve deconvolution: reopen the aggregate window only if
-            # the user has already resolved at least one peak (controller exists).
-            ctrl = getattr(pk_stage, '_deconv_controller', None) if pk_stage else None
-            if ctrl is not None and getattr(ctrl, 'peaks', None):
-                from gui.notation.deconvolution import DeconvWindow
-                DeconvWindow(self.root, ctrl, pk_stage)
-            else:
-                from tkinter import messagebox
-                messagebox.showinfo(
-                    'Deconvolution',
-                    'No deconvolution available.\n\n'
-                    'Resolve a peak first from the Peak List '
-                    '(right-click a peak → Resolve).')
+        if not _source_peaks:
+            from tkinter import messagebox
+            messagebox.showinfo(
+                'MCR Deconvolution',
+                'No MCR deconvolution available yet.\n\n'
+                'Run Annotation or Full-Spectrum MCR first, or use the '
+                'Signal List → right-click → "View in Deconvolution Tool" '
+                'for manual signal-fitting.')
+            return
+
+        # Singleton MCR window
+        if self._deconv_win is not None:
+            try:
+                w = self._deconv_win.win
+                if w.winfo_exists():
+                    w.deiconify(); w.lift(); w.focus_force()
+                    return
+            except Exception:
+                pass
+        from gui.widgets.mcr_window import MCRWindow
+        items = [{'kind': 'region', 'met': None, 'mp': None, 'peak': p}
+                 for p in _source_peaks]
+        self._deconv_win = MCRWindow(
+            self.root, items, self, ann_stage=_source_stage)
 
     def open_annot_shortcut(self):
         """Open Annotation Results — singleton.

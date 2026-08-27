@@ -20,10 +20,34 @@ from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from gui.notation.evidence_weighting import dynamic_composite
-from gui.notation.confidence_classifier import (
-    classify_annotation,
-    CLASS_COLOURS,
+from gui.utils.mcr_utils import MCR_MIN_OVERLAP_K, MCR_MIN_SHAPE_R
+from gui.utils.quality_palette import (
+    QUALITY_BG, QUALITY_FG, QUALITY_LABEL,
+    SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR,
+    build_tier_choice, build_tier_filter_row, read_tier_choice,
+    tier_from_annotation_quality, update_tier_counts)
+from processing.annotation_detectability import (
+    build_overlap_map, mark_detectability)
+from processing.annotation_quality import promote_singlets, quality_verdict
+from processing.annotation_scoring import (
+    analyte_score, apply_mcr_dj, coverage_fraction,
+    resolve_dj, score_signal,
+    SCORING_DEFAULTS as _SCORING_DEFAULTS,
+    migrate_params as _migrate_params,
+    peak_shape_score as _peak_shape_score,
+    dj_score,
+    expected_line_count,
+    is_singlet_like,
+    measure_multiplet,
+    ppm_score,
+)
+
+
+# Shown under the grade checkboxes in both Annotation Parameters dialogs.
+_TIER_NOTE = (
+    "Only signals with a ticked grade can carry an annotation. Every detected "
+    "signal still takes part in measuring a multiplet's lines and its J — a "
+    "Poor line of a doublet is still a line of that doublet."
 )
 
 
@@ -69,14 +93,23 @@ def _relative_intensities_from_type(mult_type, protons):
       dd = dd       → [1, 1, 1, 1]   (approximation)
       m  = multiplet → flat (protons equal height)
     """
+    # Two vocabularies reach here: BMRB writes quint/sext/sept, HMDB writes
+    # p/h/hept. Both must be understood — a BMRB quintet used to fall through
+    # to the flat 'm' branch and be drawn as ONE line, i.e. modelled as a
+    # singlet (35 quintets, 9 sextets and 7 septets in BMRB_Metabolomics_v01).
     mt = (mult_type or 'm').lower().strip()
     mapping = {
-        's':  [1],
-        'd':  [1, 1],
-        't':  [1, 2, 1],
-        'q':  [1, 3, 3, 1],
-        'p':  [1, 4, 6, 4, 1],
-        'h':  [1, 5, 10, 10, 5, 1],
+        's':     [1],
+        'd':     [1, 1],
+        't':     [1, 2, 1],
+        'q':     [1, 3, 3, 1],
+        'p':     [1, 4, 6, 4, 1],
+        'quint': [1, 4, 6, 4, 1],
+        'quin':  [1, 4, 6, 4, 1],
+        'h':     [1, 5, 10, 10, 5, 1],
+        'sext':  [1, 5, 10, 10, 5, 1],
+        'sept':  [1, 6, 15, 20, 15, 6, 1],
+        'hept':  [1, 6, 15, 20, 15, 6, 1],
         'dd': [1, 1, 1, 1],
         'dt': [1, 2, 1, 1, 2, 1],
         'td': [1, 1, 2, 2, 1, 1],
@@ -193,11 +226,14 @@ def _build_stick_positions(ppm_center, mult_type, protons, j_coupling_hz=None,
 
     if mt in _COMPOSITE:
         parts = _COMPOSITE[mt]
+        if not j_list_hz:
+            return [(ppm_center, 1.0)]
 
-        # Pad J list: repeat last value if too few couplings given
-        j_padded = list(j_list_hz) if j_list_hz else [7.0]
-        while len(j_padded) < len(parts):
-            j_padded.append(j_padded[-1])
+        # Require every coupling needed by the declared composite pattern;
+        # never repeat one known J as a fabricated second/third J.
+        if len(j_list_hz) < len(parts):
+            return [(ppm_center, 1.0)]
+        j_padded = list(j_list_hz)
 
         # Recursive splitting: start with a single line at offset 0
         offsets = [0.0]
@@ -231,7 +267,8 @@ def _build_stick_positions(ppm_center, mult_type, protons, j_coupling_hz=None,
     elif ppm_span and ppm_span > 1e-4 and n > 1:
         spacing_ppm = ppm_span / (n - 1)
     else:
-        spacing_ppm = 7.0 / max(field_mhz, 1.0)
+        # No J and no explicit transition span: keep the centre only.
+        return [(ppm_center, intensities[0])]
 
     total_span = spacing_ppm * (n - 1)
     start_ppm  = ppm_center - total_span / 2
@@ -271,64 +308,6 @@ def _rri_score(exp_peaks_in_region, db_sticks, tolerance=0.02):
     return max(0.0, 1.0 - mad)
 
 
-def _peak_shape_score(ppm_arr, intensity_arr, shifted_sticks,
-                      center_ppm, db_entry, hwhm_default=0.004):
-    """
-    Compute how well the experimental spectrum shape overlaps the
-    simulated DB multiplet (sum of Lorentzianas at shifted_sticks).
-
-    Returns a score 0–1:
-      1.0 = perfect overlap
-      The score is cosine similarity between the experimental slice
-      and the simulated DB shape over a ±6×HWHM window.
-    """
-    if not shifted_sticks:
-        return None
-
-    db_width = max(
-        abs(db_entry.get('ppm_end', center_ppm) -
-            db_entry.get('ppm_start', center_ppm)),
-        0.002)
-    hwhm = max(db_width / 2, hwhm_default)
-    # Window: wide enough to contain the full multiplet + ~4 hwhm of shoulder,
-    # but not so wide that neighbouring peaks or broad baseline contaminate the
-    # cosine.  hwhm * 8 gives ≈ 4 × linewidth padding on each side.
-    win  = hwhm * 8
-
-    lo = center_ppm - win
-    hi = center_ppm + win
-    mask = (ppm_arr >= lo) & (ppm_arr <= hi)
-    if mask.sum() < 3:
-        return None
-
-    x   = ppm_arr[mask]
-    y_e = intensity_arr[mask].astype(float)
-
-    # Remove linear baseline from experimental slice so that the broad baseline
-    # hump doesn't dominate and drag the cosine similarity down.
-    # Estimate from the 15% edge samples on each side.
-    n = len(y_e)
-    edge_n = max(2, int(n * 0.15))
-    xl = float(np.mean(x[:edge_n]));   yl = float(np.mean(y_e[:edge_n]))
-    xr = float(np.mean(x[-edge_n:]));  yr = float(np.mean(y_e[-edge_n:]))
-    if abs(xr - xl) > 1e-9:
-        slope = (yr - yl) / (xr - xl)
-        y_e   = y_e - (yl + slope * (x - xl))
-    y_e = np.clip(y_e, 0, None)   # only positive signal contributes
-
-    # Simulated DB shape at same x points
-    y_db = np.zeros_like(x)
-    for st_ppm, st_rel in shifted_sticks:
-        y_db += st_rel * hwhm**2 / ((x - st_ppm)**2 + hwhm**2)
-
-    # Normalise both to unit vectors
-    ne = np.linalg.norm(y_e)
-    nd = np.linalg.norm(y_db)
-    if ne == 0 or nd == 0:
-        return 0.0
-    return float(np.dot(y_e / ne, y_db / nd))
-
-
 def _cosine_similarity(exp_ppm, exp_int, db_peaks, tolerance=0.05):
     """
     Compute cosine similarity between experimental spectrum (as a sparse
@@ -357,6 +336,17 @@ def _cosine_similarity(exp_ppm, exp_int, db_peaks, tolerance=0.05):
     return float(np.dot(v_exp, v_db) / norm) if norm > 0 else 0.0
 
 
+# NNLS spectral validation is not in use. It reconstructs the whole spectrum
+# from every good candidate and solves a non-negative least-squares problem over
+# a (spectrum points x metabolites) matrix — on a 65536-point spectrum with a
+# hundred candidates that runs on the Tk thread while the window is being built.
+# It was commented out on the build path and left live on three others; the flag
+# keeps that decision in one place.
+NNLS_VALIDATION_ENABLED = False
+
+DPPM_GOLD_DEFAULT = _SCORING_DEFAULTS['dppm_gold']
+
+
 class AnnotationResultsWindow:
     def __init__(self, parent, results, peaks, ppm, all_intensities,
                  db_path, db_conn=None, elapsed=0, app=None,
@@ -381,7 +371,7 @@ class AnnotationResultsWindow:
         saved_metabolites : pre-built metabolites list from a previous session.
                             When provided, skips _group_by_metabolite and uses
                             this directly — preserving all enrichment (delta_j_hz,
-                            scores, anchor_status, etc.).
+                            scores, confidence class, etc.).
         """
         self.results          = results
         self.ppm              = ppm
@@ -393,46 +383,27 @@ class AnnotationResultsWindow:
         self._saved_metabolites = saved_metabolites  # restored from project
 
         # ── Annotation parameters (user-editable via ⚙ Parameters dialog) ────
-        self._params = {
-            # Score thresholds
-            'good_score_thresh':  0.75,   # ≥ this → Good (green); 0.51–0.74 → yellow
-            'bad_score_thresh':   0.50,   # ≤ this → Bad (red)
-            # ΔJ criteria (Hz)
-            'dj_gold_hz':         0.20,   # s_dj=1.0 below this; linear decay to dj_bad_hz
-            'dj_bad_hz':          0.50,   # gate: ΔJ ≥ this → Bad (non-singlet)
-            'dj_neutral':         0.00,   # s_dj when ΔJ unmeasurable (excluded via j_conf=0)
-            # Δppm criteria
-            'dppm_gold_hz':       0.50,   # max Δppm in Hz for gold standard (field-independent)
-            'dppm_gold':          0.05,   # max Δppm in ppm
-            # Fingerprint gate
-            'fp_coverage_pct':    50.0,   # min % fingerprint coverage (≥2 DB peaks)
-            # NNLS validation
-            'nnls_min_frac':      0.03,   # min fraction of max NNLS coefficient
-            # RANSY anchor thresholds
-            'anchor_clean_lo':    0.35,   # area ratio lower bound → clean
-            'anchor_clean_hi':    2.50,   # area ratio upper bound → clean
-            'anchor_snr_bdl':     3.0,    # SNR below this → BDL
-            # Score weights — non-singlet
-            # sum = 0.57+0.14+0.10+0.05+0.09+0.05 = 1.00
-            'w_dj':               0.57,
-            'w_cosine_ns':        0.14,
-            'w_ppm_ns':           0.10,
-            'w_found_ns':         0.05,
-            'w_rri_ns':           0.09,
-            'w_reverse_ns':       0.05,   # reverse score (nH-weighted DB coverage)
-            # Score weights — singlet
-            # sum = 0.32+0.27+0.13+0.18+0.10 = 1.00
-            'w_cosine_s':         0.32,
-            'w_ppm_s':            0.27,
-            'w_found_s':          0.13,
-            'w_rri_s':            0.18,
-            'w_reverse_s':        0.10,   # reverse score (nH-weighted DB coverage)
-        }
+        # Defaults come from the scoring core, so the dialog, the search
+        # worker and the scoring functions cannot disagree about them.
+        self._params = dict(_SCORING_DEFAULTS)
+        self._params['annotatable_tiers'] = [SIGNAL_GOOD, SIGNAL_AVERAGE]
         # Apply any params the user configured before running annotation
         _ann_stage = (app.stages.get('annotation')
                       if app and hasattr(app, 'stages') else None)
         if _ann_stage is not None and getattr(_ann_stage, '_annotation_params', None):
-            self._params.update(_ann_stage._annotation_params)
+            self._params.update(_migrate_params(_ann_stage._annotation_params))
+
+        # 'Tolerance (ppm)' on the Annotation panel is the only place this
+        # number is entered. It owns both roles — how far to look for a
+        # candidate, and how far a signal may sit from the DB and still be
+        # accepted — because they are the same question asked twice.
+        if _ann_stage is not None:
+            try:
+                _tol_hud = float(_ann_stage.tolerance_var.get())
+                if _tol_hud > 0:
+                    self._params['dppm_gold'] = _tol_hud
+            except Exception:
+                pass
 
         # ── Resolve the tk root for thread-safe after() calls ─────────────────
         _root = None
@@ -470,6 +441,11 @@ class AnnotationResultsWindow:
         def _data_phase():
             try:
                 _step(1, 'Expanding peaks…')
+                # Every detected peak stays a snap target: line counting and
+                # ΔJ measure the spectrum, they do not annotate it. Removing a
+                # Poor line here would pair its partner with an unrelated
+                # neighbour and report a coupling constant that was never
+                # measured. Poor signals are excluded at the anchor instead.
                 self.peaks = self._expand_peaks_with_subpeaks(peaks)
 
                 _step(2, 'Grouping metabolites…')
@@ -509,26 +485,13 @@ class AnnotationResultsWindow:
 
                 if not _using_saved:
                     _step(8, 'Enriching ΔJ from spectrum…')
-                    self._auto_resolve_unmatched_lines()
-                    self._enrich_delta_j_from_spectrum()
 
                     _step(9, 'Computing scores…')
                     self._compute_scores()
-                    self._propagate_multiplet_confirmation()
-                    self._filter_incompatible_candidates()
-                    self._propagate_j_anchor_quality()
-                    self._propagate_anchor_position()
                     self._enrich_scores()
-                    self._adjust_scores_for_competition()
-                    self._classify_confidence_classes()
                     self._auto_mark_good()
-                    self._require_multi_peak_confirmation()
-                    self._promote_uncontested_candidates()
-                    self._promote_exclusive_singlets()
-                    self._promote_corroborated_singlets()
-                    self._promote_anchor_confirmed_peaks()
-                    self._propagate_anchor_position()   # re-run: promotions may add anchors
-                    # self._nnls_spectral_validation()  # disabled — needs validation
+                    self._promote_singlets()
+                    self._nnls_spectral_validation()
                 else:
                     _step(8, 'Restoring saved state…')
                     # Metabolites already have all quality marks embedded — do NOT
@@ -720,6 +683,11 @@ class AnnotationResultsWindow:
                 'mcr_pearson_r':   r.get('mcr_pearson_r'),
                 'mcr_confirmed':   r.get('mcr_confirmed'),
                 'mcr_cross_corr':  r.get('mcr_cross_corr'),
+                'mcr_delta_j_hz':  r.get('mcr_delta_j_hz'),
+                'mcr_shift_ppm':   r.get('mcr_shift_ppm'),
+                'mcr_informative_only': r.get('mcr_informative_only', False),
+                'mcr_info_reason': r.get('mcr_info_reason'),
+                'mcr_shift_disagree_ppm': r.get('mcr_shift_disagree_ppm'),
                 'stocsy_coherence':r.get('stocsy_coherence'),
             })
             # Track best composite score for metabolite sorting
@@ -888,7 +856,22 @@ class AnnotationResultsWindow:
                             sticks = [(db_ppm, 1.0)]
                         offset  = mp['peak_ppm'] - db_ppm
                         shifted = [(sp + offset, si) for sp, si in sticks]
+                    # ── Local shape score, kept per signal ────────────────
+                    # _peak_shape_score is measured in THIS signal's own window,
+                    # so it answers "does this multiplet's predicted shape match
+                    # what the spectrum shows here". Storing it per matched peak
+                    # is what makes it usable to separate two metabolites
+                    # competing for the same peak; the metabolite-level value
+                    # below is the aggregate of these parts and answers a
+                    # different question (is the analyte present at all).
+                    #
+                    # _s_cosine_local is None whenever the shape could not be
+                    # measured. The Δppm/coverage substitutes used for the
+                    # aggregate must NOT be stored as if they were shape: they
+                    # are Δppm under another name, and a tie-break that silently
+                    # falls back to Δppm is no longer orthogonal to it.
                     if not has_spec:
+                        mp['_s_cosine_local'] = None
                         peak_scores.append(
                             max(0.0, 1.0 - mp.get('ppm_diff', 0) / 0.05))
                         continue
@@ -900,6 +883,7 @@ class AnnotationResultsWindow:
                     ps = _peak_shape_score(
                         ppm_arr, int_arr, shifted,
                         mp['peak_ppm'], db_entry, hwhm_default=hwhm)
+                    mp['_s_cosine_local'] = None if ps is None else float(ps)
                     if ps is None:
                         ps = max(0.0, 1.0 - mp.get('ppm_diff', 0) / 0.05)
                     if ps is not None:
@@ -1080,23 +1064,14 @@ class AnnotationResultsWindow:
                 mp['db_ppm_calibrated'] = new_db   # store separately, preserve original
                 mp['ppm_diff']  = float(abs(obs_ppm - new_db))
 
-        # Recompute scores after ppm_diff is updated, then rebuild assignments
-        self._auto_resolve_unmatched_lines()
+        # Recompute scores after ppm_diff is updated, then rebuild assignments.
+        # Calibration moved the ppm axis, so the lines the search snapped no
+        # longer describe these peaks — they must be measured again.
+        self._lines_dirty = True
         self._compute_scores()
-        self._propagate_multiplet_confirmation()   # depends on _s_dj set by scores
-        self._filter_incompatible_candidates()
-        self._propagate_j_anchor_quality()
-        self._propagate_anchor_position()
         self._enrich_scores()
-        self._adjust_scores_for_competition()
-        self._classify_confidence_classes()
         self._auto_mark_good()
-        self._require_multi_peak_confirmation()
-        self._promote_uncontested_candidates()
-        self._promote_exclusive_singlets()
-        self._promote_corroborated_singlets()
-        self._promote_anchor_confirmed_peaks()
-        self._propagate_anchor_position()
+        self._promote_singlets()
         self._nnls_spectral_validation()
         self._build_peak_assignments()
 
@@ -1134,11 +1109,11 @@ class AnnotationResultsWindow:
         n_met = len(self.metabolites)
         self._summary_lbl = ttk.Label(
             frame_a,
-            text=f"{n_pk} peaks assigned  ·  {n_met} metabolites",
+            text=f"{n_pk} signals assigned  ·  {n_met} metabolites",
             font=("Arial", 9, "italic"), foreground="gray")
         self._summary_lbl.pack(anchor=tk.W, padx=4, pady=(4, 2))
         ttk.Label(frame_a,
-                  text="Ctrl+1 = Good  ·  Ctrl+2 = Undef (→ MCR)  ·  Ctrl+3 = Bad",
+                  text="Ctrl+1 = Good  ·  Ctrl+2 = Average (→ MCR)  ·  Ctrl+3 = Poor",
                   font=("Arial", 7), foreground="#888").pack(
             anchor=tk.W, padx=4, pady=(0, 2))
 
@@ -1154,25 +1129,21 @@ class AnnotationResultsWindow:
                    command=lambda: self._flt_name.set('')
                    ).pack(side=tk.LEFT)
 
-        # Quality filter checkboxes
+        # Confidence filter — the same control the Peak List uses for signal
+        # quality, so one scale is read the same way in both windows.
         qf = ttk.Frame(frame_a)
         qf.pack(fill=tk.X, padx=4, pady=(0, 4))
-        ttk.Label(qf, text='Show:', font=('Arial', 8)).pack(side=tk.LEFT, padx=(0, 4))
         self._ann_filt_good  = tk.BooleanVar(value=True)
         self._ann_filt_bad   = tk.BooleanVar(value=True)
         self._ann_filt_undef = tk.BooleanVar(value=True)
-        self._ann_filt_bdl   = tk.BooleanVar(value=False)
         # 'm' multiplets are permanently excluded (no J values available)
         self._ann_filt_mult_m = False
-        for text, var, bg, fg in [
-            ('✓ Good',  self._ann_filt_good,  '#c8f7c5', '#1a7a1a'),
-            ('✗ Bad',   self._ann_filt_bad,   '#ffd6d6', '#9a0000'),
-            ('— Undef', self._ann_filt_undef, '#f0f0f0', '#444444'),
-        ]:
-            tk.Checkbutton(qf, text=text, variable=var,
-                           bg=bg, fg=fg, selectcolor=bg,
-                           activebackground=bg, font=('Arial', 8),
-                           command=self._populate).pack(side=tk.LEFT, padx=2)
+        self._conf_filt_cbs = build_tier_filter_row(
+            qf,
+            {SIGNAL_GOOD:    self._ann_filt_good,
+             SIGNAL_AVERAGE: self._ann_filt_undef,
+             SIGNAL_POOR:    self._ann_filt_bad},
+            self._populate)
 
         # Treeview
         tf  = ttk.Frame(frame_a)
@@ -1205,7 +1176,7 @@ class AnnotationResultsWindow:
         self.tree.heading('end',     text='End')
         self.tree.heading('score',   text='Score',
                           command=lambda: self._sort_by('score'))
-        self.tree.heading('quality', text='Quality / Match')
+        self.tree.heading('quality', text='Confidence')
         self.tree.heading('overlap', text='Overlap')
         self.tree.column('#0',      width=90,  minwidth=70)
         self.tree.column('name',    width=190, minwidth=130)
@@ -1216,40 +1187,42 @@ class AnnotationResultsWindow:
         self.tree.column('quality', width=70,  minwidth=50, anchor=tk.CENTER)
         self.tree.column('overlap', width=65,  minwidth=50, anchor=tk.CENTER)
 
-        self.tree.tag_configure('met_high',   foreground='#1a7a1a',
-                                background='#d6f5d6')   # green  — score > 0.75
-        self.tree.tag_configure('met_mid',    foreground='#7a6000',
-                                background='#fff3cc')   # amber  — score 0.50–0.75
-        self.tree.tag_configure('met_low',    foreground='#9a0000',
-                                background='#f5d6d6')   # red    — score < 0.50
+        # Metabolite rows are coloured by their confidence tier, not by the raw
+        # score: the colour must say the same thing as the Confidence column.
+        for _t, _tag in ((SIGNAL_GOOD,    'met_high'),
+                         (SIGNAL_AVERAGE, 'met_mid'),
+                         (SIGNAL_POOR,    'met_low')):
+            self.tree.tag_configure(_tag, background=QUALITY_BG[_t],
+                                    foreground=QUALITY_FG[_t])
+        # The analyte row carries the analyte score and owns the signals below
+        # it; bold separates the two levels at a glance. Only the font is set
+        # here so it composes with the tier colour tags above.
+        self.tree.tag_configure('met_parent',
+                                font=('TkDefaultFont', 9, 'bold'))
         self.tree.tag_configure('peak_match', foreground='#1a1a2e')
         self.tree.tag_configure('mult_info',  foreground='#1a5c2e',
                                 background='#e8f5e9', font=('Courier', 8))
-        self.tree.tag_configure('qual_good',  background='#d6f5d6')
-        self.tree.tag_configure('qual_bad',   background='#f5d6d6')
-        self.tree.tag_configure('qual_mid',   background='#fff3cc')  # overlap warning
-        self.tree.tag_configure('qual_bdl',   foreground='#999999', background='#f0f0f0')
+        # qual_mid is the Average tier: a plausible match the analyst must
+        # still confirm (contested peak, no verdict reached).
+        self.tree.tag_configure('qual_good', background=QUALITY_BG[SIGNAL_GOOD],
+                                foreground=QUALITY_FG[SIGNAL_GOOD])
+        self.tree.tag_configure('qual_mid',  background=QUALITY_BG[SIGNAL_AVERAGE],
+                                foreground=QUALITY_FG[SIGNAL_AVERAGE])
+        self.tree.tag_configure('qual_bad',  background=QUALITY_BG[SIGNAL_POOR],
+                                foreground=QUALITY_FG[SIGNAL_POOR])
         self.tree.tag_configure('sub_peak',          foreground='#444444', background='#f8f8ff')
         self.tree.tag_configure('sub_peak_matched',   foreground='#115511', background='#d6f5d6')
         self.tree.tag_configure('sub_peak_unmatched', foreground='#771111', background='#f5d6d6')
         self.tree.tag_configure('anchor_line', foreground='#0044cc', background='#ddeeff',
                                 font=('Courier', 8, 'bold'))
-        self.tree.tag_configure('singlet_anchored', foreground='#004466',
-                                background='#d4f0ff')
-        # Confidence class tags (A–X)
-        for _cls, (_bg, _fg) in CLASS_COLOURS.items():
-            self.tree.tag_configure(
-                f'class_{_cls}', foreground=_fg, background=_bg,
-                font=('TkDefaultFont', 9, 'bold'))
         self._sep_iids: set = set()
 
         self.tree.bind('<<TreeviewSelect>>', self._on_select)
         self.tree.bind('<Button-3>', self._on_right_click)
-        self.tree.bind('<<TreeviewClose>>', self._on_tree_close)
         self.tree.bind('<Motion>',   self._on_tree_motion)
         self.tree.bind('<Leave>',    lambda _e: self._hide_tooltip())
         self.win.bind('<Control-Key-1>', lambda e: self._classify('good'))
-        self.win.bind('<Control-Key-2>', lambda e: self._classify(None))  # → Undef → MCR
+        self.win.bind('<Control-Key-2>', lambda e: self._classify(None))  # → Average → MCR
         self.win.bind('<Control-Key-3>', lambda e: self._classify('bad'))
 
         # Export / action buttons
@@ -1272,7 +1245,7 @@ class AnnotationResultsWindow:
             font=("Arial", 8), foreground="gray")
         self.match_info.pack(anchor=tk.W, padx=4)
         ttk.Label(frame_b,
-                  text="Tip: right-drag on zoom view to select peak region",
+                  text="Tip: right-drag on zoom view to select signal region",
                   font=("Arial", 7), foreground="#999").pack(anchor=tk.W, padx=4)
 
         self.fig = plt.Figure(figsize=(6, 4), dpi=100)
@@ -1330,12 +1303,12 @@ class AnnotationResultsWindow:
 
         self._q_labels = {}
         for i, (key, label, hint) in enumerate([
-            ('confidence', 'Confidence', 'Composite score 0–1 (≥0.75 good · ≤0.50 bad) — informative'),
+            ('confidence', 'Score', 'Composite score 0–1 (≥0.75 Good · ≤0.50 Poor) — informative'),
+            ('j_obs',     'J / ΔJ',      'J obs vs DB (Hz) · right-drag to reselect'),
+            ('mcr',       'MCR',         'R²  Pearson r  cross-sample corr — plot shows the resolved component when K≥2 and r≥0.70'),
+            ('n_matched', 'Matched',     'peaks found / total — informative'),
             ('coverage',  'Coverage',    '% DB peaks matched — informative'),
             ('cosine',    'Similarity',  'Cosine similarity (0–1) — informative'),
-            ('n_matched', 'Matched',     'peaks found / total — informative'),
-            ('j_obs',     'J / ΔJ',      'J obs vs DB (Hz) · right-drag to reselect'),
-            ('mcr',       'MCR',         'R²  Pearson r  cross-sample corr (overlap tiebreaker)'),
         ]):
             ttk.Label(qf, text=f"{label}:",
                       font=("Arial", 8, "bold")).grid(
@@ -1353,7 +1326,7 @@ class AnnotationResultsWindow:
         reset_row = ttk.Frame(qf)
         reset_row.grid(row=8, column=0, columnspan=4, sticky=tk.EW, pady=(4, 2))
         self._reset_btn = tk.Button(
-            reset_row, text='↺ Reset peaks to original',
+            reset_row, text='↺ Reset signals to original',
             font=('Arial', 8), fg='#cc5500', bg='#fff8f0',
             relief='groove', cursor='hand2', command=self._rc_reset)
         self._reset_btn.pack(side=tk.LEFT, padx=4)
@@ -1380,134 +1353,17 @@ class AnnotationResultsWindow:
         _cvw.bind('<ButtonRelease-3>', self._tk_rc_release)
 
     # ── Detectability & Overlap ───────────────────────────────────────────────
-
     def _compute_detectability(self):
-        """
-        For each matched peak, estimate its SNR from the observed spectrum and
-        the relative proton count within the metabolite.  Peaks with expected
-        SNR < 3.0 are marked  below_detection_limit = True  so they are
-        excluded from overlap detection and hidden from the tree.
-
-        Also marks db_peaks with  bdl = True  when their expected SNR (propagated
-        from the anchor matched peak via nH ratio) is below the noise threshold.
-        BDL db_peaks are hidden from the child-row list entirely — they are not
-        shown as ✓ or ✗ because the signal cannot be expected to appear in the
-        experimental spectrum.
-        """
-        ppm_arr  = self.ppm
-        int_arr  = self.mean_intensity
-        if ppm_arr is None or int_arr is None or len(ppm_arr) < 10:
+        """Expected SNR per signal — see processing.annotation_detectability."""
+        if (self.ppm is None or self.mean_intensity is None
+                or len(self.ppm) < 10):
             return
-
-        # Noise estimate: MAD of the spectrum tail (far upfield, > 9.5 ppm)
-        tail_mask = ppm_arr > 9.5
-        if tail_mask.sum() < 20:
-            # fall back: lowest 5th percentile of the whole spectrum
-            noise = float(np.percentile(np.abs(int_arr), 5)) or 1.0
-        else:
-            tail = int_arr[tail_mask]
-            noise = float(np.median(np.abs(tail - np.median(tail)))) * 1.4826 or 1.0
-        if noise <= 0:
-            noise = 1.0
-        self._noise_level = noise   # stored for _propagate_j_anchor_quality
-
-        for met in self.metabolites:
-            matched = met.get('matched_peaks', [])
-
-            # Compute observed SNR for each matched peak from the spectrum
-            for mp in matched:
-                ppk = mp.get('peak_ppm', mp.get('db_ppm', 0))
-                idx = int(np.argmin(np.abs(ppm_arr - ppk)))
-                mp['obs_intensity'] = float(int_arr[idx])
-                mp['obs_snr']       = mp['obs_intensity'] / noise
-
-            if not matched:
-                continue
-
-            # Anchor = matched peak with highest observed SNR × nH
-            # (nH × SNR gives the best proxy for concentration contribution)
-            def _nh(mp):
-                try:
-                    return int(mp.get('protons', 1) or 1)
-                except Exception:
-                    return 1
-
-            anchor        = max(matched, key=lambda p: p.get('obs_snr', 0) * _nh(p))
-            anchor_snr    = anchor.get('obs_snr', 0)
-            anchor_protons = _nh(anchor)
-
-            # Mark matched_peaks
-            for mp in matched:
-                p_protons = _nh(mp)
-                expected_snr = (anchor_snr * (p_protons / anchor_protons)
-                                if anchor_protons > 0 else anchor_snr)
-                mp['expected_snr']          = expected_snr
-                mp['below_detection_limit'] = expected_snr < 3.0
-
-            # Mark db_peaks — covers both matched and unmatched DB entries.
-            # An unmatched DB peak that is BDL is simply absent because it is
-            # below the noise floor, not because the metabolite is wrong.
-            for dp in met.get('db_peaks', []):
-                try:
-                    dp_protons = int(dp.get('protons', 1) or 1)
-                except Exception:
-                    dp_protons = 1
-                expected_snr = (anchor_snr * (dp_protons / anchor_protons)
-                                if anchor_protons > 0 else anchor_snr)
-                dp['bdl']          = expected_snr < 3.0
-                dp['expected_snr'] = expected_snr
+        self._noise_level = mark_detectability(
+            self.metabolites, self.ppm, self.mean_intensity)
 
     def _compute_overlap(self):
-        """Build peak_rank → [metabolite names] map for the overlap column.
-        BDL peaks are excluded — they are not considered real competitors.
-
-        For multiplets, ALL predicted lines' closest experimental peaks are
-        registered so that a doublet in metabolite X blocks anchor status for
-        metabolite Y even when Y only overlaps one line of the doublet.
-        """
-        tol = 0.015  # ppm tolerance for matching predicted lines to exp peaks
-
-        # Fast lookup: ppm value → rank for experimental peaks
-        pk_ppm_rank = {}
-        for pk in (self.peaks or []):
-            rk = pk.get('rank')
-            if rk is not None:
-                pk_ppm_rank[float(pk.get('ppm', 0))] = rk
-        pk_ppms = sorted(pk_ppm_rank.keys())
-
-        def _find_rank(ppm_val):
-            best_d, best_r = tol, None
-            for p in pk_ppms:
-                d = abs(p - ppm_val)
-                if d < best_d:
-                    best_d, best_r = d, pk_ppm_rank[p]
-                elif p > ppm_val + tol:
-                    break
-            return best_r
-
-        peak_mets = {}
-        for met in self.metabolites:
-            name = met['name']
-            for mp in met['matched_peaks']:
-                if mp.get('below_detection_limit'):
-                    continue
-                rank = mp.get('peak_rank')
-                if rank is not None:
-                    lst = peak_mets.setdefault(rank, [])
-                    if name not in lst:
-                        lst.append(name)
-
-                # For multiplets: also register sibling predicted-line ranks
-                pred_lines = mp.get('predicted_lines') or []
-                if len(pred_lines) > 1:
-                    for line in pred_lines:
-                        r = _find_rank(float(line.get('ppm', 0)))
-                        if r is not None and r != rank:
-                            lst2 = peak_mets.setdefault(r, [])
-                            if name not in lst2:
-                                lst2.append(name)
-
-        self._peak_overlap = peak_mets
+        """Which metabolites claim each peak — see annotation_detectability."""
+        self._peak_overlap = build_overlap_map(self.metabolites, self.peaks)
 
     def _build_child_candidates(self, tol=0.015):
         """For each DB-peak PPM, collect ALL metabolites that have a DB peak
@@ -1694,199 +1550,21 @@ class AnnotationResultsWindow:
         except ValueError:
             return None
         return abs(j_obs - j_db)
-
-    def _auto_resolve_unmatched_lines(self):
-        """
-        For non-singlet matched_peaks with no predicted_lines (NOT FOUND), search
-        the spectrum in [db_ppm ± tolerance] for the expected N lines using the same
-        logic as _rc_select_region (right-drag).
-
-        Acceptance criterion: observed ΔJ < dj_bad_hz (0.50 Hz).
-        Populated peaks are flagged _auto_resolved=True so the gold J gate in
-        _auto_mark_good skips them — quality stays None (yellow); user must confirm.
-        """
-        if self.ppm is None or self.mean_intensity is None:
-            return
-
-        from scipy.signal import find_peaks as _fp
-
-        mhz       = self._get_field_mhz()
-        tolerance = float(self._params.get('tolerance', 0.05))
-        dj_bad    = float(self._params.get('dj_bad_hz', 0.50))
-        _sing     = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
-
-        import re as _re_ar
-        for met in self.metabolites:
-            for mp in met['matched_peaks']:
-                # Skip if already has lines
-                if mp.get('predicted_lines'):
-                    continue
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in _sing:
-                    continue
-                n_exp = self._MULT_N.get(mult, 0)
-                if n_exp < 2:
-                    continue
-                db_ppm = float(mp.get('db_ppm') or mp.get('peak_ppm') or 0)
-                if db_ppm == 0:
-                    continue
-
-                lo = db_ppm - tolerance
-                hi = db_ppm + tolerance
-                mask = (self.ppm >= lo) & (self.ppm <= hi)
-                if mask.sum() < 2:
-                    continue
-                x_reg = self.ppm[mask]
-                y_reg = self.mean_intensity[mask].copy()
-
-                try:
-                    pks_idx, _ = _fp(y_reg,
-                                     distance=max(1, len(y_reg) // (n_exp * 4 + 1)))
-                except Exception:
-                    pks_idx = np.array([])
-
-                if len(pks_idx) == 0:
-                    pks_idx = np.argsort(y_reg)[::-1][:n_exp * 3]
-
-                if len(pks_idx) > n_exp:
-                    top = sorted(pks_idx, key=lambda i: y_reg[i], reverse=True)[:n_exp]
-                    pks_idx = np.array(top)
-
-                if len(pks_idx) < 2:
-                    continue
-
-                pks_idx = sorted(pks_idx, key=lambda i: x_reg[i])
-                ppms_found = [float(x_reg[i]) for i in pks_idx]
-
-                # Check observed ΔJ against DB J and dj_bad_hz threshold
-                seps_ppm = [abs(ppms_found[k+1] - ppms_found[k])
-                            for k in range(len(ppms_found) - 1)]
-                j_obs_hz  = [s * mhz for s in seps_ppm]
-                mean_j    = sum(j_obs_hz) / len(j_obs_hz)
-
-                db_j_raw = str(mp.get('j_coupling') or '').strip()
-                _j_nums  = ([float(v) for v in _re_ar.findall(r'\d+\.?\d*', db_j_raw)
-                             if float(v) > 0] if db_j_raw else [])
-                if _j_nums:
-                    if abs(mean_j - _j_nums[0]) >= dj_bad:
-                        continue  # ΔJ too large — not a reliable auto-match
-
-                intensities   = _relative_intensities_from_type(mult, len(pks_idx))
-                new_pred_lines = [
-                    {'ppm': p, 'rel_intensity': intensities[k] if k < len(intensities) else 1.0}
-                    for k, p in enumerate(ppms_found)
-                ]
-
-                tot   = sum(l['rel_intensity'] for l in new_pred_lines)
-                obs_c = (sum(l['ppm'] * l['rel_intensity'] for l in new_pred_lines) / tot
-                         if tot > 0 else sum(ppms_found) / len(ppms_found))
-
-                mp['predicted_lines']           = new_pred_lines
-                mp['_original_predicted_lines'] = list(new_pred_lines)
-                mp['_auto_resolved']            = True
-                mp['j_obs_hz']                  = j_obs_hz
-                mp['j_obs_ppm']                 = seps_ppm
-                mp['peak_ppm']                  = obs_c
-                mp['ppm_diff']                  = abs(obs_c - db_ppm)
-
-    def _enrich_delta_j_from_spectrum(self):
-        """
-        For every non-singlet matched peak, measure J by snapping detected peaks
-        to the predicted_lines positions (same method used in the fingerprint plot).
-        This guarantees that delta_j_hz in mp_ref matches what is displayed in
-        the Match Quality card.
-        """
-        if self.ppm is None:
-            return
-
-        field_mhz = self._get_field_mhz()
-
-        import re as _re3
-        for met in self.metabolites:
-            for mp in met['matched_peaks']:
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in ('s', 'singlet', '', 'm', 'multiplet'):
-                    continue
-
-                pred = mp.get('predicted_lines') or []
-                if len(pred) < 2:
-                    continue
-
-                db_j_raw = str(mp.get('j_coupling') or '').strip()
-                _j_nums  = ([float(x) for x in _re3.findall(r'\d+\.?\d*', db_j_raw)
-                             if float(x) > 0] if db_j_raw else [])
-                db_j_hz  = _j_nums[0] if _j_nums else None
-
-                # Snap tolerance: half the minimum predicted-line spacing.
-                # If the peak was re-aligned after annotation, shift predicted
-                # lines to the current peak ppm before snapping.
-                ppms_pred = sorted(float(p['ppm']) for p in pred)
-                spacings  = [abs(ppms_pred[k+1] - ppms_pred[k])
-                             for k in range(len(ppms_pred) - 1)]
-                snap_r    = max(min(spacings) * 0.45, 0.003) if spacings else 0.005
-
-                # Alignment correction: only shift predicted lines if the detected
-                # peak is OUTSIDE the multiplet's own footprint — i.e. the peak has
-                # been manually re-anchored far from where annotation placed it.
-                # For triplets/quartets peak_rank may refer to any line (including
-                # outer lines), which would give |shift| ≈ J_ppm; the previous
-                # 0.5×min_spacing threshold incorrectly shifted those cases.
-                _pred_cen   = sum(ppms_pred) / len(ppms_pred)
-                _half_span  = max(ppms_pred) - _pred_cen  # distance center→outer
-                _cur_pk     = next((pk for pk in (self.peaks or [])
-                                    if pk.get('rank') == mp.get('peak_rank')), None)
-                if _cur_pk is not None:
-                    _cur_ppm = float(_cur_pk.get('ppm', _pred_cen))
-                    _shift   = _cur_ppm - _pred_cen
-                    if abs(_shift) > _half_span + min(spacings) * 0.5:
-                        ppms_pred = [p + _shift for p in ppms_pred]
-
-                # Snap detected peaks (self.peaks) to each predicted line,
-                # tracking which line INDEX was matched so we can compute J
-                # correctly regardless of which lines were detected.
-                used_ranks     = set()
-                line_to_det    = {}   # predicted-line index → detected ppm
-                for li, line_ppm in enumerate(ppms_pred):
-                    best_pk, best_d = None, snap_r
-                    for pk in (self.peaks or []):
-                        if pk.get('rank') in used_ranks:
-                            continue
-                        d = abs(float(pk.get('ppm', 0)) - line_ppm)
-                        if d <= best_d:
-                            best_d, best_pk = d, pk
-                    if best_pk is not None:
-                        used_ranks.add(best_pk.get('rank'))
-                        line_to_det[li] = float(best_pk['ppm'])
-
-                snapped_ppm = list(line_to_det.values())
-                if len(snapped_ppm) < 2:
-                    continue
-
-                # J = ppm_span / (line_index_span).  Handles all detection patterns:
-                #   adjacent lines (idx 1,2):  span=J,  idx_span=1  → J   ✓
-                #   outer lines   (idx 0,2):   span=2J, idx_span=2  → J   ✓
-                #   all lines     (idx 0,1,2): span=2J, idx_span=2  → J   ✓
-                _snapped_indices = list(line_to_det.keys())
-                _idx_span = max(_snapped_indices) - min(_snapped_indices)
-                _ppm_span = max(snapped_ppm) - min(snapped_ppm)
-                j_obs = _ppm_span * field_mhz / _idx_span if _idx_span > 0 else _ppm_span * field_mhz
-                mp['observed_j_hz'] = j_obs
-                if db_j_hz is not None:
-                    mp['delta_j_hz'] = float(abs(j_obs - db_j_hz))
-
     def _compute_scores(self):
         """
         Compute composite_score for each matched_peak with a hierarchical model
         that mirrors manual spectrum reading (Δppm gate → multiplicity/ΔJ):
 
-        Non-singlet (doublet, triplet, quartet, …):
-            score = dynamic_composite({ppm: s_ppm, j: s_dj})
-            (weights w_ppm_ns / w_dj from _params, renormalised; j excluded when
-             ΔJ unmeasurable via _dj_conf=0)
+        Delegates to processing.annotation_scoring.signal_score — the same
+        function the search worker and the rescue path use, so one signal has
+        one score. This pass re-runs it with better inputs than the search had:
+        the lines have been snapped to detected peaks and J measured from their
+        real spacings.
 
-        Singlet / 'm' / unresolvable multiplet:
-            score = s_ppm
-            (no J-coupling to validate — only Δppm proximity matters)
+        Non-singlet: ΔJ (w_dj) + Δppm (w_ppm_ns) + local shape (w_cosine_ns),
+        renormalised over whichever terms could be measured.
+        Singlet: Δppm + shape, capped below the Good band — one line is not an
+        identification.
 
         cosine, coverage (s_found), reverse and STOCSY are informative only and
         do NOT enter the score; MCR is the tiebreaker for overlaps.
@@ -1898,20 +1576,16 @@ class AnnotationResultsWindow:
                        n_found == n_expected, ΔJ in [0.20, 0.50) → linear decay 1→0
                        n_found == n_expected, ΔJ ≥ dj_bad_hz (0.50) → 0.0 (Rule 0 also fires)
                        cannot measure → 0.0, excluded from score via _dj_conf=0
-          s_cosine : existing 'cosine' value stored on the metabolite
+          s_cosine : this signal's own shape agreement (_s_cosine_local),
+                     falling back to the analyte-level aggregate
           s_ppm    : Gaussian decay on ppm_diff (σ = tolerance/2, clamped 0–1)
           s_found  : fraction of metabolite's DB peaks that have a matched peak
 
         Thresholds → annotation_quality (if not manually set):
           score > 0.8 → Good (green)
-          0.5–0.8     → Undef (yellow)
+          0.5–0.8     → Average (yellow)
           < 0.5       → Poor / Bad (red)
         """
-        import re as _re_sc
-        _n_map_sc = {'d': 2, 'doublet': 2, 't': 3, 'triplet': 3,
-                     'q': 4, 'quartet': 4, 'dd': 4, 'dt': 6,
-                     'td': 6, 'tt': 9, 'ddd': 8}
-
         try:
             ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
             _tol = float(getattr(ann_stage, 'tolerance', 0.05) or 0.05)
@@ -1921,310 +1595,47 @@ class AnnotationResultsWindow:
         _field_sc  = self._get_field_mhz()
 
         for met in self.metabolites:
-            # ── s_found: fraction of DB peaks with a matched detected peak ──
-            # Only count peaks whose ΔJ is within tolerance (< 0.5 Hz).
-            # Peaks with ΔJ ≥ 0.5 Hz (bad multiplet match) do NOT contribute.
-            # BDL peaks (expected_snr < 3σ from anchor via nH ratio) are excluded
-            # from BOTH numerator and denominator: their absence is expected and
-            # their presence is irrelevant to the metabolite identity score.
-            # Non-BDL unmatched peaks DO lower s_found — they should have appeared.
-            db_peaks_all   = [p for p in met.get('db_peaks', [])
-                              if (p.get('type') or '').lower().strip()
-                              not in ('m', 'multiplet')
-                              and not p.get('bdl', False)]
-            n_db_total     = len(db_peaks_all) or 1
+            s_found = coverage_fraction(
+                met, dj_bad_hz=self._params['dj_bad_hz'])
 
-            def _mp_dj_ok(mp2):
-                """Return True if this matched peak passes the ΔJ criterion."""
-                mult2 = str(mp2.get('type') or mp2.get('multiplicity') or 's').lower().strip()
-                if mult2 in ('s', 'singlet', '', 'm', 'multiplet'):
-                    return True   # singlets have no J — always OK
-                dj2 = mp2.get('delta_j_hz')
-                return dj2 is None or float(dj2) < 0.5  # None = not measured yet → allow
-
-            matched_db_set = {round(float(mp2.get('db_ppm', 0)), 3)
-                              for mp2 in met['matched_peaks']
-                              if _mp_dj_ok(mp2)}
-            n_db_found     = sum(1 for p in db_peaks_all
-                                 if round(float(p.get('ppm_center',
-                                                      p.get('ppm', 0))), 3)
-                                 in matched_db_set)
-            s_found = float(n_db_found) / float(n_db_total)
-
-            # ── cosine at metabolite level ───────────────────────────────────
-            s_cosine = float(met.get('cosine', 0) or 0)
+            # ── cosine ───────────────────────────────────────────────────────
+            # Aggregate over the analyte's signals; each matched peak overrides
+            # it below with its own local value when the shape was measurable.
+            s_cosine_met = float(met.get('cosine', 0) or 0)
 
             for mp in met['matched_peaks']:
                 # ── s_ppm ────────────────────────────────────────────────────
                 ppm_diff = float(mp.get('ppm_diff', 0) or 0)
-                s_ppm    = float(np.exp(-0.5 * (ppm_diff / _sigma_ppm) ** 2))
+                s_ppm    = ppm_score(ppm_diff, _sigma_ppm)
 
                 # ── s_dj ─────────────────────────────────────────────────────
-                mult_sc  = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                s_dj     = 1.0   # default for singlets
-                _dj_conf = 1.0   # 0.0 = J unmeasurable → component excluded from score
+                mult_sc = str(mp.get('type') or mp.get('multiplicity')
+                              or 's').lower().strip()
+                s_dj, _dj_conf = resolve_dj(
+                    mp, met, self.peaks, mult=mult_sc, params=self._params,
+                    field_mhz=_field_sc, tolerance=_tol,
+                    remeasure=bool(getattr(self, '_lines_dirty', False)))
 
-                if mult_sc not in ('s', 'singlet', '', 'm', 'multiplet'):
-                    # Count lines via predicted_lines (same source as tree).
-                    # For singlets with is_sub_peak=True, predicted_lines contains
-                    # ALL siblings — use DB multiplicity map instead.
-                    pred_sc  = mp.get('predicted_lines', [])
-                    # Look up the full DB entry to get the authoritative line count.
-                    # mp['predicted_lines'] may have been truncated to found lines only;
-                    # the DB fingerprint entry is the ground truth for how many are expected.
-                    _dp_sc = next(
-                        (p for p in met.get('db_peaks', [])
-                         if round(float(p.get('ppm_center', p.get('ppm', 0))), 3)
-                         == round(float(mp.get('db_ppm', 0)), 3)),
-                        None)
-                    _dp_pl_full = (_dp_sc.get('predicted_lines') or []) if _dp_sc else []
-                    _n_from_map = _n_map_sc.get(mult_sc, len(pred_sc) if pred_sc else 2)
-                    n_exp_sc    = max(_n_from_map, len(_dp_pl_full))
+                _mcr = apply_mcr_dj(mp, params=self._params)
+                if _mcr is not None:
+                    s_dj, _dj_conf = _mcr
 
-                    # If predicted_lines is empty or has fewer entries than expected
-                    # (sub-peak annotation may store only 1 entry, or none at all),
-                    # build synthetic snap targets from peak_ppm + DB J spacing —
-                    # same fallback as the fingerprint display uses via plot_sticks.
-                    if len(pred_sc) < n_exp_sc and _field_sc > 0:
-                        _obs_ctr_fb = (float(mp.get('peak_ppm') or 0)
-                                       or float(mp.get('db_ppm') or 0))
-                        _j_raw_fb   = str(mp.get('j_coupling') or '').strip()
-                        _j_fb_list  = [float(x) for x in
-                                       _re_sc.findall(r'\d+\.?\d*', _j_raw_fb)
-                                       if float(x) > 0]
-                        _j_fb = _j_fb_list[0] if _j_fb_list else None
-                        if _obs_ctr_fb and _j_fb:
-                            _j_ppm_fb = _j_fb / _field_sc
-                            _half_fb  = (n_exp_sc - 1) / 2.0
-                            pred_sc = [{'ppm': _obs_ctr_fb + (_k - _half_fb) * _j_ppm_fb,
-                                        'rel_intensity': 1.0}
-                                       for _k in range(n_exp_sc)]
+                score_signal(mp, s_ppm=s_ppm, s_dj=s_dj, dj_conf=_dj_conf,
+                             coverage=s_found, params=self._params)
 
-                    if pred_sc and n_exp_sc >= 2:
-                        # Use the user-configured tolerance as snap radius so any
-                        # peak within the annotation search window can be matched.
-                        # The _used_sc set prevents the same peak from matching two lines.
-                        _tol_sc = _tol
+                # This signal's own shape agreement when it could be measured;
+                # the analyte-level aggregate only as a fallback.
+                _cos_local = mp.get('_s_cosine_local')
+                mp['_s_cosine'] = (float(_cos_local) if _cos_local is not None
+                                   else s_cosine_met)
 
-                        _used_sc  = set()
-                        _found_sc = []
-                        for _line_sc in pred_sc:
-                            _lp = float(_line_sc.get('ppm', 0))
-                            _best_pk_sc = None
-                            _best_d_sc  = _tol_sc
-                            for _pk_sc in self.peaks:
-                                if _pk_sc.get('rank') in _used_sc:
-                                    continue
-                                _d_sc = abs(float(_pk_sc.get('ppm', 0)) - _lp)
-                                if _d_sc <= _best_d_sc:
-                                    _best_d_sc  = _d_sc
-                                    _best_pk_sc = _pk_sc
-                            if _best_pk_sc is not None:
-                                _used_sc.add(_best_pk_sc.get('rank'))
-                                _found_sc.append(float(_best_pk_sc['ppm']))
-
-                        # Deduplicate by position: a parent peak and its sub-peak
-                        # share the same physical signal but have different ranks.
-                        # Use a tight threshold (1/4 linewidth ≈ 0.003 ppm) so that
-                        # genuine multiplet lines (J ≈ 6 Hz → 0.01 ppm apart) are
-                        # NOT collapsed — only true coincident parent/sub pairs are.
-                        _dedup_thr = 0.003
-                        _dedup_sc = []
-                        for _fp in _found_sc:
-                            if not any(abs(_fp - _ep) < _dedup_thr for _ep in _dedup_sc):
-                                _dedup_sc.append(_fp)
-                        _found_sc = _dedup_sc
-
-                        # ── J-consistency validation ─────────────────────────
-                        # Every consecutive spacing between found lines must be
-                        # individually close to DB J (±1 Hz). A spurious nearby
-                        # peak makes one spacing wildly wrong while others are OK.
-                        # If any individual spacing fails, drop the peak that
-                        # causes the worst spacing and accept n_found = n_exp - 1.
-                        if len(_found_sc) >= 2 and _field_sc > 0:
-                            _j_raw_val = str(mp.get('j_coupling') or '').strip()
-                            _j_db_nums_v = [float(x) for x in
-                                            _re_sc.findall(r'\d+\.?\d*', _j_raw_val)
-                                            if float(x) > 0]
-                            _j_db_v = _j_db_nums_v[0] if _j_db_nums_v else None
-                            if _j_db_v is not None and len(_found_sc) == n_exp_sc:
-                                _srt_v = sorted(_found_sc)
-                                _seps_v = [abs(_srt_v[k+1] - _srt_v[k]) * _field_sc
-                                           for k in range(len(_srt_v) - 1)]
-                                # Check each individual spacing against DB J
-                                _bad_seps = [abs(s - _j_db_v) > 2.0 for s in _seps_v]
-                                if any(_bad_seps):
-                                    # Find which peak to drop: try every candidate,
-                                    # keep the removal that minimises max individual
-                                    # spacing deviation (worst-case spacing).
-                                    _best_drop, _best_worst = None, max(
-                                        abs(s - _j_db_v) for s in _seps_v)
-                                    for _drop_i in range(len(_found_sc)):
-                                        _cand = [p for j, p in enumerate(_found_sc)
-                                                 if j != _drop_i]
-                                        if len(_cand) < 2:
-                                            continue
-                                        _s2 = sorted(_cand)
-                                        _sep2 = [abs(_s2[k+1] - _s2[k]) * _field_sc
-                                                 for k in range(len(_s2) - 1)]
-                                        _worst2 = max(abs(s - _j_db_v) for s in _sep2)
-                                        if _worst2 < _best_worst:
-                                            _best_worst = _worst2
-                                            _best_drop  = _drop_i
-                                    if _best_drop is not None:
-                                        _found_sc.pop(_best_drop)
-
-                        n_found_sc = len(_found_sc)
-                        mp['_n_found_lines'] = n_found_sc
-                        mp['_n_exp_lines']   = n_exp_sc
-
-                        # Sync predicted_lines with the snap-confirmed peaks so
-                        # the fingerprint orange arrows show exactly the same
-                        # peaks counted in _n_found_lines (single source of truth).
-                        if _found_sc:
-                            _orig_pl  = mp.get('predicted_lines') or []
-                            _snap_pl  = []
-                            _used_fp  = set()
-                            for _l in sorted(_orig_pl, key=lambda l: l['ppm']):
-                                _lp   = float(_l['ppm'])
-                                _best = min(
-                                    (fp for fp in _found_sc if fp not in _used_fp),
-                                    key=lambda fp: abs(fp - _lp), default=None)
-                                if _best is not None and abs(_best - _lp) <= _tol_sc:
-                                    _used_fp.add(_best)
-                                    _snap_pl.append({'ppm': _best,
-                                                     'rel_intensity': _l.get('rel_intensity', 1.0)})
-                            # Any confirmed peak that had no original predicted_lines
-                            # counterpart (e.g. fallback to synthetic positions).
-                            for _fp in sorted(_found_sc):
-                                if _fp not in _used_fp:
-                                    _snap_pl.append({'ppm': _fp, 'rel_intensity': 1.0})
-                            if _snap_pl:
-                                _max_ri_snap = max(l['rel_intensity'] for l in _snap_pl) or 1.0
-                                for _sl in _snap_pl:
-                                    _sl['rel_intensity'] /= _max_ri_snap
-                                mp['predicted_lines'] = sorted(_snap_pl,
-                                                                key=lambda l: l['ppm'])
-
-                        if n_found_sc < n_exp_sc:
-                            # Missing lines — ΔJ unmeasurable; clear stale value
-                            # so Rule 0 / Rule 2 in _auto_mark_good don't use
-                            # an annotation-search ΔJ that no longer applies.
-                            mp['delta_j_hz']    = None
-                            mp['observed_j_hz'] = None
-                            s_dj = float(n_found_sc) / float(n_exp_sc) * 0.5
-                        else:
-                            # All lines found — always recompute ΔJ from snap
-                            # positions (more current than annotation-search value).
-                            dj_sc = None
-                            if len(_found_sc) >= 2 and _field_sc > 0:
-                                _sorted_sc = sorted(_found_sc)
-                                _seps_sc   = [abs(_sorted_sc[k+1] - _sorted_sc[k]) * _field_sc
-                                              for k in range(len(_sorted_sc) - 1)]
-                                _j_obs_sc  = float(np.median(_seps_sc))
-                                _j_raw_sc  = str(mp.get('j_coupling') or '').strip()
-                                _j_db_nums = [float(x) for x in
-                                              _re_sc.findall(r'\d+\.?\d*', _j_raw_sc)
-                                              if float(x) > 0]
-                                _j_db_sc   = _j_db_nums[0] if _j_db_nums else None
-                                dj_sc = abs(_j_obs_sc - _j_db_sc) if _j_db_sc else None
-                                # Write fresh measurements back so _auto_mark_good
-                                # and _sync_anchors_to_peaks use consistent data.
-                                mp['observed_j_hz'] = float(_j_obs_sc)
-                                if dj_sc is not None:
-                                    mp['delta_j_hz'] = float(dj_sc)
-                                # Update ppm_diff from snap-observed centre vs DB ppm
-                                _obs_c_sc = float(np.mean(_found_sc))
-                                _db_p_sc  = float(mp.get('db_ppm') or 0)
-                                if _db_p_sc != 0:
-                                    mp['ppm_diff']  = float(abs(_obs_c_sc - _db_p_sc))
-                                    mp['peak_ppm']  = float(_obs_c_sc)
-
-                            if dj_sc is None:
-                                s_dj     = self._params['dj_neutral']  # = 0.0
-                                _dj_conf = 0.0  # all lines found but J not computable
-                            elif dj_sc < self._params['dj_gold_hz']:
-                                s_dj = 1.0
-                            elif dj_sc < self._params['dj_bad_hz']:
-                                _rng = self._params['dj_bad_hz'] - self._params['dj_gold_hz']
-                                s_dj = 1.0 - (dj_sc - self._params['dj_gold_hz']) / _rng
-                            else:
-                                s_dj = 0.0
-                    else:
-                        # No predicted_lines — fall back to delta_j_hz stored on mp
-                        dj_sc = mp.get('delta_j_hz')
-                        if dj_sc is None:
-                            s_dj     = self._params['dj_neutral']  # = 0.0
-                            _dj_conf = 0.0  # no predicted lines and no stored ΔJ
-                        elif dj_sc < self._params['dj_gold_hz']:
-                            s_dj = 1.0
-                        elif dj_sc < self._params['dj_bad_hz']:
-                            _rng = self._params['dj_bad_hz'] - self._params['dj_gold_hz']
-                            s_dj = 1.0 - (dj_sc - self._params['dj_gold_hz']) / _rng
-                        else:
-                            s_dj = 0.0
-
-                # Hierarchical score mirroring how the spectrum is read by hand:
-                #   singlet     → only Δppm proximity matters (no J to validate)
-                #   non-singlet → Δppm + ΔJ agreement; s_dj already encodes the
-                #                 multiplicity / line-count check and the
-                #                 dj_gold_hz→dj_bad_hz gating.
-                # cosine, coverage (found), reverse and STOCSY are informative
-                # only — they no longer enter the score. Single source of truth =
-                # Δppm + ΔJ; MCR remains the tiebreaker for overlapping candidates.
-                _is_singlet_sc = mult_sc in ('s', 'singlet', '', 'm', 'multiplet',
-                                             'br s', 'brs', 'br. s')
-
-                if _is_singlet_sc:
-                    # A lone singlet is weak evidence — it must NOT reach the Good
-                    # band on Δppm alone. Cap the score in the low band; confirmed
-                    # singlets are lifted afterwards by the anchor rule
-                    # (_promote_exclusive_singlets — sole valid candidate) or the
-                    # ≥3-singlet corroboration rule (_promote_corroborated_singlets).
-                    score = s_ppm * self._params['bad_score_thresh']
-                else:
-                    # _dj_conf=0.0 when J unmeasurable → j excluded, ppm renormalised
-                    score = dynamic_composite(
-                        scores={'ppm': s_ppm, 'j': s_dj},
-                        confidences={'ppm': 1.0, 'j': _dj_conf},
-                        base_weights={'ppm': self._params['w_ppm_ns'],
-                                      'j':   self._params['w_dj']},
-                    )
-                    # Confirmation rule (non-singlet): the analyte is CONFIRMED only
-                    # when ALL three agree — every expected line found (a quintet
-                    # needs 5, not 3), ΔJ of the found lines matches the DB within the
-                    # error band (< dj_bad_hz), and Δppm is within the gold standard.
-                    # A confirmed analyte must score high, so floor it at the Good
-                    # threshold (the s_dj gradient still rewards near-perfect ΔJ above
-                    # it). Incomplete line counts never reach here (s_dj is capped at
-                    # 0.5 and the incomplete gate marks them Bad).
-                    _nf_cf = mp.get('_n_found_lines')
-                    _ne_cf = mp.get('_n_exp_lines')
-                    _dj_cf = mp.get('delta_j_hz')
-                    if (_nf_cf is not None and _ne_cf is not None
-                            and int(_nf_cf) >= int(_ne_cf) >= 2
-                            and ppm_diff < self._params['dppm_gold']
-                            and _dj_conf > 0
-                            and _dj_cf is not None
-                            and float(_dj_cf) < self._params['dj_bad_hz']):
-                        score = max(score, self._params['good_score_thresh'])
-                mp['_s_dj']      = s_dj
-                mp['_s_ppm']     = s_ppm
-                mp['_s_found']   = s_found
-                mp['_s_cosine']  = s_cosine
-
-                # Gate Rule 0b: no peaks found → score = 0
-                _gate_sc = 0.0 if s_found == 0.0 else 1.0
-
-                _enriched_base = float(np.clip(score * _gate_sc, 0.0, 1.0))
-
-                mp['composite_score'] = _enriched_base
-                mp['_score_gate']     = _gate_sc
-
-            # Propagate best score to metabolite level for sorting
+            # Analyte level: built from the signal scores, then softened by how
+            # much of the expected fingerprint was found. Missing signals are
+            # normal (overlap, water suppression, below detection), so the
+            # penalty is gentle — a single confirmed multiplet keeps the analyte
+            # well inside the Good band.
             if met['matched_peaks']:
-                met['composite_score'] = max(
-                    float(mp2.get('composite_score', 0)) for mp2 in met['matched_peaks'])
+                self._set_analyte_score(met)
 
     def _enrich_scores(self):
         """
@@ -2232,197 +1643,60 @@ class AnnotationResultsWindow:
 
         Gate Rule 0: não-singlet + ΔJ ≥ dj_bad_hz → score = 0 (Bad)
         """
-        _sing_types = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
-
         for met in self.metabolites:
             for mp in met['matched_peaks']:
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in _sing_types:
+                if is_singlet_like(mp.get('type') or mp.get('multiplicity') or 's'):
                     continue
                 _gate = float(mp.get('_score_gate', 1.0))
                 if _gate == 0.0:
                     continue
+                # ΔJ rejection gate — one place. The score and the quality
+                # verdict are two faces of one decision; they used to be applied
+                # in two methods, one zeroing the score here and one marking the
+                # peak 'bad' in _filter_incompatible_candidates.
                 _dj_enr = mp.get('delta_j_hz')
                 if (_dj_enr is not None
                         and float(_dj_enr) >= self._params['dj_bad_hz']):
                     mp['composite_score'] = 0.0
                     mp['_score_gate']     = 0.0
+                    if mp.get('annotation_quality') is None:   # never a manual mark
+                        mp['annotation_quality'] = 'bad'
 
         # Update metabolite-level score after enrichment
         for met in self.metabolites:
-            if met['matched_peaks']:
-                met['composite_score'] = max(
-                    float(mp.get('composite_score', 0)) for mp in met['matched_peaks'])
+            self._set_analyte_score(met)
+        # The stale-line flag has been consumed by this pass.
+        self._lines_dirty = False
 
-    def _classify_confidence_classes(self):
+    def _set_analyte_score(self, met):
+        """Recompute the analyte-level score of *met* from its signals.
+
+        Every pass that touches signal scores must call this — taking
+        ``max(signal scores)`` instead (as two later passes did) silently drops
+        the coverage term and the corroboration lift, leaving the analyte score
+        equal to its best signal and the two levels indistinguishable again.
         """
-        Assign confidence_class ('A'–'X') to each metabolite based on
-        the evidence available at this point in the scoring pipeline.
-        Called after _adjust_scores_for_competition so all scores are final.
-        """
-        for met in self.metabolites:
-            mps = met.get('matched_peaks', [])
-            # peak_coverage: use metabolite-level coverage (fraction), more reliable
-            # than per-peak value which defaults to 1.0 when not computed.
-            met['peak_coverage'] = met.get('coverage', 0.0) / 100.0
-            if mps:
-                best_mp = max(mps, key=lambda x: float(x.get('composite_score', 0)))
-                met['coherence_score']  = float(best_mp.get('coherence_score', 0.0))
-                # stocsy_coherence: mean across peaks that have a value
-                stc_vals = [float(m['stocsy_coherence'])
-                            for m in mps if m.get('stocsy_coherence') is not None]
-                met['stocsy_coherence'] = (sum(stc_vals) / len(stc_vals)
-                                           if stc_vals else None)
-                # mcr_confirmed: True if any peak confirmed, False if any rejected
-                mcr_flags = [m.get('mcr_confirmed') for m in mps
-                             if m.get('mcr_confirmed') is not None]
-                if True in mcr_flags:
-                    met['mcr_confirmed'] = True
-                elif False in mcr_flags:
-                    met['mcr_confirmed'] = False
-                else:
-                    met['mcr_confirmed'] = None
-                # fitting_r2 maps to multiplet_score (set from fitting_r2 in search)
-                met['fitting_r2'] = float(best_mp.get('multiplet_score', 0.0))
-                met['ppm_score']  = float(best_mp.get('ppm_score', 0.0))
-            met['confidence_class'] = classify_annotation(met)
-
-    def _adjust_scores_for_competition(self):
-        """
-        Third scoring phase: update metabolite-level score after enrichment.
-        """
-        for met in self.metabolites:
-            if met['matched_peaks']:
-                met['composite_score'] = max(
-                    float(mp.get('composite_score', 0)) for mp in met['matched_peaks'])
-
-    def _propagate_multiplet_confirmation(self):
-        """
-        If a metabolite has ≥1 non-singlet matched_peak that plausibly matches
-        the DB multiplet, mark ALL its matched_peaks with j_met_confirmed=True.
-
-        Called AFTER _compute_scores() so that _s_dj is available.
-
-        Two confirmation criteria (either suffices):
-          A. delta_j_hz < 2.0 Hz  — J coupling measured and close to DB value
-          B. ALL expected lines found (_n_found_lines >= _n_exp_lines >= 2)
-             AND s_dj >= 0.5 (decent J quality or field unknown).
-             Partial line matches (1 of 2 doublet lines) do NOT qualify —
-             they cannot confirm the multiplet in a crowded spectrum where
-             a single coincidental peak may lie near one expected line.
-
-        Peaks that reach this threshold are kept as yellow candidates — the strict
-        0.2 Hz quality gate in _auto_mark_good() Rule 2 still determines whether
-        the peak is 'good' or merely a candidate for J-Resolve to arbitrate.
-        """
-        # 'm'/'multiplet' are also treated as singlet-like.
-        SINGLET_TYPES = {'s', 'singlet', '', 'br s', 'br. s', 'm', 'multiplet'}
-        for met in self.metabolites:
-            confirmed = False
-            for mp in met['matched_peaks']:
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in SINGLET_TYPES:
-                    continue
-                dj = mp.get('delta_j_hz')
-                # Criterion A: J measured and within 2.0 Hz of DB value
-                if dj is not None and float(dj) < 2.0:
-                    confirmed = True
-                    break
-                # Criterion B: ALL expected lines found
-                _nf_b = mp.get('_n_found_lines')
-                _ne_b = mp.get('_n_exp_lines')
-                if (_nf_b is not None and _ne_b is not None
-                        and int(_nf_b) >= int(_ne_b) and int(_ne_b) >= 2):
-                    confirmed = True
-                    break
-            if confirmed:
-                for mp in met['matched_peaks']:
-                    mp['j_met_confirmed'] = True
-
-    def _filter_incompatible_candidates(self):
-        """
-        Mark candidates 'bad' only when there is a clear physical mismatch.
-        Competition between candidates is left to J-Resolve.
-
-        Rule 0 — ΔJ deviation:
-            Non-singlet candidates whose measured coupling constant deviates ≥ 0.5 Hz
-            from the DB value are marked bad.  Skipped for metabolites whose identity
-            is confirmed by any peak with ΔJ < 2.0 Hz (j_met_confirmed=True) —
-            those peaks survive as yellow candidates for J-Resolve to arbitrate.
-
-        Line-count filtering has been intentionally removed: an unresolved doublet
-        legitimately appears as a single detected peak, so matching predicted-line
-        count against detected-peak count produces false negatives.
-
-        Manual quality marks are never overwritten.
-        """
-        def _is_singlet(mp):
-            mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-            return mult in ('s', 'singlet', '')
-
-        # Group non-manually-marked entries by rank
-        by_rank = {}
-        for met in self.metabolites:
-            for mp in met['matched_peaks']:
-                if mp.get('annotation_quality') is not None:
-                    continue
-                rank = mp.get('peak_rank')
-                if rank is None:
-                    continue
-                by_rank.setdefault(rank, []).append((met, mp))
-
-        for rank, entries in by_rank.items():
-            # ── Rule 0: ΔJ ≥ 0.5 Hz → Bad (peak level, no exceptions) ──────
-            # j_met_confirmed does NOT exempt this rule — a peak with ΔJ ≥ 0.5 Hz
-            # is Bad regardless of whether the metabolite is confirmed by other peaks.
-            for met, mp in entries:
-                if _is_singlet(mp):
-                    continue
-                dj = mp.get('delta_j_hz')
-                if dj is not None and float(dj) >= 0.5:
-                    mp['annotation_quality'] = 'bad'
-
-        # ── Rule 1: J-anchor singlet exclusion ───────────────────────────────
-        # If a J-confirmed metabolite has a singlet that is positionally and
-        # quantitatively consistent with its companion multiplet ('clean' anchor
-        # status, 'high'/'medium' position confidence), competing metabolites
-        # that lack any J-confirmation at any peak are excluded at this rank.
-        # This formalises "the doublet found its singlet — it wins the dispute."
-        for rank, entries in by_rank.items():
-            j_anchored = None
-            for met, mp in entries:
-                if not _is_singlet(mp):
-                    continue
-                if (mp.get('j_met_confirmed')
-                        and mp.get('anchor_status') == 'clean'
-                        and mp.get('anchor_pos_confidence') in ('high', 'medium')):
-                    cur_conf = mp.get('anchor_pos_confidence')
-                    prev_conf = j_anchored[1].get('anchor_pos_confidence') if j_anchored else None
-                    if (j_anchored is None
-                            or (cur_conf == 'high' and prev_conf != 'high')):
-                        j_anchored = (met, mp)
-            if j_anchored is None:
-                continue
-            j_met, j_mp = j_anchored
-            for met, mp in entries:
-                if met is j_met:
-                    continue
-                if mp.get('annotation_quality') is not None:
-                    continue  # never overwrite explicit marks
-                if not mp.get('j_met_confirmed'):
-                    mp['annotation_quality'] = 'bad'
-                    mp.setdefault('_status_reasons', []).append(
-                        f'Excluded by J-anchor singlet of {j_met["name"]} '
-                        f'(pos={j_mp.get("anchor_pos_confidence")}, '
-                        f'ratio={j_mp.get("anchor_ratio")})')
-
-    # ── RANSY-like J-anchor intensity propagation ─────────────────────────────
-
+        mps = met.get('matched_peaks') or []
+        if not mps:
+            return
+        sig_vals = [float(mp.get('composite_score', 0) or 0) for mp in mps]
+        n_db_sig = len(met.get('db_peaks') or []) or len(sig_vals)
+        coverage = min(1.0, len(sig_vals) / max(n_db_sig, 1))
+        confirmed = any(mp.get('_confirmed') for mp in mps)
+        bd = analyte_score(
+            sig_vals, coverage=coverage, params=self._params,
+            floor=(self._params['good_score_thresh'] if confirmed else None))
+        met['composite_score']  = bd.value
+        met['_score_breakdown'] = bd.equation()
     @staticmethod
-    def _is_valid_candidate(mp, ppm_tol: float = 0.05) -> bool:
+    def _is_valid_candidate(mp, ppm_tol: float = DPPM_GOLD_DEFAULT) -> bool:
         """Mirrors the validity criteria used in peak_resolve_window.py.
 
         Valid = not bad  AND  (singlet OR ΔJ < 0.5 Hz)  AND  Δppm < ppm_tol
+
+        ``ppm_tol`` defaults to the dppm_gold parameter, not a literal: it is
+        the same gate _promote_singlets and _auto_mark_good apply, and three
+        copies of one threshold drift apart.
         Used to filter the overlap / candidate counters so they match what the
         user sees as non-grey rows in the Resolve Peak window.
         """
@@ -2483,151 +1757,6 @@ class AnnotationResultsWindow:
             return 0.0
         return float(abs(np.trapezoid(int_arr[mask], ppm_arr[mask])))
 
-    def _propagate_j_anchor_quality(self):
-        """RANSY-like anchor propagation (Anal. Chem. 2011, doi:10.1021/ac201625f).
-
-        For each metabolite that has at least one J-confirmed non-singlet peak
-        (ΔJ < 0.5 Hz), use that peak as a concentration reference.  The area of
-        every other matched peak of the same metabolite should be proportional to
-        its proton count (qNMR fundamental: area ∝ n_H × concentration).
-
-        Three outcomes are written to mp['anchor_status']:
-          'clean'   — area ratio 0.35–2.50 → consistent, no overlap
-          'overlap' — ratio > 2.50 → excess signal, likely overlapping compound
-          'bdl'     — obs_snr < 3 → below detection limit (SNR already on mp)
-          'absent'  — ratio < 0.35 and SNR ≥ 3 → present but weaker than expected
-
-        The thresholds are generous to absorb the ≤ 30 % intra-molecular T1
-        differential saturation typical of standard metabolomics protocols
-        (1D NOESY-presat, d1 = 4 s, 600 MHz).
-        """
-        CLEAN_LO = self._params['anchor_clean_lo']
-        CLEAN_HI = self._params['anchor_clean_hi']
-
-        if self.ppm is None or self.mean_intensity is None:
-            return
-
-        for met in self.metabolites:
-            mps = met['matched_peaks']
-
-            # ── Find best J-confirmed non-singlet anchor ──────────────────────
-            anchor    = None
-            best_sdj  = -1.0
-            for mp in mps:
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in ('s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs'):
-                    continue
-                dj   = mp.get('delta_j_hz')
-                s_dj = float(mp.get('_s_dj', 0) or 0)
-                if dj is not None and float(dj) < self._params['dj_bad_hz'] and s_dj > best_sdj:
-                    anchor  = mp
-                    best_sdj = s_dj
-
-            if anchor is None:
-                continue   # no J-anchor for this metabolite → skip
-
-            # ── Per-proton area reference from anchor ─────────────────────────
-            anchor_area = self._peak_area(anchor)
-            try:
-                anchor_protons = max(1, int(anchor.get('protons', 1) or 1))
-            except (TypeError, ValueError):
-                anchor_protons = 1
-
-            if anchor_area <= 0:
-                continue
-
-            ref_per_H = anchor_area / anchor_protons
-
-            # Mark the anchor multiplet itself as the reference
-            anchor['anchor_status']     = 'self'
-            anchor['anchor_ratio']      = 1.0
-            anchor['anchor_expected_I'] = round(anchor_area, 6)
-
-            # ── Classify every other matched peak ─────────────────────────────
-            for mp in mps:
-                if mp is anchor:
-                    continue
-
-                try:
-                    p_protons = max(1, int(mp.get('protons', 1) or 1))
-                except (TypeError, ValueError):
-                    p_protons = 1
-
-                expected_area = ref_per_H * p_protons
-                obs_area      = self._peak_area(mp)
-                ratio         = obs_area / expected_area if expected_area > 0 else 0.0
-                obs_snr       = float(mp.get('obs_snr', 0) or 0)
-
-                if obs_snr < self._params['anchor_snr_bdl']:
-                    status = 'bdl'
-                elif ratio > CLEAN_HI:
-                    status = 'overlap'
-                elif ratio >= CLEAN_LO:
-                    status = 'clean'
-                else:
-                    status = 'absent'
-
-                mp['anchor_status']     = status
-                mp['anchor_ratio']      = round(ratio, 3)
-                mp['anchor_expected_I'] = round(expected_area, 6)
-
-    def _propagate_anchor_position(self):
-        """
-        For each metabolite with a J-confirmed anchor, predict every other peak's
-        expected ppm using the DB Δδ (anchor_obs_ppm + (db_ppm_other - db_ppm_anchor)).
-        Compares the prediction to the observed peak_ppm and assigns a confidence tier:
-          'high'    — |Δδ| ≤ 0.02 ppm  (Golotvin high-confidence zone)
-          'medium'  — |Δδ| ≤ 0.05 ppm
-          'low'     — |Δδ| ≤ 0.10 ppm
-          'mismatch'— |Δδ| > 0.10 ppm  (peak at unexpected relative position)
-        """
-        for met in self.metabolites:
-            # Best J-anchor: non-singlet, delta_j_hz < 0.5 Hz, highest _s_dj
-            anchor, best_sdj = None, -1.0
-            for mp in met['matched_peaks']:
-                mult = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult in ('s', 'singlet', '', 'm', 'multiplet'):
-                    continue
-                dj = mp.get('delta_j_hz')
-                if dj is None or dj >= self._params['dj_bad_hz']:
-                    continue
-                sdj = float(mp.get('_s_dj') or 0.0)
-                if sdj > best_sdj:
-                    best_sdj, anchor = sdj, mp
-
-            if anchor is None:
-                continue
-
-            anchor_obs = float(anchor.get('peak_ppm') or anchor.get('db_ppm') or 0)
-            anchor_db  = float(anchor.get('db_ppm') or 0)
-
-            for mp in met['matched_peaks']:
-                if mp is anchor:
-                    continue
-                obs_ppm = mp.get('peak_ppm')
-                if obs_ppm is None:
-                    continue
-                obs_ppm   = float(obs_ppm)
-                pred_ppm  = anchor_obs + (float(mp.get('db_ppm') or 0) - anchor_db)
-                delta_ppm = obs_ppm - pred_ppm
-
-                abs_d = abs(delta_ppm)
-                if abs_d <= 0.02:
-                    conf = 'high'
-                elif abs_d <= 0.05:
-                    conf = 'medium'
-                elif abs_d <= 0.10:
-                    conf = 'low'
-                else:
-                    conf = 'mismatch'
-
-                mp['anchor_pos_confidence'] = conf
-                mp['anchor_pos_delta_ppm']  = round(delta_ppm, 5)
-                mp['anchor_pos_pred_ppm']   = round(pred_ppm, 5)
-                mp.setdefault('_status_reasons', []).append(
-                    f'Pos-anchor {conf}: pred {pred_ppm:.4f} ppm | '
-                    f'Δδ={delta_ppm:+.3f} ppm')
-
     def _auto_mark_good(self):
         """
         Deriva annotation_quality directamente do composite_score enriquecido.
@@ -2636,432 +1765,62 @@ class AnnotationResultsWindow:
           - Gate Rule 0b (s_found=0) e Rule 0 (ΔJ ≥ 0.5 Hz não-singlet) → score = 0
           - Bonus Rule 2 (gold standard J), Rules 6/6b (RANSY), Rule MCR
           - Penalty Rule 8 (singlet-only sem J), overlap (Rules 3/4/5)
-          aplicados em _compute_scores() + _enrich_scores() + _adjust_scores_for_competition().
+          aplicados em _compute_scores() + _enrich_scores().
 
         Thresholds:
-          score ≥ good_score_thresh (0.80) → 'good'   (verde)
-          score < bad_score_thresh  (0.50) → 'bad'    (vermelho)
+          score ≥ good_score_thresh → 'good'   (verde)
+          score < bad_score_thresh  → 'bad'    (vermelho)
           else                             → None      (amarelo)
-          score ≥ 0.80 e singlet-only sem J sem fp_gate → 'poor' (laranja)
 
         BDL (below detection limit) é tratado como flag independente.
         Marcações manuais (Ctrl+1/2/3) nunca são sobrescritas.
         """
-        _sing_types_am = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
+        ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        _qm_am = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
 
         for met in self.metabolites:
-            _mps_all = met['matched_peaks']
-
-            # Singlet-only unconfirmed flag (para threshold 'poor')
-            _all_sing_am = all(
-                str(mp2.get('type') or mp2.get('multiplicity') or 's').lower().strip()
-                in _sing_types_am for mp2 in _mps_all)
-            _has_j_am = any(mp2.get('j_met_confirmed') for mp2 in _mps_all)
-            _singlet_only_am = _all_sing_am and not _has_j_am
-
-            _n_db_fps = len(met.get('db_peaks', []))
-            _fp_cov   = float(met.get('coverage', 100.0))
-            _fp_gate  = (_n_db_fps <= 1) or (_fp_cov >= self._params['fp_coverage_pct'])
-
-            ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-            _qm_am    = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
-
-            for mp in _mps_all:
-                # Protect manual quality marks — never overwrite user decisions
+            for mp in met['matched_peaks']:
                 if (met.get('id'), mp.get('peak_rank')) in _qm_am:
-                    continue
-                # Reset auto quality before re-evaluating so calibration-induced
-                # ppm_diff changes are reflected (removes stale 'good' from prior runs).
-                mp['annotation_quality'] = None
+                    continue          # manual mark — never overwritten
+                quality, reason = quality_verdict(mp, params=self._params)
+                # Reset before assigning: a calibration that moved ppm_diff must
+                # be able to clear a 'good' left over from a previous run.
+                mp['annotation_quality'] = quality
+                if reason:
+                    mp.setdefault('_status_reasons', []).append(reason)
 
-                score = float(mp.get('composite_score', 0) or 0)
-
-                # BDL: independent flag (Rule 7), not a quality mark
-                if mp.get('anchor_status') in ('bdl', 'absent'):
-                    mp['below_detection_limit'] = True
-                    continue
-
-                _mult_am_g = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                _is_sing_g = _mult_am_g in _sing_types_am
-
-                # Singlet signals are weak evidence on their own: never auto-good and
-                # never auto-bad here — leave yellow. Promotion to Good happens only
-                # via the anchor rule (_promote_exclusive_singlets — sole valid
-                # candidate for the signal) or ≥3-singlet corroboration
-                # (_promote_corroborated_singlets); a confirmed multiplet of the same
-                # metabolite can also promote them via anchor propagation.
-                if _is_sing_g:
-                    mp['annotation_quality'] = None
-                    continue
-
-                # Gate: non-singlet with incomplete line count → Bad.
-                # If only some lines of a doublet/triplet/etc. were found,
-                # J coupling cannot be confirmed and the match is unreliable.
-                _nf_am_g = mp.get('_n_found_lines')
-                _ne_am_g = mp.get('_n_exp_lines')
-                if (_nf_am_g is not None and _ne_am_g is not None
-                        and int(_ne_am_g) >= 2
-                        and int(_nf_am_g) < int(_ne_am_g)):
-                    mp['annotation_quality'] = 'bad'
-                    continue
-
-                # Δppm gate: mismatch ≥ 0.05 ppm overrides score → not auto-good.
-                # High J score can inflate composite even with poor PPM alignment.
-                # Leave as None (yellow) so user can inspect and confirm manually.
-                _ppm_diff_g = float(mp.get('ppm_diff', 0) or 0)
-                _ppm_ok_g   = _ppm_diff_g < 0.05
-
-                # Full-multiplet gate: all expected lines found + Δppm OK → Good
-                # regardless of composite_score and regardless of _auto_resolved.
-                # If the DB has a J value, ΔJ must be within dj_bad_hz (0.50 Hz);
-                # if the DB has no J value, line count alone is sufficient evidence.
-                _nf_g = mp.get('_n_found_lines')
-                _ne_g = mp.get('_n_exp_lines')
-                if (_ppm_ok_g and not _is_sing_g
-                        and _nf_g is not None and _ne_g is not None
-                        and int(_nf_g) >= 2 and int(_nf_g) >= int(_ne_g)):
-                    _dj_fm  = mp.get('delta_j_hz')
-                    _dj_bad = float(self._params.get('dj_bad_hz', 0.50))
-                    _dj_fm_ok = (_dj_fm is None or float(_dj_fm) < _dj_bad)
-                    if _dj_fm_ok:
-                        mp['annotation_quality'] = 'good'
-                        mp.setdefault('_status_reasons', []).append(
-                            'Full-multiplet confirmed: all lines found')
-                        continue
-
-                # Gold J gate: j_met_confirmed + ΔJ < dj_gold_hz + Δppm < dppm_gold
-                # + all expected lines found → 'good' regardless of composite score.
-                # Skipped for auto-resolved peaks (_auto_resolved) — user must confirm.
-                if (_ppm_ok_g and not _is_sing_g and mp.get('j_met_confirmed')
-                        and not mp.get('_auto_resolved')):
-                    _dj_g   = mp.get('delta_j_hz')
-                    _dj_ok  = (_dj_g is not None
-                                and float(_dj_g) < float(
-                                    self._params.get('dj_gold_hz', 0.20)))
-                    _nf_gg  = mp.get('_n_found_lines')
-                    _ne_gg  = mp.get('_n_exp_lines')
-                    _lns_ok = (_nf_gg is None or _ne_gg is None
-                                or int(_nf_gg) >= int(_ne_gg))
-                    if _dj_ok and _lns_ok:
-                        mp['annotation_quality'] = 'good'
-                        continue
-
-                # Threshold principal baseado no score enriquecido
-                if score >= self._params['good_score_thresh']:        # ≥ 0.80
-                    if _singlet_only_am and not _fp_gate:
-                        mp['annotation_quality'] = 'bad'
-                    elif not _ppm_ok_g:
-                        mp.setdefault('_status_reasons', []).append(
-                            f'Auto-good blocked: Δppm={_ppm_diff_g:.4f} ≥ 0.05 ppm')
-                        # leave as None — user confirms
-                    else:
-                        mp['annotation_quality'] = 'good'
-                elif score < self._params['bad_score_thresh']:        # < 0.50
-                    mp['annotation_quality'] = 'bad'
-                else:                                                 # 0.50–0.80
-                    if _singlet_only_am:
-                        mp['annotation_quality'] = 'bad'
-                    # else: None (yellow) — utilizador inspecciona
-
-    def _require_multi_peak_confirmation(self):
-        """
-        Post-processing filter: metabolites with ≥2 DB peaks must have ≥2
-        DISTINCT DB peak positions independently confirmed to remain 'good'.
-
-        Rationale: peak-centric scoring in crowded biological NMR spectra leads
-        to many coincidental matches.  A false positive metabolite with 5 DB
-        peaks may accidentally win at 1-2 peak ranks, giving it 1-2 'good' marks
-        at the SAME DB position (e.g., two detected peaks both near the same DB
-        singlet).  Counting distinct confirmed DB positions is a much stronger
-        discriminator: genuine analytes must have multiple *different* peaks
-        confirmed, not multiple detected peaks all attributable to the same spot.
-
-        Manual quality marks are always preserved.
-        Single-peak DB entries are exempt (can't require 2 when only 1 exists).
-        """
-        _ann_s = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        _qm    = getattr(_ann_s, '_quality_marks', {}) if _ann_s else {}
-
-        for met in self.metabolites:
-            n_db = len(met.get('db_peaks', []))
-            if n_db < 2:
-                continue  # single-peak DB entry — nothing to require
-
-            good_mps = [mp for mp in met['matched_peaks']
-                        if mp.get('annotation_quality') == 'good']
-            if not good_mps:
-                continue  # nothing to downgrade
-
-            # Count distinct DB peak positions among confirmed peaks.
-            # Multiple detected peaks all matching the same DB ppm count as 1.
-            confirmed_db_ppms = {round(float(mp.get('db_ppm', 0)), 3)
-                                 for mp in good_mps}
-            if len(confirmed_db_ppms) >= 2:
-                continue  # ≥2 distinct DB positions confirmed — sufficient evidence
-
-            # Only 1 (or 0) distinct DB position confirmed — downgrade unless manually marked
-            # Exception: non-singlet multiplets where every expected line was found with
-            # correct J spacing. Matching the full J pattern (e.g., 3/3 lines at correct
-            # spacing) is independent multi-point corroboration — stronger than coincidence.
-            _sing_types_rmc = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
-            for mp in good_mps:
-                key = (met.get('id'), mp.get('peak_rank'))
-                if key in _qm:
-                    continue  # manual mark — never override
-                mult_rmc = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                if mult_rmc not in _sing_types_rmc:
-                    nf    = mp.get('_n_found_lines')
-                    ne    = mp.get('_n_exp_lines')
-                    dj    = mp.get('delta_j_hz')
-                    score = float(mp.get('composite_score', 0) or 0)
-                    dj_ok = dj is None or float(dj) < self._params['dj_bad_hz']
-                    # Cond A: explicit line count — all lines confirmed + ΔJ within tolerance
-                    cond_a = (nf is not None and ne is not None
-                              and nf >= 2 and nf == ne and dj_ok)
-                    # Cond B: line count not cached (pred_sc was empty in _compute_scores)
-                    # but _auto_mark_good already validated score ≥ threshold + ppm gate.
-                    # Trust the score-based decision: s_dj already penalises bad J.
-                    cond_b = (nf is None
-                              and score >= self._params.get('good_score_thresh', 0.80)
-                              and dj_ok)
-                    if cond_a or cond_b:
-                        continue  # multi-point J evidence — no downgrade
-                mp['annotation_quality'] = None  # yellow
-
-    def _promote_uncontested_candidates(self):
-        """
-        If exactly one non-bad, non-BDL candidate exists for a peak rank,
-        promote it to 'good' regardless of score.  No competition = best
-        available evidence; leaving it yellow blocks anchor propagation and
-        quantification needlessly.  Manual marks are never overridden.
-        """
+    def _promote_singlets(self):
+        """Singlet quality — see processing.annotation_quality."""
         ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        _qm = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
+        promote_singlets(
+            self.metabolites, self.peaks, params=self._params,
+            manual_marks=(getattr(ann_stage, '_quality_marks', {})
+                          if ann_stage else {}))
 
-        by_rank: dict = {}
+    def _rank_score_map(self):
+        """rank -> {met_id: best composite_score of that metabolite's non-BDL
+        matched_peak at that rank}. Used to weigh competition by strength
+        instead of raw headcount."""
+        m = {}
         for met in self.metabolites:
+            met_id = met.get('id', met.get('name'))
             for mp in met['matched_peaks']:
-                if mp.get('annotation_quality') == 'bad':
-                    continue
-                if mp.get('below_detection_limit'):
-                    continue
                 rank = mp.get('peak_rank')
                 if rank is None:
                     continue
-                by_rank.setdefault(rank, []).append((met, mp))
-
-        _bad_thresh_uc = float(self._params.get('bad_score_thresh', 0.50))
-
-        def _try_promote(met_uc, mp_uc, rank_uc, *, is_score_uncontested=False):
-            if (met_uc.get('id'), rank_uc) in _qm:
-                return  # manual mark — preserve
-            if mp_uc.get('annotation_quality') is None:
-                _ppm_unc = float(mp_uc.get('ppm_diff', 0) or 0)
-                if _ppm_unc < 0.05:
-                    mp_uc['annotation_quality'] = 'good'
-                    mp_uc['auto_anchor'] = True
-                    # Uncontested → confirmed → high score (keep number in sync
-                    # with the green mark).
-                    mp_uc['composite_score'] = max(
-                        float(mp_uc.get('composite_score', 0) or 0),
-                        self._params['good_score_thresh'])
-                else:
-                    mp_uc.setdefault('_status_reasons', []).append(
-                        f'Uncontested-promote blocked: Δppm={_ppm_unc:.4f} ≥ 0.05')
-
-        for rank, candidates in by_rank.items():
-            if len(candidates) == 1:
-                met, mp = candidates[0]
-                _try_promote(met, mp, rank)
-                continue
-
-            # Score-based uncontested: only 1 candidate with score ≥ bad_thresh.
-            # Multiple non-bad candidates but only 1 viable → effectively uncontested.
-            viable = [(m, p) for m, p in candidates
-                      if float(p.get('composite_score', 0) or 0) >= _bad_thresh_uc]
-            if len(viable) == 1:
-                met, mp = viable[0]
-                _try_promote(met, mp, rank, is_score_uncontested=True)
-
-    def _promote_exclusive_singlets(self):
-        """
-        Singlet peak claimed exclusively by one metabolite (no competitor at
-        any quality level) → annotation_quality='good' + auto_anchor=True,
-        regardless of composite score.
-
-        Requires gold-quality Δppm (dppm_gold_hz / mhz, capped at dppm_gold).
-        ΔJ criterion is waived — singlets have no J coupling by definition.
-        Manual marks are always preserved.
-        """
-        ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        _qm = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
-
-        # Gold-quality Δppm threshold (field-independent)
-        _mhz = 600.0
-        try:
-            if ann_stage:
-                _mhz = float(ann_stage.spectrometer_var.get() or 600.0)
-        except Exception:
-            pass
-        _dppm_gold = float(self._params.get('dppm_gold_hz', 0.50)) / max(_mhz, 1.0)
-        _dppm_gold = min(_dppm_gold, float(self._params.get('dppm_gold', 0.05)))
-
-        # Include ALL singlet matched_peaks (even 'bad') grouped by peak_rank.
-        by_rank: dict = {}
-        for met in self.metabolites:
-            for mp in met['matched_peaks']:
-                if mp.get('below_detection_limit'):
-                    continue
-                mult = (mp.get('type') or '').lower().strip()
-                if mult not in ('s', 'singlet'):
-                    continue
-                rank = mp.get('peak_rank')
-                if rank is None:
-                    continue
-                by_rank.setdefault(rank, []).append((met, mp))
-
-        for rank, claimants in by_rank.items():
-            if len(claimants) != 1:
-                continue  # competing metabolites — not exclusive
-            met, mp = claimants[0]
-            if (met.get('id'), rank) in _qm:
-                continue  # manual mark — preserve
-            if mp.get('annotation_quality') == 'good':
-                continue  # already promoted
-            if float(mp.get('ppm_diff', 0) or 0) >= _dppm_gold:
-                continue  # outside gold-quality Δppm — not a reliable match
-            mp['annotation_quality'] = 'good'
-            mp['auto_anchor'] = True
-            # Sole valid candidate for the signal → confirmed → high score.
-            mp['composite_score'] = max(
-                float(mp.get('composite_score', 0) or 0),
-                self._params['good_score_thresh'])
-
-    def _promote_corroborated_singlets(self):
-        """
-        ≥3-singlet corroboration: a metabolite with ≥3 of its singlets matched at
-        DISTINCT DB positions — each at gold-quality Δppm and not heavily contested
-        — is corroborated by multiple independent signals → promote those singlets
-        to 'good' + high score. A lone (or 2-singlet) match stays yellow.
-
-        "Not heavily contested" reuses the overlap map: a singlet rank shared by
-        ≤2 metabolites still counts (mild overlap is normal in crowded spectra);
-        more-contested ranks are skipped from the corroboration count.
-
-        Manual quality marks are always preserved.
-        """
-        ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        _qm = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
-
-        _mhz = 600.0
-        try:
-            if ann_stage:
-                _mhz = float(ann_stage.spectrometer_var.get() or 600.0)
-        except Exception:
-            pass
-        _dppm_gold = float(self._params.get('dppm_gold_hz', 0.50)) / max(_mhz, 1.0)
-        _dppm_gold = min(_dppm_gold, float(self._params.get('dppm_gold', 0.05)))
-
-        _overlap = getattr(self, '_peak_overlap', {}) or {}
-        _MAX_COMPETITORS = 2  # singlet rank shared by ≤2 metabolites still counts
-
-        for met in self.metabolites:
-            valid = {}   # round(db_ppm, 3) -> best-Δppm singlet mp at that position
-            for mp in met['matched_peaks']:
-                if mp.get('below_detection_limit'):
-                    continue
-                if (mp.get('type') or '').lower().strip() not in ('s', 'singlet'):
-                    continue
-                if float(mp.get('ppm_diff', 0) or 0) >= _dppm_gold:
-                    continue  # not gold-quality Δppm
-                rank = mp.get('peak_rank')
-                if (rank is not None
-                        and len(_overlap.get(rank, [])) > _MAX_COMPETITORS):
-                    continue  # heavily contested signal
-                key  = round(float(mp.get('db_ppm', 0) or 0), 3)
-                prev = valid.get(key)
-                if (prev is None
-                        or float(mp.get('ppm_diff', 1e9))
-                        < float(prev.get('ppm_diff', 1e9))):
-                    valid[key] = mp
-
-            if len(valid) < 3:
-                continue  # fewer than 3 distinct corroborating singlets
-
-            for mp in valid.values():
-                if (met.get('id'), mp.get('peak_rank')) in _qm:
-                    continue  # manual mark — preserve
-                mp['annotation_quality'] = 'good'
-                mp['auto_anchor'] = True
-                mp['composite_score'] = max(
-                    float(mp.get('composite_score', 0) or 0),
-                    self._params['good_score_thresh'])
-                mp.setdefault('_status_reasons', []).append(
-                    f'≥3-singlet corroboration ({len(valid)} distinct positions)')
-
-    def _promote_anchor_confirmed_peaks(self):
-        """
-        Uses an already-confirmed good multiplet as an internal reference to
-        promote other peaks of the same metabolite.
-
-        Logic per metabolite:
-          1. Find ≥1 matched peak with annotation_quality='good' AND a non-singlet
-             multiplicity (the confirmed J-anchor multiplet).
-          2. For every other matched peak whose quality is still None (yellow):
-             - anchor_status='clean'  → area ratio vs multiplet is consistent
-             - anchor_pos_confidence in ('high','medium') → PPM at predicted position
-             Both conditions must hold → promote to 'good'.
-
-        Rationale: a singlet (or additional multiplet) that passes BOTH the area
-        and positional tests against a J-confirmed sibling is trustworthy.  Keeping
-        it yellow only because its standalone score was 0.50–0.80 is overly
-        conservative once cross-peak evidence is available.
-
-        Manual quality marks are never overridden.
-        """
-        _sing_types = {'s', 'singlet', '', 'm', 'multiplet', 'br s', 'brs', 'br. s'}
-
-        ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        _qm = getattr(ann_stage, '_quality_marks', {}) if ann_stage else {}
-
-        for met in self.metabolites:
-            mps = met['matched_peaks']
-
-            # Step 1 — verify at least one confirmed good non-singlet exists
-            has_good_multiplet = any(
-                mp.get('annotation_quality') == 'good'
-                and str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-                   not in _sing_types
-                for mp in mps
-            )
-            if not has_good_multiplet:
-                continue
-
-            # Step 2 — promote yellow peaks that pass area+position tests
-            for mp in mps:
-                if (met.get('id'), mp.get('peak_rank')) in _qm:
-                    continue  # manual mark — protected
-                if mp.get('annotation_quality') is not None:
-                    continue  # already classified
-                if mp.get('below_detection_limit'):
-                    continue
-
-                a_status = mp.get('anchor_status', '')
-                a_pos    = mp.get('anchor_pos_confidence', '')
-
-                _ppm_anc = float(mp.get('ppm_diff', 0) or 0)
-                if a_status == 'clean' and a_pos in ('high', 'medium') and _ppm_anc < 0.05:
-                    mp['annotation_quality'] = 'good'
-                    mp.setdefault('_status_reasons', []).append(
-                        'Promoted: anchor-confirmed (clean ratio + pos '
-                        f'{a_pos})')
-                elif a_status == 'clean' and a_pos in ('high', 'medium') and _ppm_anc >= 0.05:
-                    mp.setdefault('_status_reasons', []).append(
-                        f'Anchor-promote blocked: Δppm={_ppm_anc:.4f} ≥ 0.05')
-
+                sc = float(mp.get('composite_score', 0) or 0)
+                d = m.setdefault(rank, {})
+                if met_id not in d or sc > d[met_id]:
+                    d[met_id] = sc
+        return m
     def _nnls_spectral_validation(self):
         """
-        Global NNLS spectral reconstruction filter.
+        Global NNLS spectral reconstruction filter. DISABLED — see
+        NNLS_VALIDATION_ENABLED.
+
+        Off by default and gated in one place rather than commented out at some
+        call sites and live at others, which is how it came to run on three
+        paths and not on the one that builds the window.
 
         Builds a synthetic spectrum for every 'good' candidate metabolite
         (Lorentzian-broadened DB sticks), stacks them into matrix A, then
@@ -3075,6 +1834,8 @@ class AnnotationResultsWindow:
         Manual quality marks are always preserved.
         No-op when DB has no stick data or < 2 good candidates.
         """
+        if not NNLS_VALIDATION_ENABLED:
+            return
         try:
             from scipy.optimize import nnls as _nnls
             from gui.utils.mcr_utils import simulate_lorentzian_profile as _slp
@@ -3212,8 +1973,16 @@ class AnnotationResultsWindow:
                                 all_cands.setdefault(other_rank, []).append(
                                     (score, met, mp))
 
-        self._peak_candidates = {}   # rank → [(score, met, mp)] sorted desc
-        self._peak_assignments = {}  # rank → (met, mp)
+        self._peak_candidates = {}   # rank -> [(score, met, mp)] sorted desc
+        self._peak_assignments = {}  # rank -> (met, mp)
+        self._peak_assignment_status = {}
+        _ann_for_q = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+        _qm_for_q = getattr(_ann_for_q, '_quality_marks', {}) if _ann_for_q else {}
+        _manual_for_q = {(str(k[0]), k[1]): v
+                         for k, v in (_qm_for_q or {}).items()}
+        from gui.stages._annotation_helpers import ambiguous_peak_ranks
+        self._ambiguous_peak_ranks = ambiguous_peak_ranks(
+            self.metabolites, manual_quality=_manual_for_q)
 
         for rank, cands in all_cands.items():
             # Sort: J-confirmed match wins over a higher-scoring singlet when both
@@ -3222,11 +1991,18 @@ class AnnotationResultsWindow:
             cands.sort(key=lambda x: _assignment_sort_key(x[0], x[2]),
                        reverse=True)
             self._peak_candidates[rank] = cands
-            # Prefer a manually-assigned 'good' match, otherwise take best score
+            _has_manual = any(
+                _manual_for_q.get((str(m.get('id', m.get('name', ''))), rank))
+                == 'good'
+                for _, m, _ in cands)
             manual = next(
                 ((m, mp2) for _, m, mp2 in cands
-                 if mp2.get('annotation_quality') == 'good'),
+                 if _manual_for_q.get(
+                     (str(m.get('id', m.get('name', ''))), rank)) == 'good'),
                 None)
+            self._peak_assignment_status[rank] = (
+                'resolved' if (_has_manual or rank not in self._ambiguous_peak_ranks)
+                else 'ambiguous')
             self._peak_assignments[rank] = manual if manual else (
                 cands[0][1], cands[0][2])
 
@@ -3268,8 +2044,6 @@ class AnnotationResultsWindow:
 
         Anchor rules:
         - Manual anchor (user override) → always anchor
-        - J-anchored singlet (j_met_confirmed + anchor_status clean/overlap) → always anchor;
-          clean: no J-Resolve needed; overlap: needs_j_resolve=True + anchor_expected_I
           propagated to detected peak so J-Resolve can subtract the known contribution.
         - Multiplet: must be J-confirmed (ΔJ < 0.5 Hz) AND no valid competitor at rank
         - Plain singlet: qual == 'good' AND no valid competitor at rank
@@ -3289,7 +2063,6 @@ class AnnotationResultsWindow:
             pk.pop('assigned_metabolite', None)
             pk.pop('is_anchor_line', None)
             pk.pop('needs_j_resolve', None)
-            pk.pop('anchor_expected_I', None)
             pk.pop('anchor_metabolite', None)
 
         ann_stage    = (getattr(self.app, 'stages', {}) or {}).get('annotation')
@@ -3310,7 +2083,7 @@ class AnnotationResultsWindow:
         def _mp_j_ok(m):
             """True if this matched-peak qualifies as anchor:
             singlet (no J needed) OR multiplet where ALL predicted lines are
-            found AND ΔJ < 0.2 Hz AND Δppm < 0.05 ppm."""
+            found AND ΔJ < dj_gold_hz AND Δppm < dppm_gold."""
             if _is_singlet_mp(m):
                 return True
             dj      = m.get('delta_j_hz')
@@ -3319,8 +2092,8 @@ class AnnotationResultsWindow:
             n_exp   = m.get('_n_exp_lines')
             all_found = (n_found is not None and n_exp is not None
                          and int(n_found) >= int(n_exp) and int(n_exp) > 0)
-            dj_ok   = dj is not None and float(dj) < 0.2
-            dppm_ok = dppm is None or float(dppm) < 0.05
+            dj_ok   = dj is not None and float(dj) < self._params['dj_gold_hz']
+            dppm_ok = dppm is None or float(dppm) < self._params['dppm_gold']
             return all_found and dj_ok and dppm_ok
 
         for rank, (met, mp) in self._peak_assignments.items():
@@ -3329,6 +2102,9 @@ class AnnotationResultsWindow:
                 continue
             pk = pk_by_rank.get(rank)
             if pk is None:
+                continue
+            if getattr(self, '_peak_assignment_status', {}).get(rank) == 'ambiguous':
+                # Candidates remain visible, but no false ownership is published.
                 continue
             pk['assigned_metabolite'] = met.get('name', '')
 
@@ -3367,30 +2143,8 @@ class AnnotationResultsWindow:
                 ann_stage._anchor_lines[anchor_key] = best_li
                 anchor_store[anchor_key]             = best_li
 
-            # ── J-anchored singlet: companion multiplet proves identity ──────
-            _mult_t  = str(mp.get('type') or mp.get('multiplicity') or 's').lower().strip()
-            _is_sing = _mult_t in ('s', 'singlet', '', 'm', 'multiplet')
-            is_j_anchored_singlet = (
-                _is_sing
-                and qual == 'good'
-                and mp.get('j_met_confirmed')
-                and mp.get('anchor_status') in ('clean', 'overlap')
-            )
-
             if has_manual_anchor:
                 pk['is_anchor_line'] = True
-            elif is_j_anchored_singlet:
-                # Wins regardless of competitors: the companion multiplet confirmed
-                # the metabolite identity, so this singlet is definitively assigned.
-                pk['is_anchor_line'] = True
-                _store_anchor_line_idx()
-                # Pass expected intensity to detected peak for J-Resolve Phase 1
-                if mp.get('anchor_expected_I') is not None:
-                    pk['anchor_expected_I'] = mp['anchor_expected_I']
-                    pk['anchor_metabolite'] = met.get('name', '')
-                if mp.get('anchor_status') == 'overlap':
-                    # Excess signal present → J-Resolve resolves the competitor
-                    pk['needs_j_resolve'] = True
             elif this_j_ok:
                 if not valid_competitors:
                     # J-confirmed and exclusive → auto-anchor
@@ -3401,7 +2155,11 @@ class AnnotationResultsWindow:
                     pk['needs_j_resolve'] = True
 
     def _classify(self, quality):
-        """Mark the selected row as Good / Bad / Undefined (Ctrl+1/2/3)."""
+        """Mark the selected row as Good / Average / Poor (Ctrl+1/2/3).
+
+        Stored internally as 'good' / None / 'bad' — the displayed tiers share
+        the Peak List vocabulary, the persisted keys do not change.
+        """
         sel = self.tree.selection()
         if not sel:
             return
@@ -3414,7 +2172,7 @@ class AnnotationResultsWindow:
             self._classify_subchild(iid, quality)
 
     def _classify_one(self, iid, quality):
-        """Classify a parent peak-assignment row (Good/Bad/None=Undefined)."""
+        """Classify a parent peak-assignment row ('good'/'bad'/None=Average)."""
         rank, met, mp, det_pk = self._iid_to_row[iid]
         mp['annotation_quality'] = quality
 
@@ -3438,21 +2196,17 @@ class AnnotationResultsWindow:
             self._peak_assignments[rank] = (met, mp)
         self._sync_anchors_to_peaks()
 
-        if quality == 'good':
-            qual_mark = '✓ Good'
-        elif quality == 'bad':
-            qual_mark = '✗ Bad'
-        else:
-            qual_mark = '—'
-        score = float(mp.get('composite_score', mp.get('multiplet_score', 0.0)) or 0.0)
-        tag  = 'met_high' if score > 0.75 else 'met_mid' if score >= 0.5 else 'met_low'
-        tags = (tag,)  # parent colour = score only
+        _tier     = tier_from_annotation_quality(quality)
+        qual_mark = QUALITY_LABEL[_tier]
+        # Row colour follows the confidence tier, same as the column.
+        tags = ({SIGNAL_GOOD: 'met_high', SIGNAL_AVERAGE: 'met_mid',
+                 SIGNAL_POOR: 'met_low'}[_tier],)
         cur = list(self.tree.item(iid, 'values'))
         cur[5] = qual_mark
         self.tree.item(iid, values=cur, tags=tags)
 
     def _classify_child(self, ciid, quality):
-        """Classify a child DB-peak row (Good/Bad/None=Undefined)."""
+        """Classify a child DB-peak row ('good'/'bad'/None=Average)."""
         met, dp, mp_ref = self._iid_to_child[ciid]
         dp_ppm  = float(dp.get('ppm_center', dp.get('ppm', 0)))
         key     = (met['id'], round(dp_ppm, 3))
@@ -3491,9 +2245,9 @@ class AnnotationResultsWindow:
                 tags = ('peak_match', 'qual_bad')
 
         if quality == 'good':
-            match_mark = '✓ Good'
+            match_mark = QUALITY_LABEL[SIGNAL_GOOD]
         elif quality == 'bad':
-            match_mark = '✗ Bad'
+            match_mark = QUALITY_LABEL[SIGNAL_POOR]
         else:
             match_mark = '✓' if tags[1] != 'qual_bad' else '✗'
 
@@ -3502,10 +2256,10 @@ class AnnotationResultsWindow:
         self.tree.item(ciid, values=cur, tags=tags)
 
     def _classify_subchild(self, sciid, quality):
-        """Classify an individual predicted-line row (sub-child) as Good/Bad/Undef.
+        """Classify an individual predicted-line row (sub-child).
 
         When Good: annotates the linked detected peak in self.peaks with the
-        metabolite name (sets 'assigned_metabolite').  Bad/Undef removes it.
+        metabolite name (sets 'assigned_metabolite').  Poor/Average removes it.
         """
         met, dp, mp_ref, line_dict, line_idx, nearest_pk = self._iid_to_subchild[sciid]
         child_rank = mp_ref.get('peak_rank') if mp_ref else None
@@ -3545,15 +2299,15 @@ class AnnotationResultsWindow:
         # Update tree row appearance
         score_col = '⚓' if this_is_anchor else ''
         if quality == 'good':
-            qual_lbl  = '✓ Good'
+            qual_lbl  = QUALITY_LABEL[SIGNAL_GOOD]
             new_tags = ('sub_peak', 'sub_peak_matched', 'qual_good')
         elif quality == 'bad':
-            qual_lbl  = '✗ Bad'
+            qual_lbl  = QUALITY_LABEL[SIGNAL_POOR]
             new_tags = ('sub_peak',
                         'sub_peak_matched' if nearest_pk is not None else 'sub_peak_unmatched',
                         'qual_bad')
         else:
-            qual_lbl  = f'Peak #{nearest_pk["rank"]}' if nearest_pk else ''
+            qual_lbl  = f'Signal #{nearest_pk["rank"]}' if nearest_pk else ''
             new_tags = ('sub_peak',
                         'sub_peak_matched' if nearest_pk is not None else 'sub_peak_unmatched')
         if this_is_anchor:
@@ -3583,7 +2337,8 @@ class AnnotationResultsWindow:
                 continue
             cur = list(self.tree.item(ciid, 'values'))
             mm  = cur[5]
-            if mm.startswith('✓ Good') or mm.startswith('✗ Bad'):
+            if mm.startswith((QUALITY_LABEL[SIGNAL_GOOD],
+                              QUALITY_LABEL[SIGNAL_POOR])):
                 break   # manually saved — never auto-override
             if not _complete:
                 cur[5] = f'✗ {nf}/{ne}'
@@ -3608,12 +2363,41 @@ class AnnotationResultsWindow:
                 pass
             self._tooltip_win = None
 
+    def _show_score_tooltip(self, event, mp):
+        """Tooltip for the Score column: the equation behind the value."""
+        eq = mp.get('_score_breakdown')
+        lines = ['Signal score' if eq else 'Score']
+        if eq:
+            lines.append(f'  {eq}')
+            lines.append('')
+            lines.append('  ΔJ    coupling agreement (dj_gold_hz → dj_bad_hz)')
+            lines.append('  Δppm  chemical-shift agreement')
+            lines.append("  shape cosine of this signal's own window")
+        else:
+            sc = mp.get('composite_score')
+            lines.append(f'  {float(sc):.3f}' if sc is not None else '  n/a')
+            lines.append('  (breakdown unavailable — rescore to populate it)')
+        self._render_tooltip(event, '\n'.join(lines))
+
+    def _render_tooltip(self, event, text):
+        """Place a tooltip window near the cursor with *text*."""
+        rx = self.win.winfo_rootx() + event.x + 16
+        ry = self.win.winfo_rooty() + event.y + 10
+        self._hide_tooltip()
+        tw = tk.Toplevel(self.win)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{rx}+{ry}")
+        tk.Label(tw, text=text, justify=tk.LEFT,
+                 background='#fffde7', relief='solid', borderwidth=1,
+                 font=('Courier', 8), padx=4, pady=3).pack()
+        self._tooltip_win = tw
+
     def _on_tree_motion(self, event):
         """Show tooltip with _status_reasons when hovering over the Quality column."""
         iid = self.tree.identify_row(event.y)
         col = self.tree.identify_column(event.x)
-        # column #6 is 'quality' (0-based: #1=name, #2=ppm, #3=start, #4=end, #5=score, #6=quality)
-        if not iid or col != '#6':
+        # #1=name, #2=ppm, #3=start, #4=end, #5=score, #6=quality
+        if not iid or col not in ('#5', '#6'):
             self._hide_tooltip()
             return
 
@@ -3626,6 +2410,14 @@ class AnnotationResultsWindow:
 
         if mp is None:
             self._hide_tooltip()
+            return
+
+        if col == '#5':
+            # Score column: show the equation that produced the number, so the
+            # value is auditable instead of opaque. Two different scores once
+            # coexisted under the same key precisely because nobody could see
+            # how either was built.
+            self._show_score_tooltip(event, mp)
             return
 
         reasons = mp.get('_status_reasons') or []
@@ -3655,51 +2447,7 @@ class AnnotationResultsWindow:
             self._hide_tooltip()
             return
 
-        text = '\n'.join(lines)
-
-        # Position tooltip near cursor
-        rx = self.win.winfo_rootx() + event.x + 16
-        ry = self.win.winfo_rooty() + event.y + 10
-
-        self._hide_tooltip()
-        tw = tk.Toplevel(self.win)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{rx}+{ry}")
-        lbl = tk.Label(tw, text=text, justify=tk.LEFT,
-                       background='#fffde7', relief='solid', borderwidth=1,
-                       font=('Courier', 8), padx=4, pady=3)
-        lbl.pack()
-        self._tooltip_win = tw
-
-    def _on_tree_close(self, event):
-        """When a parent row is collapsed, refresh its score in the treeview."""
-        iid = self.tree.focus()
-        if iid not in self._iid_to_row:
-            return
-        rank, met, mp, det_pk = self._iid_to_row[iid]
-        # Recalculate composite score from only Good child peaks
-        ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        cqm = getattr(ann, '_child_quality_marks', {}) if ann else {}
-        good_children = [
-            dp for dp in met.get('db_peaks', [])
-            if cqm.get((met['id'], round(float(dp.get('ppm_center', dp.get('ppm', 0))), 3)))
-               == 'good'
-        ]
-        if good_children:
-            n_good    = len(good_children)
-            n_db      = max(len(met.get('db_peaks', [])), 1)
-            coverage  = n_good / n_db
-            new_score = float(mp.get('composite_score',
-                                     mp.get('multiplet_score', 0.0)) or 0.0)
-            # Blend original score with coverage of Good peaks
-            new_score = new_score * 0.6 + coverage * 0.4
-            mp['composite_score'] = new_score
-            tag  = 'met_high' if new_score > 0.75 else 'met_mid' if new_score >= 0.5 else 'met_low'
-            tags = (tag,)  # parent colour = score only
-            cur = list(self.tree.item(iid, 'values'))
-            cur[4] = f'{new_score:.3f}'
-            self.tree.item(iid, values=cur, tags=tags)
-
+        self._render_tooltip(event, '\n'.join(lines))
     # ── Table ─────────────────────────────────────────────────────────────────
 
     def _sort_by(self, key):
@@ -3820,10 +2568,10 @@ class AnnotationResultsWindow:
 
             menu = tk.Menu(self.win, tearoff=0)
             menu.add_command(
-                label=f'📋 Open Peak #{rank} in Peak List',
+                label=f'📋 Open Signal #{rank} in Signal List',
                 command=_open_peak_list)
             menu.add_command(
-                label=f'🧅 Send Peak #{rank} to Deconvolution Tool',
+                label=f'🧅 Send Signal #{rank} to Deconvolution Tool',
                 command=_open_deconv)
             menu.add_separator()
             menu.add_command(
@@ -3884,7 +2632,7 @@ class AnnotationResultsWindow:
                             'start_ppm': _ppm - 0.015,
                             'end_ppm':   _ppm + 0.015}
                 # mp_ref can be None when no matched peak was recorded yet —
-                # build a minimal stub so AnnotationMCRWindow can proceed
+                # build a minimal stub so MCRWindow can proceed
                 mp = _mp_ref if _mp_ref is not None else {
                     'db_ppm':    _ppm,
                     'peak_ppm':  _ppm,
@@ -3893,17 +2641,17 @@ class AnnotationResultsWindow:
                     'protons':   _dp.get('protons', 1),
                     'composite_score': 0.0,
                 }
-                from gui.widgets.annotation_mcr_window import AnnotationMCRWindow
-                AnnotationMCRWindow(
+                from gui.widgets.mcr_window import MCRWindow
+                MCRWindow(
                     self.win,
-                    [(_met, mp, peak)],
+                    [{'kind': 'undef', 'met': _met, 'mp': mp, 'peak': peak}],
                     app,
                     ann_stage=ann_stage,
                     ann_results=self)
 
             menu = tk.Menu(self.win, tearoff=0)
             menu.add_command(
-                label=f'DB peak @ {dp_ppm:.4f} ppm  [{dp.get("type","?")}]  —  {met["name"]}',
+                label=f'DB signal @ {dp_ppm:.4f} ppm  [{dp.get("type","?")}]  —  {met["name"]}',
                 state='disabled')
             if cands_raw:
                 menu.add_separator()
@@ -4009,11 +2757,9 @@ class AnnotationResultsWindow:
         show_good   = getattr(self, '_ann_filt_good',   None)
         show_bad    = getattr(self, '_ann_filt_bad',    None)
         show_undef  = getattr(self, '_ann_filt_undef',  None)
-        show_bdl    = getattr(self, '_ann_filt_bdl',    None)
         show_good   = show_good.get()   if show_good   else True
         show_bad    = show_bad.get()    if show_bad    else True
         show_undef  = show_undef.get()  if show_undef  else True
-        show_bdl    = show_bdl.get()    if show_bdl    else True
         show_mult_m = False  # 'm' multiplets permanently excluded
 
         def _is_mult_m(mp):
@@ -4024,8 +2770,6 @@ class AnnotationResultsWindow:
             # Filter out 'm' (multiplet without J) unless explicitly shown
             if _is_mult_m(mp) and not show_mult_m:
                 return False
-            if mp.get('below_detection_limit'):
-                return show_bdl
             qual = mp.get('annotation_quality')
             if qual == 'good':  return show_good
             if qual == 'bad':   return show_bad
@@ -4049,21 +2793,15 @@ class AnnotationResultsWindow:
             mid_f = met.get('id')
             has_anch_f = (
                 any(k[0] == mid_f for k in anchor_store)
-                or any(mp2.get('anchor_status') == 'clean' and mp2.get('j_met_confirmed')
-                       for mp2 in met['matched_peaks'])
                 or any(mp2.get('auto_anchor') for mp2 in met['matched_peaks'])
             )
             quals_f  = [mp2.get('annotation_quality') for mp2 in met['matched_peaks']]
-            is_bdl_f = all(mp2.get('below_detection_limit', False)
-                           for mp2 in met['matched_peaks'])
-            if has_anch_f and not is_bdl_f:
+            if has_anch_f:
                 return 'good'
             if 'good' in quals_f:
                 return 'good'
             if quals_f and all(q2 == 'bad' for q2 in quals_f):
                 return 'bad'
-            if is_bdl_f:
-                return 'bdl'
             return None  # undef
 
         visible_mets = []
@@ -4076,7 +2814,6 @@ class AnnotationResultsWindow:
             pq = _met_parent_qual(met)
             if pq == 'good'   and not show_good:  continue
             if pq == 'bad'    and not show_bad:    continue
-            if pq == 'bdl'    and not show_bdl:    continue
             if pq is None     and not show_undef:  continue
             visible_mets.append(met)
 
@@ -4102,7 +2839,7 @@ class AnnotationResultsWindow:
         lbl = getattr(self, '_summary_lbl', None)
         if lbl:
             lbl.config(
-                text=f"{n_matched}/{n_total_peaks} peaks annotated  ·  "
+                text=f"{n_matched}/{n_total_peaks} signals annotated  ·  "
                      f"{n_matched} matched in DB  ·  "
                      f"{len(visible_mets)} metabolites visible")
 
@@ -4110,49 +2847,48 @@ class AnnotationResultsWindow:
         self._iid_to_child    = {}
         self._iid_to_subchild = {}
 
+        # Live per-tier counts shown on the filter labels.
+        _tier_counts = {SIGNAL_GOOD: 0, SIGNAL_AVERAGE: 0, SIGNAL_POOR: 0}
+
         for ri, met in enumerate(visible_mets):
             met_id = met.get('id')
 
             # ── Aggregate quality / score across all matched peaks ─────────────
             score = float(met.get('composite_score', 0) or 0)
 
-            # An anchor only promotes the metabolite to Good when the anchoring
-            # peak is itself quality-'good'. The quality gate already marks an
-            # incomplete multiplet (e.g. 2/3 lines, J unconfirmed) as 'bad', so
-            # requiring 'good' here stops such a peak from forcing "⚓ Good" and
-            # being quantified. anchor_store entries are only written for good +
-            # J-qualified peaks (or manual marks), so that check stays as-is.
+            # A quantification anchor line (manual, or auto-assigned to an
+            # exclusive J-confirmed peak) still marks the metabolite as Good.
             has_anchor = (
                 any(k[0] == met_id for k in anchor_store)
-                or any(mp2.get('annotation_quality') == 'good'
-                       and mp2.get('anchor_status') == 'clean'
-                       and mp2.get('j_met_confirmed')
-                       for mp2 in met['matched_peaks'])
                 or any(mp2.get('annotation_quality') == 'good' and mp2.get('auto_anchor')
                        for mp2 in met['matched_peaks'])
             )
 
             # Overall quality: best quality among matched peaks
             quals = [mp2.get('annotation_quality') for mp2 in met['matched_peaks']]
-            is_bdl = all(mp2.get('below_detection_limit', False)
-                         for mp2 in met['matched_peaks'])
-            if has_anchor and not is_bdl:
+            if has_anchor:
                 qual = 'good'
                 qual_mark = '⚓ Good'
             elif 'good' in quals:
                 qual = 'good'
-                qual_mark = '✓ Good'
+                qual_mark = QUALITY_LABEL[SIGNAL_GOOD]
             elif quals and all(q2 == 'bad' for q2 in quals):
                 qual = 'bad'
-                qual_mark = '✗ Bad'
-            elif is_bdl:
-                qual = None
-                qual_mark = '⬇ BDL'
-            elif False:  # 'poor' removed — handled as 'bad'
-                pass
+                qual_mark = QUALITY_LABEL[SIGNAL_POOR]
             else:
+                # No verdict reached: plausible but unconfirmed → Average.
                 qual = None
-                qual_mark = '—'
+                qual_mark = QUALITY_LABEL[SIGNAL_AVERAGE]
+
+            _met_ambiguous = any(
+                mp2.get('peak_rank') in getattr(self, '_ambiguous_peak_ranks', set())
+                for mp2 in met.get('matched_peaks', [])
+            )
+            if _met_ambiguous and qual != 'bad':
+                # Competing candidates leave the identity unconfirmed, which is
+                # what Average means. The Overlap column carries the count.
+                qual = None
+                qual_mark = QUALITY_LABEL[SIGNAL_AVERAGE]
 
             # Overlap: matched peaks with ≥1 valid competitor
             n_ovlp = sum(
@@ -4182,12 +2918,12 @@ class AnnotationResultsWindow:
                 start_ppm = peak_ppm + 0.01
                 end_ppm   = peak_ppm - 0.01
 
-            tag  = ('met_high' if score > 0.75
-                    else 'met_mid' if score >= 0.5 else 'met_low')
-            # Parent row colour = score only. Quality shown in Quality/M column.
-            tags = (tag, 'qual_bdl') if is_bdl else (tag,)
+            # Row colour follows the confidence tier shown in the column.
+            tag = {SIGNAL_GOOD: 'met_high', SIGNAL_AVERAGE: 'met_mid',
+                   SIGNAL_POOR: 'met_low'}[tier_from_annotation_quality(qual)]
+            tags = (tag, 'met_parent')
+            _tier_counts[tier_from_annotation_quality(qual)] += 1
 
-            _conf_cls  = met.get('confidence_class', '')
             _name_disp = met['name']
 
             piid = f"met{ri}"
@@ -4233,13 +2969,10 @@ class AnnotationResultsWindow:
             #           (2) BDL peaks that were NOT detected — expected SNR < 3σ
             #               and no experimental match, so showing ✗ would be
             #               misleading (absence is expected, not informative).
-            # BDL peaks that WERE detected are kept and shown gray (⬇).
+            # BDL peaks that WERE detected are kept and shown grey.
             _dp_list = [
                 p for p in met['db_peaks']
                 if (p.get('type') or '').lower().strip() not in ('m', 'multiplet')
-                and (not p.get('bdl', False)
-                     or round(float(p.get('ppm_center', p.get('ppm', 0))), 3)
-                        in matched_db_ppms)
             ]
             for ci, dp in enumerate(sorted(
                     _dp_list,
@@ -4338,10 +3071,10 @@ class AnnotationResultsWindow:
                                  and float(_child_dj) >= 0.5)
                 if child_saved_quality == 'good':
                     child_tags = ('peak_match', 'qual_good')
-                    match_mark = '✓ Good'
+                    match_mark = QUALITY_LABEL[SIGNAL_GOOD]
                 elif child_saved_quality == 'bad':
                     child_tags = ('peak_match', 'qual_bad')
-                    match_mark = '✗ Bad'
+                    match_mark = QUALITY_LABEL[SIGNAL_POOR]
                 else:
                     # Auto-colour: red if not matched, lines missing, or ΔJ ≥ 0.5 Hz
                     if not is_matched:
@@ -4360,31 +3093,6 @@ class AnnotationResultsWindow:
                         child_tags = ('peak_match', 'qual_good')
                         match_mark = f'✓ {_n_found_c}/{_n_exp_c}' if _n_exp_c > 1 else '✓'
 
-                # ── J-anchor badge for singlets confirmed by companion multiplet ─
-                if (_child_is_singlet
-                        and child_saved_quality != 'bad'
-                        and mp_ref_child is not None
-                        and mp_ref_child.get('j_met_confirmed')
-                        and mp_ref_child.get('anchor_status') == 'clean'):
-                    child_tags = child_tags + ('singlet_anchored',)
-                    _a_conf    = mp_ref_child.get('anchor_pos_confidence', '')
-                    _conf_badge = {'high': '●', 'medium': '◑', 'low': '○'}.get(_a_conf, '')
-                    match_mark  = f'⚓{_conf_badge} anchored'
-                elif (_child_is_singlet
-                        and child_saved_quality != 'bad'
-                        and mp_ref_child is not None
-                        and mp_ref_child.get('anchor_status') == 'overlap'):
-                    if not match_mark.startswith('✗'):
-                        match_mark = match_mark + '  ⚓⚠'
-
-                # ── BDL override: detected but below expected SNR threshold ──────
-                # Show in gray to indicate the signal is marginal. Only applied
-                # when the user has not explicitly saved a quality mark.
-                if dp.get('bdl') and is_matched and not child_saved_quality:
-                    child_tags = ('peak_match', 'qual_bdl')
-                    if not match_mark.startswith('✗'):
-                        match_mark = '⬇ ' + match_mark
-
                 # ── Overlap column — computed after match_mark is finalised ────
                 # ⚓ = exclusive (no competitors) — only shown when the peak is
                 # actually good. A bad-quality row (✗) shows '—' so the ⚓ symbol
@@ -4396,6 +3104,13 @@ class AnnotationResultsWindow:
                                else '—')
 
                 self._iid_to_child[ciid] = (met, dp, mp_ref_child)
+                # Signal score of THIS resonance. The parent shows the analyte
+                # score (bold); the children show what each signal contributed
+                # to it, so the aggregate is readable as the sum of its parts.
+                # Empty for a DB signal that was never matched — it has no score.
+                _child_sc = (mp_ref_child or {}).get('composite_score')
+                _child_sc_str = ('' if _child_sc is None
+                                 else f"{float(_child_sc):.3f}")
                 try:
                     self.tree.insert(
                         piid, tk.END, iid=ciid,
@@ -4405,7 +3120,7 @@ class AnnotationResultsWindow:
                             f"{dp_ppm:.4f}",
                             f"{dp_start:.4f}",
                             f"{dp_end:.4f}",
-                            '',
+                            _child_sc_str,
                             match_mark,
                             child_ovlp),
                         tags=child_tags)
@@ -4486,13 +3201,13 @@ class AnnotationResultsWindow:
                         pk_end    = float(nearest_pk.get('end_ppm',   pk_ppm))
                         if saved_sl_q == 'good':
                             sci_color = ('sub_peak', 'sub_peak_matched', 'qual_good')
-                            qual_lbl  = '✓ Good'
+                            qual_lbl  = QUALITY_LABEL[SIGNAL_GOOD]
                         elif saved_sl_q == 'bad':
                             sci_color = ('sub_peak', 'sub_peak_matched', 'qual_bad')
-                            qual_lbl  = '✗ Bad'
+                            qual_lbl  = QUALITY_LABEL[SIGNAL_POOR]
                         else:
                             sci_color = ('sub_peak', 'sub_peak_matched')
-                            qual_lbl  = f'Peak #{pk_rank}'
+                            qual_lbl  = f'Signal #{pk_rank}'
                         if is_anchor:
                             sci_color = sci_color + ('anchor_line',)
 
@@ -4515,6 +3230,8 @@ class AnnotationResultsWindow:
                                 tags=sci_color)
                         except Exception as _se:
                             print(f"  sub-child insert error: {_se}")
+
+        update_tier_counts(getattr(self, '_conf_filt_cbs', {}), _tier_counts)
 
         # Select first row
         children = self.tree.get_children('')
@@ -4753,6 +3470,34 @@ class AnnotationResultsWindow:
                             x_exp = _x_reg
                             y_exp = _y_sum
 
+        # ── MCR-resolved component ───────────────────────────────────────────
+        # A peak whose score came from MCR was measured on the deconvolved
+        # component, not on the merged signal. Show the same thing the decision
+        # was made on: raw fades to context, the resolved component is drawn.
+        # Sub-peaks saved from the Deconvolution Tool take precedence — those
+        # are the analyst's own explicit decision.
+        _mcr_component = None
+        if not _use_deconv_display and mp_ref is not None:
+            _mcr_c = self._mcr_component_for(mp_ref, met)
+            if _mcr_c is not None:
+                _mx, _my = _mcr_c
+                _mk = (_mx >= lo) & (_mx <= hi)
+                if _mk.sum() >= 4 and float(np.max(_my[_mk])) > 0:
+                    _mx, _my = _mx[_mk], _my[_mk].copy()
+                    # A component cannot be taller than the merged signal it was
+                    # separated out of. If the concentration scaling landed in
+                    # different units from the plotted trace, fall back to the
+                    # raw envelope so the two stay comparable on screen.
+                    _raw_pk = float(np.max(y_exp)) if y_exp.size else 0.0
+                    _cmp_pk = float(np.max(_my))
+                    if _raw_pk > 0 and not (_raw_pk * 0.01 <= _cmp_pk <= _raw_pk * 1.5):
+                        _my = _my / _cmp_pk * _raw_pk
+                    _mcr_component = (_mx, _my)
+                    _deconv_components.append(_mcr_component)
+                    _use_deconv_display = True
+                    x_exp = _mx
+                    y_exp = _my.copy()
+
         y_norm = np.zeros_like(y_exp)          # always defined
         if len(x_exp) >= 4 and y_exp.max() > 0:
 
@@ -4785,11 +3530,21 @@ class AnnotationResultsWindow:
                 for _ki, (_xc, _yc) in enumerate(_deconv_components):
                     _yc_n = _yc / ref_max
                     _cc   = _comp_colors[_ki % len(_comp_colors)]
+                    # The MCR component is this metabolite's own resolved signal
+                    # and the thing its score was measured on — draw it solid and
+                    # name it, rather than as one anonymous component of a set.
+                    _is_mcr = (_mcr_component is not None
+                               and _yc is _mcr_component[1])
+                    if _is_mcr:
+                        _cc = '#7b1fa2'
                     self.ax.fill_between(_xc, 0, _yc_n,
                                          color=_cc, alpha=0.18, zorder=2)
                     self.ax.plot(_xc, _yc_n,
-                                 color=_cc, linewidth=0.9,
-                                 linestyle='-', alpha=0.70, zorder=3)
+                                 color=_cc,
+                                 linewidth=1.6 if _is_mcr else 0.9,
+                                 linestyle='-',
+                                 alpha=0.95 if _is_mcr else 0.70, zorder=3,
+                                 label='MCR component' if _is_mcr else None)
                     # record peak position → height for marker placement
                     if len(_yc_n) > 0:
                         _pk_idx = int(np.argmax(_yc_n))
@@ -4908,9 +3663,35 @@ class AnnotationResultsWindow:
                 _mcp = min(_cpy.keys(), key=lambda cp: abs(cp - centre))
                 y_db *= _cpy[_mcp]
 
+        # ── What the Pearson r compares ─────────────────────────────────
+        # MCR aligns the DB profile onto the signal before correlating, and this
+        # panel already draws the DB curve at the observed position rather than
+        # at the nominal DB ppm. The aligned profile and the drawn DB curve are
+        # therefore the same curve — the component and its reference are already
+        # superimposed, and adding a shifted copy only put a third curve an
+        # extra offset away from both. The shift is reported as a number, on the
+        # DB curve's own label and in the Match Quality card.
+        _mcr_shift = (mp_ref.get('mcr_shift_ppm') if mp_ref is not None else None)
+        _mcr_lbl_extra = ''
+        if _use_deconv_display and _mcr_component is not None:
+            _r_val = mp_ref.get('mcr_pearson_r') if mp_ref is not None else None
+            _bits = []
+            if _mcr_shift is not None and abs(float(_mcr_shift)) > 1e-4:
+                # In ppm only. Hz is reserved for couplings here: a Hz figure
+                # sitting beside the "J = 5.25 Hz" box reads as a coupling
+                # constant of the resolved component, and an alignment distance
+                # is not one.
+                _sh = float(_mcr_shift)
+                _bits.append(f'aligned {_sh:+.4f} ppm')
+            if _r_val is not None:
+                _bits.append(f'shape r={float(_r_val):.2f}')
+            if _bits:
+                _mcr_lbl_extra = '  — MCR: ' + ' · '.join(_bits)
+
         db_color = '#1a7a1a' if is_matched else '#cc2200'
         db_fill  = '#44bb44' if is_matched else '#ee4444'
-        lbl      = 'DB matched' if is_matched else 'DB — not found'
+        lbl      = ('DB matched' if is_matched else 'DB — not found')
+        lbl      = lbl + _mcr_lbl_extra
         self.ax.fill_between(x_db, 0, y_db,
                              color=db_fill, alpha=0.22, zorder=3)
         self.ax.plot(x_db, y_db,
@@ -5085,39 +3866,10 @@ class AnnotationResultsWindow:
                 self._set_q('j_obs', j_card, j_color)
 
             else:
-                # Singlet — show J-anchor validation if available
-                _a_status = mp_ref.get('anchor_status')         if mp_ref else None
-                _a_ratio  = mp_ref.get('anchor_ratio')          if mp_ref else None
-                _a_conf   = mp_ref.get('anchor_pos_confidence') if mp_ref else None
-                _a_dppm   = mp_ref.get('anchor_pos_delta_ppm')  if mp_ref else None
-                _j_conf   = mp_ref.get('j_met_confirmed')       if mp_ref else False
-
-                if _a_status == 'clean' and _j_conf:
-                    _dppm_str = f'  Δδ {_a_dppm:+.4f} ppm' if _a_dppm is not None else ''
-                    _conf_str = f'  [{_a_conf}]'             if _a_conf              else ''
-                    j_card    = f'⚓ J-anchor  ratio {_a_ratio:.2f}{_dppm_str}{_conf_str}'
-                    j_color   = ('#1a7a1a' if _a_conf == 'high'
-                                 else '#7a6000' if _a_conf in ('medium', 'low')
-                                 else '#004466')
-                    self.ax.text(0.02, 0.04,
-                                 f'⚓ J-anchor  ratio {_a_ratio:.2f}'
-                                 + (f'  Δδ {_a_dppm:+.4f} ppm'
-                                    if _a_dppm is not None else ''),
-                                 transform=self.ax.transAxes, fontsize=7,
-                                 color=j_color, va='bottom',
-                                 bbox=dict(boxstyle='round,pad=0.2',
-                                           facecolor='#d4f0ff',
-                                           edgecolor=j_color, alpha=0.80))
-                elif _a_status == 'overlap':
-                    j_card  = (f'⚓ overlap  ratio {_a_ratio:.2f}'
-                               if _a_ratio is not None else '⚓ anchor: overlap')
-                    j_color = '#cc7700'
-                elif _a_status in ('absent', 'bdl'):
-                    j_card  = f'⚓ anchor: {_a_status}'
-                    j_color = '#9a0000'
-                else:
-                    j_card  = '— singlet'
-                    j_color = '#888888'
+                # A singlet carries no coupling constant, so there is
+                # nothing to validate here.
+                j_card, j_color = '', '#666666'
+                j_card, j_color = '— singlet', '#888888'
                 self._set_q('j_obs', j_card, j_color)
 
         # ── Δppm arrow if matched and shift is visible ─────────────────────────
@@ -5266,8 +4018,20 @@ class AnnotationResultsWindow:
                 _parts_pk.append(f"r={_pr_pk:.2f}")
             if _cc_pk is not None:
                 _parts_pk.append(f"cc={_cc_pk:.2f}")
-            _sym_pk   = '✓' if _conf_pk is True else ('✗' if _conf_pk is False else '?')
-            _color_pk = '#1a7a1a' if _conf_pk is True else ('#9a0000' if _conf_pk is False else '#7a6000')
+            if mp_ref.get('mcr_informative_only'):
+                # The numbers describe the fit, not the identity: either the
+                # profile is a singlet (shape carries nothing after alignment)
+                # or MCR resolved a different signal from the one matched here.
+                _sym_pk, _color_pk = '—', '#555577'
+                _parts_pk.append(mp_ref.get('mcr_info_reason')
+                                 or 'informative only')
+            else:
+                _sym_pk   = '✓' if _conf_pk is True else ('✗' if _conf_pk is False else '?')
+                _color_pk = ('#1a7a1a' if _conf_pk is True
+                             else '#9a0000' if _conf_pk is False else '#7a6000')
+            _shift_pk = mp_ref.get('mcr_shift_ppm')
+            if _shift_pk is not None and abs(float(_shift_pk)) > 1e-4:
+                _parts_pk.append(f'align {float(_shift_pk):+.4f} ppm')
             self._set_q('mcr', f"{_sym_pk}  {' · '.join(_parts_pk)}", _color_pk)
         else:
             self._set_q('mcr', '— not run', '#888888')
@@ -5397,6 +4161,98 @@ class AnnotationResultsWindow:
             return '#ddaa00', '#8b6000'   # amber: intermediate annotation
         return '#ee6644', '#aa2200'       # red-orange: poor annotation
 
+    def _mcr_component_for(self, mp, met=None):
+        """This candidate's MCR component, when MCR genuinely resolved one.
+
+        Returns ``(ppm_region, contribution)`` or None. The contribution is in
+        data units, not the unit-normalised S column, so it can be drawn against
+        the experimental trace on the same scale.
+
+        ``met`` supplies the compound identity. A matched_peak carries only its
+        positions and scores — ``_group_by_metabolite`` keeps the HMDB/BMRB
+        accession on the metabolite, not on each of its peaks — so without it
+        the candidate lookup can never match and no component is ever found.
+
+        The gate is the same one the scoring uses to trust MCR's J over the raw
+        measurement (MCR_MIN_OVERLAP_K / MCR_MIN_SHAPE_R): there must have been a
+        real overlap to separate, and this component's shape must match this
+        candidate's profile. Deliberately NOT gated on ``mcr_confirmed`` — that
+        is a region-level verdict on the global R², and a component can be well
+        resolved for this candidate while the region fit falls short of it.
+        Showing it then is the point: the analyst sees what the score was
+        measured on, and the Match Quality card still reports the verdict.
+        """
+        rank = mp.get('peak_rank')
+        if rank is None:
+            return None
+        pk = next((p for p in (self.peaks or []) if p.get('rank') == rank), None)
+        ann = (pk or {}).get('mcr_annotation') or {}
+        S       = ann.get('S')
+        ppm_reg = ann.get('ppm_region')
+        assigns = ann.get('assignments') or []
+        cands   = ann.get('candidates') or []
+        if S is None or ppm_reg is None or not len(assigns) or not cands:
+            return None
+        try:
+            if int(ann.get('K') or 0) < MCR_MIN_OVERLAP_K:
+                return None      # single component — nothing was deconvolved
+        except (TypeError, ValueError):
+            return None
+
+        def _ident(d):
+            return str(d.get('hmdb_id') or d.get('bmrb_id')
+                       or d.get('id') or d.get('name') or '')
+
+        want_id = _ident(met or {}) or _ident(mp)
+        if not want_id:
+            return None
+        want_ppm = round(float(mp.get('db_ppm') or 0), 3)
+        same_met = [i for i, c in enumerate(cands) if _ident(c) == want_id]
+        if not same_met:
+            return None
+        # A metabolite can contribute more than one DB peak to the same region,
+        # so prefer the candidate for this exact peak and fall back to the
+        # compound's only entry.
+        cand_idx = next(
+            (i for i in same_met
+             if round(float(cands[i].get('db_ppm') or 0), 3) == want_ppm),
+            same_met[0] if len(same_met) == 1 else None)
+        if cand_idx is None:
+            return None
+        # assignments is per component: entry k describes component k
+        comp = next((k for k, a in enumerate(assigns)
+                     if a is not None and len(a) and a[0] == cand_idx), None)
+        if comp is None:
+            return None
+
+        _a = assigns[comp]
+        shape_r = (_a[1] if len(_a) > 1 and _a[1] is not None
+                   else mp.get('mcr_pearson_r'))
+        if shape_r is None or float(shape_r) < MCR_MIN_SHAPE_R:
+            return None          # component does not look like this compound
+
+        try:
+            S = np.asarray(S, dtype=float)
+            if comp >= S.shape[1]:
+                return None
+            profile = S[:, comp]
+            # S columns are unit-normalised, so their height is arbitrary. The
+            # concentration matrix restores data units: contribution of
+            # component k to a sample is C[sample, k] * S[:, k].
+            C = ann.get('C')
+            scale = 1.0
+            if C is not None:
+                C = np.asarray(C, dtype=float)
+                if C.ndim == 2 and comp < C.shape[1]:
+                    scale = float(np.mean(C[:, comp]))
+                elif C.ndim == 1 and comp < C.size:
+                    scale = float(C[comp])
+            if not np.isfinite(scale) or scale <= 0:
+                scale = 1.0
+            return np.asarray(ppm_reg, dtype=float), profile * scale
+        except Exception:
+            return None
+
     def _plot_fingerprint(self, met):
         # Switching to fingerprint view — clear per-peak zoom state
         self._current_dp      = None
@@ -5506,6 +4362,11 @@ class AnnotationResultsWindow:
 
             for x_seg, y_mean_seg, y_all_seg, mp in y_segments:
                 gmax = y_global_max
+                # Where MCR resolved the overlap, the raw trace is the merged
+                # signal — kept for context but dimmed, with the resolved
+                # component drawn on top.
+                _mcr_comp = self._mcr_component_for(mp, met)
+                _exp_a = 0.30 if _mcr_comp is not None else 1.0
                 if groups and y_all_seg is not None:
                     for g, idxs in groups.items():
                         col   = gcols.get(g, '#888')
@@ -5516,13 +4377,13 @@ class AnnotationResultsWindow:
                         for y_s in ys:
                             self.ax.plot(x_seg, y_s / gmax, color=col,
                                          lw=0.5,
-                                         alpha=0.35 if is_best else 0.18,
+                                         alpha=(0.35 if is_best else 0.18) * _exp_a,
                                          zorder=1)
                         if ys and g not in _legend_done:
                             ymean_g = np.mean(ys, axis=0)
                             self.ax.plot(x_seg, ymean_g / gmax, color=col,
                                          lw=1.8 if is_best else 1.0,
-                                         alpha=0.95 if is_best else 0.50,
+                                         alpha=(0.95 if is_best else 0.50) * _exp_a,
                                          zorder=2,
                                          label=g if is_best else f'{g} (dim)')
                             _legend_done.add(g)
@@ -5530,14 +4391,36 @@ class AnnotationResultsWindow:
                             ymean_g = np.mean(ys, axis=0)
                             self.ax.plot(x_seg, ymean_g / gmax, color=col,
                                          lw=1.8 if is_best else 1.0,
-                                         alpha=0.95 if is_best else 0.50,
+                                         alpha=(0.95 if is_best else 0.50) * _exp_a,
                                          zorder=2)
                 else:
                     y_n = y_mean_seg / gmax
                     self.ax.fill_between(x_seg, 0, y_n, color='#aaaaaa',
-                                         alpha=0.35, zorder=1)
+                                         alpha=0.35 * _exp_a, zorder=1)
                     self.ax.plot(x_seg, y_n, color='#444444',
-                                 lw=0.8, zorder=2, label='Experimental')
+                                 lw=0.8, alpha=_exp_a, zorder=2,
+                                 label='Experimental')
+
+                # ── MCR-resolved component ────────────────────────────────
+                if _mcr_comp is not None:
+                    _mx, _my = _mcr_comp
+                    _in = (_mx >= float(min(x_seg))) & (_mx <= float(max(x_seg)))
+                    if _in.sum() >= 2 and float(np.max(_my[_in])) > 0:
+                        # Scale to the experimental trace so the shapes are
+                        # comparable; MCR components carry arbitrary units.
+                        _ref = (float(np.max(y_mean_seg))
+                                if float(np.max(y_mean_seg)) > 0 else 1.0)
+                        _my_n = (_my[_in] / float(np.max(_my[_in]))
+                                 * (_ref / gmax))
+                        _lbl = ('MCR component'
+                                if 'MCR component' not in _legend_done else '')
+                        self.ax.fill_between(_mx[_in], 0, _my_n,
+                                             color='#7b1fa2', alpha=0.18,
+                                             zorder=3)
+                        self.ax.plot(_mx[_in], _my_n, color='#7b1fa2',
+                                     lw=1.6, zorder=4, label=_lbl)
+                        if _lbl:
+                            _legend_done.add('MCR component')
 
                 # ── Deconvolved sub-peak overlay (if region was deconvolved) ──
                 sub_pks = self._deconv_sub_peaks_for(mp.get('peak_rank'))
@@ -5679,65 +4562,7 @@ class AnnotationResultsWindow:
                 xytext=(2, 3), textcoords='offset points',
                 fontsize=6, color=_ec_mp, alpha=0.9)
 
-        # ── J-anchor BDL / absent peak markers ───────────────────────────────
-        # Peaks where the J-confirmed anchor indicates the signal is below the
-        # detection threshold (obs_snr < 3) or weaker than expected (ratio < 0.35).
-        # The metabolite IS confirmed present via the anchor, so the DB position
-        # is correct — the signal is theoretically present but undetectable at
-        # this concentration.  Draw as gray dashed vertical lines (RANSY principle).
-        _bdl_label_done = False
-        for mp in met['matched_peaks']:
-            if mp.get('anchor_status') not in ('bdl', 'absent'):
-                continue
-            pos = float(mp.get('peak_ppm') or mp.get('db_ppm') or 0)
-            if pos <= 0:
-                continue
-            lbl = '< 3σ' if not _bdl_label_done else ''
-            self.ax.axvline(pos, color='#aaaaaa', linewidth=1.3,
-                            linestyle='--', alpha=0.75, zorder=5, label=lbl)
-            self.ax.text(pos, 1.06, '< 3σ',
-                         fontsize=6, ha='center', color='#999999',
-                         style='italic', zorder=6)
-            _bdl_label_done = True
-
-        # ── Legend / axes ─────────────────────────────────────────────────────
-        self.ax.set_xlim(span_hi + 0.05, span_lo - 0.05)   # NMR inverted
-        self.ax.set_ylim(bottom=-0.20, top=1.15)
-        self.ax.set_xlabel('δ (ppm)', fontsize=9)
-        self.ax.set_ylabel('Intensity (normalised to peak max)', fontsize=8)
-        _mean_score_fp = (sum(mp.get('composite_score', 0) or 0
-                             for mp in met['matched_peaks'])
-                          / max(len(met['matched_peaks']), 1))
-        _fc_title, _ = self._score_to_fill_colors(_mean_score_fp)
-        self.ax.set_title(f"{met['name']}  [{_mean_score_fp:.2f}]",
-                          fontsize=10, fontweight='bold', color=_fc_title)
-        self.ax.tick_params(labelsize=8)
-        self.ax.grid(True, alpha=0.2, linestyle=':')
-        # ── MCR deconvolution overlay ─────────────────────────────────────────
-        # Find the detected peak for this metabolite (any matched peak rank)
-        _det_pk_mcr = None
-        for _mp2 in met['matched_peaks']:
-            _rk2 = _mp2.get('peak_rank')
-            if _rk2 is not None:
-                _det_pk_mcr = next(
-                    (p for p in self.peaks if p.get('rank') == _rk2), None)
-                if _det_pk_mcr and _det_pk_mcr.get('mcr_annotation'):
-                    break
-
-        if _det_pk_mcr is not None:
-            _mcr = _det_pk_mcr.get('mcr_annotation')
-            if _mcr and _mcr.get('K', 1) >= 2:
-                _r2 = _mcr.get('metrics', {}).get('r2', float('nan'))
-                _K  = _mcr['K']
-                self.ax.text(
-                    0.02, 0.97,
-                    f'MCR  K={_K}  R²={_r2:.3f}',
-                    transform=self.ax.transAxes,
-                    fontsize=7, va='top', color='#c62828',
-                    bbox=dict(boxstyle='round,pad=0.2',
-                              fc='white', ec='#c62828', alpha=0.75))
-
-        # Legend — collect all labeled artists automatically
+        # ── Legend — collect all labeled artists automatically ────────────
         from matplotlib.patches import Patch
         from matplotlib.lines import Line2D
         _base_handles = [
@@ -5747,15 +4572,9 @@ class AnnotationResultsWindow:
                    alpha=0.5, label='DB unmatched'),
         ]
         _auto_h, _auto_l = self.ax.get_legend_handles_labels()
-        _bdl_lbl_set = {'Experimental', 'DB matched', 'DB unmatched'}
-        if any(mp.get('anchor_status') in ('bdl', 'absent')
-               for mp in met['matched_peaks']):
-            _base_handles.append(
-                Line2D([0], [0], color='#aaaaaa', lw=1.3,
-                       linestyle='--', alpha=0.75, label='< 3σ (anchor BDL)'))
-            _bdl_lbl_set.add('< 3σ')
+        _base_lbls = {'Experimental', 'DB matched', 'DB unmatched'}
         _extra = [(h, l) for h, l in zip(_auto_h, _auto_l)
-                  if l not in _bdl_lbl_set]
+                  if l not in _base_lbls]
         _all_h = _base_handles + [h for h, _ in _extra]
         self.ax.legend(handles=_all_h, loc='upper right', fontsize=7)
 
@@ -5806,7 +4625,7 @@ class AnnotationResultsWindow:
             self._set_q('mcr', f"{_sym}  {' · '.join(_parts)}", _color)
 
         self.match_info.config(
-            text=(f"{met['name']}  ·  {n_mat}/{n_db} DB peaks matched  "
+            text=(f"{met['name']}  ·  {n_mat}/{n_db} DB signals matched  "
                   f"·  {cov:.0f}% coverage  ·  cosine {cos:.3f}"))
 
     def _plot_peak_zoom(self, met, mp):
@@ -5953,9 +4772,9 @@ class AnnotationResultsWindow:
         # xlim already set above; re-apply to be explicit.
         self.ax.set_ylim(-0.05, 1.25)
         self.ax.set_xlabel('δ (ppm)', fontsize=9)
-        self.ax.set_ylabel('Intensity (normalised to peak max)', fontsize=8)
+        self.ax.set_ylabel('Intensity (normalised to signal max)', fontsize=8)
         self.ax.set_title(
-            f"{met['name']}  ·  Peak #{mp['peak_rank']}",
+            f"{met['name']}  ·  Signal #{mp['peak_rank']}",
             fontsize=9, fontweight='bold')
         self.ax.legend(loc='upper right', fontsize=7)
         self.ax.tick_params(labelsize=8)
@@ -6057,7 +4876,7 @@ class AnnotationResultsWindow:
             self.plot_canvas.draw_idle()
             try:
                 self.match_info.config(
-                    text='Select a peak in the list first, then right-drag.',
+                    text='Select a signal in the list first, then right-drag.',
                     foreground='orange')
             except Exception:
                 pass
@@ -6072,7 +4891,7 @@ class AnnotationResultsWindow:
         """Update the 'modified' indicator next to the reset button."""
         try:
             if modified:
-                self._reset_modified_lbl.config(text='● peaks modified by selection')
+                self._reset_modified_lbl.config(text='● signals modified by selection')
             else:
                 self._reset_modified_lbl.config(text='')
         except Exception:
@@ -6129,7 +4948,7 @@ class AnnotationResultsWindow:
         if self._current_dp is None:
             self.plot_canvas.draw_idle()
             self.match_info.config(
-                text='Select a peak in the list first, then right-drag.',
+                text='Select a signal in the list first, then right-drag.',
                 foreground='orange')
             return
 
@@ -6149,22 +4968,13 @@ class AnnotationResultsWindow:
     def _recompute_and_refresh(self):
         """Full scoring pipeline + UI refresh. Called after parameter changes."""
         try:
-            self._auto_resolve_unmatched_lines()
+            # A parameter change can move the line-matching tolerance, so the
+            # measurement has to be redone rather than read back.
+            self._lines_dirty = True
             self._compute_scores()
-            self._propagate_multiplet_confirmation()
-            self._filter_incompatible_candidates()
-            self._propagate_j_anchor_quality()
-            self._propagate_anchor_position()
             self._enrich_scores()
-            self._adjust_scores_for_competition()
-            self._classify_confidence_classes()
             self._auto_mark_good()
-            self._require_multi_peak_confirmation()
-            self._promote_uncontested_candidates()
-            self._promote_exclusive_singlets()
-            self._promote_corroborated_singlets()
-            self._promote_anchor_confirmed_peaks()
-            self._propagate_anchor_position()
+            self._promote_singlets()
             self._nnls_spectral_validation()
             self._build_peak_assignments()
             self._populate()
@@ -6183,14 +4993,8 @@ class AnnotationResultsWindow:
         try:
             self._compute_scores()
             self._enrich_scores()
-            self._adjust_scores_for_competition()
             self._auto_mark_good()
-            self._require_multi_peak_confirmation()
-            self._promote_uncontested_candidates()
-            self._promote_exclusive_singlets()
-            self._promote_corroborated_singlets()
-            self._promote_anchor_confirmed_peaks()
-            self._propagate_anchor_position()
+            self._promote_singlets()
             self._nnls_spectral_validation()
             self._build_peak_assignments()
             self._populate()
@@ -6407,126 +5211,29 @@ class AnnotationResultsWindow:
     # ── Annotation Parameters dialog ─────────────────────────────────────────
 
     def _open_param_dialog(self):
-        """Open a tabbed dialog for editing all annotation parameters."""
-        dlg = tk.Toplevel(self.win)
-        dlg.title("Annotation Parameters")
-        dlg.resizable(False, False)
-        dlg.transient(self.win)
-        dlg.grab_set()
+        """Edit the annotation parameters and rescore with them.
 
-        nb = ttk.Notebook(dlg)
-        nb.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
+        Opens the shared dialog — this used to be a second implementation of the
+        same list of parameters, kept in step with the menu one by hand.
+        """
+        from gui.widgets.annotation_params_dialog import open_annotation_params
 
-        # Storage for StringVar widgets: key → StringVar
-        _vars = {}
-
-        def _tab(title, rows):
-            """Create a tab with label/entry pairs. rows = [(label, key, tooltip), ...]"""
-            frm = ttk.Frame(nb, padding=10)
-            nb.add(frm, text=title)
-            for r, (lbl, key, tip) in enumerate(rows):
-                ttk.Label(frm, text=lbl, anchor=tk.W).grid(
-                    row=r, column=0, sticky=tk.W, padx=(0, 10), pady=3)
-                var = tk.StringVar(value=str(self._params[key]))
-                _vars[key] = var
-                ent = ttk.Entry(frm, textvariable=var, width=10)
-                ent.grid(row=r, column=1, sticky=tk.W, pady=3)
-                if tip:
-                    ttk.Label(frm, text=tip, foreground='gray',
-                              font=('Arial', 8)).grid(
-                        row=r, column=2, sticky=tk.W, padx=(6, 0))
-
-        # ── Tab 1: Score & Quality ─────────────────────────────────────────
-        _tab("Score & Quality", [
-            ("Good score threshold",  'good_score_thresh', "Rules 3/4/5 — min score → Good"),
-            ("Bad score threshold",   'bad_score_thresh',  "Rule 1 — singlets only"),
-            ("Fingerprint coverage %", 'fp_coverage_pct',  "≥2 DB peaks: min coverage %"),
-            ("NNLS min fraction",     'nnls_min_frac',     "< this → downgrade to yellow"),
-        ])
-
-        # ── Tab 2: ΔJ Criteria ────────────────────────────────────────────
-        _tab("ΔJ Criteria (Hz)", [
-            ("Gold standard ΔJ",  'dj_gold_hz',  "ΔJ < this → s_dj=1.0 (binary)"),
-            ("Bad ΔJ threshold",  'dj_bad_hz',   "ΔJ ≥ this → Bad (non-singlet gate)"),
-            ("s_dj neutral",      'dj_neutral',  "s_dj when ΔJ unmeasurable"),
-        ])
-
-        # ── Tab 3: Δppm Criteria ──────────────────────────────────────────
-        _tab("Δppm Criteria", [
-            ("Gold standard Δppm (Hz)", 'dppm_gold_hz', "Max Δppm in Hz (field-independent)"),
-            ("Gold standard Δppm (ppm)",'dppm_gold',    "Max Δppm in ppm"),
-        ])
-
-        # ── Tab 4: RANSY Anchor ───────────────────────────────────────────
-        _tab("RANSY Anchor", [
-            ("Clean ratio low",  'anchor_clean_lo',  "Min area ratio → clean"),
-            ("Clean ratio high", 'anchor_clean_hi',  "Max area ratio → clean (above = overlap)"),
-            ("SNR BDL threshold", 'anchor_snr_bdl',  "SNR < this → below detection limit"),
-        ])
-
-        # ── Tab 5: Score Weights ──────────────────────────────────────────
-        _tab("Score Weights", [
-            ("w_dj (non-singlet)",     'w_dj',        "ΔJ score weight"),
-            ("w_cosine (non-singlet)", 'w_cosine_ns', ""),
-            ("w_ppm (non-singlet)",    'w_ppm_ns',    ""),
-            ("w_found (non-singlet)",  'w_found_ns',  ""),
-            ("w_rri (non-singlet)",    'w_rri_ns',    ""),
-            ("w_cosine (singlet)",     'w_cosine_s',  ""),
-            ("w_ppm (singlet)",        'w_ppm_s',     ""),
-            ("w_found (singlet)",      'w_found_s',   ""),
-            ("w_rri (singlet)",        'w_rri_s',     ""),
-        ])
-
-        # ── Bottom buttons ─────────────────────────────────────────────────
-        bf2 = ttk.Frame(dlg)
-        bf2.pack(fill=tk.X, padx=8, pady=(0, 8))
-
-        def _apply():
-            errs = []
-            new_params = {}
-            for key, var in _vars.items():
-                try:
-                    new_params[key] = float(var.get())
-                except ValueError:
-                    errs.append(key)
-            if errs:
-                import tkinter.messagebox as mb
-                mb.showerror("Invalid value",
-                             f"Not a number: {', '.join(errs)}", parent=dlg)
-                return
+        def _apply(new_params):
             self._params.update(new_params)
-            # Keep annotation stage in sync so params survive window close
-            _ann_s = getattr(getattr(self, 'app', None), 'stages', {}).get('annotation')
-            if _ann_s is not None:
-                _ann_s._annotation_params = dict(self._params)
+            _ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
+            if _ann is not None:
+                _ann._annotation_params = dict(self._params)
             self._recompute_and_refresh()
-            dlg.destroy()
 
-        def _reset():
-            defaults = {
-                'good_score_thresh': 0.75, 'bad_score_thresh': 0.50,
-                'dj_gold_hz': 0.20, 'dj_bad_hz': 0.50, 'dj_neutral': 0.00,
-                'dppm_gold_hz': 0.50, 'dppm_gold': 0.05,
-                'fp_coverage_pct': 50.0, 'nnls_min_frac': 0.03,
-                'anchor_clean_lo': 0.35, 'anchor_clean_hi': 2.50, 'anchor_snr_bdl': 3.0,
-                'w_dj': 0.57, 'w_cosine_ns': 0.14, 'w_ppm_ns': 0.10,
-                'w_found_ns': 0.05, 'w_rri_ns': 0.09, 'w_reverse_ns': 0.05,
-                'w_cosine_s': 0.32, 'w_ppm_s': 0.27,
-                'w_found_s': 0.13, 'w_rri_s': 0.18, 'w_reverse_s': 0.10,
-            }
-            for key, var in _vars.items():
-                var.set(str(defaults.get(key, self._params[key])))
-
-        ttk.Button(bf2, text="Reset Defaults", command=_reset).pack(side=tk.LEFT)
-        ttk.Button(bf2, text="Apply & Recompute", command=_apply).pack(side=tk.RIGHT)
-        ttk.Button(bf2, text="Cancel",
-                   command=dlg.destroy).pack(side=tk.RIGHT, padx=6)
-
-    # ── MCR Deconvolution for Undef peaks ────────────────────────────────────
+        open_annotation_params(
+            self.win, self._params, _apply,
+            tier_builder=build_tier_choice,
+            tier_reader=read_tier_choice,
+            tier_note=_TIER_NOTE)
 
     def _open_mcr_deconv(self):
-        """Collect all Undef peaks and open AnnotationMCRWindow."""
-        # Gather (met_dict, mp_dict, peak_dict) for every Undef matched peak
+        """Collect all Average (unconfirmed) peaks and open MCRWindow."""
+        # Gather (met_dict, mp_dict, peak_dict) for every unconfirmed match
         app        = getattr(self, 'app', None)
         pd_stage   = getattr(app, 'stages', {}).get('peak_detection') if app else None
         ann_stage  = (getattr(app, 'stages', {}).get('annotation') if app else None)
@@ -6535,7 +5242,7 @@ class AnnotationResultsWindow:
         for met in self.metabolites:
             for mp in met['matched_peaks']:
                 if mp.get('annotation_quality') is not None:
-                    continue   # skip Good and Bad — only Undef
+                    continue   # skip Good and Poor — only unconfirmed
                 rank = mp.get('peak_rank')
                 peak = None
                 if pd_stage and rank is not None:
@@ -6552,16 +5259,18 @@ class AnnotationResultsWindow:
         if not undef_items:
             from tkinter import messagebox
             messagebox.showinfo(
-                'No Undef Peaks',
-                'No Undefined peaks found.\n\n'
-                'Use Ctrl+2 on a selected peak to mark it as Undef.',
+                'No Average Signals',
+                'No unconfirmed (Average) signals found.\n\n'
+                'Use Ctrl+2 on a selected signal to mark it as Average.',
                 parent=self.win)
             return
 
-        from gui.widgets.annotation_mcr_window import AnnotationMCRWindow
-        AnnotationMCRWindow(
+        from gui.widgets.mcr_window import MCRWindow
+        items = [{'kind': 'undef', 'met': met, 'mp': mp, 'peak': peak}
+                 for met, mp, peak in undef_items]
+        MCRWindow(
             self.win,
-            undef_items,
+            items,
             app,
             ann_stage=ann_stage,
             ann_results=self)
@@ -6583,7 +5292,7 @@ class AnnotationResultsWindow:
             with open(fn, 'w', newline='', encoding='utf-8-sig') as f:
                 w = csv.writer(f)
                 w.writerow([
-                    'Peak #', 'Metabolite', 'Met ID',
+                    'Signal #', 'Metabolite', 'Met ID',
                     'PPM', 'Start PPM', 'End PPM',
                     'Score', 'Quality', 'Candidates',
                     'DB PPM', 'Δ PPM', 'Multiplicity',

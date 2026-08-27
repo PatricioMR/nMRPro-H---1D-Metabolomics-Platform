@@ -48,7 +48,7 @@ class QuantPeaksWindow:
         self._original_anchor = self._current_anchor_rank(result)
 
         self.win = tk.Toplevel(parent)
-        self.win.title(f"Quant Peaks — {result['metabolite']}")
+        self.win.title(f"Quant Signals — {result['metabolite']}")
         self.win.resizable(True, True)
 
         self._groups       = self._get_groups()
@@ -80,7 +80,7 @@ class QuantPeaksWindow:
         self._selected_hdr   = None
         self._hdr_members    = {}
         self._original_anchor = self._current_anchor_rank(result)
-        self.win.title(f"Quant Peaks — {result['metabolite']}")
+        self.win.title(f"Quant Signals — {result['metabolite']}")
         self._candidates     = self._gather_candidates()
         self._populate_tree()
 
@@ -714,7 +714,7 @@ class QuantPeaksWindow:
             self._selected_hdr = None
             self._apply_btn.config(state='disabled')
             self._info_lbl.config(
-                text='Individual peaks are view-only — select the multiplet '
+                text='Individual signals are view-only — select the multiplet '
                      '(header row) to quantify this analyte with it.')
             return
 
@@ -737,7 +737,7 @@ class QuantPeaksWindow:
         if self._multiplet_anchor_rank(members) is None:
             self._apply_btn.config(state='disabled')
             self._info_lbl.config(
-                text='No detected anchor peak for this multiplet.')
+                text='No detected anchor signal for this multiplet.')
             return
 
         self._apply_btn.config(state='normal')
@@ -764,7 +764,7 @@ class QuantPeaksWindow:
 
         anchor = self._multiplet_anchor_rank(members)
         if anchor is None:
-            self._info_lbl.config(text='No detected anchor peak for this multiplet.')
+            self._info_lbl.config(text='No detected anchor signal for this multiplet.')
             return
 
         if not messagebox.askyesno(

@@ -3,7 +3,7 @@
 Peak detection for NMR spectroscopy with baseline correction.
 
 Features:
-  - Baseline correction (airPLS, SNIP) before detection
+  - Baseline correction (arPLS, SNIP) before detection
   - Peak separation by valley points (foot-head-foot)
   - SNR-based thresholding
   - Individual peak integration
@@ -13,8 +13,10 @@ from scipy.signal import find_peaks, savgol_filter
 from scipy.ndimage import gaussian_filter1d
 import traceback
 
-from .baseline_correction import correct_baseline, airPLS
+from .baseline_correction import correct_baseline, arPLS, normalize_method
 from .peak_alignment import global_peak_rigid_align
+from .signal_quality import (
+    classify_signal_quality, measure_fwhm_points, corrected_profile)
 
 
 def diagnose_array(arr, name):
@@ -149,73 +151,6 @@ def find_valley_points(intensity, peak_idx, left_bound, right_bound):
     return left_valley, right_valley
 
 
-# ── 3-tier peak quality scoring ────────────────────────────────────────────────
-# Weights (sum = 1): lineshape dominates "is it a peak", curvature drives the
-# red (straight-line) verdict, baseline flatness separates green from yellow
-# (overlap), symmetry is a refinement.
-_PQ_W_SHAPE = 0.35
-_PQ_W_CURV  = 0.30
-_PQ_W_BASE  = 0.20
-_PQ_W_SYM   = 0.15
-# Tier thresholds on the composite score (green ≥, yellow ≥, else red).
-_PQ_GREEN  = 0.80
-_PQ_YELLOW = 0.45
-
-
-def _classify_peak_quality(intensity, start_idx, end_idx, left_idx, right_idx,
-                           height, shape_r2, sym_score, n_cluster):
-    """Return (tier, score) where tier ∈ {'green','yellow','red'}.
-
-    green  — good peak parameters (peak-shaped, symmetric, flat baseline).
-    yellow — peak-like but tilted/crooked baseline → possibly overlapping
-             (all cluster members land here, never green).
-    red    — essentially a straight line: little second-derivative variation
-             (low non-linearity) or an overall poor score.
-    """
-    y = np.asarray(intensity[start_idx:end_idx + 1], dtype=float)
-    n = y.size
-
-    # S_curv — non-linearity from a straight-line fit R² (a line → R²≈1 → 0).
-    if n >= 3:
-        x = np.arange(n, dtype=float)
-        A = np.vstack([x, np.ones_like(x)]).T
-        coef, *_ = np.linalg.lstsq(A, y, rcond=None)
-        yfit = A @ coef
-        tss = float(np.sum((y - y.mean()) ** 2))
-        lin_r2 = float(1.0 - np.sum((y - yfit) ** 2) / tss) if tss > 1e-30 else 0.0
-        s_curv = float(np.clip(1.0 - max(0.0, lin_r2), 0.0, 1.0))
-    else:
-        s_curv = 0.0
-
-    # S_base — baseline flatness from foot-to-foot tilt relative to peak height.
-    lv = float(intensity[left_idx]); rv = float(intensity[right_idx])
-    amp = max(float(height), 1e-12)
-    tilt = abs(lv - rv) / amp
-    s_base = float(np.clip(1.0 - tilt, 0.0, 1.0))
-
-    s_shape = float(np.clip(shape_r2, 0.0, 1.0))
-    s_sym   = float(np.clip(sym_score, 0.0, 1.0))
-
-    score = (_PQ_W_SHAPE * s_shape + _PQ_W_CURV * s_curv
-             + _PQ_W_BASE * s_base + _PQ_W_SYM * s_sym)
-
-    # Tier is a direct, intuitive function of the score: higher score → greener.
-    # A crooked baseline already lowers the score (via S_base), so it naturally
-    # tends toward yellow without a separate gate. The only hard override is a
-    # near-straight line (almost no second-derivative variation) → always red.
-    # Cluster membership is NOT penalised: a well-resolved multiplet line is a
-    # high-quality peak and should be green.
-    if s_curv < 0.10:
-        tier = 'red'
-    elif score >= _PQ_GREEN:
-        tier = 'green'
-    elif score >= _PQ_YELLOW:
-        tier = 'yellow'
-    else:
-        tier = 'red'
-    return tier, score
-
-
 def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                                method="auto", baseline_level=0.0):
     """
@@ -265,6 +200,8 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                         left_valley_idx, right_valley_idx,
                         left_valley_ppm, right_valley_ppm
         Quality keys  : gaussian_r2, gaussian_quality ('good'/'poor'/'overlap'),
+                        signal_quality ('Good'/'Average'/'Poor'),
+                        signal_quality_score, signal_quality_detail, fwhm_pts,
                         left_grounded, right_grounded, baseline_grounded
         Cluster keys  : n_cluster_peaks, cluster_rank,
                         cluster_lo, cluster_hi,
@@ -466,15 +403,6 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
             else:
                 gauss_qual = 'overlap'
 
-            # ── 3-tier peak quality (green / yellow / red) ────────────────────
-            # Weighted score over: lineshape fit (is it peak-shaped), curvature
-            # /non-linearity (a straight line has ~0 second-derivative variation),
-            # baseline flatness (a tilted foot-to-foot baseline signals overlap),
-            # and symmetry. See classify weights below.
-            pq, pq_score = _classify_peak_quality(
-                intensity, start_idx, end_idx, left_idx, right_idx,
-                float(height), gauss_r2, sym_score, n_ap)
-
             separated_peaks.append({
                 # Core
                 'index':    int(apex),
@@ -495,8 +423,6 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                 'gaussian_r2':       float(gauss_r2),
                 'symmetry_score':    float(sym_score),
                 'gaussian_quality':  gauss_qual,
-                'peak_quality':       pq,                 # 'green'/'yellow'/'red'
-                'peak_quality_score': float(pq_score),
                 'left_grounded':     bool(left_grounded),
                 'right_grounded':    bool(right_grounded),
                 'baseline_grounded': bool(left_grounded and right_grounded),
@@ -508,6 +434,34 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                 'cluster_lo_ppm':   float(ppm[c_lo]),
                 'cluster_hi_ppm':   float(ppm[c_hi]),
             })
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Phase 3  ·  signal quality (Good / Average / Poor)
+    # ──────────────────────────────────────────────────────────────────────────
+    # Second pass: the linewidth component compares each signal against the
+    # spectrum-wide median FWHM, which only exists once every signal is measured.
+    _fwhms = []
+    for p in separated_peaks:
+        y_c = corrected_profile(intensity, p['start_idx'], p['end_idx'],
+                                 p['left_valley_idx'], p['right_valley_idx'])
+        p['_fwhm_pts'] = measure_fwhm_points(y_c)
+        if p['_fwhm_pts'] > 0:
+            _fwhms.append(p['_fwhm_pts'])
+    median_fwhm_pts = float(np.median(_fwhms)) if _fwhms else None
+
+    for p in separated_peaks:
+        tier, q_score, q_detail = classify_signal_quality(
+            intensity,
+            start_idx=p['start_idx'], end_idx=p['end_idx'],
+            left_idx=p['left_valley_idx'], right_idx=p['right_valley_idx'],
+            cluster_lo_idx=p['cluster_lo'], cluster_hi_idx=p['cluster_hi'],
+            height=p['height'], shape_r2=p['gaussian_r2'],
+            noise_std=eff_noise, baseline_level=float(baseline_level),
+            median_fwhm_pts=median_fwhm_pts)
+        p['signal_quality']        = tier          # 'Good'/'Average'/'Poor'
+        p['signal_quality_score']  = float(q_score)
+        p['signal_quality_detail'] = q_detail
+        p['fwhm_pts']              = p.pop('_fwhm_pts')
 
     # Return in apex-index order (same order as sorted_indices input)
     separated_peaks.sort(key=lambda p: p['index'])
@@ -865,14 +819,15 @@ def _consensus_apices(per_sample_idx, n_points, merge_tol_pts):
 
 def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                  min_distance=0.01, baseline_correct=True,
-                 baseline_method='airPLS', baseline_lam=1e5,
+                 baseline_method='snip', baseline_lam=1e5,
+                 baseline_niter=40,
                  global_align=True, global_align_max_shift_ppm=0.03,
                  samples_info=None, progress_callback=None,
                  return_details=False, per_peak_align=True,
                  per_peak_max_shift_ppm=0.02,
                  per_sample_detection=False,
                  detect_shoulders=True, shoulder_curvature_k=3.0,
-                 min_group_presence=1):
+                 min_group_presence=1, baseline_2d=None):
     """
     Detect peaks with SNR > min_snr - WITH BASELINE CORRECTION.
 
@@ -896,9 +851,14 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
     baseline_correct : bool
         If True, apply baseline correction before detection
     baseline_method : str
-        'airPLS', 'snip', 'rolling', or 'constant'
+        'snip' (default), 'arPLS', 'rolling', or 'constant'
     baseline_lam : float
-        Baseline smoothing parameter (for airPLS)
+        Smoothness of the arPLS baseline. Larger = stiffer = follows only very
+        broad features. At 1e5 arPLS eats the skirts of sharp lines and biases
+        their area low by ~20%, which is why 'snip' is the default.
+    baseline_niter : int
+        SNIP clipping iterations. More = deeper clipping = broader features are
+        treated as baseline.
     global_align : bool
         If True, rigidly align all samples before building the reference
         spectrum used for peak detection.
@@ -964,41 +924,66 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         shift_pts = np.zeros(n_samples, dtype=int)
         shift_ppm = np.zeros(n_samples, dtype=float)
 
-        if baseline_correct:
+        # The baseline this step removes is not only instrumental distortion: in
+        # plasma and serum it is mostly the broad macromolecule envelope, which
+        # is genuine NMR signal. Removing it is what lets a small metabolite
+        # resting on that envelope be detected and integrated honestly, but it
+        # IS a subtraction of real signal — so the per-sample baselines are kept
+        # and returned, and each peak records how much of its raw area came from
+        # the broad component (see 'broad_removed_frac' below).
+        #
+        # Every method runs per sample. arPLS used to be estimated once on the
+        # mean spectrum and reused with only a per-sample constant offset, for
+        # speed. A constant cannot absorb an envelope that differs in shape and
+        # amplitude between samples — exactly the case in plasma, where protein
+        # content is the biological variable — and it injected variance into
+        # areas that should have been identical (measured: 22.6% CV on a
+        # constant analyte across samples with differing humps).
+        if baseline_2d is not None:
+            # The caller already applied the project's baseline model, so the
+            # correction is not repeated here — only carried through, together
+            # with the baselines it removed, so the audit trail below stays
+            # exact. This is the path the GUI uses: one correction, shared by
+            # detection, quantification, statistics and MCR alike.
+            _report(0.20, "Using the project baseline model")
+            baseline_2d = np.asarray(baseline_2d, dtype=float)
+            corrected_2d = intensities_2d.astype(float)
+            corrected_mean = np.mean(corrected_2d, axis=1)
+            baseline = np.mean(baseline_2d, axis=1)
+            baseline_correct = True
+        elif baseline_correct:
             _report(0.20, f"Applying baseline correction ({baseline_method})")
-            print(f"\n[INFO] Applying baseline correction ({baseline_method})...")
-            corrected_mean, baseline = correct_baseline(
-                ppm, mean_intensity,
-                method=baseline_method,
-                lam=baseline_lam if baseline_method == 'airPLS' else None
-            )
-            print(f"   Baseline estimated. Mean baseline level: {np.mean(baseline):.4f}")
-
-            # Correct each sample: for airPLS reuse mean baseline shape + per-sample
-            # constant offset (running airPLS per sample is O(n_samples * n * niter)).
+            print(f"\n[INFO] Applying baseline correction ({baseline_method}, "
+                  f"per sample)...")
+            # Each method takes its own width-cutoff parameter; passing the
+            # wrong one silently falls back to that method's own default.
+            baseline_method = normalize_method(baseline_method)
+            if baseline_method == 'arPLS':
+                _bl_kwargs = {'lam': baseline_lam}
+            elif baseline_method == 'snip':
+                _bl_kwargs = {'niter': int(baseline_niter)}
+            else:
+                _bl_kwargs = {}
+            baseline_2d = np.empty_like(intensities_2d, dtype=float)
             corrected_samples = []
-            edge_pts = max(5, n_points // 20)
-            edge_mask = np.concatenate([np.arange(edge_pts),
-                                        np.arange(n_points - edge_pts, n_points)])
             for s in range(n_samples):
                 if n_samples > 1:
                     _report(0.20 + 0.22 * ((s + 1) / n_samples),
                             f"Baseline correction per sample ({s + 1}/{n_samples})")
-                if baseline_method == 'airPLS':
-                    offset = np.median(intensities_2d[edge_mask, s] - baseline[edge_mask])
-                    corr_s = intensities_2d[:, s] - (baseline + offset)
-                else:
-                    corr_s, _ = correct_baseline(
-                        ppm, intensities_2d[:, s],
-                        method=baseline_method,
-                        lam=baseline_lam
-                    )
+                corr_s, base_s = correct_baseline(
+                    ppm, intensities_2d[:, s],
+                    method=baseline_method, **_bl_kwargs)
                 corrected_samples.append(corr_s)
+                baseline_2d[:, s] = base_s
             corrected_2d = np.column_stack(corrected_samples)
+            corrected_mean = np.mean(corrected_2d, axis=1)
+            baseline = np.mean(baseline_2d, axis=1)
+            print(f"   Baseline estimated. Mean baseline level: {np.mean(baseline):.4f}")
         else:
             corrected_mean = mean_intensity
             corrected_2d = intensities_2d
             baseline = np.zeros(n_points)
+            baseline_2d = np.zeros_like(intensities_2d, dtype=float)
 
         if global_align and n_samples > 1:
             _report(0.48, "Applying global rigid alignment")
@@ -1013,6 +998,11 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 "   Alignment shifts (mppm): min="
                 f"{np.min(shift_ppm) * 1000:.2f}  max={np.max(shift_ppm) * 1000:.2f}"
             )
+            # Carry the baselines through the same rigid shift, so the removed
+            # broad component still lines up with the spectrum it came from.
+            for s in range(n_samples):
+                if shift_pts[s]:
+                    baseline_2d[:, s] = np.roll(baseline_2d[:, s], int(shift_pts[s]))
         else:
             corrected_mean = np.mean(corrected_2d, axis=1) if n_samples > 1 else corrected_2d.flatten()
 
@@ -1233,6 +1223,10 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                     'reference_intensity': corrected_mean,
                     'aligned_intensities': corrected_2d,
                     'baseline': baseline,
+                    'baseline_per_sample': baseline_2d,
+                    'baseline_method': baseline_method if baseline_correct else None,
+                    'baseline_lam': float(baseline_lam) if baseline_correct else None,
+                    'baseline_niter': int(baseline_niter) if baseline_correct else None,
                     'noise_std': float(noise_std),
                     'shift_points': shift_pts,
                     'shift_ppm': shift_ppm,
@@ -1352,6 +1346,27 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             peak['mean_intensity'] = float(np.mean([corrected_2d[peak['index'], s]
                                                      for s in range(n_samples)]))
 
+            # ── Audit trail for the removed broad component ────────────────────
+            # How much of the raw area inside this window was the macromolecule
+            # envelope rather than the analyte. A signal sitting on a large
+            # envelope has most of its raw integral removed here; the analyst
+            # must be able to see that, because the subtraction is of real NMR
+            # signal and it sets how much the reported area depends on the
+            # baseline model. 0 = nothing removed, →1 = the window was almost
+            # entirely broad component.
+            if baseline_correct and len(x_region) > 1:
+                fracs = []
+                for s in range(n_samples):
+                    a_base = abs(float(np.trapezoid(
+                        baseline_2d[start_idx:end_idx + 1, s], x_region)))
+                    denom = a_base + areas[s]
+                    fracs.append(a_base / denom if denom > 1e-30 else 0.0)
+                peak['broad_removed_frac_per_sample'] = np.array(fracs)
+                peak['broad_removed_frac'] = float(np.mean(fracs))
+            else:
+                peak['broad_removed_frac_per_sample'] = np.zeros(n_samples)
+                peak['broad_removed_frac'] = 0.0
+
             # height/area come from separate_overlapping_peaks on the per-sample
             # MAX reference (used for detection). Re-express them on the MEAN
             # spectrum so they match the displayed spectrum (overlay markers) and
@@ -1389,6 +1404,10 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 'detection_reference': detection_ref,
                 'aligned_intensities': corrected_2d,
                 'baseline': baseline,
+                'baseline_per_sample': baseline_2d,
+                'baseline_method': baseline_method if baseline_correct else None,
+                'baseline_lam': float(baseline_lam) if baseline_correct else None,
+                'baseline_niter': int(baseline_niter) if baseline_correct else None,
                 'noise_std': float(noise_std),
                 'shift_points': shift_pts,
                 'shift_ppm': shift_ppm,

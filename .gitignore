@@ -47,3 +47,14 @@ hmdb_api_download/chebi/*.gz
 /pytest.ini
 /run_tests.bat
 /ParseHMDBNames.py
+.tmp.driveupload/
+
+# Working notes, not part of the repo
+PENDENCIAS.md
+
+# Google Drive conflict copies. It duplicates a whole folder as "data (1)/"
+# when it cannot reconcile a change, and two of those got committed once.
+* (1)/
+* (2)/
+* (1).*
+* (2).*

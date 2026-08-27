@@ -1,12 +1,17 @@
 # gui/widgets/peak_list_window.py
 """
-Peak List Window.
+Signal List Window.
 
 Panel A : sortable table — Rank, PPM, Start, End, Width, SNR, Quality, Overlap
-          • Quality column: Good (green) / Average (yellow) / Poor (red)
+          • Quality column: Good (green) / Average (yellow) / Poor (red).
+            An automatic grade shows its score ("Good 0.91"); a manual mark
+            shows a hand ("Good ✋").  Both share one colour — the effective
+            grade drives the row tint, the filters and the counts alike.
+          • Filters carry live per-grade counts; the summary line reports how
+            many of the total are currently shown.
           • Ctrl+1 = Good, Ctrl+2 = Average, Ctrl+3 = Poor
           • Save button (bottom-left) writes changes back to peak_stage.peaks
-Panel B : peak region mini-plot
+Panel B : signal region mini-plot
           • Scroll to zoom
           • Click+drag to redefine start/end boundaries
 """
@@ -17,22 +22,20 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import SpanSelector
 from .peak_sample_view import PeakSampleView
+from processing.signal_quality import (
+    SIGNAL_GOOD, SIGNAL_AVERAGE, SIGNAL_POOR)
+from gui.utils.quality_palette import (
+    QUALITY_BG, QUALITY_FG, build_tier_filter_row, update_tier_counts)
 
-# Status definitions
-STATUS_GOOD      = 'Good'
-STATUS_UNDEFINED = 'Average'
-STATUS_POOR      = 'Poor'
+# Status definitions — the manual marks share their vocabulary with the
+# automatic signal grade, so a row reads the same whoever assigned it.
+STATUS_GOOD      = SIGNAL_GOOD
+STATUS_UNDEFINED = SIGNAL_AVERAGE
+STATUS_POOR      = SIGNAL_POOR
 
-STATUS_COLORS = {
-    STATUS_GOOD:      '#c8f7c5',  # light green
-    STATUS_UNDEFINED: '#fef9c3',  # light yellow (Average)
-    STATUS_POOR:      '#ffd6d6',  # light red
-}
-STATUS_FG = {
-    STATUS_GOOD:      '#1a7a1a',
-    STATUS_UNDEFINED: '#7a6000',
-    STATUS_POOR:      '#9a0000',
-}
+# Palette shared with the annotation window so one colour means one thing.
+STATUS_COLORS = dict(QUALITY_BG)
+STATUS_FG     = dict(QUALITY_FG)
 
 
 class PeakListWindow:
@@ -52,7 +55,7 @@ class PeakListWindow:
             p.setdefault('status', None)
 
         self.win = tk.Toplevel(parent)
-        self.win.title(f"Peak List  ({len(peaks)} peaks)")
+        self.win.title(f"Signal List  ({len(peaks)} signals)")
         self.win.geometry("1200x560")
         self.win.minsize(900, 400)
 
@@ -80,37 +83,28 @@ class PeakListWindow:
         frame_a = ttk.Frame(paned)
         paned.add(frame_a, minsize=430)
 
-        ttk.Label(frame_a, text="Peak List",
+        ttk.Label(frame_a, text="Signal List",
                   font=("Arial", 10, "bold")).pack(
             anchor=tk.W, pady=(4, 2), padx=4)
 
-        summary   = (f"{len(self.peaks)} peaks"
-                     + "  ·  Ctrl+1 Good  Ctrl+2 Average  Ctrl+3 Poor")
-        ttk.Label(frame_a, text=summary,
-                  font=("Arial", 7), foreground="gray").pack(
-            anchor=tk.W, padx=4)
+        self._summary_lbl = ttk.Label(
+            frame_a, text="", font=("Arial", 7), foreground="gray")
+        self._summary_lbl.pack(anchor=tk.W, padx=4)
 
-        # Filter checkboxes
+        # Filter checkboxes — each carries the live count of signals at that
+        # grade, so hiding a grade also tells you how many were hidden.
         filt_row = ttk.Frame(frame_a)
         filt_row.pack(fill=tk.X, padx=4, pady=(2, 0))
-        ttk.Label(filt_row, text='Show:', font=('Arial', 8)).pack(side=tk.LEFT, padx=(0, 4))
         _fs = getattr(self.app, '_peak_list_filters', {})
         self._filt_good  = tk.BooleanVar(value=_fs.get('good',  True))
         self._filt_undef = tk.BooleanVar(value=_fs.get('undef', True))
         self._filt_poor  = tk.BooleanVar(value=_fs.get('poor',  True))
-        self._filt_none  = tk.BooleanVar(value=_fs.get('none',  True))
-        for text, var, bg, fg in [
-            ('✓ Good',      self._filt_good,  '#c8f7c5', '#1a7a1a'),
-            ('~ Average',  self._filt_undef, '#fef9c3', '#7a6000'),
-            ('✗ Poor',      self._filt_poor,  '#ffd6d6', '#9a0000'),
-            ('— No status', self._filt_none,  '#f0f0f0', '#444444'),
-        ]:
-            cb = tk.Checkbutton(filt_row, text=text, variable=var,
-                                bg=bg, fg=fg, selectcolor=bg,
-                                activebackground=bg,
-                                font=('Arial', 8),
-                                command=self._on_filter_change)
-            cb.pack(side=tk.LEFT, padx=2)
+        self._filt_cbs   = build_tier_filter_row(
+            filt_row,
+            {STATUS_GOOD:      self._filt_good,
+             STATUS_UNDEFINED: self._filt_undef,
+             STATUS_POOR:      self._filt_poor},
+            self._on_filter_change)
 
         # Treeview
         cols = ('rank', 'ppm', 'start', 'end', 'width', 'snr', 'area', 'metabolite', 'status')
@@ -147,12 +141,11 @@ class PeakListWindow:
                               command=lambda c=cid: self._sort(c))
             self.tree.column(cid, width=width, anchor=anchor, minwidth=35)
 
-        # Row tags for the 3-tier peak quality (shape-based; shown when the peak
-        # has no manual status yet).
-        self.tree.tag_configure('quality_green',  background='#e6f4ea')
-        self.tree.tag_configure('quality_yellow', background='#fff4d6')
-        self.tree.tag_configure('quality_red',    background='#fde4e4')
-        self.tree.tag_configure('normal',           background='white')
+        # One palette for both the automatic grade and the manual mark: a Good
+        # signal looks the same whoever decided it. The Quality cell says which.
+        for grade, bg in STATUS_COLORS.items():
+            self.tree.tag_configure(f'grade_{grade}', background=bg)
+        self.tree.tag_configure('normal', background='white')
         # Row tags for status (overlap rows keep overlap bg; status shown via Status col)
         self.tree.bind('<<TreeviewSelect>>', lambda e: self._on_select())
         self.tree.bind('<Button-3>', self._on_right_click)
@@ -182,7 +175,7 @@ class PeakListWindow:
         frame_b = ttk.Frame(paned)
         paned.add(frame_b, minsize=360)
 
-        ttk.Label(frame_b, text="Peak Region",
+        ttk.Label(frame_b, text="Signal Region",
                   font=("Arial", 10, "bold")).pack(
             anchor=tk.W, pady=(4, 2), padx=4)
 
@@ -306,13 +299,23 @@ class PeakListWindow:
         except Exception:
             pass
 
+    @staticmethod
+    def _effective_grade(peak):
+        """The grade the analyst actually sees: a manual mark, else the
+        automatic one. Filters, counts and row colour all read this, so the
+        three can never disagree."""
+        return peak.get('status') or peak.get('signal_quality') or SIGNAL_AVERAGE
+
+    def _grade_counts(self):
+        from collections import Counter
+        return Counter(self._effective_grade(p) for p in self.peaks)
+
     def _on_filter_change(self):
         if self.app is not None:
             self.app._peak_list_filters = {
                 'good':  self._filt_good.get(),
                 'undef': self._filt_undef.get(),
                 'poor':  self._filt_poor.get(),
-                'none':  self._filt_none.get(),
             }
         self._populate()
 
@@ -320,7 +323,7 @@ class PeakListWindow:
         self.tree.delete(*self.tree.get_children())
         self.tree.tag_configure('sub_peak', background='#e8f5e9',
                                             foreground='#2e7d32')
-        # Build set of allowed statuses from filter checkboxes
+        # Allowed grades from the filter checkboxes
         _allowed = set()
         if getattr(self, '_filt_good',  None) and self._filt_good.get():
             _allowed.add(STATUS_GOOD)
@@ -328,7 +331,6 @@ class PeakListWindow:
             _allowed.add(STATUS_UNDEFINED)
         if getattr(self, '_filt_poor',  None) and self._filt_poor.get():
             _allowed.add(STATUS_POOR)
-        _show_none = not getattr(self, '_filt_none', None) or self._filt_none.get()
 
         # Build metabolite lookup: one label per peak, best candidate wins.
         # The winner must match the Annotation Results window, so this reuses
@@ -340,7 +342,9 @@ class PeakListWindow:
             _metabolites = getattr(_ann, '_metabolites', None)
             if _metabolites:
                 from gui.stages._annotation_helpers import select_metabolite_per_rank
-                _met_by_rank = select_metabolite_per_rank(_metabolites)
+                _qm_peak = getattr(_ann, '_quality_marks', {}) or {}
+                _met_by_rank = select_metabolite_per_rank(
+                    _metabolites, manual_quality=_qm_peak)
             else:
                 # Fallback: raw results list (no ΔJ filtering possible)
                 _last = getattr(_ann, '_last_results_args', None) or {}
@@ -349,27 +353,15 @@ class PeakListWindow:
                     if _pr is not None and _pr not in _met_by_rank:
                         _met_by_rank[_pr] = _r.get('name', _r.get('metabolite', ''))
 
+        n_shown = 0
         for p in self._sorted_peaks():
-            _st = p.get('status')
-            if _st is None:
-                if not _show_none:
-                    continue
-            elif _st not in _allowed:
+            if self._effective_grade(p) not in _allowed:
                 continue
+            n_shown += 1
             is_sub   = p.get('is_sub_peak', False)
-            _qs      = p.get('peak_quality_score')
-            q_txt    = (f"{_qs:.2f}" if (_qs is not None and _qs == _qs) else '—')
-            if p.get('is_anchor_line', False):
-                q_txt = '⚓ ' + q_txt
-            _st  = p.get('status')
-            # Row tint: manual status wins; otherwise the 3-tier peak quality
-            # (green good / yellow crooked-baseline-overlap / red straight-line).
-            if is_sub:
-                tag = 'sub_peak'
-            elif _st is not None:
-                tag = f'status_{_st}'
-            else:
-                tag = f'quality_{p.get("peak_quality", "yellow")}'
+            q_txt    = self._quality_text(p)
+            tag = ('sub_peak' if is_sub
+                   else f'grade_{self._effective_grade(p)}')
             area_val = p.get('area', 0) or 0
             met_name = (p.get('assigned_metabolite')
                         or p.get('metabolite')
@@ -387,23 +379,103 @@ class PeakListWindow:
                                  q_txt,
                              ))
         self._apply_status_colors()
+        self._refresh_counts(n_shown)
+
+    def _refresh_counts(self, n_shown):
+        """Filter labels carry their own count; the summary carries the total."""
+        update_tier_counts(getattr(self, '_filt_cbs', {}),
+                           self._grade_counts())
+        total = len(self.peaks)
+        lbl = getattr(self, '_summary_lbl', None)
+        if lbl is not None:
+            shown = (f"{n_shown} of {total} signals"
+                     if n_shown != total else f"{total} signals")
+            lbl.config(text=f"{shown}"
+                            "  ·  Ctrl+1 Good  Ctrl+2 Average  Ctrl+3 Poor")
+
+    @staticmethod
+    def _quality_text(peak):
+        """Quality cell: the grade plus where it came from.
+
+        An automatic grade shows its score ('Good 0.91'); a manual mark shows a
+        hand ('Good ✋'), because the analyst's call carries no score and must
+        stay distinguishable now that both share one colour.  A signal rejected
+        by a hard gate shows why instead of a bare 0.00 — the reason is what
+        tells the analyst whether to reprocess or discard.
+        """
+        manual = peak.get('status')
+        if manual:
+            txt = f'{manual} ✋'
+        else:
+            _qs   = peak.get('signal_quality_score')
+            _tier = peak.get('signal_quality')
+            gate  = (peak.get('signal_quality_detail') or {}).get('gate_failed')
+            if gate == 'snr':
+                txt = f'{SIGNAL_POOR} · S/N'
+            elif gate == 'digital_resolution':
+                txt = f'{SIGNAL_POOR} · res'
+            elif _tier and _qs is not None and _qs == _qs:
+                txt = f'{_tier} {_qs:.2f}'
+            elif _qs is not None and _qs == _qs:
+                txt = f'{_qs:.2f}'
+            else:
+                txt = '—'
+        return ('⚓ ' + txt) if peak.get('is_anchor_line', False) else txt
+
+    @staticmethod
+    def _quality_reason(peak):
+        """Why the signal was graded as it was — the weakest components first.
+
+        Silently grading a signal Poor hides a fixable problem (a phase error,
+        a residual baseline hump); naming the offending component lets the
+        analyst act on it.
+        """
+        detail = peak.get('signal_quality_detail') or {}
+        gate = detail.get('gate_failed')
+        if gate == 'snr':
+            snr = detail.get('snr')
+            return (f"  ·  rejected: SNR {snr:.1f} < 3"
+                    if snr is not None else "  ·  rejected: SNR")
+        if gate == 'digital_resolution':
+            return (f"  ·  rejected: {detail.get('fwhm_pts', 0):.0f} pts "
+                    f"across FWHM")
+
+        labels = {
+            'shape':       'lineshape',
+            'sym':         'symmetry',
+            'base_tilt':   'baseline tilt',
+            'base_ground': 'baseline offset',
+            'shoulder':    'shoulder',
+            'width':       'linewidth',
+        }
+        weak = sorted(((v, k) for k, v in (detail.get('components') or {}).items()
+                       if v < 0.75))[:2]
+        parts = [f"{labels.get(k, k)} {v:.2f}" for v, k in weak]
+        if detail.get('asym_kind') == 'phase':
+            parts.append('phase residual')
+        elif detail.get('n_shoulders'):
+            parts.append(f"{detail['n_shoulders']} hidden shoulder(s)")
+
+        # The baseline model subtracted real NMR signal here (a macromolecule
+        # envelope). Past a third of the raw area, the reported integral depends
+        # more on the baseline model than on the analyte, and the analyst has to
+        # know that before trusting it.
+        broad = float(peak.get('broad_removed_frac', 0.0) or 0.0)
+        if broad >= 0.33:
+            parts.append(f"{broad * 100:.0f}% broad component removed")
+        return ("  ·  " + ', '.join(parts)) if parts else ""
 
     def _apply_status_colors(self):
-        """Row colour: manual status when set, else the 3-tier peak quality
-        (green good / yellow crooked-baseline-overlap / red straight-line)."""
-        self.tree.tag_configure('status_none', background='white')
-        for status, bg in STATUS_COLORS.items():
-            self.tree.tag_configure(f'status_{status}', background=bg)
+        """Row colour follows the effective grade — manual mark or automatic."""
+        for grade, bg in STATUS_COLORS.items():
+            self.tree.tag_configure(f'grade_{grade}', background=bg)
 
         for p in self.peaks:
             iid = str(p['rank'])
             if not self.tree.exists(iid):
                 continue
-            status = p.get('status')   # pode ser None
-            if status is not None:
-                tag = f'status_{status}'
-            else:
-                tag = f'quality_{p.get("peak_quality", "yellow")}'
+            tag = ('sub_peak' if p.get('is_sub_peak')
+                   else f'grade_{self._effective_grade(p)}')
             self.tree.item(iid, tags=(tag,))
 
     def _refresh_row(self, peak):
@@ -416,7 +488,9 @@ class PeakListWindow:
         _met_by_rank = {}
         if _metabolites_rr:
             from gui.stages._annotation_helpers import select_metabolite_per_rank
-            _met_by_rank = select_metabolite_per_rank(_metabolites_rr)
+            _qm_peak_rr = getattr(ann, '_quality_marks', {}) or {}
+            _met_by_rank = select_metabolite_per_rank(
+                _metabolites_rr, manual_quality=_qm_peak_rr)
         met_name = (peak.get('assigned_metabolite')
                     or peak.get('metabolite')
                     or _met_by_rank.get(peak.get('rank'), '—'))
@@ -429,12 +503,12 @@ class PeakListWindow:
             f"{peak['snr']:.1f}",
             f"{peak.get('area', 0) or 0:.2f}",
             met_name,
-            (('⚓ ' if peak.get('is_anchor_line', False) else '')
-             + (f"{peak.get('peak_quality_score'):.2f}"
-                if peak.get('peak_quality_score') == peak.get('peak_quality_score')
-                else '—')),
+            self._quality_text(peak),
         ))
         self._apply_status_colors()
+        # A manual mark can move a signal between grades, so the counts must
+        # follow immediately rather than waiting for the next repopulate.
+        self._refresh_counts(len(self.tree.get_children()))
 
     def _sorted_peaks(self):
         key_map = {
@@ -445,8 +519,8 @@ class PeakListWindow:
             'width':   lambda p: p['width_ppm'],
             'snr':     lambda p: p['snr'],
             # 'Quality' column → sort by the numeric shape-quality score.
-            'status':  lambda p: (p.get('peak_quality_score')
-                                  if p.get('peak_quality_score') == p.get('peak_quality_score')
+            'status':  lambda p: (p.get('signal_quality_score')
+                                  if p.get('signal_quality_score') == p.get('signal_quality_score')
                                   else -1.0),
         }
         return sorted(self.peaks,
@@ -485,7 +559,7 @@ class PeakListWindow:
         # Update info bar
         if self._current_peak and self._current_peak['rank'] == rank:
             self._update_info_bar(peak)
-        # Undefined/Poor → queue for deconvolution
+        # Average/Poor → queue for deconvolution
         if status in (STATUS_UNDEFINED, STATUS_POOR):
             self._queue_for_deconv(peak)
         # Good → remove from deconv queue if present
@@ -551,10 +625,11 @@ class PeakListWindow:
 
     def _update_info_bar(self, peak):
         n_samples   = self.all_intensities.shape[1]
-        _tier       = peak.get('peak_quality')
-        _qscore     = peak.get('peak_quality_score')
+        _tier       = peak.get('signal_quality')
+        _qscore     = peak.get('signal_quality_score')
         quality_txt = (f"  ·  {_tier} ({_qscore:.2f})"
                        if _tier and _qscore is not None else "")
+        quality_txt += self._quality_reason(peak)
         status_txt  = f"  ·  {peak.get('status') or '—'}"
         r2_val      = peak.get('gaussian_r2')
         r2_txt      = (f"  ·  R²={r2_val:.3f}" if r2_val is not None
@@ -653,7 +728,7 @@ class PeakListWindow:
                         break
         if not candidates:
             tk.messagebox.showinfo('View Candidates',
-                                   f'No candidates found for Peak #{rank} @ {peak_ppm:.4f} ppm.',
+                                   f'No candidates found for Signal #{rank} @ {peak_ppm:.4f} ppm.',
                                    parent=self.win)
             return
         from gui.widgets.peak_resolve_window import PeakResolveWindow
@@ -895,7 +970,7 @@ class PeakListWindow:
             r2   = peak.get('r_squared', None)
             bic  = peak.get('bic', None)
             unc  = peak.get('cen_uncertainty', None)
-            stat = peak.get('status', 'Undefined')
+            stat = peak.get('status', STATUS_UNDEFINED)
             snr_q = '● Good' if snr>=10 else ('◐ OK' if snr>=3 else '○ Low')
             lines = [f'Model : {model}',
                      f'SNR   : {snr:.1f}  {snr_q}',
@@ -906,8 +981,7 @@ class PeakListWindow:
             if bic is not None: lines.append(f'BIC   : {bic:.1f}')
             if unc is not None: lines.append(f'Δppm  : ±{unc:.4f}')
             lines.append(f'Status: {stat}')
-            bc = ('#e8f5e9' if stat=='Good' else
-                  '#fff3cd' if stat=='Undefined' else '#ffd6d6')
+            bc = STATUS_COLORS.get(stat, STATUS_COLORS[STATUS_UNDEFINED])
             self.ax.text(0.02, 0.97, '\n'.join(lines),
                          transform=self.ax.transAxes, va='top', ha='left',
                          fontsize=7.5, fontfamily='monospace',

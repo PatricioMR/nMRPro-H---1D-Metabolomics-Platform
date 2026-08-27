@@ -6,7 +6,7 @@ Left  : DeconvListPanel  — hierarchical Treeview of regions + deconvolved chil
 Right : DeconvPlotPanel  — spectrum plot + quality card
 
 Keyboard shortcuts:
-  Ctrl+1/2/3  → Good / Undefined / Poor on selected child peak
+  Ctrl+1/2/3  → Good / Average / Poor on selected child peak
   Ctrl+R      → Reset zoom / view
   Enter       → Deconvolve selected region
 """
@@ -74,7 +74,7 @@ class DeconvWindow:
         ttk.Label(
             main,
             text=(f"🔍  {len(self.controller.regions)} overlapping region(s)  "
-                  "— deconvolve to separate individual peaks"),
+                  "— deconvolve to separate individual signals"),
             font=("Arial", 10, "italic")).pack(pady=2)
 
         content = ttk.Frame(main)
@@ -143,8 +143,8 @@ class DeconvWindow:
 
             ppm_txt = f'{tgt_ppm:.4f} ppm' if tgt_ppm else 'unknown ppm'
             ttk.Label(dlg,
-                text=f'Peak at {ppm_txt} is not in any overlap region.\n'
-                      'Choose the window width (ppm) around this peak\n'
+                text=f'Signal at {ppm_txt} is not in any overlap region.\n'
+                      'Choose the window width (ppm) around this signal\n'
                       'to create a new deconvolution region.',
                 justify='left', padding=10).grid(
                 row=0, column=0, columnspan=2, sticky='w')
@@ -192,7 +192,7 @@ class DeconvWindow:
                     'No spectrum data in this region',
                     f'The spectrum has no data points between\n'
                     f'{lo:.4f} – {hi:.4f} ppm.\n\n'
-                    f'This peak may be outside the acquisition window\n'
+                    f'This signal may be outside the acquisition window\n'
                     f'or in a zero-filled region. Check the spectral range\n'
                     f'in your Bruker acquisition parameters (SW, O1P).',
                     parent=self.window)
@@ -323,7 +323,7 @@ class DeconvWindow:
                                       "Try widening the region or choosing a "
                                       "quieter region boundary.")
                     messagebox.showwarning(
-                        "No Peaks Found",
+                        "No Signals Found",
                         "No peaks could be separated in this region\n"
                         "with the current parameters.\n\n"
                         "Try lowering Min SNR or increasing Max Peaks."
@@ -455,7 +455,7 @@ class DeconvWindow:
                           for res in self.controller.results.values())
         if not has_results:
             messagebox.showwarning('Nothing to Save',
-                'No peaks deconvolved yet.\nSelect a peak and click Deconvolve.')
+                'No signals deconvolved yet.\nSelect a signal and click Deconvolve.')
             return
         n_deconv  = sum(1 for r in self.controller.results.values() if r.get('peaks'))
         # Re-fit confirmed peaks to correct amplitudes before collecting them.
@@ -476,7 +476,7 @@ class DeconvWindow:
                      if p.get('status') == 'Poor')
         poor_note = f'\n({n_poor} Poor peak(s) excluded)' if n_poor else ''
         if not messagebox.askyesno('Confirm Save',
-                f'Replace {n_deconv} peak(s) with {len(sub_peaks)} sub-peak(s)?'
+                f'Replace {n_deconv} signal(s) with {len(sub_peaks)} sub-signal(s)?'
                 f'{poor_note}\n\nContinue?'):
             return
         peak_stage = self.notation_stage
@@ -572,8 +572,8 @@ class DeconvWindow:
         # Não fechar — utilizador pode continuar a deconvolver
         poor_msg = f'  ({n_poor} Poor excluded)' if n_poor else ''
         messagebox.showinfo('Saved',
-            f'Peak list updated: {len(original_list)} peaks '
-            f'({n_deconv} replaced, {len(sub_peaks)} sub-peaks added{poor_msg})',
+            f'Signal list updated: {len(original_list)} signals '
+            f'({n_deconv} replaced, {len(sub_peaks)} sub-signals added{poor_msg})',
             parent=self.window)
         self.list_panel.refresh_list()
 

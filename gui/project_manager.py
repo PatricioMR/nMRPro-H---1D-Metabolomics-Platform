@@ -81,6 +81,12 @@ class ProjectManager:
             'ppm':             app.ppm,
             'ppm_calibration': getattr(app, '_ppm_calibration', None),
             'all_intensities':     app.all_intensities,
+            # The project's single baseline decision. Saved as the CHOICE, not
+            # the corrected numbers: all_intensities stays raw, so reopening
+            # reproduces the same correction instead of baking one in.
+            'baseline_model': (app.baseline_model.to_dict()
+                               if getattr(app, 'baseline_model', None) is not None
+                               else None),
             'baseline_corrected':  getattr(app, 'baseline_corrected',  False),
             'alignment_corrected': getattr(app, 'alignment_corrected', False),
             'samples_info':        app.samples_info,
@@ -110,8 +116,12 @@ class ProjectManager:
                 'noise_end_var':   _safe_var(pd, 'noise_end_var'),
                 'min_snr_var':     _safe_var(pd, 'min_snr_var'),
                 'min_width_var':   _safe_var(pd, 'min_width_var'),
-                'per_sample_detection': bool(_safe_var(pd, 'per_sample_var') or False),
-                'detect_shoulders': bool(_safe_var(pd, 'detect_shoulders_var') if _safe_var(pd, 'detect_shoulders_var') is not None else True),
+                'per_sample_detection': bool(_safe_var(pd, 'per_sample_var')
+                                             if _safe_var(pd, 'per_sample_var') is not None
+                                             else True),
+                'detect_shoulders': bool(_safe_var(pd, 'detect_shoulders_var')
+                                         if _safe_var(pd, 'detect_shoulders_var') is not None
+                                         else False),
                 'shoulder_k_var':  _safe_var(pd, 'shoulder_k_var'),
                 'min_group_presence_var': _safe_var(pd, 'min_group_presence_var'),
             }
@@ -150,6 +160,12 @@ class ProjectManager:
                 'water_hi':              _safe_var(ann, 'water_hi_var'),
                 'internal_library_mode': _safe_var(ann, 'internal_library_mode_var'),
                 'lipid_solvent':         _safe_var(ann, 'lipid_solvent_var'),
+                # Scoring thresholds and the allowed signal grades. Without
+                # these a reloaded project re-annotates under different rules
+                # than the ones its marks were produced with.
+                'annotation_params':     (dict(getattr(ann, '_annotation_params', None))
+                                          if getattr(ann, '_annotation_params', None)
+                                          else None),
                 'quality_marks':         dict(getattr(ann, '_quality_marks', {})),
                 'child_quality_marks':   dict(getattr(ann, '_child_quality_marks', {})),
                 'anchor_lines':          dict(getattr(ann, '_anchor_lines', {})),
@@ -292,6 +308,14 @@ class ProjectManager:
         app.ppm                  = state.get('ppm')
         app.all_intensities      = state.get('all_intensities')
         app._ppm_calibration     = state.get('ppm_calibration')
+        _bl_state = state.get('baseline_model')
+        if _bl_state is not None:
+            from processing.baseline_model import BaselineModel
+            app.baseline_model = BaselineModel.from_dict(_bl_state)
+        try:
+            app.invalidate_baseline_cache()
+        except Exception:
+            pass
         app.baseline_corrected   = state.get('baseline_corrected',  False)
         app.alignment_corrected  = state.get('alignment_corrected', False)
         app.samples_info     = state.get('samples_info', [])
@@ -345,10 +369,15 @@ class ProjectManager:
             _set_var(pd, 'noise_end_var',   pd_state.get('noise_end_var'))
             _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
             _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
-            _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', False))
-            _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', True))
+            _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', True))
+            _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', False))
             _set_var(pd, 'shoulder_k_var',  pd_state.get('shoulder_k_var'))
             _set_var(pd, 'min_group_presence_var', pd_state.get('min_group_presence_var'))
+            # Baseline lives on the app as a single model; the panel mirrors it.
+            try:
+                pd.pull_baseline_model()
+            except Exception:
+                pass
 
             if pd.processor and app.ppm is not None:
                 try:
@@ -370,9 +399,9 @@ class ProjectManager:
                     pd.step1_status.config(text='✅ Completed', foreground='green')
                     pd.btn_detect.config(state='normal')
                 if pd.peaks:
-                    pd.peaks_count_label.config(text=f'Found {len(pd.peaks)} peaks')
+                    pd.peaks_count_label.config(text=f'Found {len(pd.peaks)} signals')
                     pd.step2_status.config(
-                        text=f'✅ {len(pd.peaks)} peaks detected', foreground='green')
+                        text=f'✅ {len(pd.peaks)} signals detected', foreground='green')
                     try: app.btn_peak_list.config(state='normal')
                     except Exception: pass
                 if pd._overlaps:
@@ -422,6 +451,8 @@ class ProjectManager:
                     try: ann._on_lib_mode_change()
                     except Exception: pass
 
+                _ann_p = ann_state.get('annotation_params')
+                ann._annotation_params = dict(_ann_p) if _ann_p else None
                 ann._quality_marks         = ann_state.get('quality_marks', {})
                 ann._child_quality_marks   = ann_state.get('child_quality_marks', {})
                 ann._anchor_lines          = ann_state.get('anchor_lines', {})

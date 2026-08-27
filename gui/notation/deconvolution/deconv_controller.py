@@ -463,7 +463,7 @@ class DeconvController:
                 if r2_sp is None or float(r2_sp) < _deconv_r2:
                     sp['status'] = 'Poor'
                 else:
-                    sp['status'] = None  # user assigns Good/Undefined
+                    sp['status'] = None  # user assigns Good/Average/Poor
                 w = sp.get('width', sp.get('width_ppm', 0.005))
                 sp['width_ppm'] = float(w)
                 sp['width_at_half'] = float(w)

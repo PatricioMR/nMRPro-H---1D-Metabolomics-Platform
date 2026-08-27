@@ -30,7 +30,7 @@ class DeconvParamsFrame:
         ttk.Entry(params_frame, textvariable=self.min_snr_var, width=8).grid(row=0, column=1, padx=5, pady=2)
 
         # Max peaks
-        ttk.Label(params_frame, text="Max peaks:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
+        ttk.Label(params_frame, text="Max signals:").grid(row=1, column=0, padx=5, pady=2, sticky=tk.W)
         self.max_peaks_var = tk.IntVar(value=5)
         ttk.Spinbox(params_frame, from_=1, to=10, textvariable=self.max_peaks_var, width=8).grid(row=1, column=1,
                                                                                                  padx=5, pady=2)

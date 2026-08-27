@@ -2,13 +2,18 @@
 """
 BMRB API search module.
 """
-import requests
-import urllib3
+try:
+    import requests
+    import urllib3
+except ImportError:
+    requests = None
+    urllib3 = None
 import time
 from typing import List, Dict
 
 # Suppress SSL warnings
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+if urllib3 is not None:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 class BMRBSearcher:
@@ -41,6 +46,8 @@ class BMRBSearcher:
         """
 
         try:
+            if requests is None:
+                return self._get_sample_data(peak_ppm, tolerance)
             response = requests.post(
                 self.search_url,
                 data={"query": query, "format": "application/json"},

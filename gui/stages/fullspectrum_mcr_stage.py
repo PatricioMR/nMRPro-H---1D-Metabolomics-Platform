@@ -7,10 +7,10 @@ Bypasses peak detection entirely. Instead:
   2. Clusters overlapping DB hits into spectral regions (greedy interval merge).
   3. Filters regions by experimental SNR (skips below noise floor).
   4. Runs MCR-ALS per region using DB-simulated profiles as S_init.
-  5. Opens MCRDeconvWindow with every region that had K≥1 component.
+  5. Opens MCRWindow with every region that had K≥1 component.
 
 The resulting "virtual peaks" have the same mcr_annotation structure as peaks
-produced by the peak-detection → annotation pipeline, so MCRDeconvWindow and
+produced by the peak-detection → annotation pipeline, so MCRWindow and
 the quantification stage work unchanged.
 """
 import tkinter as tk
@@ -340,13 +340,29 @@ class FullSpectrumMCRStage(BaseStage):
             values=['peak_bounded', 'db_driven', 'hybrid_adaptive'])
         mode_combo.pack(side=tk.LEFT)
 
+        # Water-suppression exclusion zone — this stage bypasses peak detection
+        # entirely (queries the DB directly), so it must apply its own water
+        # exclusion instead of inheriting AnnotationStage._exclude_water_peaks.
+        wf = ttk.Frame(pf); wf.pack(fill=tk.X, pady=(4, 1))
+        self.exclude_water_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(wf, text='Exclude water region',
+                        variable=self.exclude_water_var).pack(side=tk.LEFT)
+        self.water_lo_var = tk.DoubleVar(value=4.70)
+        self.water_hi_var = tk.DoubleVar(value=4.90)
+        ttk.Entry(wf, textvariable=self.water_lo_var, width=5).pack(
+            side=tk.LEFT, padx=(6, 1))
+        ttk.Label(wf, text='–').pack(side=tk.LEFT)
+        ttk.Entry(wf, textvariable=self.water_hi_var, width=5).pack(
+            side=tk.LEFT, padx=1)
+        ttk.Label(wf, text='ppm').pack(side=tk.LEFT, padx=(2, 0))
+
         ttk.Label(pf,
                   text='Region gap: DB signals within this distance are grouped.\n'
                        'Max width: hard upper limit for any region (safety net).\n'
                        'Valley threshold: split two DB signals if the spectrum between\n'
-                       '  them drops below this fraction of the local peak (0=off, 1=always).\n'
+                       '  them drops below this fraction of the local signal (0=off, 1=always).\n'
                        'PPM shift tol: each DB profile is shifted ±tol before MCR (0=off).\n'
-                       'Region mode: peak_bounded (detected peaks), db_driven (DB only),\n'
+                       'Region mode: peak_bounded (detected signals), db_driven (DB only),\n'
                        '  hybrid_adaptive (recommended).',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W, pady=2)
 
@@ -458,7 +474,7 @@ class FullSpectrumMCRStage(BaseStage):
             self.btn_run.config(state='normal')
         # Show data info
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
         if ppm_arr is not None and all_int is not None:
             n_s = all_int.shape[1] if all_int.ndim == 2 else 1
             self._set_status(
@@ -481,10 +497,22 @@ class FullSpectrumMCRStage(BaseStage):
         import os
         self._blank_label.config(text=os.path.basename(path), foreground='black')
 
+    def _corrected_intensities(self):
+        """Spectra with the project's baseline model applied.
+
+        MCR-ALS is a bilinear decomposition: an uncorrected baseline drift is a
+        strong, smooth, sample-varying feature and the solver will happily
+        resolve it as if it were a chemical component. Reading the corrected
+        matrix keeps the components chemical.
+        """
+        if hasattr(self.app, 'corrected_intensities'):
+            return self.app.corrected_intensities()
+        return getattr(self.app, 'all_intensities', None)
+
     def _get_blank_spectrum(self, ppm_arr):
         """Return blank intensity vector (n_pts,) on ppm_arr grid, or None."""
         samples_info = getattr(self.app, 'samples_info', []) or []
-        all_int      = getattr(self.app, 'all_intensities', None)
+        all_int      = self._corrected_intensities()
 
         # Option 1: use BLK samples already loaded
         if self._blank_use_loaded.get() and all_int is not None:
@@ -579,7 +607,7 @@ class FullSpectrumMCRStage(BaseStage):
             messagebox.showinfo('Info', 'Select a database first.')
             return
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
         if ppm_arr is None or all_int is None:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
@@ -595,6 +623,11 @@ class FullSpectrumMCRStage(BaseStage):
             shift_tol     = float(self.shift_tol_var.get())
             mhz           = float(self.mhz_var.get())
             region_mode   = str(self.region_mode_var.get()).strip().lower()
+            exclude_water = bool(self.exclude_water_var.get())
+            water_lo      = float(self.water_lo_var.get())
+            water_hi      = float(self.water_hi_var.get())
+            if water_lo > water_hi:
+                water_lo, water_hi = water_hi, water_lo
         except Exception:
             messagebox.showerror('Error', 'Invalid parameter values.')
             return
@@ -638,7 +671,8 @@ class FullSpectrumMCRStage(BaseStage):
                 regions = self._run_worker(
                     ppm_arr, all_int, self._db_path,
                     gap, max_width, valley_rel, min_snr, min_cand,
-                    r2_thr, max_k, shift_tol, mhz, region_mode)
+                    r2_thr, max_k, shift_tol, mhz, region_mode,
+                    exclude_water, water_lo, water_hi)
                 self.app.root.after(0, lambda: self._on_done(regions))
             except Exception as exc:
                 import traceback; traceback.print_exc()
@@ -661,12 +695,12 @@ class FullSpectrumMCRStage(BaseStage):
             preproc.append(self._norm_method.get())
         preproc_str = f'  [{", ".join(preproc)}]' if preproc else ''
         self._result_label.config(
-            text=(f'{len(regions)} region(s) — {n_k1} single (→ Peak List), '
+            text=(f'{len(regions)} region(s) — {n_k1} single (→ Signal List), '
                   f'{n_k2} overlapping (→ Deconvolution).{preproc_str}'),
             foreground='black')
         self.btn_run.config(state='normal')
         self._set_status(
-            f'Done. {n_k1} peak(s) in Peak List — {n_k2} overlapping region(s) to review.',
+            f'Done. {n_k1} signal(s) in Signal List — {n_k2} overlapping region(s) to review.',
             'green')
         try:
             self.app.btn_peak_list.config(state='normal')
@@ -690,7 +724,7 @@ class FullSpectrumMCRStage(BaseStage):
                     if not p.get('_from_mcr')]
 
         ppm_arr = getattr(self.app, 'ppm', None)
-        all_int = getattr(self.app, 'all_intensities', None)
+        all_int = self._corrected_intensities()
 
         new_peaks = []
         for r in regions:
@@ -768,10 +802,12 @@ class FullSpectrumMCRStage(BaseStage):
                 'No overlapping regions found (K≥2).\n'
                 'All detected regions contain a single component.')
             return
-        from gui.widgets.mcr_deconv_window import MCRDeconvWindow
-        win = MCRDeconvWindow(
+        from gui.widgets.mcr_window import MCRWindow
+        items = [{'kind': 'region', 'met': None, 'mp': None, 'peak': r}
+                 for r in overlap_regions]
+        win = MCRWindow(
             self.app.root,
-            overlap_regions,
+            items,
             self.app,
             ann_stage=self)
         self.app._deconv_win = win
@@ -780,7 +816,8 @@ class FullSpectrumMCRStage(BaseStage):
 
     def _run_worker(self, ppm_arr, all_int, db_path,
                     gap, max_width, valley_rel, min_snr, min_cand,
-                    r2_thr, max_k, shift_tol, mhz, region_mode='hybrid_adaptive'):
+                    r2_thr, max_k, shift_tol, mhz, region_mode='hybrid_adaptive',
+                    exclude_water=True, water_lo=4.70, water_hi=4.90):
         """
         1. Query DB for all signals in spectrum range.
         2. Cluster into regions.
@@ -795,6 +832,22 @@ class FullSpectrumMCRStage(BaseStage):
         db_entries = self._query_db(db_path, ppm_lo, ppm_hi)
         if not db_entries:
             raise RuntimeError('No DB entries found in this ppm range.')
+
+        # Water-suppression exclusion zone — dropped here (DB-entry level)
+        # since this stage bypasses peak detection and never goes through
+        # AnnotationStage._exclude_water_peaks.
+        if exclude_water:
+            _n0 = len(db_entries)
+            db_entries = [e for e in db_entries
+                         if not (water_lo <= float(e['ppm_center']) <= water_hi)]
+            if not db_entries:
+                raise RuntimeError(
+                    'All DB entries fall inside the water exclusion zone '
+                    f'({water_lo:.2f}-{water_hi:.2f} ppm).')
+            _n_skip = _n0 - len(db_entries)
+            if _n_skip:
+                print(f'[fullspectrum_mcr] water exclusion {water_lo:.2f}-'
+                      f'{water_hi:.2f} ppm: skipped {_n_skip} DB signal(s)')
 
         self._update_status(f'{len(db_entries)} DB signals loaded. Clustering…')
 
@@ -1089,7 +1142,7 @@ class FullSpectrumMCRStage(BaseStage):
             print(f'DB query error: {e}')
         return results
 
-    # Expose mcr_r2_threshold and _rerun_mcr_for_peak for MCRDeconvWindow
+    # Expose mcr_r2_threshold and _rerun_mcr_for_peak for MCRWindow
     @property
     def mcr_r2_threshold(self):
         try:
@@ -1115,7 +1168,7 @@ class FullSpectrumMCRStage(BaseStage):
         ppm_lo   = float(peak['start_ppm'])
         ppm_hi   = float(peak['end_ppm'])
         ppm_arr  = getattr(self.app, 'ppm', None)
-        all_int  = getattr(self.app, 'all_intensities', None)
+        all_int  = self._corrected_intensities()
         if ppm_arr is None or all_int is None:
             return
         mean_int = (np.mean(all_int, axis=1) if all_int.ndim == 2 else all_int)

@@ -95,7 +95,7 @@ class FilteredResultsWindow:
                         value="all", command=self.apply_filters).pack(side=tk.LEFT, padx=2)
         ttk.Radiobutton(row3, text="Multiplets Only", variable=self.match_var,
                         value="multiplet", command=self.apply_filters).pack(side=tk.LEFT, padx=2)
-        ttk.Radiobutton(row3, text="Peaks Only", variable=self.match_var,
+        ttk.Radiobutton(row3, text="Signals Only", variable=self.match_var,
                         value="peak", command=self.apply_filters).pack(side=tk.LEFT, padx=2)
 
         # Filter row 4 - Summary

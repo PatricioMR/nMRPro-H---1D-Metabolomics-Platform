@@ -1,15 +1,99 @@
 """
-nMRPipe
+NMRPro-H
 Main entry point for the application
 """
 
+import datetime as _dt
 import sys
 import os
 import traceback
 
-print("=" * 50)
-print("nMRPipe - Starting")
 
+class _NullWriter:
+    """Last-resort stand-in so nothing downstream ever writes to None."""
+
+    encoding = 'utf-8'
+
+    def write(self, _text):
+        return len(_text) if isinstance(_text, str) else 0
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
+def _open_log_stream():
+    """A real, writable stream for a build that has no console.
+
+    Returns None only if even the fallback location is unwritable.
+    """
+    try:
+        from app_paths import user_data_dir
+        base = user_data_dir()
+    except Exception:
+        base = os.path.expanduser('~')
+    try:
+        return open(os.path.join(base, 'startup.log'), 'a', buffering=1,
+                    encoding='utf-8', errors='replace')
+    except Exception:
+        return None
+
+
+def _make_console_safe():
+    """Keep startup logging from killing the app.
+
+    A frozen build does not get a UTF-8 console: stdout is cp1252 on Windows,
+    or None entirely when built with console=False. Printing a tick character
+    then raises UnicodeEncodeError, and because the handler below also printed
+    one, the app died after importing successfully.
+
+    None is the worse case, and it is silent: print() with sys.stdout None is a
+    no-op, but traceback.print_exception() calls .write on it and raises
+    AttributeError. Tk routes every callback exception through that function, so
+    a failure inside root.after() destroys the interpreter's only means of
+    reporting it and mainloop() returns as if the user had closed the window.
+    Pointing the missing streams at a log file makes the real traceback
+    survivable and readable.
+    """
+    log = None
+    for stream_name in ('stdout', 'stderr'):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            if log is None:
+                log = _open_log_stream() or _NullWriter()
+            setattr(sys, stream_name, log)
+            if getattr(sys, '__%s__' % stream_name, None) is None:
+                setattr(sys, '__%s__' % stream_name, log)
+            continue
+        try:
+            stream.reconfigure(encoding='utf-8', errors='replace')
+        except Exception:
+            pass
+
+
+def _has_console() -> bool:
+    """True when there is a real stdin to wait on.
+
+    A windowed build has none, so a "Press Enter to exit" prompt would raise or
+    hang instead of showing the error it was meant to explain.
+    """
+    return bool(getattr(sys, 'stdin', None)) and sys.stdin.isatty()
+
+
+def _pause_if_interactive():
+    if _has_console():
+        try:
+            input("\nPress Enter to exit...")
+        except Exception:
+            pass
+
+
+_make_console_safe()
+
+print("=" * 50)
+print("NMRPro-H - Starting  %s" % _dt.datetime.now().isoformat(timespec='seconds'))
 print("=" * 50)
 
 def main():
@@ -52,13 +136,13 @@ def main():
         print("      ├── __init__.py")
         print("      └── spectrum.py")
         traceback.print_exc()
-        input("\nPress Enter to exit...")
+        _pause_if_interactive()
         sys.exit(1)
 
     except Exception as e:
         print(f"✗ Unexpected error: {e}")
         traceback.print_exc()
-        input("\nPress Enter to exit...")
+        _pause_if_interactive()
         sys.exit(1)
 
 if __name__ == "__main__":

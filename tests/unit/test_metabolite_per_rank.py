@@ -67,11 +67,16 @@ def test_none_rank_ignored():
     assert select_metabolite_per_rank(mets) == {2: 'X'}
 
 
-def test_sort_key_singlet_companion_bonus():
+def test_companion_multiplet_no_longer_boosts_a_singlet():
+    """Confirmation by a companion multiplet was removed: too variable.
+
+    A singlet is ranked on its own score plus its own J evidence; the fact that
+    the metabolite has a good multiplet elsewhere gives it nothing here.
+    """
     base = _mp(1, 0.5, mult='s')
     boosted = _mp(1, 0.5, mult='s', j_met_confirmed=True,
                   anchor_status='clean', anchor_pos_confidence='high')
-    assert _assignment_sort_key(0.5, boosted) > _assignment_sort_key(0.5, base)
+    assert _assignment_sort_key(0.5, boosted) == _assignment_sort_key(0.5, base)
 
 
 def test_empty_input():

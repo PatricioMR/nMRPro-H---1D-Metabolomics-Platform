@@ -37,6 +37,8 @@ def _install_mocks():
                  'WORD', 'FLAT', 'GROOVE', 'RAISED', 'RIDGE', 'SUNKEN'):
         setattr(tk, attr, attr.lower())
     tk.font = types.ModuleType('tkinter.font')
+    tk.colorchooser = types.ModuleType('tkinter.colorchooser')
+    tk.colorchooser.askcolor = lambda *a, **kw: (None, None)
 
     ttk = types.ModuleType('tkinter.ttk')
     for name in ('Frame', 'Label', 'Button', 'Entry', 'Checkbutton',
@@ -50,11 +52,15 @@ def _install_mocks():
 
     fd = types.ModuleType('tkinter.filedialog')
     fd.askopenfilename = fd.asksaveasfilename = lambda *a, **kw: ''
+    fd.askdirectory = lambda *a, **kw: ''
+
+    cc = types.ModuleType('tkinter.colorchooser')
+    cc.askcolor = lambda *a, **kw: (None, None)
 
     for mod, name in [
         (tk, 'tkinter'), (ttk, 'tkinter.ttk'),
         (mb, 'tkinter.messagebox'), (fd, 'tkinter.filedialog'),
-        (tk.font, 'tkinter.font'),
+        (tk.font, 'tkinter.font'), (cc, 'tkinter.colorchooser'),
     ]:
         sys.modules.setdefault(name, mod)
 
@@ -114,6 +120,11 @@ def _install_mocks():
     patches_mod.Rectangle    = lambda *a, **kw: types.SimpleNamespace()
     patches_mod.FancyArrowPatch = lambda *a, **kw: types.SimpleNamespace()
 
+    widgets_mod = types.ModuleType('matplotlib.widgets')
+    widgets_mod.SpanSelector  = lambda *a, **kw: types.SimpleNamespace()
+    widgets_mod.RectangleSelector = lambda *a, **kw: types.SimpleNamespace()
+    widgets_mod.Cursor        = lambda *a, **kw: types.SimpleNamespace()
+
     figure_mod = types.ModuleType('matplotlib.figure')
     figure_mod.Figure = lambda *a, **kw: types.SimpleNamespace(
         add_subplot=lambda *a, **kw: types.SimpleNamespace(),
@@ -128,6 +139,7 @@ def _install_mocks():
         (colors_mod,    'matplotlib.colors'),
         (patches_mod,   'matplotlib.patches'),
         (figure_mod,    'matplotlib.figure'),
+        (widgets_mod,   'matplotlib.widgets'),
     ]:
         sys.modules.setdefault(name, mod)
 

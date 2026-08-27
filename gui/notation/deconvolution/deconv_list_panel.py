@@ -7,40 +7,40 @@ Tree layout (show='tree headings'):
   data cols  = #  |  PPM  |  Start  |  End  |  SNR  |  W  |  Status
 
   ▼ ⚠ Region 1                     (parent — collapsible)
-        3   3.2100  3.2050  3.2150  12.4  0.005  ⚠ Undef
+        3   3.2100  3.2050  3.2150  12.4  0.005  ~ Average
   ▼ Region 2
-        7   1.3950  1.3900  1.4000   8.1  0.006  Undef
+        7   1.3950  1.3900  1.4000   8.1  0.006  ~ Average
   ▼ ✅ Region 1  (after deconv)
-        —   3.2180  ...                    ⚠ Undef
+        —   3.2180  ...                    ~ Average
         —   3.2040  ...                    ● Good
 
 Rules:
   • Parent #0 text = "Region N"  (no number in the # column)
   • Parent data columns are ALL EMPTY except Status = n peaks
-  • ⚠ on parent  → region contains a manually-Undef peak (from Peak List)
-  • ⚠ on child   → child status is Undefined (not yet resolved)
+  • ⚠ on parent  → region contains a manually-Average peak (from Peak List)
+  • ⚠ on child   → child status is Average (not yet resolved)
   • Green child  → only after marking Good (Ctrl+1)
-  • Ctrl+1/2/3   → Good / Undefined / Poor on selected child
+  • Ctrl+1/2/3   → Good / Average / Poor on selected child
   • Ctrl+click   → multi-select regions
   • Ctrl+G       → group selected regions into one merged entry
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
 
-STATUS_GOOD      = 'Good'
-STATUS_UNDEFINED = 'Undefined'
-STATUS_POOR      = 'Poor'
+from gui.utils.quality_palette import (
+    QUALITY_FG, QUALITY_LABEL, SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR)
 
-STATUS_COLORS = {
-    STATUS_GOOD:      '#1a7a1a',
-    STATUS_UNDEFINED: '#7a6000',
-    STATUS_POOR:      '#9a0000',
-}
-STATUS_SYMBOL = {
-    STATUS_GOOD:      '● Good',
-    STATUS_UNDEFINED: '⚠ Undef',
-    STATUS_POOR:      '✗ Poor',
-}
+# Same three tiers as the Peak List and the annotation window.
+STATUS_GOOD      = SIGNAL_GOOD
+STATUS_UNDEFINED = SIGNAL_AVERAGE
+STATUS_POOR      = SIGNAL_POOR
+
+# Projects saved before the vocabulary was unified stored this literal. It still
+# means "no verdict reached", so it must keep counting as a status.
+LEGACY_UNDEFINED = 'Undefined'
+
+STATUS_COLORS = dict(QUALITY_FG)
+STATUS_SYMBOL = dict(QUALITY_LABEL)
 
 
 class DeconvListPanel:
@@ -69,7 +69,7 @@ class DeconvListPanel:
         self.frame.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
         self.frame.pack_propagate(False)
 
-        ttk.Label(self.frame, text="Peaks for Deconvolution",
+        ttk.Label(self.frame, text="Signals for Deconvolution",
                   font=("Arial", 11, "bold")).pack(pady=5)
 
         self.info_label = ttk.Label(self.frame, text="", foreground="gray")
@@ -194,23 +194,23 @@ class DeconvListPanel:
         self.min_snr_var = tk.DoubleVar(value=3.0)
         ttk.Entry(pf, textvariable=self.min_snr_var, width=7).grid(
             row=0, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Minimum SNR to accept a sub-peak (default: 3)",
+        ttk.Label(pf, text="Minimum SNR to accept a sub-signal (default: 3)",
                   font=("Arial", 7), foreground="#888").grid(
             row=0, column=2, columnspan=2, sticky=tk.W, padx=2)
 
         # ── row 1: Max Peaks ──────────────────────────────────────────────────
-        ttk.Label(pf, text="Max Peaks:").grid(
+        ttk.Label(pf, text="Max Signals:").grid(
             row=1, column=0, sticky=tk.W, pady=2, padx=4)
         self.max_peaks_var = tk.IntVar(value=6)
         ttk.Spinbox(pf, from_=1, to=15,
                     textvariable=self.max_peaks_var, width=6).grid(
             row=1, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Maximum sub-peaks per region (default: 6)",
+        ttk.Label(pf, text="Maximum sub-signals per region (default: 6)",
                   font=("Arial", 7), foreground="#888").grid(
             row=1, column=2, columnspan=2, sticky=tk.W, padx=2)
 
         # ── row 2: Peak Model ─────────────────────────────────────────────────
-        ttk.Label(pf, text="Peak Model:").grid(
+        ttk.Label(pf, text="Lineshape Model:").grid(
             row=2, column=0, sticky=tk.W, pady=2, padx=4)
         self.model_var = tk.StringVar(value="Lorentzian")
         cb_model = ttk.Combobox(
@@ -258,7 +258,7 @@ class DeconvListPanel:
         self.max_width_var = tk.DoubleVar(value=0.010)
         ttk.Entry(pf, textvariable=self.max_width_var, width=7).grid(
             row=5, column=1, pady=2, padx=4, sticky=tk.W)
-        ttk.Label(pf, text="Maximum peak HWHM (ppm); limits broad fits (default: 0.010)",
+        ttk.Label(pf, text="Maximum signal HWHM (ppm); limits broad fits (default: 0.010)",
                   font=("Arial", 7), foreground="#888").grid(
             row=5, column=2, columnspan=2, sticky=tk.W, padx=2)
 
@@ -330,13 +330,13 @@ class DeconvListPanel:
         self.revert_all_btn.pack(fill=tk.X, padx=5, pady=2)
 
         self.save_btn = ttk.Button(
-            _inner, text="💾 Save Sub-peaks to Peak List",
+            _inner, text="💾 Save Sub-signals to Signal List",
             command=self.on_save, state="disabled")
         self.save_btn.pack(fill=tk.X, padx=5, pady=2)
 
         ttk.Label(
             _inner,
-            text="Ctrl+1 Good  ·  Ctrl+2 Undefined  ·  Ctrl+3 Poor\n"
+            text="Ctrl+1 Good  ·  Ctrl+2 Average  ·  Ctrl+3 Poor\n"
                  "Ctrl+R Reset view  ·  Enter Deconvolve",
             font=("Arial", 7), foreground="gray").pack(pady=4)
 
@@ -463,13 +463,13 @@ class DeconvListPanel:
                     status = p.get('status', STATUS_UNDEFINED)
                     if status == STATUS_GOOD:
                         c_tag   = 'child_good'
-                        st_cell = '● Good'
+                        st_cell = STATUS_SYMBOL[STATUS_GOOD]
                     elif status == STATUS_POOR:
                         c_tag   = 'child_poor'
-                        st_cell = '✗ Poor'
+                        st_cell = STATUS_SYMBOL[STATUS_POOR]
                     else:
                         c_tag   = 'child_undefined'
-                        st_cell = '⚠ Undef'
+                        st_cell = STATUS_SYMBOL[STATUS_UNDEFINED]
 
                     pk_num = p.get('rank', f'{valid_count}.{j+1}')
                     try:
@@ -514,7 +514,8 @@ class DeconvListPanel:
                     pass
 
         has_any = any(
-            p.get('status') in (STATUS_GOOD, STATUS_UNDEFINED, STATUS_POOR)
+            p.get('status') in (STATUS_GOOD, STATUS_UNDEFINED, STATUS_POOR,
+                                LEGACY_UNDEFINED)
             for res in self.controller.results.values()
             for p in res.get('peaks', []))
         self.save_btn.config(state='normal' if has_any else 'disabled')
@@ -645,7 +646,7 @@ class DeconvListPanel:
                        regions[region_idx]['status'] == 'deconvolved')
             if done:
                 menu.add_command(
-                    label='↩ Restore original peak',
+                    label='↩ Restore original signal',
                     command=lambda ri=region_idx: self._restore_peak(ri))
             else:
                 menu.add_command(
@@ -659,7 +660,7 @@ class DeconvListPanel:
         elif row_type == 'child':
             menu.add_command(label='● Mark Good',
                 command=lambda: self.set_child_status(STATUS_GOOD))
-            menu.add_command(label='⚠ Mark Undefined',
+            menu.add_command(label=f'{STATUS_SYMBOL[STATUS_UNDEFINED]}',
                 command=lambda: self.set_child_status(STATUS_UNDEFINED))
             menu.add_command(label='✗ Mark Poor',
                 command=lambda: self.set_child_status(STATUS_POOR))
@@ -674,7 +675,7 @@ class DeconvListPanel:
         self.controller.restore_peak(region_idx)
         self.refresh_list()
         self.status_label.config(
-            text=f'Peak {region_idx+1} restored to original.',
+            text=f'Signal {region_idx+1} restored to original.',
             foreground='#555')
 
     def _remove_peak(self, region_idx):
@@ -710,7 +711,7 @@ class DeconvListPanel:
 
         if len(region_idxs) < 2:
             messagebox.showinfo(
-                'Group Peaks',
+                'Group Signals',
                 'Ctrl+click 2 or more region rows to select,\n'
                 'then press Ctrl+G.')
             return
@@ -774,7 +775,7 @@ class DeconvListPanel:
             self.tree.see(new_iid)
 
         self.status_label.config(
-            text=f'Grouped {len(region_idxs)} peaks → 1 entry. '
+            text=f'Grouped {len(region_idxs)} signals → 1 entry. '
                  f'Now click Deconvolve.',
             foreground='#1565c0')
 

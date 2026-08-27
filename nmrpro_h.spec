@@ -1,14 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for nMRPipe (one-folder Windows build).
+PyInstaller spec for NMRPro-H (one-folder Windows build).
 
-Build:   pyinstaller --noconfirm nmrpipe.spec
-Output:  dist/nMRPipe/nMRPipe.exe  (+ _internal/, databases/, data/, utils/)
+Build:   pyinstaller --noconfirm nmrpro_h.spec
+Output:  dist/NMRPro-H/NMRPro-H.exe  (+ _internal/, databases/, data/, utils/)
 
 Notes
 -----
 * One-folder (not one-file): fast startup; the bundled databases/ act as the
-  SEED that app_paths.databases_dir() copies to %APPDATA%/nMRPipe on first run.
+  SEED that app_paths.databases_dir() copies to %APPDATA%/NMRPro-H on first run.
 * Heavy scientific deps (scipy, scikit-learn, matplotlib, reportlab) need their
   data files and some submodules collected explicitly.
 """
@@ -28,7 +28,7 @@ _db_seed = [
 ]
 datas = _db_seed + [
     ('data',      'data'),         # lipidomics / internal CSV libraries
-    ('utils',     'utils'),        # Logo_nMRPipe.png, nmrpipe.ico
+    ('utils',     'utils'),        # Logo_NMRPro-H.png, nmrpro_h.ico
 ]
 binaries = []
 hiddenimports = [
@@ -66,13 +66,13 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='nMRPipe',
+    name='NMRPro-H',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
     console=False,          # release build — no debug console window
-    icon='utils/nmrpipe.ico',
+    icon='utils/nmrpro_h.ico',
 )
 coll = COLLECT(
     exe,
@@ -82,5 +82,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name='nMRPipe',
+    name='NMRPro-H',
 )

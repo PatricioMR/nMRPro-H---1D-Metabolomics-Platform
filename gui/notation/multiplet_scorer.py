@@ -35,8 +35,10 @@ For each DB candidate (with known multiplicity and J):
 """
 
 import numpy as np
+from processing.signal_quality import SIGNAL_AVERAGE
 import re as _re
 from itertools import combinations
+from scipy.optimize import linear_sum_assignment
 
 
 # ── Multiplet patterns ────────────────────────────────────────────────────────
@@ -85,7 +87,9 @@ def _offsets_from_pattern(norm, j_values_hz, mhz):
         n = len(ints)
         if n == 1:
             return [(0.0, 1.0)]
-        j  = (j_values_hz[0] if j_values_hz else 7.0)
+        if not j_values_hz:
+            return []
+        j  = j_values_hz[0]
         jp = j / mhz
         positions = [(k - (n - 1) / 2) * jp for k in range(n)]
         max_i = max(ints)
@@ -93,7 +97,9 @@ def _offsets_from_pattern(norm, j_values_hz, mhz):
 
     # Compound multiplets
     n_j   = _COMPOUND.get(norm, 1)
-    j_list = (j_values_hz[:n_j] + [7.0] * n_j)[:n_j]
+    if not j_values_hz or len(j_values_hz) < n_j:
+        return []
+    j_list = j_values_hz[:n_j]
     lines  = [(0.0, 1.0)]
     for jv in j_list:
         jp = jv / mhz
@@ -349,23 +355,8 @@ def _scan_candidates(ppm_exp, offsets, peaks, tolerance, mhz):
         spacing  = (2 * max_off / (n_lines - 1)) if n_lines > 1 else max_off
         eff_tol  = max(0.0005, min(tolerance, spacing * 0.55))
 
-        matched, used = [], set()
-        for pred_ppm, pred_rel in sorted(predicted, key=lambda x: -x[1]):
-            best_i, best_d = None, eff_tol
-            for j, obs in enumerate(ppms_obs):
-                if j not in used and abs(obs - pred_ppm) < best_d:
-                    best_d, best_i = abs(obs - pred_ppm), j
-            if best_i is not None:
-                used.add(best_i)
-                matched.append({
-                    'obs_ppm':  ppms_obs[best_i],
-                    'obs_rel':  heights[best_i] / max_h,
-                    'pred_ppm': pred_ppm,
-                    'pred_rel': pred_rel,
-                    'distance': best_d,
-                    'eff_tol':  eff_tol,
-                    'peak':     nearby[best_i],
-                })
+        matched = _hungarian_line_matches(
+            predicted, nearby, max_distance=eff_tol, max_height=max_h)
 
         if not matched:
             continue
@@ -446,23 +437,18 @@ def _score_from_transitions(db_trans, result, peaks, ppm_c, ppm_exp,
         heights    = [p['height'] for p in nearby]
         max_h      = max(heights) if heights else 1.0
 
-        matched, used = [], set()
-        for pred_p, pred_r in sorted(zip(pred_ppms, t_rels),
-                                     key=lambda x: -x[1]):
-            best_i, best_d = None, eff_tol * 2
-            for j, obs in enumerate(ppms_obs):
-                if j not in used and abs(obs - pred_p) < best_d:
-                    best_d, best_i = abs(obs - pred_p), j
-            if best_i is not None:
-                used.add(best_i)
-                obs_rel = heights[best_i] / max_h
-                matched.append({
-                    'pos_sc':   max(0.0, 1.0 - best_d / max(eff_tol * 2, 1e-9)),
-                    'int_sc':   max(0.0, 1.0 - abs(pred_r - obs_rel)),
-                    'weight':   pred_r,
-                    'obs_ppm':  ppms_obs[best_i],
-                    'pred_ppm': float(pred_p),
-                })
+        raw_matches = _hungarian_line_matches(
+            list(zip(pred_ppms, t_rels)), nearby,
+            max_distance=eff_tol * 2, max_height=max_h)
+        matched = []
+        for m in raw_matches:
+            matched.append({
+                'pos_sc': max(0.0, 1.0 - m['distance'] / max(eff_tol * 2, 1e-9)),
+                'int_sc': max(0.0, 1.0 - abs(m['pred_rel'] - m['obs_rel'])),
+                'weight': m['pred_rel'],
+                'obs_ppm': m['obs_ppm'],
+                'pred_ppm': m['pred_ppm'],
+            })
 
         if not matched:
             continue
@@ -502,6 +488,38 @@ def _score_from_transitions(db_trans, result, peaks, ppm_c, ppm_exp,
               f'  centre={best_centre:.4f}  Δ={delta:+.4f}'
               f'  score={best_score:.2f}')
     return float(max(0.0, best_score)), detail, best_lines
+
+
+def _hungarian_line_matches(predicted, observed, max_distance, max_height=None):
+    """Match predicted and observed lines one-to-one with Hungarian assignment."""
+    if not predicted or not observed or max_distance <= 0:
+        return []
+    obs_ppm = np.asarray([float(p["ppm"]) for p in observed], dtype=float)
+    heights = np.asarray([float(p.get("height", 0.0)) for p in observed], dtype=float)
+    scale = float(max_height if max_height is not None else (heights.max() or 1.0))
+    if scale <= 0:
+        scale = 1.0
+    pred_ppm = np.asarray([float(p[0]) for p in predicted], dtype=float)
+    pred_rel = np.asarray([float(p[1]) for p in predicted], dtype=float)
+    dist = np.abs(pred_ppm[:, None] - obs_ppm[None, :])
+    obs_rel = heights / scale
+    cost = dist / max_distance + 0.35 * np.abs(pred_rel[:, None] - obs_rel[None, :])
+    rows, cols = linear_sum_assignment(cost)
+    matches = []
+    for i, j in zip(rows, cols):
+        d = float(dist[i, j])
+        if d >= max_distance:
+            continue
+        matches.append({
+            "obs_ppm": float(obs_ppm[j]),
+            "obs_rel": float(obs_rel[j]),
+            "pred_ppm": float(pred_ppm[i]),
+            "pred_rel": float(pred_rel[i]),
+            "distance": d,
+            "eff_tol": max_distance,
+            "peak": observed[j],
+        })
+    return matches
 
 
 def score_multiplet_match(result, peaks, tolerance=0.005,
@@ -569,7 +587,9 @@ def score_multiplet_match(result, peaks, tolerance=0.005,
     # ── Doublet ───────────────────────────────────────────────────────────────
     if norm == 'd':
         # j_db = 0 means J is unknown; _find_doublet_pair uses soft scoring then.
-        j_db = j_vals[0] if j_vals else 0.0
+        if not j_vals:
+            return 0.0, 'D - J ausente; confirmacao manual necessaria', []
+        j_db = j_vals[0]
 
         # Search from both anchors:
         #   ppm_exp = detected peak closest to DB ppm (typically ONE doublet line)
@@ -602,7 +622,7 @@ def score_multiplet_match(result, peaks, tolerance=0.005,
             return float(score), detail, lines
 
         # Pair not found — model centred on ppm_c (DB centre), not ppm_exp.
-        j_model  = j_vals[0] if j_vals else 7.0
+        j_model  = j_vals[0]
         half_sep = j_model / (2.0 * mhz)
         offsets_d = [(-half_sep, 1.0), (half_sep, 1.0)]
         centre_d, _, score_d = _scan_candidates(
@@ -618,11 +638,13 @@ def score_multiplet_match(result, peaks, tolerance=0.005,
 
     # ── Triplet ───────────────────────────────────────────────────────────────
     if norm == 't':
-        j_t = j_vals[0] if j_vals else 0.0
+        if not j_vals:
+            return 0.0, 'T - J ausente; confirmacao manual necessaria', []
+        j_t = j_vals[0]
         best_t       = None
         best_t_score = -1.0
         for anchor in dict.fromkeys([ppm_exp, ppm_c]):
-            rt = _find_triplet(peaks, j_t if j_t > 0 else 7.0, mhz, anchor, tolerance)
+            rt = _find_triplet(peaks, j_t, mhz, anchor, tolerance)
             if rt is not None and rt[2] > best_t_score:
                 best_t_score = rt[2]
                 best_t       = rt
@@ -640,7 +662,7 @@ def score_multiplet_match(result, peaks, tolerance=0.005,
                       f'  centre={centre:.4f}  Δ={delta:+.4f}  score={score:.2f}')
             return float(score), detail, lines
         # Triplet not found — model centred on ppm_c
-        j_model  = j_vals[0] if j_vals else 7.0
+        j_model  = j_vals[0]
         jp       = j_model / mhz
         offsets_t = [(-jp, 0.5), (0.0, 1.0), (jp, 0.5)]
         centre_t, _, score_t = _scan_candidates(
@@ -995,7 +1017,7 @@ def merge_multiplet_peaks(peaks, results, spectrometer_mhz=600.0,
             'component_peaks': component_peaks_list,
             'predicted_lines': pl,
             'rank':            min(component_ranks),
-            'status':          component_peaks_list[0].get('status', 'Undefined'),
+            'status':          component_peaks_list[0].get('status', SIGNAL_AVERAGE),
             'snr':             max(p.get('snr', 0) for p in component_peaks_list),
         }
         new_peaks.append(merged)
