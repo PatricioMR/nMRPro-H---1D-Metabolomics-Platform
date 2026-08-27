@@ -29,6 +29,8 @@ from gui.utils.quality_palette import (
 from processing.annotation_detectability import (
     build_overlap_map, mark_detectability)
 from processing.annotation_quality import promote_singlets, quality_verdict
+from processing.annotation_quality import (
+    metabolite_has_anchor, metabolite_tier)
 from processing.annotation_scoring import (
     analyte_score, apply_mcr_dj, coverage_fraction,
     resolve_dj, score_signal,
@@ -2788,34 +2790,35 @@ class AnnotationResultsWindow:
         anchor_store = getattr(ann_stage, '_anchor_lines', {}) if ann_stage else {}
         _user_tol    = float(getattr(ann_stage, 'tolerance', 0.05) or 0.05)
 
-        def _met_parent_qual(met):
-            """Compute parent-row quality — mirrors the rendering logic in _populate."""
-            mid_f = met.get('id')
-            has_anch_f = (
-                any(k[0] == mid_f for k in anchor_store)
-                or any(mp2.get('auto_anchor') for mp2 in met['matched_peaks'])
-            )
-            quals_f  = [mp2.get('annotation_quality') for mp2 in met['matched_peaks']]
-            if has_anch_f:
-                return 'good'
-            if 'good' in quals_f:
-                return 'good'
-            if quals_f and all(q2 == 'bad' for q2 in quals_f):
-                return 'bad'
-            return None  # undef
+        # One definition of the parent tier, shared by the row, the filter and
+        # the count. They used to be three separate expressions that disagreed.
+        _ambig = getattr(self, '_ambiguous_peak_ranks', set())
 
-        visible_mets = []
-        for met in self.metabolites:
-            if q and q not in met['name'].lower():
-                continue
-            if not _met_visible(met):
-                continue
-            # Filter by parent-level quality — matches what the parent row displays
-            pq = _met_parent_qual(met)
-            if pq == 'good'   and not show_good:  continue
-            if pq == 'bad'    and not show_bad:    continue
-            if pq is None     and not show_undef:  continue
-            visible_mets.append(met)
+        def _met_parent_tier(met):
+            return metabolite_tier(met, anchor_store=anchor_store,
+                                   ambiguous_ranks=_ambig)
+
+        def _met_has_anchor(met):
+            return metabolite_has_anchor(met, anchor_store)
+
+        # Everything the non-tier filters allow. The per-tier counts are read
+        # from here, never from visible_mets: they label the tier checkboxes,
+        # so making them follow those checkboxes meant unticking Average set
+        # its own count to (0), with no way to see what re-ticking would bring
+        # back.
+        _pre_tier_mets = [
+            met for met in self.metabolites
+            if not (q and q not in met['name'].lower()) and _met_visible(met)
+        ]
+
+        _tier_counts = {SIGNAL_GOOD: 0, SIGNAL_AVERAGE: 0, SIGNAL_POOR: 0}
+        for met in _pre_tier_mets:
+            _tier_counts[_met_parent_tier(met)] += 1
+
+        _tier_shown = {SIGNAL_GOOD: show_good, SIGNAL_POOR: show_bad,
+                       SIGNAL_AVERAGE: show_undef}
+        visible_mets = [met for met in _pre_tier_mets
+                        if _tier_shown.get(_met_parent_tier(met), True)]
 
         # Sort metabolites
         sk  = getattr(self, '_sort_key', 'ppm')
@@ -2847,48 +2850,14 @@ class AnnotationResultsWindow:
         self._iid_to_child    = {}
         self._iid_to_subchild = {}
 
-        # Live per-tier counts shown on the filter labels.
-        _tier_counts = {SIGNAL_GOOD: 0, SIGNAL_AVERAGE: 0, SIGNAL_POOR: 0}
-
         for ri, met in enumerate(visible_mets):
-            met_id = met.get('id')
-
             # ── Aggregate quality / score across all matched peaks ─────────────
             score = float(met.get('composite_score', 0) or 0)
 
-            # A quantification anchor line (manual, or auto-assigned to an
-            # exclusive J-confirmed peak) still marks the metabolite as Good.
-            has_anchor = (
-                any(k[0] == met_id for k in anchor_store)
-                or any(mp2.get('annotation_quality') == 'good' and mp2.get('auto_anchor')
-                       for mp2 in met['matched_peaks'])
-            )
-
-            # Overall quality: best quality among matched peaks
-            quals = [mp2.get('annotation_quality') for mp2 in met['matched_peaks']]
-            if has_anchor:
-                qual = 'good'
-                qual_mark = '⚓ Good'
-            elif 'good' in quals:
-                qual = 'good'
-                qual_mark = QUALITY_LABEL[SIGNAL_GOOD]
-            elif quals and all(q2 == 'bad' for q2 in quals):
-                qual = 'bad'
-                qual_mark = QUALITY_LABEL[SIGNAL_POOR]
-            else:
-                # No verdict reached: plausible but unconfirmed → Average.
-                qual = None
-                qual_mark = QUALITY_LABEL[SIGNAL_AVERAGE]
-
-            _met_ambiguous = any(
-                mp2.get('peak_rank') in getattr(self, '_ambiguous_peak_ranks', set())
-                for mp2 in met.get('matched_peaks', [])
-            )
-            if _met_ambiguous and qual != 'bad':
-                # Competing candidates leave the identity unconfirmed, which is
-                # what Average means. The Overlap column carries the count.
-                qual = None
-                qual_mark = QUALITY_LABEL[SIGNAL_AVERAGE]
+            met_tier  = _met_parent_tier(met)
+            qual_mark = ('⚓ Good'
+                         if met_tier == SIGNAL_GOOD and _met_has_anchor(met)
+                         else QUALITY_LABEL[met_tier])
 
             # Overlap: matched peaks with ≥1 valid competitor
             n_ovlp = sum(
@@ -2920,9 +2889,8 @@ class AnnotationResultsWindow:
 
             # Row colour follows the confidence tier shown in the column.
             tag = {SIGNAL_GOOD: 'met_high', SIGNAL_AVERAGE: 'met_mid',
-                   SIGNAL_POOR: 'met_low'}[tier_from_annotation_quality(qual)]
+                   SIGNAL_POOR: 'met_low'}[met_tier]
             tags = (tag, 'met_parent')
-            _tier_counts[tier_from_annotation_quality(qual)] += 1
 
             _name_disp = met['name']
 

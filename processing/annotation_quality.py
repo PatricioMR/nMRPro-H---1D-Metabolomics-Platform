@@ -136,3 +136,52 @@ def promote_singlets(metabolites, peaks, *, params, manual_marks=None):
                     f'Singlet contested: {n_rivals} rival(s), '
                     f'{n_in_window} signal(s) within {tol} ppm')
     return promoted
+
+
+def metabolite_has_anchor(met, anchor_store=()) -> bool:
+    """Does a quantification anchor line vouch for this metabolite?
+
+    Either the analyst pinned one, or the pipeline auto-assigned one to a
+    signal it had already graded Good on an exclusive, J-confirmed peak. An
+    auto_anchor on a signal that is not Good does not count — that pairing was
+    accepted as a marker by the filter and rejected by the row, so the same
+    metabolite could render Average and be hidden by the Good filter.
+    """
+    mid = met.get('id')
+    return (
+        any(k[0] == mid for k in (anchor_store or ()))
+        or any(mp.get('annotation_quality') == QUALITY_GOOD and mp.get('auto_anchor')
+               for mp in (met.get('matched_peaks') or []))
+    )
+
+
+def metabolite_tier(met, *, anchor_store=(), ambiguous_ranks=()):
+    """The quality tier of a metabolite, aggregated over its signals.
+
+    Read in order — the first that applies wins:
+
+      every signal Bad     → Poor. Nothing here was accepted.
+      any signal contested → Average. Competing candidates leave the identity
+                             unconfirmed, which is what Average means, and that
+                             outranks a Good signal or an anchor: the anchor
+                             says this peak is the metabolite's, the contest
+                             says it may be someone else's.
+      anchored, or any
+      signal Good          → Good.
+      otherwise            → Average. Plausible, unconfirmed.
+
+    Returns one of the SIGNAL_* tiers from processing.signal_quality.
+    """
+    from processing.signal_quality import (
+        SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR)
+
+    mps = met.get('matched_peaks') or []
+    quals = [mp.get('annotation_quality') for mp in mps]
+    if quals and all(q == QUALITY_BAD for q in quals):
+        return SIGNAL_POOR
+    ranks = set(ambiguous_ranks or ())
+    if ranks and any(mp.get('peak_rank') in ranks for mp in mps):
+        return SIGNAL_AVERAGE
+    if metabolite_has_anchor(met, anchor_store) or QUALITY_GOOD in quals:
+        return SIGNAL_GOOD
+    return SIGNAL_AVERAGE
