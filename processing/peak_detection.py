@@ -847,7 +847,12 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
     min_snr : float
         Minimum SNR threshold for peak detection
     min_distance : float
-        Minimum distance between peaks in ppm
+        Minimum SEPARATION between peak apices, in ppm — goes straight to
+        find_peaks(distance=...), so despite the "Min Distance" label in the UI
+        it is not a linewidth. Shoulder detection uses half of it, so apices
+        closer than this can still be reported. The application passes the
+        project's own value; see the default in peak_detection_stage for the
+        measurement behind it.
     baseline_correct : bool
         If True, apply baseline correction before detection
     baseline_method : str
