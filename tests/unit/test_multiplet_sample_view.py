@@ -1,18 +1,10 @@
 """Tests for the Tk-free math of the per-multiplet across-samples view."""
-import numpy as np
 
 from gui.widgets.multiplet_sample_view import (
-    parse_j_hz, multiplet_window, measure_j, measure_sample,
+    parse_j_hz, multiplet_window,
 )
 
 MHZ = 600.0
-
-
-def _triplet(ppm, centre, j_hz, amp, w=0.0015):
-    d = j_hz / MHZ
-    def g(c, a):
-        return a * np.exp(-((ppm - c) ** 2) / (2 * w ** 2))
-    return g(centre - d, amp) + g(centre, 2 * amp) + g(centre + d, amp)
 
 
 def test_parse_j_hz():
@@ -32,58 +24,11 @@ def test_multiplet_window_covers_predicted_lines():
     assert db_j == 7.0 and mult == 't'
 
 
-def test_measure_j_recovers_coupling():
-    ppm = np.linspace(0.84, 0.96, 1600)
-    y = _triplet(ppm, 0.90, 7.0, 1.0)
-    j = measure_j(ppm, y, MHZ)
-    assert j is not None
-    assert abs(j - 7.0) < 0.6
-
-
-def test_measure_sample_present_and_absent():
-    ppm = np.linspace(0.84, 0.96, 1600)
-    noise = 0.01
-    lo, hi, centre = 0.86, 0.94, 0.90
-    # present sample (tall triplet)
-    y = _triplet(ppm, 0.90, 7.0, 1.0) + np.random.default_rng(0).normal(0, noise, ppm.size)
-    m = measure_sample(ppm, y, lo, hi, centre, MHZ, 7.0, noise, 3.0)
-    assert m['present'] is True
-    assert m['j_obs'] is not None and abs(m['dj']) < 1.0
-    # absent sample (noise only)
-    yn = np.random.default_rng(1).normal(0, noise, ppm.size)
-    mn = measure_sample(ppm, yn, lo, hi, centre, MHZ, 7.0, noise, 3.0)
-    assert mn['present'] is False
-
-
-def test_measure_sample_dppm_reflects_shift():
-    ppm = np.linspace(0.84, 0.96, 1600)
-    shifted = _triplet(ppm, 0.9020, 7.0, 1.0)     # +2 mppm
-    m = measure_sample(ppm, shifted, 0.86, 0.94, 0.90, MHZ, 7.0, 0.005, 3.0)
-    assert m['present'] is True
-    assert 1.0 < m['dppm_mppm'] < 3.0             # ≈ +2 mppm
-
-
 def test_plot_width_is_derived_from_the_table_columns():
     """The plot is pinned to the table width so a trace sits above its own row.
     Deriving it from COLS means adding a column moves both."""
     from gui.widgets.multiplet_sample_view import COLS, TABLE_WIDTH_PX
     assert TABLE_WIDTH_PX == sum(c[2] for c in COLS) + 18
-
-
-def test_deltas_come_from_the_annotated_lines_not_the_crop():
-    """δppm and δJ must be read from the signal's own lines.
-
-    The crop is padded by 60% per side — a 50 Hz window for a 7 Hz doublet — so
-    measure_j was returning the spacing of whatever neighbouring resonances fell
-    inside it: three different metabolites in one region all reported the same
-    J. Median |ΔJ| on the reference study was 1.46 Hz that way against 0.77 Hz
-    from the lines.
-    """
-    import inspect
-    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
-    src = inspect.getsource(V._precompute)
-    assert 'signal_in_sample' in src
-    assert "m['j_obs']" in src and "m['dj']" in src
 
 
 def test_each_group_is_labelled_once():
@@ -95,9 +40,42 @@ def test_each_group_is_labelled_once():
     assert 'label=lbl' in src
 
 
-def test_measure_j_still_serves_signals_without_matched_lines():
-    """Kept as the fallback: a signal whose lines never matched a detected peak
-    has nothing else to offer."""
-    ppm = np.linspace(1.40, 1.55, 3000)
-    y = _triplet(ppm, 1.47, 7.0, 1.0)
-    assert measure_j(ppm, y, MHZ) is not None
+
+def test_the_window_displays_and_does_not_measure():
+    """This window renders what the annotation search settled. Nothing here may
+    re-derive a number: when it did, the crop-based J it produced disagreed with
+    the pipeline's — three signals sharing a region all read 4.76 Hz.
+    """
+    import inspect
+    import gui.widgets.multiplet_sample_view as mod
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+
+    src = inspect.getsource(V._precompute)
+    assert "self.mp_ref.get('per_sample')" in src, 'rows must come from the signal'
+    for banned in ('measure_j', 'measure_sample', 'estimate_noise',
+                   'signal_in_sample', 'find_peaks'):
+        assert banned not in src, f'_precompute must not call {banned}'
+
+    # The measuring helpers are gone from the module, not merely unused.
+    for banned in ('measure_j', 'measure_sample'):
+        assert not hasattr(mod, banned), f'{banned} still lives in the view'
+
+
+def test_alignment_shift_is_read_not_recomputed():
+    import inspect
+    import gui.widgets.multiplet_sample_view as mod
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._alignment_shifts)
+    assert "r['shift']" in src, 'the shift must come from the stored row'
+    # The processing helper that derives it is no longer reachable from here.
+    assert not hasattr(mod, 'signal_in_sample')
+    assert 'processing.per_sample_signal' not in inspect.getsource(mod)
+
+
+def test_a_project_without_readings_says_so():
+    """Dashes and a warning beat this window inventing a second set of numbers."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._build)
+    assert 'has_readings' in src
+    assert 'annotation search again' in src

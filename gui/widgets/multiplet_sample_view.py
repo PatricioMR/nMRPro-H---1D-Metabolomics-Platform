@@ -9,10 +9,14 @@ sample overlaid (coloured by group), plus a per-sample table with the centre
 the multiplet was detected in that sample. A header reports in how many samples
 the metabolite was found at this multiplicity.
 
-The per-sample measurements are RE-EXTRACTED from each sample's crop (independent
-of the detection mode), mirroring how MS-DIAL re-reads each sample for a feature.
+The per-sample measurements are NOT made here. The annotation search settles
+them — reading each sample from what detection recorded — and this window
+renders what it stored. It used to re-extract them from a crop of the spectrum
+and the two disagreed, because the crop is padded for context and the estimate
+picked up whatever neighbouring resonances fell inside it.
 
-The math is kept in module-level functions so it can be unit-tested without Tk.
+The crop geometry is kept in module-level functions so it can be unit-tested
+without Tk.
 """
 import re
 import tkinter as tk
@@ -24,11 +28,6 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 
-from processing.multiplet_line_selector import multiplet_line_peaks
-from processing.peak_detection import estimate_noise_minimum_segment
-from processing.per_sample_signal import (
-    alignment_shifts, signal_in_sample)
-from processing.sample_selection import included_sample_indices
 
 
 # ── Column definitions ────────────────────────────────────────────────────────
@@ -49,13 +48,6 @@ TABLE_WIDTH_PX = sum(c[2] for c in COLS) + 18     # + vertical scrollbar
 
 
 # ── Module-level math (Tk-free, unit-testable) ────────────────────────────────
-
-def _trapz(y, x):
-    try:
-        return float(np.trapezoid(y, x=x))
-    except AttributeError:
-        return float(np.trapz(y, x=x))
-
 
 def parse_j_hz(val):
     """Parse a J value like '7.1 Hz', 7.1, '7' → float Hz (or None)."""
@@ -102,72 +94,6 @@ def multiplet_window(mp_ref, peak, dp, field_mhz, default_margin=0.01):
     return lo - margin, hi + margin, centre, db_j, mult
 
 
-def measure_j(x, y, field_mhz):
-    """Observed J (Hz) = median spacing of local maxima in the crop, or None."""
-    x = np.asarray(x, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if x.size < 6:
-        return None
-    yy = np.clip(y - y.min(), 0, None)
-    if yy.max() < 1e-12:
-        return None
-    yy = yy / yy.max()
-    try:
-        from scipy.signal import find_peaks
-    except Exception:
-        return None
-    min_dist = max(2, int(x.size * 0.06))
-    pks, _ = find_peaks(yy, height=0.15, prominence=0.10, distance=min_dist)
-    if pks.size < 2:
-        return None
-    xo = np.sort(x[pks])
-    seps = np.abs(np.diff(xo)) * field_mhz
-    return float(np.median(seps)) if seps.size else None
-
-
-def measure_sample(ppm, col, lo, hi, centre_ppm, field_mhz, db_j, noise,
-                   min_snr, centre_win_ppm=None):
-    """Per-sample multiplet measurement on the crop [lo, hi].
-
-    Returns dict(present, dppm_mppm, j_obs, dj, area, height). 'present' is True
-    when the central line clears min_snr·noise above the local baseline.
-    """
-    ppm = np.asarray(ppm, dtype=float)
-    col = np.asarray(col, dtype=float)
-    mask = (ppm >= lo) & (ppm <= hi)
-    if mask.sum() < 3:
-        return dict(present=False, dppm_mppm=float('nan'),
-                    j_obs=None, dj=None, area=0.0, height=0.0)
-    x, y = ppm[mask], col[mask]
-    base = float(np.median(y))                    # robust local baseline
-    y0 = np.clip(y - base, 0, None)
-
-    cw = centre_win_ppm if centre_win_ppm else max((hi - lo) * 0.25, 1e-4)
-    cmask = np.abs(x - centre_ppm) <= cw
-    if cmask.sum() < 1:
-        cmask = np.ones_like(x, dtype=bool)
-    # Smooth before measuring the central-line height so a lone noise spike does
-    # not pass the SNR gate (max over many points biases noise upward).
-    y_meas = y0
-    if y0.size >= 5:
-        try:
-            from scipy.ndimage import gaussian_filter1d
-            y_meas = gaussian_filter1d(y0, 2.0)
-        except Exception:
-            pass
-    yc = y_meas[cmask]
-    height = float(yc.max()) if yc.size else 0.0
-    apex_ppm = float(x[cmask][int(np.argmax(yc))]) if yc.size else centre_ppm
-
-    present = bool(noise and noise > 0 and height >= float(min_snr) * float(noise))
-    dppm = (apex_ppm - centre_ppm) * 1000.0
-    j_obs = measure_j(x, y0, field_mhz)
-    dj = (j_obs - db_j) if (j_obs is not None and db_j) else None
-    area = abs(_trapz(y0, x))
-    return dict(present=present, dppm_mppm=dppm, j_obs=j_obs, dj=dj,
-                area=area, height=height)
-
-
 # ── Widget ────────────────────────────────────────────────────────────────────
 
 class MultipletSampleView:
@@ -184,13 +110,11 @@ class MultipletSampleView:
         self._rows = []
 
         self.field_mhz = self._field_mhz()
-        self.min_snr = self._min_snr()
         self.peak = self._resolve_peak()
         (self.lo, self.hi, self.centre, self.db_j,
          self.mult) = multiplet_window(self.mp_ref, self.peak, self.dp,
                                        self.field_mhz)
 
-        self._lines = self._line_peaks()
         self._precompute()
         self._shifts = self._alignment_shifts()
 
@@ -214,13 +138,6 @@ class MultipletSampleView:
         except Exception:
             return 600.0
 
-    def _min_snr(self):
-        try:
-            pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
-            return float(pd.min_snr_var.get())
-        except Exception:
-            return 3.0
-
     def _resolve_peak(self):
         rank = self.mp_ref.get('peak_rank')
         pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
@@ -234,82 +151,62 @@ class MultipletSampleView:
         return gc.get(group, f'C{idx % 10}')
 
     def _precompute(self):
+        """Assemble the table rows. Reads; measures nothing.
+
+        Every number here — presence, δppm, observed J, δJ, area — was settled
+        by the annotation search, which reads each sample from what detection
+        recorded. This window used to re-derive them from a crop of the
+        spectrum, and the two disagreed: the crop is padded by 60% per side, a
+        50 Hz window for a 7 Hz doublet, so the J it reported was the spacing of
+        whichever neighbouring resonances fell inside it. Cytidine, hippuric
+        acid and 2'-deoxyuridine, three signals sharing a region, all read
+        4.76 Hz. Median |ΔJ| was 1.46 Hz that way against 0.77 Hz from the
+        annotated lines.
+
+        A project annotated before the per-sample pass carries no rows: the
+        table then shows dashes and the header says to run the search again,
+        rather than this window quietly inventing a second set of numbers.
+        """
         arr = self.all_intensities
         if arr is None:
             return
         if arr.ndim == 1:
             arr = arr.reshape(-1, 1)
-        n = arr.shape[1]
-        for s in range(n):
+        stored = {int(r['sample_idx']): r
+                  for r in (self.mp_ref.get('per_sample') or [])
+                  if r.get('sample_idx') is not None}
+        self.has_readings = bool(stored)
+        for s in range(arr.shape[1]):
             inf = self.samples_info[s] if s < len(self.samples_info) else {}
-            stype = str(inf.get('type', 'Sample')).upper()
-            excluded = bool(inf.get('excluded', False))
-            col = arr[:, s].astype(float)
-            noise = estimate_noise_minimum_segment(col)
-            m = measure_sample(self.ppm, col, self.lo, self.hi, self.centre,
-                               self.field_mhz, self.db_j, noise, self.min_snr)
-            # δppm and δJ come from the signal's OWN lines, not from whatever
-            # maxima happen to sit in the crop. The crop is padded by 60% on
-            # each side for context, which for a 7 Hz doublet is a 50 Hz window:
-            # measure_sample then reported the spacing of neighbouring
-            # resonances, so three different metabolites in one region all read
-            # the same J. Measured against the reference study, that crop
-            # estimate is off by a median 1.46 Hz against 0.77 Hz here.
-            if self._lines:
-                ls = signal_in_sample(self._lines, s, db_ppm=self.centre,
-                                      db_j_hz=self.db_j,
-                                      field_mhz=self.field_mhz)
-                m['j_obs'] = ls['j_obs_hz']
-                m['dj'] = (ls['j_obs_hz'] - self.db_j
-                           if (ls['j_obs_hz'] is not None and self.db_j)
-                           else None)
-                if ls['ppm_centre'] is not None:
-                    m['dppm_mppm'] = (ls['ppm_centre'] - self.centre) * 1000.0
-                m['collapsed'] = ls['collapsed']
-            m.update(
+            r = stored.get(s, {})
+            centre = r.get('ppm_centre')
+            j_obs = r.get('j_obs_hz')
+            self._rows.append(dict(
                 idx=s,
                 name=inf.get('name', f'S{s}'),
                 group=inf.get('label', inf.get('group', '—')),
-                type=stype,
-                excluded=excluded,
-                col=col,
-                noise=noise,
-            )
-            self._rows.append(m)
-
-    def _line_peaks(self):
-        """The detected peaks that make up this signal's lines.
-
-        Same mapping the annotation and the quantification use, so the table,
-        the plot and the pipeline are talking about the same lines.
-        """
-        pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
-        peaks = getattr(pd, 'peaks', None) or []
-        if not peaks:
-            return []
-        try:
-            return multiplet_line_peaks(self.mp_ref,
-                                        {p.get('rank'): p for p in peaks})
-        except Exception:
-            return []
+                type=str(inf.get('type', 'Sample')).upper(),
+                excluded=bool(inf.get('excluded', False)),
+                col=arr[:, s].astype(float),
+                present=bool(r.get('present')),
+                dppm_mppm=((centre - self.centre) * 1000.0
+                           if centre is not None else float('nan')),
+                j_obs=j_obs,
+                dj=(j_obs - self.db_j
+                    if (j_obs is not None and self.db_j) else None),
+                area=r.get('area'),
+                collapsed=bool(r.get('collapsed')),
+                shift=r.get('align_shift_ppm'),
+            ))
 
     def _alignment_shifts(self):
-        """Per-sample shift that stacks this multiplet on top of itself.
+        """The per-sample display shift the annotation search already computed.
 
-        Each sample moves by how far the centre of ITS OWN lines sits from the
-        reference centre, so the pattern travels whole and the spacing that
-        carries the coupling is untouched — a doublet that drifted 20 Hz still
-        reads J = 7 Hz after aligning. Used only to draw; the spectra and the
-        quantification windows are never touched.
+        Each sample moves by how far the centre of its own lines sits from the
+        reference, so the pattern travels whole and the coupling is untouched.
         """
-        if not self._lines:
-            return {}
-        try:
-            incl = included_sample_indices(self.samples_info, len(self._rows))
-            return alignment_shifts(self._lines, included=incl,
-                                    reference=self.centre)
-        except Exception:
-            return {}
+        return {r['idx']: r['shift'] for r in self._rows
+                if r.get('shift') is not None}
 
     def _counted_rows(self):
         return [r for r in self._rows
@@ -332,9 +229,15 @@ class MultipletSampleView:
             head, foreground='#1a7a1a', font=('Arial', 10, 'bold'),
             text=f"Detected in {n_present} of {len(counted)} samples")
         self._count_lbl.pack(anchor=tk.W)
-        ttk.Label(head, text="Per-sample crop re-extracted from each spectrum "
-                             "(presence = central line ≥ min_snr·noise).",
-                  font=('Arial', 8), foreground='#666').pack(anchor=tk.W)
+        if getattr(self, 'has_readings', False):
+            _note, _fg = ("Values as measured by the annotation search — this "
+                          "window displays, it does not re-measure."), '#666'
+        else:
+            _note, _fg = ("This annotation predates the per-sample pass, so "
+                          "there is nothing to show per sample. Run the "
+                          "annotation search again."), '#a33'
+        ttk.Label(head, text=_note, font=('Arial', 8),
+                  foreground=_fg).pack(anchor=tk.W)
 
         self._align_var = tk.BooleanVar(value=bool(self._shifts))
         _row = ttk.Frame(head)
@@ -397,7 +300,8 @@ class MultipletSampleView:
             self._tree.insert(
                 '', 'end',
                 values=(r['name'], r['group'], present_txt, dptxt, jtxt,
-                        djtxt, f"{r['area']:.3e}"),
+                        djtxt,
+                        f"{r['area']:.3e}" if r['area'] is not None else '—'),
                 tags=(tag,))
 
     def _draw_overlay(self):

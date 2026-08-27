@@ -691,10 +691,11 @@ class AnnotationResultsWindow:
                 'mcr_info_reason': r.get('mcr_info_reason'),
                 'mcr_shift_disagree_ppm': r.get('mcr_shift_disagree_ppm'),
                 'stocsy_coherence':r.get('stocsy_coherence'),
-                # Per-sample reading, written by the annotation search. Only
-                # the counts are carried: the per-sample rows are derived from
-                # the detected peaks, so the view recomputes them instead of
-                # adding 500-odd x 32 dicts to every saved project.
+                # Per-sample reading, written by the annotation search. The
+                # rows travel with the signal: the across-samples view renders
+                # them and measures nothing of its own, so what it shows and
+                # what the pipeline decided cannot drift apart.
+                'per_sample':      r.get('per_sample'),
                 'n_present':       r.get('n_present'),
                 'n_included':      r.get('n_included'),
                 'ppm_spread':      r.get('ppm_spread'),

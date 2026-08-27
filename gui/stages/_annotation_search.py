@@ -35,7 +35,7 @@ from processing.annotation_scoring import (
     parse_first_j)
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.per_sample_signal import (
-    sample_count, signal_across_samples)
+    alignment_shifts, sample_count, signal_across_samples)
 from processing.sample_selection import included_sample_indices
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_POOR, effective_tier, filter_annotatable,
@@ -395,13 +395,17 @@ class _AnnotationSearchMixin:
             line_pks = multiplet_line_peaks(r, pk_by_rank)
             if not line_pks:
                 continue
+            _ref = r.get('peak_ppm') or r.get('db_ppm')
             out = signal_across_samples(
                 line_pks, included=incl,
                 db_ppm=r.get('db_ppm'),
                 db_j_hz=parse_first_j(r.get('j_coupling') or ''),
                 field_mhz=mhz)
-            # The rows are what the across-samples view draws; the two counts
-            # are what the results table shows without reopening anything.
+            # The display shift travels with the reading. The across-samples
+            # view is a view: it renders these rows, it does not re-derive them.
+            _shifts = alignment_shifts(line_pks, included=incl, reference=_ref)
+            for _row in out['per_sample']:
+                _row['align_shift_ppm'] = _shifts.get(_row['sample_idx'])
             r['per_sample']    = out['per_sample']
             r['n_present']     = out['n_present']
             r['n_included']    = out['n_included']
