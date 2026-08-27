@@ -367,3 +367,44 @@ def _build_result(
 def _is_edge_peak(ppm: float, ppm_limits: tuple[float, float]) -> bool:
     lo, hi = min(ppm_limits), max(ppm_limits)
     return ppm < lo + EDGE_PPM_MARGIN or ppm > hi - EDGE_PPM_MARGIN
+
+
+def multiplet_line_peaks(hit, pk_by_rank):
+    """Detected peaks that make up the multiplet = the peaks the Annotation
+    Results tree shows for the signal: each predicted line matched to its nearest
+    detected peak (same 0.015 ppm tolerance, greedy no-reuse, as the annotation
+    tree's _register_peak_overlap / subchild matching).
+
+    IMPORTANT: the hit's ``peak_rank`` (anchor) is NOT used — for a multiplet the
+    anchor is the multiplet CENTRE, which can land on a stray peak sitting between
+    the real lines (e.g. peak 461 between Alanine's doublet 49/51). Only the
+    predicted-line peaks count. A singlet falls back to the anchor peak when its
+    single line cannot be matched.
+
+    Returns a list of detected-peak dicts (may be empty).
+    """
+    pls = hit.get('predicted_lines') or []
+    pl_ppms = [float(l['ppm']) for l in pls if 'ppm' in l]
+    # Tolerance from the multiplet's own line spacing (J/MHz): a line's match
+    # window never reaches the midpoint toward its neighbour, so a foreign peak
+    # between the legs is not swept into the integration window. No dependence on
+    # nH / rel_intensity — safe for DB signals lacking proton counts.
+    tol = line_match_tolerance(pl_ppms)
+    matched, used = [], set()
+    for lp in pl_ppms:
+        best, bd = None, tol
+        for pk in pk_by_rank.values():
+            r = pk.get('rank')
+            if r in used:
+                continue
+            d = abs(float(pk.get('ppm', 1e9)) - lp)
+            if d < bd:
+                bd, best = d, pk
+        if best is not None:
+            matched.append(best)
+            used.add(best.get('rank'))
+    if not matched:
+        p0 = pk_by_rank.get(hit.get('peak_rank'))
+        if p0 is not None:
+            matched = [p0]
+    return matched

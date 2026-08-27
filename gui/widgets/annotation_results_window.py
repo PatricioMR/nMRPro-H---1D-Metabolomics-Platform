@@ -691,6 +691,13 @@ class AnnotationResultsWindow:
                 'mcr_info_reason': r.get('mcr_info_reason'),
                 'mcr_shift_disagree_ppm': r.get('mcr_shift_disagree_ppm'),
                 'stocsy_coherence':r.get('stocsy_coherence'),
+                # Per-sample reading, written by the annotation search. Only
+                # the counts are carried: the per-sample rows are derived from
+                # the detected peaks, so the view recomputes them instead of
+                # adding 500-odd x 32 dicts to every saved project.
+                'n_present':       r.get('n_present'),
+                'n_included':      r.get('n_included'),
+                'ppm_spread':      r.get('ppm_spread'),
             })
             # Track best composite score for metabolite sorting
             cs = r.get('composite_score', 0)
@@ -1155,7 +1162,8 @@ class AnnotationResultsWindow:
 
         self.tree = ttk.Treeview(
             tf,
-            columns=('name', 'ppm', 'start', 'end', 'score', 'quality', 'overlap'),
+            columns=('name', 'ppm', 'start', 'end', 'score', 'quality',
+                     'overlap', 'samples'),
             show='tree headings',
             selectmode='browse',
             yscrollcommand=vsb.set,
@@ -1180,6 +1188,7 @@ class AnnotationResultsWindow:
                           command=lambda: self._sort_by('score'))
         self.tree.heading('quality', text='Confidence')
         self.tree.heading('overlap', text='Overlap')
+        self.tree.heading('samples', text='Samples')
         self.tree.column('#0',      width=90,  minwidth=70)
         self.tree.column('name',    width=190, minwidth=130)
         self.tree.column('ppm',     width=80,  minwidth=60, anchor=tk.CENTER)
@@ -1188,6 +1197,7 @@ class AnnotationResultsWindow:
         self.tree.column('score',   width=65,  minwidth=50, anchor=tk.CENTER)
         self.tree.column('quality', width=70,  minwidth=50, anchor=tk.CENTER)
         self.tree.column('overlap', width=65,  minwidth=50, anchor=tk.CENTER)
+        self.tree.column('samples', width=70,  minwidth=55, anchor=tk.CENTER)
 
         # Metabolite rows are coloured by their confidence tier, not by the raw
         # score: the colour must say the same thing as the Confidence column.
@@ -2801,6 +2811,27 @@ class AnnotationResultsWindow:
         def _met_has_anchor(met):
             return metabolite_has_anchor(met, anchor_store)
 
+        def _samples_str(mp):
+            """'23/32' — in how many of the studied samples this signal was
+            actually detected. Blank when the search predates the per-sample
+            pass, so an old project reads as unknown rather than as zero."""
+            n_in = mp.get('n_included')
+            if not n_in:
+                return ''
+            return f"{int(mp.get('n_present') or 0)}/{int(n_in)}"
+
+        def _met_samples_str(met):
+            """The metabolite's best-attested signal — the strongest claim its
+            signals make about how widely it was seen."""
+            best, n_in = None, None
+            for mp2 in (met.get('matched_peaks') or []):
+                if not mp2.get('n_included'):
+                    continue
+                n = int(mp2.get('n_present') or 0)
+                if best is None or n > best:
+                    best, n_in = n, int(mp2['n_included'])
+            return f'{best}/{n_in}' if best is not None else ''
+
         # Everything the non-tier filters allow. The per-tier counts are read
         # from here, never from visible_mets: they label the tier checkboxes,
         # so making them follow those checkboxes meant unticking Average set
@@ -2908,7 +2939,8 @@ class AnnotationResultsWindow:
                         f"{end_ppm:.4f}",
                         f"{score:.3f}",
                         qual_mark,
-                        ovlp_str),
+                        ovlp_str,
+                        _met_samples_str(met)),
                     tags=tags,
                     open=False)
             except Exception as e:
@@ -3090,7 +3122,8 @@ class AnnotationResultsWindow:
                             f"{dp_end:.4f}",
                             _child_sc_str,
                             match_mark,
-                            child_ovlp),
+                            child_ovlp,
+                            _samples_str(mp_ref_child or {})),
                         tags=child_tags)
                 except Exception as e:
                     print(f"  child insert error: {e}")
@@ -3194,6 +3227,7 @@ class AnnotationResultsWindow:
                                     f'{pk_end:.4f}',
                                     score_col,
                                     qual_lbl,
+                                    '',
                                     ''),
                                 tags=sci_color)
                         except Exception as _se:

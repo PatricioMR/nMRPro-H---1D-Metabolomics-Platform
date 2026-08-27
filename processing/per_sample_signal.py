@@ -25,6 +25,16 @@ _PPM_KEY = 'ppm_per_sample'
 _PRESENT_KEY = 'aligned_per_sample'
 _AREA_KEY = 'area_per_sample'
 
+# Two lines of the same multiplet may be reported at the same position: the
+# per-sample apex search (peak_alignment._refine_one_center) scans +-0.02 ppm,
+# which is 12 Hz at 600 MHz, while the median line spacing is 7.1 Hz — so the
+# taller leg wins BOTH searches and the pattern collapses onto it. Measured on
+# the reference set: 64% of (multiplet, sample) pairs. A reading whose lines sit
+# closer than this fraction of their master spacing has lost the pattern; its
+# positions describe one leg, not the multiplet, and neither a J nor a centre
+# may be reported from it.
+COLLAPSE_FRACTION = 0.5
+
 
 def _per_sample(peak, key, n_samples):
     """One peak's per-sample vector, padded to ``n_samples``; None when absent."""
@@ -35,6 +45,27 @@ def _per_sample(peak, key, n_samples):
     if len(arr) < n_samples:
         arr += [None] * (n_samples - len(arr))
     return arr[:n_samples]
+
+
+def _min_gap(values):
+    srt = sorted(float(v) for v in values)
+    return min((srt[i + 1] - srt[i] for i in range(len(srt) - 1)), default=None)
+
+
+def _lines_collapsed(line_peaks, sample_ppms) -> bool:
+    """Did the per-sample apex search fold this multiplet onto one line?
+
+    Compared against the multiplet's own master spacing rather than a fixed Hz:
+    what counts as collapsed for a 3 Hz doublet is not what counts for a 12 Hz
+    one.
+    """
+    if len(sample_ppms) < 2:
+        return False
+    master = _min_gap(pk.get('ppm', 0.0) for pk in line_peaks)
+    here = _min_gap(sample_ppms)
+    if not master or master <= 0 or here is None:
+        return False
+    return here < COLLAPSE_FRACTION * master
 
 
 def sample_count(line_peaks) -> int:
@@ -73,7 +104,8 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
     n = sample_count(line_peaks)
     lines = list(line_peaks or ())
     blank = dict(present=False, ppm_centre=None, ppm_diff=None,
-                 j_obs_hz=None, delta_j_hz=None, area=None, n_lines=len(lines))
+                 j_obs_hz=None, delta_j_hz=None, area=None, n_lines=len(lines),
+                 collapsed=False)
     if not lines or n == 0 or not (0 <= sample_idx < n):
         return blank
 
@@ -87,7 +119,8 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
             break
 
     ppms = line_positions(lines, sample_idx)
-    centre = float(np.mean(ppms)) if ppms else None
+    collapsed = _lines_collapsed(lines, ppms)
+    centre = (float(np.mean(ppms)) if (ppms and not collapsed) else None)
 
     area = 0.0
     for pk in lines:
@@ -96,7 +129,7 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
             area += float(v[sample_idx])
 
     j_obs = None
-    if present and len(ppms) >= 2 and field_mhz > 0:
+    if present and not collapsed and len(ppms) >= 2 and field_mhz > 0:
         srt = sorted(ppms)
         seps = [abs(srt[k + 1] - srt[k]) * field_mhz for k in range(len(srt) - 1)]
         if seps:
@@ -112,6 +145,7 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
                     if (j_obs is not None and db_j_hz) else None),
         area=area,
         n_lines=len(lines),
+        collapsed=collapsed,
     )
 
 
@@ -136,11 +170,13 @@ def signal_across_samples(line_peaks, *, included=None, db_ppm=None,
         rows.append(row)
     present = [r for r in rows if r['present']]
     drifts = [r['ppm_centre'] for r in present if r['ppm_centre'] is not None]
+    n_collapsed = sum(1 for r in rows if r.get('collapsed'))
     return dict(
         per_sample=rows,
         n_present=len(present),
         n_included=len(idx),
         ppm_spread=(float(max(drifts) - min(drifts)) if len(drifts) >= 2 else None),
+        n_collapsed=n_collapsed,
     )
 
 

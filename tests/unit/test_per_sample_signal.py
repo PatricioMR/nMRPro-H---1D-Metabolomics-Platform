@@ -148,3 +148,74 @@ class TestAlignment:
 def test_line_positions_falls_back_to_the_master_apex():
     """A peak without a per-sample vector still has one position to offer."""
     assert line_positions([{'ppm': 2.5}], 0) == [2.5]
+
+
+class TestCollapsedLines:
+    """The per-sample apex search scans ±0.02 ppm — 12 Hz at 600 MHz — while the
+    median multiplet line spacing is 7.1 Hz, so the taller leg wins BOTH searches
+    and both lines are reported at one position. 64% of (multiplet, sample) pairs
+    on the reference set. Nothing may be measured from such a reading.
+    """
+
+    def _collapsed_doublet(self, n=4):
+        """Sample 1 has both legs folded onto the left one."""
+        left, right = 1.47 - D / 2, 1.47 + D / 2
+        return [
+            {'ppm': left, 'aligned_per_sample': [True] * n,
+             'ppm_per_sample': [left, left, left, left],
+             'area_per_sample': [1.0] * n},
+            {'ppm': right, 'aligned_per_sample': [True] * n,
+             'ppm_per_sample': [right, left, right, right],
+             'area_per_sample': [1.0] * n},
+        ]
+
+    def test_collapsed_sample_reports_no_j(self):
+        r = signal_in_sample(self._collapsed_doublet(), 1, db_j_hz=J, field_mhz=MHZ)
+        assert r['collapsed'] is True
+        assert r['j_obs_hz'] is None
+        assert r['delta_j_hz'] is None
+
+    def test_collapsed_sample_reports_no_centre(self):
+        """The positions describe one leg, so their mean is off by half a J."""
+        r = signal_in_sample(self._collapsed_doublet(), 1, db_ppm=1.47)
+        assert r['ppm_centre'] is None
+        assert r['ppm_diff'] is None
+
+    def test_intact_sample_is_unaffected(self):
+        r = signal_in_sample(self._collapsed_doublet(), 0, db_j_hz=J, field_mhz=MHZ)
+        assert r['collapsed'] is False
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+
+    def test_presence_still_reflects_detection(self):
+        """Collapsing is a measurement failure, not an absence."""
+        assert signal_in_sample(self._collapsed_doublet(), 1)['present'] is True
+
+    def test_area_survives_the_collapse(self):
+        """Areas come from integration, not from the apex search."""
+        assert signal_in_sample(self._collapsed_doublet(), 1)['area'] == pytest.approx(2.0)
+
+    def test_singlet_is_never_collapsed(self):
+        r = signal_in_sample([_line(3.03, (True,) * 4)], 0)
+        assert r['collapsed'] is False
+        assert r['ppm_centre'] == pytest.approx(3.03)
+
+    def test_across_samples_counts_the_collapses(self):
+        out = signal_across_samples(self._collapsed_doublet())
+        assert out['n_collapsed'] == 1
+        assert out['n_present'] == 4
+
+    def test_alignment_skips_a_collapsed_sample(self):
+        """A shift from a folded pattern would move the sample by half a J."""
+        assert 1 not in alignment_shifts(self._collapsed_doublet())
+
+    def test_threshold_scales_with_the_multiplet(self):
+        """What counts as collapsed for a 3 Hz doublet is not what counts for 12."""
+        wide = 12.0 / MHZ
+        lines = [
+            {'ppm': 1.47, 'aligned_per_sample': [True] * 2,
+             'ppm_per_sample': [1.47, 1.47]},
+            {'ppm': 1.47 + wide, 'aligned_per_sample': [True] * 2,
+             'ppm_per_sample': [1.47 + wide, 1.47 + wide * 0.7]},
+        ]
+        # 70% of the master spacing is not a collapse.
+        assert signal_in_sample(lines, 1)['collapsed'] is False

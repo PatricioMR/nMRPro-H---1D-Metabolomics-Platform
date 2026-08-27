@@ -308,3 +308,30 @@ def test_no_method_references_an_undefined_name():
                     and sym.get_name() not in known):
                 undefined.append(f'{name}: {sym.get_name()}')
     assert not undefined, 'undefined names: ' + ', '.join(undefined)
+
+
+def test_matched_peaks_carries_the_per_sample_counts():
+    """The results row is copied into matched_peaks field by field.
+
+    A whitelist copy drops what nobody listed, silently: the Samples column
+    would read blank for every signal and the saved project would lose the
+    count, with no error anywhere. matched_peaks is what gets pickled, so this
+    is also what makes the count survive save/load.
+    """
+    import inspect
+    src = inspect.getsource(ARW._populate_from_results
+                            if hasattr(ARW, '_populate_from_results')
+                            else ARW.__init__)
+    if 'n_present' not in src:                 # built elsewhere in the class
+        src = inspect.getsource(ARW)
+    for key in ("'n_present'", "'n_included'"):
+        assert key in src, f'{key} missing from the matched_peaks copy'
+
+
+def test_samples_column_is_declared_on_the_tree():
+    """A value tuple longer than the column list is dropped by Tk without a
+    word, so the column and the row builders must agree."""
+    import inspect
+    src = inspect.getsource(ARW)
+    assert "'samples'" in src
+    assert "self.tree.heading('samples'" in src

@@ -24,7 +24,10 @@ from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import (
     FigureCanvasTkAgg, NavigationToolbar2Tk)
 
+from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.peak_detection import estimate_noise_minimum_segment
+from processing.per_sample_signal import alignment_shifts
+from processing.sample_selection import included_sample_indices
 
 
 # ── Column definitions ────────────────────────────────────────────────────────
@@ -182,6 +185,7 @@ class MultipletSampleView:
                                        self.field_mhz)
 
         self._precompute()
+        self._shifts = self._alignment_shifts()
 
         self.win = tk.Toplevel(parent)
         name = self.met.get('name', '?')
@@ -248,6 +252,30 @@ class MultipletSampleView:
             )
             self._rows.append(m)
 
+    def _alignment_shifts(self):
+        """Per-sample shift that stacks this multiplet on top of itself.
+
+        Each sample moves by how far the centre of ITS OWN lines sits from the
+        reference centre, so the pattern travels whole and the spacing that
+        carries the coupling is untouched — a doublet that drifted 20 Hz still
+        reads J = 7 Hz after aligning. Used only to draw; the spectra and the
+        quantification windows are never touched.
+        """
+        pd = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
+        peaks = getattr(pd, 'peaks', None) or []
+        if not peaks:
+            return {}
+        try:
+            line_pks = multiplet_line_peaks(self.mp_ref,
+                                            {p.get('rank'): p for p in peaks})
+            if not line_pks:
+                return {}
+            incl = included_sample_indices(self.samples_info, len(self._rows))
+            return alignment_shifts(line_pks, included=incl,
+                                    reference=self.centre)
+        except Exception:
+            return {}
+
     def _counted_rows(self):
         return [r for r in self._rows
                 if r['type'] != 'BLK' and not r['excluded']]
@@ -272,6 +300,21 @@ class MultipletSampleView:
         ttk.Label(head, text="Per-sample crop re-extracted from each spectrum "
                              "(presence = central line ≥ min_snr·noise).",
                   font=('Arial', 8), foreground='#666').pack(anchor=tk.W)
+
+        self._align_var = tk.BooleanVar(value=bool(self._shifts))
+        _row = ttk.Frame(head)
+        _row.pack(anchor=tk.W, pady=(4, 0))
+        ttk.Checkbutton(
+            _row, text='Align samples on the multiplet',
+            variable=self._align_var,
+            command=self._draw_overlay,
+            state=(tk.NORMAL if self._shifts else tk.DISABLED)).pack(side=tk.LEFT)
+        if self._shifts:
+            _sp = (max(self._shifts.values()) - min(self._shifts.values()))
+            ttk.Label(_row,
+                      text=f'   drift {_sp * self.field_mhz:.1f} Hz across samples '
+                           f'· display only, spectra unchanged',
+                      font=('Arial', 8), foreground='#666').pack(side=tk.LEFT)
 
         paned = ttk.PanedWindow(self.win, orient=tk.VERTICAL)
         paned.pack(fill=tk.BOTH, expand=True, padx=4, pady=4)
@@ -329,20 +372,31 @@ class MultipletSampleView:
             self._canvas.draw_idle()
             return
 
+        aligned = bool(getattr(self, '_align_var', None)
+                       and self._align_var.get() and self._shifts)
         present_cols = []
         for r in self._rows:
             if r['type'] == 'BLK' or r['excluded']:
                 continue
             y = r['col'][mask]
-            ax.plot(x, y, color=self._group_color(r['group'], r['idx']),
+            # Shifting the axis, not the data: the sample is drawn where its own
+            # lines say it sits. Samples with no shift (absent here) stay put.
+            xs = x - self._shifts.get(r['idx'], 0.0) if aligned else x
+            ax.plot(xs, y, color=self._group_color(r['group'], r['idx']),
                     lw=0.8, alpha=0.45)
             if r['present']:
-                present_cols.append(y)
+                # Averaging needs one grid, so the aligned curve is resampled
+                # onto the reference axis. np.interp wants ascending x.
+                if aligned and xs is not x:
+                    o = np.argsort(xs)
+                    present_cols.append(np.interp(x, xs[o], y[o]))
+                else:
+                    present_cols.append(y)
 
         if present_cols:
             mean_y = np.mean(np.vstack(present_cols), axis=0)
             ax.plot(x, mean_y, color='#1a1a6e', lw=2.2,
-                    label='Mean (present)')
+                    label='Mean (aligned)' if aligned else 'Mean (present)')
 
         # DB predicted lines (sticks) + reference centre
         ymax = ax.get_ylim()[1]

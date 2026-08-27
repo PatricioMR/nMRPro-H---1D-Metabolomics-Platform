@@ -15,6 +15,7 @@ import traceback
 
 from .baseline_correction import correct_baseline, arPLS, normalize_method
 from .peak_alignment import global_peak_rigid_align
+from .sample_selection import included_sample_indices
 from .signal_quality import (
     classify_signal_quality, measure_fwhm_points, corrected_profile)
 
@@ -1021,16 +1022,7 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         # in the max spectrum are rejected by the prominence requirement and the
         # positive >= min_height gate.
         if n_samples > 1:
-            _incl = []
-            for _s in range(n_samples):
-                _info = (samples_info[_s]
-                         if (samples_info and _s < len(samples_info)) else {})
-                if (str(_info.get('type', 'Sample')).upper() == 'BLK'
-                        or _info.get('excluded', False)):
-                    continue
-                _incl.append(_s)
-            if not _incl:
-                _incl = list(range(n_samples))
+            _incl = included_sample_indices(samples_info, n_samples)
             detection_ref = np.max(corrected_2d[:, _incl], axis=1).astype(float)
             print(f"   Detection reference: pointwise-max of {len(_incl)} "
                   f"included sample(s) (single-sample analytes preserved)")

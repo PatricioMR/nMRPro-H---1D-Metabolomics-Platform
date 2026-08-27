@@ -31,7 +31,12 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    candidate_key)
+    candidate_key,
+    parse_first_j)
+from processing.multiplet_line_selector import multiplet_line_peaks
+from processing.per_sample_signal import (
+    sample_count, signal_across_samples)
+from processing.sample_selection import included_sample_indices
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_POOR, effective_tier, filter_annotatable,
     is_annotatable)
@@ -364,6 +369,45 @@ class _AnnotationSearchMixin:
                 conn.close()
 
     # ── MCR ───────────────────────────────────────────────────────────────────
+
+    def _measure_results_per_sample(self, results, mhz):
+        """Write each result's per-sample reading onto the result row.
+
+        Annotation decides on the mean spectrum, which cannot say in how many
+        samples a signal is actually there. Detection already knows — it runs
+        per sample — so this reads what it recorded rather than re-measuring:
+        a signal can never be present here and absent from the peak list.
+
+        Blanks and excluded samples are left out, the same selection detection
+        used. Returns how many results were measured.
+        """
+        peaks = getattr(self.peak_stage, 'peaks', None) or []
+        if not peaks:
+            return 0
+        n_samples = (sample_count(peaks)
+                     or len(getattr(self.app, 'samples_info', ()) or ()))
+        incl = included_sample_indices(
+            getattr(self.app, 'samples_info', None), n_samples)
+        pk_by_rank = {p.get('rank'): p for p in peaks}
+
+        n = 0
+        for r in results:
+            line_pks = multiplet_line_peaks(r, pk_by_rank)
+            if not line_pks:
+                continue
+            out = signal_across_samples(
+                line_pks, included=incl,
+                db_ppm=r.get('db_ppm'),
+                db_j_hz=parse_first_j(r.get('j_coupling') or ''),
+                field_mhz=mhz)
+            # The rows are what the across-samples view draws; the two counts
+            # are what the results table shows without reopening anything.
+            r['per_sample']    = out['per_sample']
+            r['n_present']     = out['n_present']
+            r['n_included']    = out['n_included']
+            r['ppm_spread']    = out['ppm_spread']
+            n += 1
+        return n
 
     def _run_mcr_on_results(self, results, mhz):
         """Run MCR deconvolution on all annotated peaks and enrich results in place.
@@ -1788,6 +1832,18 @@ class _AnnotationSearchMixin:
             pw.update_idletasks()
         except Exception:
             pass
+
+        try:
+            _mhz_ps = float(self.spectrometer_var.get())
+        except Exception:
+            _mhz_ps = 600.0
+        try:
+            self.progress_op_label.config(text='Reading each sample…')
+            self.progress_bar['value'] = 56
+            pw.update_idletasks()
+        except Exception:
+            pass
+        self._measure_results_per_sample(results, _mhz_ps)
 
         run_mcr = getattr(self, 'mcr_run_var', None)
         if run_mcr is not None and run_mcr.get():
