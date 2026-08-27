@@ -113,13 +113,56 @@ def _refine_one_center(x, y, cen, max_shift_ppm, noise_floor=0.0):
     return float(x_w[apex_idx]), True
 
 
+def neighbour_bounded_radius(peaks, ppm, max_shift_ppm, frac=0.5):
+    """Per-peak apex-search radius that cannot reach a neighbouring peak.
+
+    A single ``max_shift_ppm`` for every peak is wrong whenever peaks sit closer
+    together than that: at 600 MHz the 0.02 ppm default spans 12 Hz while the
+    median multiplet line spacing is 7.1 Hz, so both legs of a doublet fall
+    inside each other's window and the taller one wins BOTH searches. The
+    doublet is then reported twice at one position — measured at 1661 of 2592
+    (multiplet, sample) pairs on a real study, with 86% of multiplets narrower
+    than the window.
+
+    So the radius is capped at ``frac`` of the distance to the nearest detected
+    neighbour: a window never reaches the midpoint between two peaks. This is
+    the rule multiplet_line_selector.line_match_tolerance already applies when
+    matching predicted lines to peaks; the apex search was the one place that
+    ignored its neighbours.
+
+    The floor is two ppm steps, so the window always holds enough points to
+    locate an apex. Two peaks closer than that are not resolved at this digital
+    resolution and neither position means anything on its own.
+
+    Returns ``{id(peak): radius_ppm}``.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    step = (abs(float(ppm[1] - ppm[0])) if ppm.size > 1 else 0.0)
+    floor = max(2.0 * step, 0.0)
+    order = sorted(range(len(peaks)),
+                   key=lambda i: float(peaks[i].get('ppm', 0.0)))
+    out = {}
+    for k, i in enumerate(order):
+        pp = float(peaks[i].get('ppm', 0.0))
+        gaps = []
+        if k > 0:
+            gaps.append(pp - float(peaks[order[k - 1]].get('ppm', 0.0)))
+        if k < len(order) - 1:
+            gaps.append(float(peaks[order[k + 1]].get('ppm', 0.0)) - pp)
+        gaps = [g for g in gaps if g > 1e-12]
+        r = max_shift_ppm if not gaps else min(max_shift_ppm, frac * min(gaps))
+        out[id(peaks[i])] = max(r, floor) if floor else r
+    return out
+
+
 def refine_peak_centers_per_sample(peaks, ppm, aligned_2d, noise_std=None,
                                    min_snr=3.0, max_shift_ppm=0.02):
     """Locate each detected peak's apex in every sample so the same analyte's
     peak lines up across samples.
 
     Targeted and non-destructive: only detected peaks are touched, the shift is
-    bounded by ``max_shift_ppm``, and a sample whose window holds no signal above
+    bounded by ``max_shift_ppm`` AND by half the distance to the nearest
+    detected neighbour (see ``neighbour_bounded_radius``), and a sample whose window holds no signal above
     ``min_snr·noise_std`` keeps the reference position (shift 0, not aligned) —
     an analyte absent in a sample is never dragged onto noise.
 
@@ -135,11 +178,13 @@ def refine_peak_centers_per_sample(peaks, ppm, aligned_2d, noise_std=None,
         arr = arr.reshape(-1, 1)
     n_s = arr.shape[1]
     noise_floor = (float(noise_std) * float(min_snr)) if noise_std else 0.0
+    radius = neighbour_bounded_radius(list(peaks), ppm, float(max_shift_ppm))
     for p in peaks:
         cen = float(p.get('ppm', 0.0))
+        r_p = radius.get(id(p), float(max_shift_ppm))
         centers, shifts, ok = [], [], []
         for s in range(n_s):
-            c, a = _refine_one_center(ppm, arr[:, s], cen, max_shift_ppm,
+            c, a = _refine_one_center(ppm, arr[:, s], cen, r_p,
                                       noise_floor)
             centers.append(c)
             shifts.append(c - cen)
