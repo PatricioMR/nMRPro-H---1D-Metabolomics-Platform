@@ -30,7 +30,8 @@ from ._annotation_helpers import (
 )
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
-    measure_multiplet, expected_line_count, search_multiplet_in_window)
+    measure_multiplet, expected_line_count, search_multiplet_in_window,
+    candidate_key)
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_POOR, effective_tier, filter_annotatable,
     is_annotatable)
@@ -71,6 +72,26 @@ def clear_stale_mcr(peaks, results=None):
                 r.pop(k, None)
             n_results += 1
     return n_peaks, n_results
+
+
+def _mcr_candidate(r):
+    """A search result in the shape ``candidate_key`` reads.
+
+    cosine and the annotation verdict do not exist yet at MCR time — they are
+    computed later, in the Annotation Results window. Absent, they are neutral
+    for every candidate, so the ranking falls through to the evidence that does
+    exist here: tier, then ΔJ, then Δppm.
+    """
+    return {
+        'multiplicity': r.get('type') or r.get('multiplicity'),
+        'delta_j_hz':   r.get('delta_j_hz'),
+        'ppm_diff':     r.get('ppm_diff'),
+        'n_found':      r.get('_n_found_lines'),
+        'n_expected':   r.get('_n_exp_lines'),
+        'cosine':       r.get('_s_cosine'),
+        'quality':      r.get('annotation_quality'),
+        'score':        r.get('composite_score', 0.0),
+    }
 
 
 def is_unquantifiable_multiplicity(mult):
@@ -374,6 +395,10 @@ class _AnnotationSearchMixin:
             simulate_lorentzian_profile)
         from gui.widgets.annotation_results_window import _build_stick_positions
 
+        _mcr_dj_gold = float(
+            (getattr(self, '_annotation_params', None) or {}).get(
+                'dj_gold_hz', SCORING_DEFAULTS['dj_gold_hz']))
+
         n_validated = 0
         for rk, cands in all_ranks.items():
             orig_peak = next(
@@ -438,8 +463,15 @@ class _AnnotationSearchMixin:
             if mcr_r2 is None or (isinstance(mcr_r2, float) and np.isnan(mcr_r2)):
                 mcr_confirmed = None
             else:
-                top_idx = max(range(len(cands)),
-                              key=lambda i: cands[i].get('composite_score', 0))
+                # The candidate MCR judges must be the one the ranking
+                # elects, or mcr_confirmed describes a compound the pipeline
+                # did not pick — and it then feeds back as a tie-break into
+                # that same ranking. composite_score is a Δppm-weighted blend
+                # and ordered them differently.
+                top_idx = min(range(len(cands)),
+                              key=lambda i: candidate_key(
+                                  _mcr_candidate(cands[i]),
+                                  dj_gold_hz=_mcr_dj_gold))
                 pearson_r = next(
                     (a[1] for a in assignments if a[0] == top_idx), 0.0)
                 # True positive: R² good AND shape matches (Pearson r ≥ 0.70)
