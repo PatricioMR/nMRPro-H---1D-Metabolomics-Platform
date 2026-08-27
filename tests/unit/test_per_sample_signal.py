@@ -219,3 +219,30 @@ class TestCollapsedLines:
         ]
         # 70% of the master spacing is not a collapse.
         assert signal_in_sample(lines, 1)['collapsed'] is False
+
+
+class TestRelativeSD:
+    def test_cv_of_a_measured_quantity(self):
+        from processing.per_sample_signal import relative_sd_percent
+        # J readings around 7 Hz, sd 0.1 → ~1.4%
+        assert relative_sd_percent([6.9, 7.0, 7.1]) == pytest.approx(
+            np.std([6.9, 7.0, 7.1], ddof=1) / 7.0 * 100.0)
+
+    def test_identical_readings_have_no_spread(self):
+        from processing.per_sample_signal import relative_sd_percent
+        assert relative_sd_percent([7.0, 7.0, 7.0]) == pytest.approx(0.0)
+
+    def test_one_reading_has_no_cv(self):
+        from processing.per_sample_signal import relative_sd_percent
+        assert relative_sd_percent([7.0]) is None
+        assert relative_sd_percent([]) is None
+
+    def test_a_mean_at_zero_has_no_cv(self):
+        """Why the CV is taken on the measured value and not on the deviation:
+        a deviation is centred on zero, so its ratio is meaningless."""
+        from processing.per_sample_signal import relative_sd_percent
+        assert relative_sd_percent([-0.2, 0.0, 0.2]) is None
+
+    def test_nones_and_nans_are_skipped(self):
+        from processing.per_sample_signal import relative_sd_percent
+        assert relative_sd_percent([7.0, None, float('nan'), 7.2]) is not None

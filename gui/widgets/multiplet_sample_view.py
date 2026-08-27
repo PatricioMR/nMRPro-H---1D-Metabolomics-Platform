@@ -21,6 +21,8 @@ without Tk.
 import re
 import tkinter as tk
 from tkinter import ttk
+
+from processing.per_sample_signal import relative_sd_percent
 import numpy as np
 import matplotlib
 matplotlib.use('TkAgg')
@@ -32,13 +34,15 @@ from matplotlib.backends.backend_tkagg import (
 
 # ── Column definitions ────────────────────────────────────────────────────────
 COLS = [
-    ('sample',  'Sample',       150, tk.W),
-    ('group',   'Group',         80, tk.CENTER),
-    ('present', 'Present',       70, tk.CENTER),
-    ('dppm',    'δppm (mppm)',   95, tk.CENTER),
-    ('jobs',    'J_obs (Hz)',    85, tk.CENTER),
-    ('dj',      'δJ (Hz)',       75, tk.CENTER),
-    ('area',    'Area',          95, tk.CENTER),
+    ('sample',   'Sample',       150, tk.W),
+    ('group',    'Group',         80, tk.CENTER),
+    ('present',  'Present',       70, tk.CENTER),
+    ('dppm',     'δppm',          85, tk.CENTER),
+    ('dppm_sd',  'DP %',          65, tk.CENTER),
+    ('jobs',     'J_obs (Hz)',    85, tk.CENTER),
+    ('dj',       'δJ (Hz)',       75, tk.CENTER),
+    ('dj_sd',    'DP %',          65, tk.CENTER),
+    ('area',     'Area',          95, tk.CENTER),
 ]
 
 # The plot is pinned to the table's width so the two read as one figure: a
@@ -189,8 +193,8 @@ class MultipletSampleView:
                 excluded=bool(inf.get('excluded', False)),
                 col=arr[:, s].astype(float),
                 present=bool(r.get('present')),
-                dppm_mppm=((centre - self.centre) * 1000.0
-                           if centre is not None else float('nan')),
+                ppm_centre=centre,
+                dppm=(centre - self.centre if centre is not None else None),
                 j_obs=j_obs,
                 dj=(j_obs - self.db_j
                     if (j_obs is not None and self.db_j) else None),
@@ -285,13 +289,14 @@ class MultipletSampleView:
         self._tree.tag_configure('present', background='#eafaea')
         self._tree.tag_configure('absent', background='#fdeaea')
         self._tree.tag_configure('blk', background='#f0f0f0', foreground='#888')
+        self._tree.tag_configure('summary', background='#e6e9f5',
+                                 font=('Arial', 9, 'bold'))
 
     def _populate(self):
         for r in self._rows:
             jtxt = f"{r['j_obs']:.2f}" if r['j_obs'] is not None else '—'
             djtxt = f"{r['dj']:+.2f}" if r['dj'] is not None else '—'
-            dpp = r['dppm_mppm']
-            dptxt = f"{dpp:+.1f}" if np.isfinite(dpp) else '—'
+            dptxt = f"{r['dppm']:+.4f}" if r['dppm'] is not None else '—'
             if r['type'] == 'BLK' or r['excluded']:
                 present_txt, tag = '—', 'blk'
             else:
@@ -299,10 +304,46 @@ class MultipletSampleView:
                 tag = 'present' if r['present'] else 'absent'
             self._tree.insert(
                 '', 'end',
-                values=(r['name'], r['group'], present_txt, dptxt, jtxt,
-                        djtxt,
+                values=(r['name'], r['group'], present_txt, dptxt, '',
+                        jtxt, djtxt, '',
                         f"{r['area']:.3e}" if r['area'] is not None else '—'),
                 tags=(tag,))
+        self._populate_summary()
+
+    def _populate_summary(self):
+        """Closing row: the mean of each column, and how much it varied.
+
+        The spread is the coefficient of variation of the MEASURED quantity —
+        the signal's δ, its observed J — not of the deviation from the
+        database. A deviation sits on zero by construction, so its own CV
+        divides by nothing and reports hundreds of percent for readings that
+        agree to three decimals.
+        """
+        rows = [r for r in self._counted_rows() if r['present']]
+        if not rows:
+            return
+        dppm = [r['dppm'] for r in rows if r['dppm'] is not None]
+        jobs = [r['j_obs'] for r in rows if r['j_obs'] is not None]
+        djs = [r['dj'] for r in rows if r['dj'] is not None]
+        areas = [r['area'] for r in rows if r['area'] is not None]
+
+        def _mean(v, fmt):
+            return format(float(np.mean(v)), fmt) if v else '—'
+
+        def _cv(v):
+            c = relative_sd_percent(v)
+            return f'{c:.2f}' if c is not None else '—'
+
+        self._tree.insert(
+            '', 'end',
+            values=(f'Mean of {len(rows)} present', '', '',
+                    _mean(dppm, '+.4f'),
+                    _cv([r['ppm_centre'] for r in rows]),
+                    _mean(jobs, '.2f'),
+                    _mean(djs, '+.2f'),
+                    _cv(jobs),
+                    _mean(areas, '.3e')),
+            tags=('summary',))
 
     def _draw_overlay(self):
         ax = self._ax

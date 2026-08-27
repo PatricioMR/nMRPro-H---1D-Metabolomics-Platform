@@ -207,3 +207,23 @@ def alignment_shifts(line_peaks, *, included=None, reference=None) -> dict:
     ref = float(reference) if reference is not None else float(
         np.mean(list(centres.values())))
     return {i: float(c - ref) for i, c in centres.items()}
+
+
+def relative_sd_percent(values) -> float | None:
+    """Coefficient of variation, in percent, of what was measured.
+
+    Reported on the MEASURED quantity — the signal's δ, its observed J — never
+    on the deviation from the database. A deviation is centred on zero by
+    construction, so its own CV divides by ~0 and reports hundreds of percent
+    for a set that agrees to three decimal places.
+
+    None when fewer than two values, or when the mean is too close to zero for
+    a ratio to mean anything.
+    """
+    vals = [float(v) for v in (values or ()) if v is not None and np.isfinite(v)]
+    if len(vals) < 2:
+        return None
+    mean = float(np.mean(vals))
+    if abs(mean) < 1e-12:
+        return None
+    return float(np.std(vals, ddof=1) / abs(mean) * 100.0)

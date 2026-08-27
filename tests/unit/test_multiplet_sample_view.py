@@ -67,9 +67,10 @@ def test_alignment_shift_is_read_not_recomputed():
     from gui.widgets.multiplet_sample_view import MultipletSampleView as V
     src = inspect.getsource(V._alignment_shifts)
     assert "r['shift']" in src, 'the shift must come from the stored row'
-    # The processing helper that derives it is no longer reachable from here.
-    assert not hasattr(mod, 'signal_in_sample')
-    assert 'processing.per_sample_signal' not in inspect.getsource(mod)
+    # The functions that DERIVE a reading are not reachable from here. Summary
+    # statistics over what was stored are not a measurement and may be imported.
+    for banned in ('signal_in_sample', 'alignment_shifts', 'signal_across_samples'):
+        assert not hasattr(mod, banned), f'{banned} still reachable from the view'
 
 
 def test_a_project_without_readings_says_so():
@@ -79,3 +80,22 @@ def test_a_project_without_readings_says_so():
     src = inspect.getsource(V._build)
     assert 'has_readings' in src
     assert 'annotation search again' in src
+
+
+def test_the_table_has_a_spread_column_for_each_delta():
+    from gui.widgets.multiplet_sample_view import COLS
+    keys = [c[0] for c in COLS]
+    assert keys.index('dppm_sd') == keys.index('dppm') + 1
+    assert keys.index('dj_sd') == keys.index('dj') + 1
+
+
+def test_the_spread_is_taken_on_the_measured_value():
+    """CV of δ and of J_obs, never of the deviation: a deviation sits on zero by
+    construction, so its own CV divides by nothing."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._populate_summary)
+    assert "_cv([r['ppm_centre'] for r in rows])" in src
+    assert '_cv(jobs)' in src
+    assert '_cv(djs)' not in src
+    assert '_cv(dppm)' not in src
