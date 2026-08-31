@@ -115,3 +115,28 @@ def test_delta_columns_use_the_difference_symbol():
     heads = {c[0]: c[1] for c in COLS}
     assert heads['dppm'].startswith('Δ')
     assert heads['dj'].startswith('Δ')
+
+
+def test_a_sample_without_the_signal_is_not_coloured_as_a_failure():
+    """Absent means nothing was measured there; rejected means a reading failed.
+    Sharing one colour made the six samples that carried a signal impossible to
+    pick out of sixteen identical rows.
+    """
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    verdict = inspect.getsource(V._sample_verdict)
+    assert "'absent'" in verdict and "'rejected'" in verdict
+    build = inspect.getsource(V._build)
+    assert 'n_conf' in build, 'the header must say how many ΔJ confirms'
+    cfg = inspect.getsource(V._build)
+    assert "tag_configure('rejected'" in cfg
+    assert "tag_configure('absent'" in cfg
+
+
+def test_the_verdict_tags_are_distinct_per_outcome():
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._sample_verdict)
+    tags = {t for t in ('absent', 'rejected', 'unverified', 'present')
+            if f"'{t}'" in src}
+    assert tags == {'absent', 'rejected', 'unverified', 'present'}

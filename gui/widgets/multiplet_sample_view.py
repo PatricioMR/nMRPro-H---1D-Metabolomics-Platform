@@ -224,6 +224,9 @@ class MultipletSampleView:
         name = self.met.get('name', '?')
         counted = self._counted_rows()
         n_present = sum(1 for r in counted if r['present'])
+        n_conf = sum(1 for r in counted
+                     if r['present'] and r['dj'] is not None
+                     and abs(r['dj']) <= SCORING_DEFAULTS['dj_gold_hz'])
         jtxt = f"{self.db_j:.2f} Hz" if self.db_j else "—"
 
         head = ttk.Frame(self.win, padding=6)
@@ -233,7 +236,8 @@ class MultipletSampleView:
                   font=('Arial', 11, 'bold')).pack(anchor=tk.W)
         self._count_lbl = ttk.Label(
             head, foreground='#1a7a1a', font=('Arial', 10, 'bold'),
-            text=f"Detected in {n_present} of {len(counted)} samples")
+            text=(f"Detected in {n_present} of {len(counted)} samples"
+                  f"  ·  ΔJ confirms it in {n_conf}"))
         self._count_lbl.pack(anchor=tk.W)
         if getattr(self, 'has_readings', False):
             _note, _fg = ("Values as measured by the annotation search — this "
@@ -288,8 +292,13 @@ class MultipletSampleView:
         self._tree.configure(yscrollcommand=vsb.set)
         self._tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         vsb.pack(side=tk.RIGHT, fill=tk.Y)
+        # Background says whether the signal was measured in that sample;
+        # the text says what the measurement concluded. Absent is neutral —
+        # nothing was measured — while rejected is a reading that failed.
         self._tree.tag_configure('present', background='#eafaea')
-        self._tree.tag_configure('absent', background='#fdeaea')
+        self._tree.tag_configure('rejected', background='#fdeaea')
+        self._tree.tag_configure('absent', background='#fafafa',
+                                 foreground='#999')
         self._tree.tag_configure('blk', background='#f0f0f0', foreground='#888')
         self._tree.tag_configure('unverified', background='#fff6e0')
         self._tree.tag_configure('summary', background='#e6e9f5',
@@ -344,16 +353,19 @@ class MultipletSampleView:
         Returns ``(text, row_tag)``.
         """
         if not r['present']:
-            return '✗ absent', 'absent'
+            # Not measured here. A blank is not a failure, and colouring it like
+            # one made the six samples that DID carry this signal impossible to
+            # pick out of sixteen identical red rows.
+            return '· not detected', 'absent'
         dj = r['dj']
         if dj is None:
-            return ('~ folded', 'unverified') if r.get('collapsed') else                    ('~ no ΔJ', 'unverified')
+            return ('~ lines folded', 'unverified') if r.get('collapsed') else                    ('~ nothing to verify', 'unverified')
         a = abs(dj)
         if a <= SCORING_DEFAULTS['dj_gold_hz']:
             return '✓ confirmed', 'present'
         if a <= SCORING_DEFAULTS['dj_bad_hz']:
-            return '✓ ΔJ off', 'unverified'
-        return '✗ ΔJ wrong', 'absent'
+            return '~ ΔJ off', 'unverified'
+        return '✗ ΔJ rejected', 'rejected'
 
     def _populate_summary(self):
         """One closing row per group: the mean each sample above is measured
