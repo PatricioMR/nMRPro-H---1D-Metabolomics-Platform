@@ -997,6 +997,21 @@ class _QuantCompMixin:
                 # would block every other gap-fill metabolite.
                 if _pr is not None and _pr in _assigned_peaks:
                     continue
+                # The anchor was checked; the LINES were not. A multiplet claims
+                # its line peaks below, but the next candidate was only ever
+                # tested on its anchor — so a different anchor over the same
+                # lines walked straight in. On the reference study L-valine,
+                # L-isoleucine and 2-hydroxy-3-methylbutyric acid were all
+                # integrating the peaks at 0.9912 and 1.0028, from anchors 90,
+                # 58 and 83; butanol and N-acetyl-L-alanine shared 1.3238 and
+                # 1.3354. Whatever the anchor, the same physical lines cannot be
+                # quantified twice.
+                _my_lines = ([l for l in (_h.get('predicted_lines') or [])
+                              if 'ppm' in l])
+                _my_ranks = (set(matched_line_ranks(_h, _pk_by_rank))
+                             if len(_my_lines) >= 2 else set())
+                if _my_ranks & _assigned_peaks:
+                    continue
                 _assigned_mets.add(_h_mid)
                 if _pr is not None:
                     _assigned_peaks.add(_pr)
