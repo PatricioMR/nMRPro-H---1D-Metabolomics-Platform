@@ -318,3 +318,65 @@ class TestAbsentSamplesReportNothing:
         lines = _doublet(present=(False, False, True, True))
         centres = [signal_in_sample(lines, i)['ppm_centre'] for i in (0, 1)]
         assert centres == [None, None]
+
+
+class TestPartialMultiplets:
+    """Half a multiplet is worth seeing. What must not happen is measuring a
+    line the sample never detected — its recorded position is the study's.
+    """
+
+    def _triplet(self, present_by_line, n=2):
+        """Three lines one J apart; presence given per line."""
+        centres = [1.47 - D, 1.47, 1.47 + D]
+        return [{'ppm': c,
+                 'ppm_per_sample': [c] * n,
+                 'aligned_per_sample': [p] * n,
+                 'area_per_sample': [1.0] * n}
+                for c, p in zip(centres, present_by_line)]
+
+    def test_outer_lines_span_two_couplings_and_still_report_j(self):
+        """Lines 0 and 2 sit 2J apart. Dividing by the index span returns J."""
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([True, False, True]), 0,
+                             db_j_hz=J, field_mhz=MHZ)
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+        assert r['partial'] is True
+        assert r['present'] is False
+
+    def test_adjacent_lines_span_one_coupling(self):
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([True, True, False]), 0,
+                             db_j_hz=J, field_mhz=MHZ)
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+
+    def test_a_single_line_gives_a_position_but_no_coupling(self):
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([False, True, False]), 0)
+        assert r['ppm_centre'] == pytest.approx(1.47)
+        assert r['j_obs_hz'] is None
+        assert r['partial'] is True
+
+    def test_the_centre_uses_only_what_was_found(self):
+        """Averaging in an undetected line's reference position would drag the
+        centre back onto the study value."""
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([True, False, False]), 0)
+        assert r['ppm_centre'] == pytest.approx(1.47 - D)
+
+    def test_a_complete_multiplet_is_not_partial(self):
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([True, True, True]), 0,
+                             db_j_hz=J, field_mhz=MHZ)
+        assert r['partial'] is False and r['present'] is True
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+
+    def test_nothing_found_reports_nothing(self):
+        from processing.per_sample_signal import signal_in_sample
+        r = signal_in_sample(self._triplet([False, False, False]), 0)
+        assert r['ppm_centre'] is None and r['j_obs_hz'] is None
+        assert r['partial'] is False and r['n_found'] == 0
+
+    def test_indices_follow_position_not_list_order(self):
+        from processing.per_sample_signal import detected_lines
+        lines = self._triplet([True, False, True])
+        assert [i for i, _ in detected_lines(lines, 0)] == [0, 2]

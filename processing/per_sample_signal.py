@@ -92,20 +92,72 @@ def line_positions(line_peaks, sample_idx) -> list[float]:
     return out
 
 
+def detected_lines(line_peaks, sample_idx):
+    """The lines actually found in this sample, as ``(line_index, ppm)``.
+
+    The index is the line's rank in the multiplet by position, ascending. It is
+    what makes a partial multiplet measurable: two lines of a triplet that are
+    one apart span J, while lines 0 and 2 span 2J, and only the index says
+    which. Without it a partial reading has to be thrown away or reported
+    wrong.
+
+    Lines the sample did not detect are left out entirely — their recorded
+    position is the reference one, not a measurement.
+    """
+    n = sample_count(line_peaks)
+    peaks = list(line_peaks or ())
+    if not peaks or n == 0 or not (0 <= sample_idx < n):
+        return []
+    order = sorted(range(len(peaks)), key=lambda i: float(peaks[i].get('ppm', 0.0)))
+    out = []
+    for rank, i in enumerate(order):
+        pk = peaks[i]
+        pres = _per_sample(pk, _PRESENT_KEY, n)
+        if pres is not None and not pres[sample_idx]:
+            continue
+        v = _per_sample(pk, _PPM_KEY, n)
+        p = v[sample_idx] if v is not None else None
+        out.append((rank, float(p if p is not None else pk.get('ppm', 0.0))))
+    return out
+
+
+def spacing_from_indexed_lines(found, field_mhz):
+    """J from however many lines were found, using how far apart they sit.
+
+    ``J = span / index_span`` — the total ppm spread divided by the number of
+    couplings between the outermost lines found. A triplet showing only its
+    outer lines spans two couplings, so dividing by the index span returns J
+    and not 2J. The ratio does not depend on the magnitude of the database J,
+    only on the ordering that assigned the indices.
+    """
+    if len(found) < 2 or field_mhz <= 0:
+        return None
+    idx = [i for i, _ in found]
+    pos = [p for _, p in found]
+    span_idx = max(idx) - min(idx)
+    if span_idx <= 0:
+        return None
+    return float(abs(max(pos) - min(pos)) * field_mhz / span_idx)
+
+
 def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
                      field_mhz=600.0) -> dict:
     """Measure one annotated signal in one sample.
 
-    ``present`` is True only when EVERY line of the signal was detected in this
-    sample. Neither a centre nor a J is reported for a sample where it is not:
-    an undetected line keeps its reference position, so both would be the study
-    value handed back as though it had been measured here.
+    ``present`` is True only when EVERY line of the signal was detected here —
+    the rule the pipeline's own multiplet tier uses, unchanged.
+
+    δ and J are still reported when only some lines were found, measured from
+    those alone and flagged ``partial``. A reading of half a multiplet is worth
+    seeing even though it cannot confirm the assignment: what must never happen
+    is measuring a line the sample did not detect, whose recorded position is
+    the study's, not this sample's.
     """
     n = sample_count(line_peaks)
     lines = list(line_peaks or ())
     blank = dict(present=False, ppm_centre=None, ppm_diff=None,
                  j_obs_hz=None, delta_j_hz=None, area=None, n_lines=len(lines),
-                 collapsed=False)
+                 n_found=0, partial=False, collapsed=False)
     if not lines or n == 0 or not (0 <= sample_idx < n):
         return blank
 
@@ -118,15 +170,14 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
             present = False
             break
 
-    ppms = line_positions(lines, sample_idx)
-    collapsed = _lines_collapsed(lines, ppms)
-    # A position is reported only where the lines were actually found. Where
-    # they were not, refine_peak_centers_per_sample keeps the reference
-    # position rather than chasing noise — so a centre computed from it is the
-    # master value repeated, identical in every absent sample, and reads in the
-    # table as a measurement that was never made.
-    centre = (float(np.mean(ppms))
-              if (ppms and present and not collapsed) else None)
+    # Measured from the lines this sample actually detected, never from the
+    # ones it did not: refine_peak_centers_per_sample keeps the reference
+    # position for those, so including them hands back the study value as
+    # though this sample had produced it.
+    found = detected_lines(lines, sample_idx)
+    ppms = [p for _, p in found]
+    collapsed = _lines_collapsed(lines, ppms) if len(ppms) == len(lines) else False
+    centre = float(np.mean(ppms)) if (ppms and not collapsed) else None
 
     area = 0.0
     for pk in lines:
@@ -134,12 +185,8 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
         if v is not None and v[sample_idx] is not None:
             area += float(v[sample_idx])
 
-    j_obs = None
-    if present and not collapsed and len(ppms) >= 2 and field_mhz > 0:
-        srt = sorted(ppms)
-        seps = [abs(srt[k + 1] - srt[k]) * field_mhz for k in range(len(srt) - 1)]
-        if seps:
-            j_obs = float(np.median(seps))
+    j_obs = (None if collapsed
+             else spacing_from_indexed_lines(found, field_mhz))
 
     return dict(
         present=present,
@@ -151,6 +198,8 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
                     if (j_obs is not None and db_j_hz) else None),
         area=area,
         n_lines=len(lines),
+        n_found=len(found),
+        partial=bool(found) and len(found) < len(lines),
         collapsed=collapsed,
     )
 

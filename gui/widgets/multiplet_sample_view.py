@@ -194,6 +194,9 @@ class MultipletSampleView:
                 excluded=bool(inf.get('excluded', False)),
                 col=arr[:, s].astype(float),
                 present=bool(r.get('present')),
+                partial=bool(r.get('partial')),
+                n_found=r.get('n_found'),
+                n_lines=r.get('n_lines'),
                 ppm_centre=centre,
                 j_obs=j_obs,
                 area=r.get('area'),
@@ -303,6 +306,10 @@ class MultipletSampleView:
         # chemical shift moves with pH and ionic strength, which is exactly what
         # the groups differ in, so a study-wide mean would call a whole group an
         # outlier. Means come from the present samples of each group.
+        # The group mean each row is measured against comes from the complete
+        # readings only. A multiplet missing a leg has its centre displaced by
+        # half a coupling, and letting that into the mean would move the
+        # reference the other samples are judged by.
         present_rows = [r for r in self._counted_rows() if r['present']]
         ppm_mean = group_means(present_rows, 'ppm_centre')
         j_mean = group_means(present_rows, 'j_obs')
@@ -325,13 +332,17 @@ class MultipletSampleView:
                 # The signal has ONE verdict, reached by the annotation search
                 # and shown in the header; classifying each sample here invented
                 # a second one that could contradict it.
-                ann_txt = '✓' if r['present'] else '·'
-                tag = 'present' if r['present'] else 'absent'
-            if r['present']:
-                d_ppm = percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))
-                d_j = percent_deviation(r['j_obs'], j_mean.get(r['group']))
-            else:
-                d_ppm = d_j = None
+                # All lines, some, or none. A partial reading still carries
+                # a δ and a J, measured from the lines that were found.
+                if r['present']:
+                    ann_txt, tag = '✓', 'present'
+                elif r['partial']:
+                    ann_txt = f"{r['n_found']}/{r['n_lines']}"
+                    tag = 'unverified'
+                else:
+                    ann_txt, tag = '·', 'absent'
+            d_ppm = percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))
+            d_j = percent_deviation(r['j_obs'], j_mean.get(r['group']))
             self._tree.insert(
                 '', 'end',
                 values=(r['name'], r['group'], ann_txt,

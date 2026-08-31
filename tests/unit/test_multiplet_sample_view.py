@@ -154,8 +154,31 @@ def test_the_window_shows_the_pipeline_verdict_not_one_of_its_own():
 
 
 def test_the_detected_column_reports_detection_only():
+    """All the lines, some of them, or none — detection's own answer. No
+    threshold is applied: the window does not decide anything."""
     import inspect
     from gui.widgets.multiplet_sample_view import COLS, MultipletSampleView as V
     assert dict((c[0], c[1]) for c in COLS)['present'] == 'Detected'
     src = inspect.getsource(V._populate)
-    assert "ann_txt = '✓' if r['present'] else '·'" in src
+    assert "r['partial']" in src
+    assert "f\"{r['n_found']}/{r['n_lines']}\"" in src
+    assert 'dj_gold_hz' not in src and 'dj_bad_hz' not in src
+
+
+def test_a_partial_reading_still_shows_its_numbers():
+    """Half a multiplet is worth seeing; it just cannot confirm the signal."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._populate)
+    # δ and J are formatted from the row, not gated on a complete multiplet.
+    assert "pptxt = (f\"{r['ppm_centre']:.4f}\"" in src
+    assert "if r['ppm_centre'] is not None else '—')" in src
+
+
+def test_the_group_mean_uses_complete_readings_only():
+    """A multiplet missing a leg has its centre displaced by half a coupling;
+    letting that into the mean moves the reference the others are judged by."""
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._populate)
+    assert "present_rows = [r for r in self._counted_rows() if r['present']]" in src
