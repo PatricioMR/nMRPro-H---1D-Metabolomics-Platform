@@ -954,6 +954,38 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     return _score(meas.delta_j_hz), (0.0 if meas.delta_j_hz is None else 1.0)
 
 
+def apply_per_sample_consensus(mp, *, params):
+    """Replace ΔJ and Δppm with what the samples themselves measured.
+
+    Returns ``(s_dj, dj_confidence)`` when the samples reached a consensus J,
+    else None. Δppm is applied whenever a consensus δ exists, independently of
+    J — a singlet has a position and no coupling.
+
+    The values these replace were measured on the mean spectrum, which is a
+    pointwise maximum across the samples: a trace none of them is. Where a
+    signal was read in several samples, the median of those readings is the
+    better estimate of the same quantity, and it is the one an analyst can
+    check against the per-sample table. ``apply_mcr_dj`` already establishes
+    that a later, better measurement replaces the master one.
+
+    Nothing is invented when the samples said nothing: a consensus over zero
+    samples leaves the stored value alone.
+    """
+    con = mp.get('per_sample_consensus') or {}
+    if con.get('ppm_diff') is not None and con.get('ppm_centre') is not None:
+        mp['ppm_diff'] = float(con['ppm_diff'])
+        mp['peak_ppm'] = float(con['ppm_centre'])
+        mp['_ppm_source'] = 'per_sample'
+    dj = con.get('delta_j_hz')
+    if dj is None or con.get('observed_j_hz') is None:
+        return None
+    mp['delta_j_hz'] = float(dj)
+    mp['observed_j_hz'] = float(con['observed_j_hz'])
+    mp['_dj_source'] = 'per_sample'
+    return dj_score(dj, params['dj_gold_hz'], params['dj_bad_hz'],
+                    params['dj_neutral']), 1.0
+
+
 def apply_mcr_dj(mp, *, params):
     """Replace ΔJ with the value measured on the deconvolved component.
 

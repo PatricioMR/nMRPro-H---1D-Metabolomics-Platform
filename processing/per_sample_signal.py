@@ -3,15 +3,17 @@
 
 Annotation reads the mean spectrum: a single verdict for the whole study. That
 hides the two things an analyst actually wants from a multi-sample run — in how
-many samples the signal is really there, and how far its lines drift between
-them. Both are already recorded on the detected peaks: ``detect_peaks`` runs per
-sample and ``refine_peak_centers_per_sample`` writes each peak's apex, area and
-genuine detection presence for every sample. Nothing here re-measures the
-spectrum; it reads what detection already established, so a signal can never be
-"present" here and absent in the peak list.
+many samples the signal is really there, and what it measured in each one.
 
-The presence rule is the one the multiplet rule already uses: every line, or
-nothing. A doublet with one leg detected is not a doublet in that sample.
+Where the lines of the signal sit in a given sample is decided by
+``multiplet_line_fit``, which fits the multiplet as a unit against the apices
+that sample really has. This module reads that assignment, adds the area
+detection already integrated, and aggregates the samples into the one δ and J
+the signal is reported by.
+
+The signal is in the peak list by construction: the expected line positions
+handed to the fit are the ``predicted_lines`` the annotation search matched to
+detected peaks, so nothing here can report a signal detection never saw.
 
 Blank and excluded samples are the caller's business — pass ``included``.
 """
@@ -19,21 +21,12 @@ from __future__ import annotations
 
 import numpy as np
 
-# A line's apex position in a sample is only meaningful where that line was
-# detected; elsewhere refine_peak_centers_per_sample locked onto noise.
-_PPM_KEY = 'ppm_per_sample'
-_PRESENT_KEY = 'aligned_per_sample'
-_AREA_KEY = 'area_per_sample'
+from processing.multiplet_line_fit import observed_j_hz
 
-# Two lines of the same multiplet may be reported at the same position: the
-# per-sample apex search (peak_alignment._refine_one_center) scans +-0.02 ppm,
-# which is 12 Hz at 600 MHz, while the median line spacing is 7.1 Hz — so the
-# taller leg wins BOTH searches and the pattern collapses onto it. Measured on
-# the reference set: 64% of (multiplet, sample) pairs. A reading whose lines sit
-# closer than this fraction of their master spacing has lost the pattern; its
-# positions describe one leg, not the multiplet, and neither a J nor a centre
-# may be reported from it.
-COLLAPSE_FRACTION = 0.5
+# A line's area in a sample comes from detection's own integration over the
+# master peak bounds, which the per-sample apex position does not enter.
+_PPM_KEY = 'ppm_per_sample'
+_AREA_KEY = 'area_per_sample'
 
 
 def _per_sample(peak, key, n_samples):
@@ -47,37 +40,6 @@ def _per_sample(peak, key, n_samples):
     return arr[:n_samples]
 
 
-def _min_gap(values):
-    srt = sorted(float(v) for v in values)
-    return min((srt[i + 1] - srt[i] for i in range(len(srt) - 1)), default=None)
-
-
-def _lines_collapsed(line_peaks, found) -> bool:
-    """Did the per-sample apex search fold two of these lines onto one?
-
-    Each consecutive pair of lines FOUND is checked against the spacing its
-    indices call for: lines one apart should sit one master gap apart, lines
-    two apart should sit two. Testing the raw minimum gap instead only worked
-    for complete readings, which is how a partial reading whose two lines had
-    folded together came to be reported as a measurement.
-
-    Compared against the multiplet's own master spacing rather than a fixed Hz:
-    what counts as collapsed for a 3 Hz doublet is not what counts for a 12 Hz
-    one.
-    """
-    if len(found) < 2:
-        return False
-    master = _min_gap(pk.get('ppm', 0.0) for pk in line_peaks)
-    if not master or master <= 0:
-        return False
-    srt = sorted(found)
-    for (i1, p1), (i2, p2) in zip(srt, srt[1:]):
-        expected = max(1, i2 - i1) * master
-        if abs(p2 - p1) < COLLAPSE_FRACTION * expected:
-            return True
-    return False
-
-
 def sample_count(line_peaks) -> int:
     """How many samples the peaks carry data for; 0 when they carry none."""
     for pk in line_peaks or ():
@@ -87,119 +49,40 @@ def sample_count(line_peaks) -> int:
     return 0
 
 
-def line_positions(line_peaks, sample_idx) -> list[float]:
-    """Apex ppm of every line of this signal, in one sample.
+def signal_in_sample(line_peaks, sample_idx, *, fit=None, db_ppm=None,
+                     db_j_hz=None, field_mhz=600.0, n_lines=None) -> dict:
+    """Measure one annotated signal in one sample, from its line assignment.
 
-    Returned in the peaks' own order, not sorted — the caller decides whether
-    order matters (spacings sort, a centre does not).
-    """
-    out = []
-    n = sample_count(line_peaks)
-    for pk in line_peaks or ():
-        v = _per_sample(pk, _PPM_KEY, n)
-        p = v[sample_idx] if (v is not None and 0 <= sample_idx < n) else None
-        out.append(float(p) if p is not None else float(pk.get('ppm', 0.0)))
-    return out
+    ``fit`` is what ``multiplet_line_fit.fit_lines`` returned for this sample.
+    Without one there is no reading: δ and J are not guessed from the master
+    positions, which belong to the study and not to this sample.
 
-
-def detected_lines(line_peaks, sample_idx):
-    """The lines actually found in this sample, as ``(line_index, ppm)``.
-
-    The index is the line's rank in the multiplet by position, ascending. It is
-    what makes a partial multiplet measurable: two lines of a triplet that are
-    one apart span J, while lines 0 and 2 span 2J, and only the index says
-    which. Without it a partial reading has to be thrown away or reported
-    wrong.
-
-    Lines the sample did not detect are left out entirely — their recorded
-    position is the reference one, not a measurement.
-    """
-    n = sample_count(line_peaks)
-    peaks = list(line_peaks or ())
-    if not peaks or n == 0 or not (0 <= sample_idx < n):
-        return []
-    order = sorted(range(len(peaks)), key=lambda i: float(peaks[i].get('ppm', 0.0)))
-    out = []
-    for rank, i in enumerate(order):
-        pk = peaks[i]
-        pres = _per_sample(pk, _PRESENT_KEY, n)
-        if pres is not None and not pres[sample_idx]:
-            continue
-        v = _per_sample(pk, _PPM_KEY, n)
-        p = v[sample_idx] if v is not None else None
-        out.append((rank, float(p if p is not None else pk.get('ppm', 0.0))))
-    return out
-
-
-def spacing_from_indexed_lines(found, field_mhz):
-    """J from however many lines were found, using how far apart they sit.
-
-    ``J = span / index_span`` — the total ppm spread divided by the number of
-    couplings between the outermost lines found. A triplet showing only its
-    outer lines spans two couplings, so dividing by the index span returns J
-    and not 2J. The ratio does not depend on the magnitude of the database J,
-    only on the ordering that assigned the indices.
-    """
-    if len(found) < 2 or field_mhz <= 0:
-        return None
-    idx = [i for i, _ in found]
-    pos = [p for _, p in found]
-    span_idx = max(idx) - min(idx)
-    if span_idx <= 0:
-        return None
-    return float(abs(max(pos) - min(pos)) * field_mhz / span_idx)
-
-
-def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
-                     field_mhz=600.0) -> dict:
-    """Measure one annotated signal in one sample.
-
-    ``present`` is True only when EVERY line of the signal was detected here —
-    the rule the pipeline's own multiplet tier uses, unchanged.
-
-    δ and J are still reported when only some lines were found, measured from
-    those alone and flagged ``partial``. A reading of half a multiplet is worth
-    seeing even though it cannot confirm the assignment: what must never happen
-    is measuring a line the sample did not detect, whose recorded position is
-    the study's, not this sample's.
+    ``present`` is True only when the fit assigned EVERY line of the signal —
+    the rule the pipeline's multiplet tier already uses. δ and J are still
+    reported when only some lines were assigned, measured from those alone and
+    flagged ``partial``: half a multiplet is worth seeing even though it cannot
+    confirm the assignment.
     """
     n = sample_count(line_peaks)
     lines = list(line_peaks or ())
-    blank = dict(present=False, ppm_centre=None, ppm_diff=None,
-                 j_obs_hz=None, delta_j_hz=None, area=None, n_lines=len(lines),
-                 n_found=0, partial=False, collapsed=False)
-    if not lines or n == 0 or not (0 <= sample_idx < n):
-        return blank
+    n_exp = int(n_lines if n_lines is not None else len(lines))
+    fit = fit or {}
+    ppms = list(fit.get('ppms') or ())
+    ranks = list(fit.get('ranks') or ())
+    fitted = bool(fit.get('fitted'))
 
-    present = True
-    for pk in lines:
-        v = _per_sample(pk, _PRESENT_KEY, n)
-        if v is None:
-            continue          # detection did not record presence — do not invent absence
-        if not v[sample_idx]:
-            present = False
-            break
-
-    # Measured from the lines this sample actually detected, never from the
-    # ones it did not: refine_peak_centers_per_sample keeps the reference
-    # position for those, so including them hands back the study value as
-    # though this sample had produced it.
-    found = detected_lines(lines, sample_idx)
-    ppms = [p for _, p in found]
-    collapsed = _lines_collapsed(lines, found)
-    centre = float(np.mean(ppms)) if (ppms and not collapsed) else None
+    n_found = len(ppms) if fitted else 0
+    centre = float(np.mean(ppms)) if n_found >= 2 else None
+    j_obs = observed_j_hz(ranks, ppms, field_mhz) if n_found >= 2 else None
 
     area = 0.0
     for pk in lines:
         v = _per_sample(pk, _AREA_KEY, n)
-        if v is not None and v[sample_idx] is not None:
+        if v is not None and 0 <= sample_idx < n and v[sample_idx] is not None:
             area += float(v[sample_idx])
 
-    j_obs = (None if collapsed
-             else spacing_from_indexed_lines(found, field_mhz))
-
     return dict(
-        present=present,
+        present=bool(n_found and n_found >= n_exp),
         ppm_centre=centre,
         ppm_diff=(abs(centre - float(db_ppm))
                   if (centre is not None and db_ppm is not None) else None),
@@ -207,45 +90,113 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
         delta_j_hz=(abs(j_obs - float(db_j_hz))
                     if (j_obs is not None and db_j_hz) else None),
         area=area,
-        n_lines=len(lines),
-        n_found=len(found),
-        partial=bool(found) and len(found) < len(lines),
-        collapsed=collapsed,
+        n_lines=n_exp,
+        n_found=n_found,
+        partial=bool(n_found) and n_found < n_exp,
+        n_alternatives=int(fit.get('n_alternatives') or 0),
+        residual_hz=fit.get('residual_hz') if fitted else None,
     )
 
 
-def signal_across_samples(line_peaks, *, included=None, db_ppm=None,
-                          db_j_hz=None, field_mhz=600.0) -> dict:
+def signal_across_samples(line_peaks, *, fits=None, included=None, db_ppm=None,
+                          db_j_hz=None, field_mhz=600.0, n_lines=None,
+                          j_from_db=False) -> dict:
     """The same signal measured in every sample the caller allows.
 
-    ``included`` is the list of sample indices to report — blanks and excluded
-    samples belong outside it, the way detection already treats them. Omitted,
-    every sample is reported.
+    ``fits`` maps sample index to the line assignment for that sample, as
+    ``multiplet_line_fit.fit_across_samples`` returns it. ``included`` is the
+    list of sample indices to report — blanks and excluded samples belong
+    outside it, the way detection already treats them.
 
-    Returns the per-sample rows plus the summary the results table needs:
-    ``n_present`` out of ``n_included``.
+    ``j_from_db`` says the expected line positions were built from the
+    database J rather than from detected peaks. The fit then recovers that J by
+    construction — measured at a slope of 1.00 against 0.00 on the other path —
+    so the consensus reports the positions but withholds the J: a number that
+    came from the database is not evidence about the database.
+
+    Returns the per-sample rows, the summary the results table needs
+    (``n_present`` out of ``n_included``), and the consensus δ and J the signal
+    is reported by.
     """
     n = sample_count(line_peaks)
     idx = list(range(n)) if included is None else [i for i in included if 0 <= i < n]
+    fits = fits or {}
     rows = []
     for i in idx:
-        row = signal_in_sample(line_peaks, i, db_ppm=db_ppm, db_j_hz=db_j_hz,
-                               field_mhz=field_mhz)
+        row = signal_in_sample(line_peaks, i, fit=fits.get(i), db_ppm=db_ppm,
+                               db_j_hz=db_j_hz, field_mhz=field_mhz,
+                               n_lines=n_lines)
         row['sample_idx'] = i
         rows.append(row)
     present = [r for r in rows if r['present']]
     drifts = [r['ppm_centre'] for r in present if r['ppm_centre'] is not None]
-    n_collapsed = sum(1 for r in rows if r.get('collapsed'))
-    return dict(
+    out = dict(
         per_sample=rows,
         n_present=len(present),
         n_included=len(idx),
         ppm_spread=(float(max(drifts) - min(drifts)) if len(drifts) >= 2 else None),
-        n_collapsed=n_collapsed,
+    )
+    out.update(consensus(rows, db_ppm=db_ppm, db_j_hz=db_j_hz,
+                         j_from_db=j_from_db))
+    return out
+
+
+def consensus(rows, *, db_ppm=None, db_j_hz=None, j_from_db=False) -> dict:
+    """The signal's δ and J, agreed across the samples that measured them.
+
+    The value annotation used to report came from the mean spectrum, which is
+    the pointwise maximum across samples — a spectrum none of them actually is.
+    These come from the samples themselves.
+
+    Aggregated on the MEASURED quantity, never on its distance from the
+    database::
+
+        wrong:  ΔJ = median(|J_s - J_db|)      noise cannot cancel
+        right:  ΔJ = |median(J_s) - J_db|      noise cancels
+
+    ΔJ is an absolute value, so averaging it accumulates the per-sample scatter
+    instead of averaging it away: a signal whose J agrees with the database
+    exactly, read with ±0.5 Hz of noise, would report ~0.4 Hz of disagreement.
+    The same rule ``relative_sd_percent`` already states for the CV.
+
+    The median, not the mean — one bad reading out of five drags a mean, and
+    the pipeline chooses distribution-free statistics everywhere else for the
+    same reason. ``n`` and the scatter travel with the value: a consensus over
+    two samples and one over twenty are not the same evidence.
+
+    ``j_from_db`` withholds the J entirely. When the pattern searched for was
+    laid out from the database J, the spacing found among its own lines is that
+    J returned: perturbing it by 4 Hz moves the result by 3.99 Hz, against 0.00
+    when the pattern came from detected peaks. The positions are still a
+    measurement — where the lines sit is the sample's own answer — so δ stays.
+    """
+    ppms = [r['ppm_centre'] for r in (rows or ())
+            if r.get('ppm_centre') is not None]
+    js = ([] if j_from_db else
+          [r['j_obs_hz'] for r in (rows or ())
+           if r.get('j_obs_hz') is not None])
+
+    def _sd(v):
+        return float(np.std(v, ddof=1)) if len(v) >= 2 else None
+
+    ppm_c = float(np.median(ppms)) if ppms else None
+    j_c = float(np.median(js)) if js else None
+    return dict(
+        ppm_centre=ppm_c,
+        ppm_diff=(abs(ppm_c - float(db_ppm))
+                  if (ppm_c is not None and db_ppm is not None) else None),
+        ppm_n=len(ppms),
+        ppm_sd=_sd(ppms),
+        observed_j_hz=j_c,
+        delta_j_hz=(abs(j_c - float(db_j_hz))
+                    if (j_c is not None and db_j_hz) else None),
+        j_n=len(js),
+        j_sd=_sd(js),
+        j_from_db=bool(j_from_db),
     )
 
 
-def alignment_shifts(line_peaks, *, included=None, reference=None) -> dict:
+def alignment_shifts(rows, *, reference=None) -> dict:
     """Per-sample shift that puts this signal's pattern on top of itself.
 
     The multiplet aligns to the multiplet: a sample's shift is how far the
@@ -260,13 +211,10 @@ def alignment_shifts(line_peaks, *, included=None, reference=None) -> dict:
     Returns ``{sample_idx: shift_ppm}``. Subtract the shift from a sample's ppm
     axis to align it. Meant for display: nothing here writes to the spectrum.
     """
-    n = sample_count(line_peaks)
-    idx = list(range(n)) if included is None else [i for i in included if 0 <= i < n]
-    centres = {}
-    for i in idx:
-        row = signal_in_sample(line_peaks, i)
-        if row['present'] and row['ppm_centre'] is not None:
-            centres[i] = row['ppm_centre']
+    centres = {int(r['sample_idx']): float(r['ppm_centre'])
+               for r in (rows or ())
+               if r.get('present') and r.get('ppm_centre') is not None
+               and r.get('sample_idx') is not None}
     if not centres:
         return {}
     ref = float(reference) if reference is not None else float(

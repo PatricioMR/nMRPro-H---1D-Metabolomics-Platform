@@ -1,15 +1,14 @@
-"""Per-sample view of one annotated signal.
+"""Per-sample view of one annotated signal, and the consensus it adds up to.
 
-Annotation grades on the mean spectrum, so it cannot say in how many samples a
-signal is actually there. These read what detection already recorded per sample
-instead of re-measuring, which is what keeps "present here" from disagreeing
-with the peak list.
+Where a signal's lines sit in a sample comes from the multiplet fit, which
+assigns one apex per line. This module reads that assignment, so the tests
+build the assignment the way the fit hands it over.
 """
 import numpy as np
 import pytest
 
 from processing.per_sample_signal import (
-    alignment_shifts, line_positions, sample_count, signal_across_samples,
+    alignment_shifts, consensus, sample_count, signal_across_samples,
     signal_in_sample)
 
 MHZ = 600.0
@@ -17,208 +16,192 @@ J = 7.0
 D = J / MHZ          # one coupling, in ppm
 
 
-def _line(ppm, present, drift=None, area=1.0, n=4):
-    """One detected line: same apex in every sample unless drift says otherwise."""
-    return {
-        'ppm': ppm,
-        'ppm_per_sample': [ppm + (drift[i] if drift else 0.0) for i in range(n)],
-        'aligned_per_sample': list(present),
-        'area_per_sample': [area] * n,
-    }
+def _line(ppm, area=1.0, n=4):
+    """One detected line, carrying only what this module still reads."""
+    return {'ppm': ppm,
+            'ppm_per_sample': [ppm] * n,
+            'area_per_sample': [area] * n}
 
 
-def _doublet(centre=1.47, present=(True, True, True, True), drift=None, n=4):
-    return [_line(centre - D / 2, present, drift, n=n),
-            _line(centre + D / 2, present, drift, n=n)]
+def _doublet(centre=1.47, n=4):
+    return [_line(centre - D / 2, n=n), _line(centre + D / 2, n=n)]
+
+
+def _fit(ppms, ranks, *, residual=0.0, alts=0):
+    """What multiplet_line_fit hands back for one sample."""
+    return dict(ppms=list(ppms), ranks=list(ranks), residual_hz=residual,
+                drift_ppm=0.0, n_alternatives=alts, fitted=True,
+                n_candidates=len(ppms))
 
 
 class TestPresence:
-    def test_every_line_detected_is_present(self):
-        r = signal_in_sample(_doublet(), 0)
+    def test_every_line_assigned_is_present(self):
+        f = _fit([1.47 - D / 2, 1.47 + D / 2], [0, 1])
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
         assert r['present'] is True
+        assert r['partial'] is False
 
-    def test_one_missing_leg_is_absent(self):
-        """A doublet with one leg is not a doublet in that sample."""
-        lines = [_line(1.4642, (True,) * 4), _line(1.4758, (False, True, True, True))]
-        assert signal_in_sample(lines, 0)['present'] is False
-        assert signal_in_sample(lines, 1)['present'] is True
-
-    def test_absent_sample_reports_no_j(self):
-        """An undetected line's recorded apex is noise; a J from it is fiction."""
-        lines = [_line(1.4642, (False,) * 4), _line(1.4758, (False,) * 4)]
-        r = signal_in_sample(lines, 0)
+    def test_one_leg_only_is_not_a_doublet_here(self):
+        f = _fit([1.47 - D / 2], [0])
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
         assert r['present'] is False
-        assert r['j_obs_hz'] is None
-        assert r['delta_j_hz'] is None
 
-    def test_missing_presence_vector_is_not_absence(self):
-        """Detection that never recorded presence must not be read as absent."""
-        lines = [{'ppm': 1.4642, 'ppm_per_sample': [1.4642] * 4},
-                 {'ppm': 1.4758, 'ppm_per_sample': [1.4758] * 4}]
-        assert signal_in_sample(lines, 0)['present'] is True
+    def test_no_fit_is_no_reading(self):
+        """The master positions belong to the study, not to this sample."""
+        r = signal_in_sample(_doublet(), 0, db_ppm=1.47, db_j_hz=J,
+                             field_mhz=MHZ)
+        assert r['present'] is False
+        assert r['ppm_centre'] is None and r['j_obs_hz'] is None
+        assert r['ppm_diff'] is None and r['delta_j_hz'] is None
+
+    def test_a_fit_that_failed_measures_nothing(self):
+        f = _fit([1.47, 1.48], [0, 1])
+        f['fitted'] = False
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
+        assert r['n_found'] == 0 and r['j_obs_hz'] is None
+
+    def test_area_does_not_depend_on_the_fit(self):
+        """Integration runs over the master peak bounds; no apex enters it."""
+        r = signal_in_sample(_doublet(), 0, field_mhz=MHZ)
+        assert r['area'] == pytest.approx(2.0)
 
 
 class TestMeasurement:
-    def test_j_is_the_line_spacing_in_that_sample(self):
-        r = signal_in_sample(_doublet(), 0, db_j_hz=J, field_mhz=MHZ)
+    def test_adjacent_lines_span_one_coupling(self):
+        f = _fit([1.47 - D / 2, 1.47 + D / 2], [0, 1])
+        r = signal_in_sample(_doublet(), 0, fit=f, db_j_hz=J, field_mhz=MHZ)
         assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
         assert r['delta_j_hz'] == pytest.approx(0.0, abs=1e-6)
 
-    def test_drift_moves_the_centre_but_not_the_coupling(self):
-        """The whole pattern shifts together, so J survives a 20 Hz drift."""
-        shift = 20.0 / MHZ
-        lines = _doublet(drift=[0.0, shift, 0.0, 0.0])
-        r = signal_in_sample(lines, 1, db_ppm=1.47, db_j_hz=J, field_mhz=MHZ)
+    def test_outer_lines_of_a_triplet_span_two(self):
+        """Lines 0 and 2 sit 2J apart; the index span is what divides."""
+        lines = [_line(1.47 - D), _line(1.47), _line(1.47 + D)]
+        f = _fit([1.47 - D, 1.47 + D], [0, 2])
+        r = signal_in_sample(lines, 0, fit=f, db_j_hz=J, field_mhz=MHZ,
+                             n_lines=3)
         assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-        assert r['ppm_diff'] == pytest.approx(shift, abs=1e-9)
+        assert r['partial'] is True and r['present'] is False
 
-    def test_singlet_has_no_j(self):
-        r = signal_in_sample([_line(3.03, (True,) * 4)], 0, db_j_hz=None)
+    def test_the_centre_is_the_mean_of_the_assigned_lines(self):
+        f = _fit([1.47 - D / 2, 1.47 + D / 2], [0, 1])
+        r = signal_in_sample(_doublet(), 0, fit=f, db_ppm=1.46, field_mhz=MHZ)
+        assert r['ppm_centre'] == pytest.approx(1.47)
+        assert r['ppm_diff'] == pytest.approx(0.01)
+
+    def test_a_single_assigned_line_has_no_coupling(self):
+        f = _fit([1.47], [0])
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
         assert r['j_obs_hz'] is None
-        assert r['n_lines'] == 1
 
-    def test_area_sums_the_lines(self):
-        r = signal_in_sample(_doublet(), 0)
-        assert r['area'] == pytest.approx(2.0)
-
-    def test_no_peaks_measures_nothing(self):
-        r = signal_in_sample([], 0)
-        assert r['present'] is False and r['area'] is None
-
-    def test_sample_index_out_of_range(self):
-        assert signal_in_sample(_doublet(), 99)['present'] is False
+    def test_alternatives_travel_with_the_reading(self):
+        f = _fit([1.47 - D / 2, 1.47 + D / 2], [0, 1], alts=3)
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
+        assert r['n_alternatives'] == 3
 
 
 class TestAcrossSamples:
-    def test_counts_only_the_included_samples(self):
-        """Blanks live outside `included`, the way detection already treats them."""
-        lines = _doublet(present=(True, True, False, True))
-        out = signal_across_samples(lines, included=[1, 2, 3])
+    def _fits(self, js):
+        """One fit per sample, each doublet carrying the J it was given."""
+        out = {}
+        for i, j_hz in enumerate(js):
+            d = j_hz / MHZ
+            out[i] = _fit([1.47 - d / 2, 1.47 + d / 2], [0, 1])
+        return out
+
+    def test_present_count_is_over_the_included_samples(self):
+        fits = self._fits([7.0, 7.1])
+        out = signal_across_samples(_doublet(), fits=fits, included=[0, 1, 2],
+                                    field_mhz=MHZ)
         assert out['n_included'] == 3
         assert out['n_present'] == 2
-        assert [r['sample_idx'] for r in out['per_sample']] == [1, 2, 3]
 
-    def test_all_samples_when_nothing_excluded(self):
-        out = signal_across_samples(_doublet())
-        assert out['n_included'] == 4 and out['n_present'] == 4
-
-    def test_spread_reports_the_drift(self):
-        shift = 0.03
-        out = signal_across_samples(_doublet(drift=[0.0, shift, 0.0, 0.0]))
-        assert out['ppm_spread'] == pytest.approx(shift, abs=1e-9)
-
-    def test_spread_needs_two_present_samples(self):
-        out = signal_across_samples(_doublet(present=(True, False, False, False)))
-        assert out['ppm_spread'] is None
-
-    def test_sample_count_survives_peaks_without_vectors(self):
-        assert sample_count([{'ppm': 1.0}]) == 0
-        assert sample_count(_doublet()) == 4
+    def test_excluded_samples_are_never_read(self):
+        out = signal_across_samples(_doublet(), fits=self._fits([7.0] * 4),
+                                    included=[1, 2], field_mhz=MHZ)
+        assert [r['sample_idx'] for r in out['per_sample']] == [1, 2]
 
 
-class TestAlignment:
-    def test_shift_is_the_drift_of_the_pattern_centre(self):
-        shift = 15.0 / MHZ
-        lines = _doublet(drift=[0.0, shift, 0.0, 0.0])
-        sh = alignment_shifts(lines)
-        # Reference is the mean centre, so the shifts sum to zero.
-        assert sum(sh.values()) == pytest.approx(0.0, abs=1e-12)
-        assert sh[1] - sh[0] == pytest.approx(shift, abs=1e-9)
+class TestConsensus:
+    """The signal's own δ and J: the median of what the samples measured, and
+    the distance to the database taken AFTER that median."""
 
-    def test_subtracting_the_shift_lines_the_centres_up(self):
-        lines = _doublet(drift=[0.0, 0.01, -0.004, 0.007])
-        sh = alignment_shifts(lines)
-        aligned = [signal_in_sample(lines, i)['ppm_centre'] - sh[i] for i in sh]
-        assert max(aligned) - min(aligned) == pytest.approx(0.0, abs=1e-9)
+    def _rows(self, js, ppms=None):
+        ppms = ppms or [1.47] * len(js)
+        return [{'sample_idx': i, 'present': True, 'ppm_centre': p,
+                 'j_obs_hz': j} for i, (j, p) in enumerate(zip(js, ppms))]
 
-    def test_absent_samples_get_no_shift(self):
-        sh = alignment_shifts(_doublet(present=(True, False, True, True)))
-        assert set(sh) == {0, 2, 3}
+    def test_the_median_j_is_reported(self):
+        c = consensus(self._rows([6.9, 7.0, 7.4]), db_j_hz=J)
+        assert c['observed_j_hz'] == pytest.approx(7.0)
+        assert c['j_n'] == 3
 
-    def test_explicit_reference_pins_the_axis(self):
-        lines = _doublet(centre=1.47, drift=[0.0, 0.01, 0.0, 0.0])
-        sh = alignment_shifts(lines, reference=1.47)
-        assert sh[0] == pytest.approx(0.0, abs=1e-9)
-        assert sh[1] == pytest.approx(0.01, abs=1e-9)
+    def test_noise_around_the_database_value_cancels(self):
+        """Averaging |ΔJ| instead would report ~0.5 Hz of disagreement for a
+        signal that agrees exactly — an absolute value cannot cancel."""
+        c = consensus(self._rows([6.5, 7.0, 7.5]), db_j_hz=J)
+        assert c['delta_j_hz'] == pytest.approx(0.0, abs=1e-9)
+        assert float(np.mean([abs(x - J) for x in (6.5, 7.0, 7.5)])) > 0.3
 
-    def test_nothing_present_yields_no_shifts(self):
-        assert alignment_shifts(_doublet(present=(False,) * 4)) == {}
+    def test_one_bad_reading_does_not_drag_the_consensus(self):
+        c = consensus(self._rows([7.0, 7.0, 7.0, 7.0, 25.0]), db_j_hz=J)
+        assert c['observed_j_hz'] == pytest.approx(7.0)
+
+    def test_the_scatter_is_reported_with_the_value(self):
+        c = consensus(self._rows([6.9, 7.0, 7.1]), db_j_hz=J)
+        assert c['j_sd'] == pytest.approx(np.std([6.9, 7.0, 7.1], ddof=1))
+
+    def test_one_sample_has_no_scatter_but_still_a_value(self):
+        c = consensus(self._rows([7.2]), db_j_hz=J)
+        assert c['observed_j_hz'] == pytest.approx(7.2)
+        assert c['j_sd'] is None and c['j_n'] == 1
+
+    def test_nothing_measured_is_reported_as_nothing(self):
+        c = consensus([], db_ppm=1.47, db_j_hz=J)
+        assert c['observed_j_hz'] is None and c['delta_j_hz'] is None
+        assert c['ppm_centre'] is None and c['j_n'] == 0
+
+    def test_delta_ppm_follows_the_same_rule(self):
+        c = consensus(self._rows([7.0] * 3, ppms=[1.46, 1.47, 1.48]),
+                      db_ppm=1.47)
+        assert c['ppm_centre'] == pytest.approx(1.47)
+        assert c['ppm_diff'] == pytest.approx(0.0, abs=1e-9)
+
+    def test_samples_without_a_j_still_contribute_their_position(self):
+        rows = [{'sample_idx': 0, 'ppm_centre': 1.47, 'j_obs_hz': 7.0},
+                {'sample_idx': 1, 'ppm_centre': 1.48, 'j_obs_hz': None}]
+        c = consensus(rows, db_ppm=1.47, db_j_hz=J)
+        assert c['ppm_n'] == 2 and c['j_n'] == 1
 
 
-def test_line_positions_falls_back_to_the_master_apex():
-    """A peak without a per-sample vector still has one position to offer."""
-    assert line_positions([{'ppm': 2.5}], 0) == [2.5]
+class TestAlignmentShifts:
+    def _rows(self, centres):
+        return [{'sample_idx': i, 'present': True, 'ppm_centre': c}
+                for i, c in enumerate(centres)]
+
+    def test_each_sample_moves_by_its_own_offset(self):
+        sh = alignment_shifts(self._rows([1.46, 1.47, 1.48]), reference=1.47)
+        assert sh == {0: pytest.approx(-0.01), 1: pytest.approx(0.0),
+                      2: pytest.approx(0.01)}
+
+    def test_the_group_centres_itself_by_default(self):
+        sh = alignment_shifts(self._rows([1.46, 1.48]))
+        assert sum(sh.values()) == pytest.approx(0.0)
+
+    def test_a_sample_without_a_reading_is_not_shifted(self):
+        rows = self._rows([1.47, 1.48])
+        rows[0]['present'] = False
+        assert 0 not in alignment_shifts(rows)
+
+    def test_nothing_present_shifts_nothing(self):
+        assert alignment_shifts([]) == {}
 
 
-class TestCollapsedLines:
-    """The per-sample apex search scans ±0.02 ppm — 12 Hz at 600 MHz — while the
-    median multiplet line spacing is 7.1 Hz, so the taller leg wins BOTH searches
-    and both lines are reported at one position. 64% of (multiplet, sample) pairs
-    on the reference set. Nothing may be measured from such a reading.
-    """
+class TestSampleCount:
+    def test_counts_from_the_recorded_vector(self):
+        assert sample_count(_doublet(n=6)) == 6
 
-    def _collapsed_doublet(self, n=4):
-        """Sample 1 has both legs folded onto the left one."""
-        left, right = 1.47 - D / 2, 1.47 + D / 2
-        return [
-            {'ppm': left, 'aligned_per_sample': [True] * n,
-             'ppm_per_sample': [left, left, left, left],
-             'area_per_sample': [1.0] * n},
-            {'ppm': right, 'aligned_per_sample': [True] * n,
-             'ppm_per_sample': [right, left, right, right],
-             'area_per_sample': [1.0] * n},
-        ]
-
-    def test_collapsed_sample_reports_no_j(self):
-        r = signal_in_sample(self._collapsed_doublet(), 1, db_j_hz=J, field_mhz=MHZ)
-        assert r['collapsed'] is True
-        assert r['j_obs_hz'] is None
-        assert r['delta_j_hz'] is None
-
-    def test_collapsed_sample_reports_no_centre(self):
-        """The positions describe one leg, so their mean is off by half a J."""
-        r = signal_in_sample(self._collapsed_doublet(), 1, db_ppm=1.47)
-        assert r['ppm_centre'] is None
-        assert r['ppm_diff'] is None
-
-    def test_intact_sample_is_unaffected(self):
-        r = signal_in_sample(self._collapsed_doublet(), 0, db_j_hz=J, field_mhz=MHZ)
-        assert r['collapsed'] is False
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-
-    def test_presence_still_reflects_detection(self):
-        """Collapsing is a measurement failure, not an absence."""
-        assert signal_in_sample(self._collapsed_doublet(), 1)['present'] is True
-
-    def test_area_survives_the_collapse(self):
-        """Areas come from integration, not from the apex search."""
-        assert signal_in_sample(self._collapsed_doublet(), 1)['area'] == pytest.approx(2.0)
-
-    def test_singlet_is_never_collapsed(self):
-        r = signal_in_sample([_line(3.03, (True,) * 4)], 0)
-        assert r['collapsed'] is False
-        assert r['ppm_centre'] == pytest.approx(3.03)
-
-    def test_across_samples_counts_the_collapses(self):
-        out = signal_across_samples(self._collapsed_doublet())
-        assert out['n_collapsed'] == 1
-        assert out['n_present'] == 4
-
-    def test_alignment_skips_a_collapsed_sample(self):
-        """A shift from a folded pattern would move the sample by half a J."""
-        assert 1 not in alignment_shifts(self._collapsed_doublet())
-
-    def test_threshold_scales_with_the_multiplet(self):
-        """What counts as collapsed for a 3 Hz doublet is not what counts for 12."""
-        wide = 12.0 / MHZ
-        lines = [
-            {'ppm': 1.47, 'aligned_per_sample': [True] * 2,
-             'ppm_per_sample': [1.47, 1.47]},
-            {'ppm': 1.47 + wide, 'aligned_per_sample': [True] * 2,
-             'ppm_per_sample': [1.47 + wide, 1.47 + wide * 0.7]},
-        ]
-        # 70% of the master spacing is not a collapse.
-        assert signal_in_sample(lines, 1)['collapsed'] is False
+    def test_no_vector_is_no_samples(self):
+        assert sample_count([{'ppm': 1.47}]) == 0
 
 
 class TestRelativeSD:
@@ -292,138 +275,45 @@ class TestGroupMeans:
         assert group_means(rows, 'j_obs')['A'] == pytest.approx(7.0)
 
 
-class TestAbsentSamplesReportNothing:
-    """An undetected line keeps its reference position, so a centre built from
-    it is the study value handed back as if it had been measured here — the
-    same number in every absent sample, which reads as data and is not.
+class TestJFromTheDatabaseIsNotEvidence:
+    """When the pattern searched for was laid out from the database J, the
+    spacing found among its own lines is that J returned. Measured against the
+    reference study: perturbing the database J by 4 Hz moved the fitted J by
+    3.99 Hz on that path and by 0.00 Hz when the pattern came from detected
+    peaks. Aggregating the first as a measurement would confirm the database
+    against itself.
     """
 
-    def test_no_centre_where_the_signal_was_not_detected(self):
-        lines = _doublet(present=(False, True, True, True))
-        assert signal_in_sample(lines, 0)['ppm_centre'] is None
-        assert signal_in_sample(lines, 1)['ppm_centre'] is not None
+    def _rows(self):
+        return [{'present': True, 'ppm_centre': 1.470, 'j_obs_hz': 7.0},
+                {'present': True, 'ppm_centre': 1.472, 'j_obs_hz': 7.2}]
 
-    def test_no_ppm_diff_either(self):
-        lines = _doublet(present=(False, True, True, True))
-        assert signal_in_sample(lines, 0, db_ppm=1.47)['ppm_diff'] is None
+    def test_the_j_is_withheld(self):
+        from processing.per_sample_signal import consensus
+        c = consensus(self._rows(), db_j_hz=7.0, j_from_db=True)
+        assert c['observed_j_hz'] is None
+        assert c['delta_j_hz'] is None
+        assert c['j_n'] == 0
+        assert c['j_from_db'] is True
 
-    def test_area_is_still_reported(self):
-        """Integration does not depend on finding an apex."""
-        lines = _doublet(present=(False, True, True, True))
-        assert signal_in_sample(lines, 0)['area'] == pytest.approx(2.0)
+    def test_the_positions_are_still_a_measurement(self):
+        """Where the lines sit is the sample's own answer, whatever led there."""
+        from processing.per_sample_signal import consensus
+        c = consensus(self._rows(), db_ppm=1.47, j_from_db=True)
+        assert c['ppm_centre'] == pytest.approx(1.471)
+        assert c['ppm_n'] == 2
 
-    def test_absent_samples_do_not_all_report_the_same_position(self):
-        """The regression this guards: every absent row showed one identical
-        Δppm, because it was the master centre repeated."""
-        lines = _doublet(present=(False, False, True, True))
-        centres = [signal_in_sample(lines, i)['ppm_centre'] for i in (0, 1)]
-        assert centres == [None, None]
+    def test_a_pattern_from_detected_peaks_keeps_its_j(self):
+        from processing.per_sample_signal import consensus
+        c = consensus(self._rows(), db_j_hz=7.0, j_from_db=False)
+        assert c['observed_j_hz'] == pytest.approx(7.1)
+        assert c['delta_j_hz'] == pytest.approx(0.1)
+        assert c['j_from_db'] is False
 
-
-class TestPartialMultiplets:
-    """Half a multiplet is worth seeing. What must not happen is measuring a
-    line the sample never detected — its recorded position is the study's.
-    """
-
-    def _triplet(self, present_by_line, n=2):
-        """Three lines one J apart; presence given per line."""
-        centres = [1.47 - D, 1.47, 1.47 + D]
-        return [{'ppm': c,
-                 'ppm_per_sample': [c] * n,
-                 'aligned_per_sample': [p] * n,
-                 'area_per_sample': [1.0] * n}
-                for c, p in zip(centres, present_by_line)]
-
-    def test_outer_lines_span_two_couplings_and_still_report_j(self):
-        """Lines 0 and 2 sit 2J apart. Dividing by the index span returns J."""
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([True, False, True]), 0,
-                             db_j_hz=J, field_mhz=MHZ)
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-        assert r['partial'] is True
-        assert r['present'] is False
-
-    def test_adjacent_lines_span_one_coupling(self):
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([True, True, False]), 0,
-                             db_j_hz=J, field_mhz=MHZ)
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-
-    def test_a_single_line_gives_a_position_but_no_coupling(self):
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([False, True, False]), 0)
-        assert r['ppm_centre'] == pytest.approx(1.47)
-        assert r['j_obs_hz'] is None
-        assert r['partial'] is True
-
-    def test_the_centre_uses_only_what_was_found(self):
-        """Averaging in an undetected line's reference position would drag the
-        centre back onto the study value."""
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([True, False, False]), 0)
-        assert r['ppm_centre'] == pytest.approx(1.47 - D)
-
-    def test_a_complete_multiplet_is_not_partial(self):
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([True, True, True]), 0,
-                             db_j_hz=J, field_mhz=MHZ)
-        assert r['partial'] is False and r['present'] is True
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-
-    def test_nothing_found_reports_nothing(self):
-        from processing.per_sample_signal import signal_in_sample
-        r = signal_in_sample(self._triplet([False, False, False]), 0)
-        assert r['ppm_centre'] is None and r['j_obs_hz'] is None
-        assert r['partial'] is False and r['n_found'] == 0
-
-    def test_indices_follow_position_not_list_order(self):
-        from processing.per_sample_signal import detected_lines
-        lines = self._triplet([True, False, True])
-        assert [i for i, _ in detected_lines(lines, 0)] == [0, 2]
-
-
-class TestCollapseIsCheckedOnWhateverWasFound:
-    """The check used to run only on complete readings, so a partial one whose
-    two lines had folded together was reported as a measurement — 257 of them
-    on the reference study — while complete readings that folded showed a tick
-    and an empty row with nothing to explain it.
-    """
-
-    def _triplet(self, positions, present=(True, True, True), n=2):
-        """Three lines; `positions` is where this sample recorded each one."""
-        master = [1.47 - D, 1.47, 1.47 + D]
-        return [{'ppm': m, 'ppm_per_sample': [p] * n,
-                 'aligned_per_sample': [q] * n, 'area_per_sample': [1.0] * n}
-                for m, p, q in zip(master, positions, present)]
-
-    def test_a_partial_reading_that_folded_is_refused(self):
-        from processing.per_sample_signal import signal_in_sample
-        lines = self._triplet([1.47 - D, 1.47 - D, 1.47 + D],
-                              present=(True, True, False))
-        r = signal_in_sample(lines, 0, field_mhz=MHZ)
-        assert r['collapsed'] is True
-        assert r['j_obs_hz'] is None and r['ppm_centre'] is None
-
-    def test_outer_lines_two_indices_apart_are_not_a_collapse(self):
-        """They sit 2J apart, which is what their indices call for."""
-        from processing.per_sample_signal import signal_in_sample
-        lines = self._triplet([1.47 - D, 1.47, 1.47 + D],
-                              present=(True, False, True))
-        r = signal_in_sample(lines, 0, db_j_hz=J, field_mhz=MHZ)
-        assert r['collapsed'] is False
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-
-    def test_a_complete_reading_that_folded_is_still_refused(self):
-        from processing.per_sample_signal import signal_in_sample
-        lines = self._triplet([1.47, 1.47, 1.47 + D])
-        r = signal_in_sample(lines, 0, field_mhz=MHZ)
-        assert r['present'] is True and r['collapsed'] is True
-        assert r['j_obs_hz'] is None
-
-    def test_a_clean_complete_reading_measures(self):
-        from processing.per_sample_signal import signal_in_sample
-        lines = self._triplet([1.47 - D, 1.47, 1.47 + D])
-        r = signal_in_sample(lines, 0, db_j_hz=J, field_mhz=MHZ)
-        assert r['collapsed'] is False
-        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
-        assert r['ppm_centre'] == pytest.approx(1.47)
+    def test_the_flag_travels_through_the_summary(self):
+        from processing.per_sample_signal import signal_across_samples
+        lines = [{'ppm': 1.47, 'ppm_per_sample': [1.47],
+                  'aligned_per_sample': [True], 'area_per_sample': [1.0]}]
+        out = signal_across_samples(lines, j_from_db=True, db_j_hz=7.0)
+        assert out['j_from_db'] is True
+        assert out['observed_j_hz'] is None

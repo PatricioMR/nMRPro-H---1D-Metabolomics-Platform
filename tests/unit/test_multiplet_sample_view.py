@@ -184,12 +184,15 @@ def test_the_group_mean_uses_complete_readings_only():
     assert "present_rows = [r for r in self._counted_rows() if r['present']]" in src
 
 
-def test_a_folded_row_says_why_it_is_empty():
-    """All the lines can be detected and still leave nothing to measure, when
-    the apex search put two of them in one place. A tick over empty cells gave
-    no way to tell that from a bug."""
+def test_the_detected_column_says_only_what_was_assigned():
+    """Folding is gone — the line assignment is injective, so two lines cannot
+    share an apex and there is no folded row left to explain. The column now
+    carries one fact: all the lines, some of them, or none.
+
+    The rival-assignment count still travels on each reading; it is simply not
+    what this column is for."""
     import inspect
     from gui.widgets.multiplet_sample_view import MultipletSampleView as V
     src = inspect.getsource(V._populate)
-    assert "r['collapsed']" in src
-    assert 'folded' in src
+    assert 'folded' not in src
+    assert '?' not in src

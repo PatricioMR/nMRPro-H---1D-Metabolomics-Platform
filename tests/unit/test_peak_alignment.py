@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from processing.peak_alignment import global_peak_rigid_align
 
@@ -57,3 +58,53 @@ class TestGlobalPeakRigidAlign:
         assert shifts_pts[0] < shifts_pts[1]
         assert shifts_pts[1] <= shifts_pts[2]
         assert np.max(np.abs(aligned[:, 1] - aligned[:, 2])) < 1e-9
+
+class TestParabolicApex:
+    """The sub-pixel step is signed. A ppm axis descends, so a positive
+    sub-sample offset must move the apex toward the NEXT index — a smaller ppm.
+    An unsigned step moved it the other way by up to half a point, 0.15 Hz on a
+    typical grid, which two lines of one multiplet could turn into more than
+    dj_gold_hz of invented disagreement.
+    """
+
+    def _axis(self):
+        import numpy as np
+        return np.array([1.50, 1.49, 1.48, 1.47, 1.46])
+
+    def test_a_symmetric_apex_does_not_move(self):
+        import numpy as np
+        from processing.peak_alignment import parabolic_apex
+        y = np.array([0.0, 1.0, 4.0, 1.0, 0.0])
+        assert parabolic_apex(self._axis(), y, 2) == pytest.approx(1.48)
+
+    def test_it_leans_toward_the_taller_neighbour(self):
+        import numpy as np
+        from processing.peak_alignment import parabolic_apex
+        x = self._axis()
+        # Neighbour at index 3 (ppm 1.47) is the taller one → apex below 1.48.
+        y = np.array([0.0, 1.0, 4.0, 3.0, 0.0])
+        assert parabolic_apex(x, y, 2) < 1.48
+        # And the mirror case leans the other way.
+        y2 = np.array([0.0, 3.0, 4.0, 1.0, 0.0])
+        assert parabolic_apex(x, y2, 2) > 1.48
+
+    def test_it_never_leaves_the_neighbouring_points(self):
+        import numpy as np
+        from processing.peak_alignment import parabolic_apex
+        x = self._axis()
+        y = np.array([0.0, 3.9, 4.0, 0.0, 0.0])
+        assert 1.485 >= parabolic_apex(x, y, 2) >= 1.475
+
+    def test_an_edge_point_stays_where_it_is(self):
+        import numpy as np
+        from processing.peak_alignment import parabolic_apex
+        x = self._axis()
+        y = np.array([4.0, 1.0, 0.0, 0.0, 0.0])
+        assert parabolic_apex(x, y, 0) == pytest.approx(1.50)
+
+    def test_a_flat_top_stays_where_it_is(self):
+        import numpy as np
+        from processing.peak_alignment import parabolic_apex
+        x = self._axis()
+        y = np.array([0.0, 4.0, 4.0, 4.0, 0.0])
+        assert parabolic_apex(x, y, 2) == pytest.approx(1.48)

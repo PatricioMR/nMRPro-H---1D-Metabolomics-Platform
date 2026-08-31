@@ -195,7 +195,7 @@ class MultipletSampleView:
                 col=arr[:, s].astype(float),
                 present=bool(r.get('present')),
                 partial=bool(r.get('partial')),
-                collapsed=bool(r.get('collapsed')),
+                n_alternatives=int(r.get('n_alternatives') or 0),
                 n_found=r.get('n_found'),
                 n_lines=r.get('n_lines'),
                 ppm_centre=centre,
@@ -314,10 +314,11 @@ class MultipletSampleView:
         ppm_mean = group_means(present_rows, 'ppm_centre')
         j_mean = group_means(present_rows, 'j_obs')
 
-        # One number for the whole signal: the ΔJ the annotation search decided
-        # on. It repeats down the column because it belongs to the signal, not
-        # to any sample — it is here so the measured J beside it can be read
-        # against what the pipeline concluded.
+        # One number for the whole signal, repeated down the column because it
+        # belongs to the signal and not to any sample. It is the consensus of
+        # the readings beside it — median J over the samples that measured one,
+        # then its distance from the database — so the column and the value it
+        # is read against come from the same measurements.
         _sig_dj = self.mp_ref.get('delta_j_hz')
         _sig_djtxt = f'{float(_sig_dj):+.2f}' if _sig_dj is not None else '—'
 
@@ -334,12 +335,7 @@ class MultipletSampleView:
                 # a second one that could contradict it.
                 # All lines, some, or none. A partial reading still carries
                 # a δ and a J, measured from the lines that were found.
-                if r['collapsed']:
-                    # All the lines may be there, but the apex search put two of
-                    # them in one place, so there is no spacing left to measure.
-                    # Saying so beats an unexplained blank row.
-                    ann_txt, tag = '⚠ folded', 'unverified'
-                elif r['present']:
+                if r['present']:
                     ann_txt, tag = '✓', 'present'
                 elif r['partial']:
                     ann_txt = f"{r['n_found']}/{r['n_lines']}"
@@ -371,9 +367,17 @@ class MultipletSampleView:
         q = (self.mp_ref.get('annotation_quality') or 'undecided')
         dj = self.mp_ref.get('delta_j_hz')
         jo = self.mp_ref.get('observed_j_hz')
+        con = self.mp_ref.get('per_sample_consensus') or {}
+        # How many samples the consensus rests on, and how far they scattered.
+        # A J agreed by twelve samples and one seen in two are not the same
+        # evidence, and the number that hides which it is says too little.
+        _n, _sd = con.get('j_n'), con.get('j_sd')
+        _spread = ''
+        if _n:
+            _spread = f' (n={int(_n)}' + (f', sd {float(_sd):.2f}' if _sd else '') + ')'
         bits = [f'Annotation verdict: {str(q).capitalize()}']
         if jo is not None:
-            bits.append(f'J {float(jo):.2f} Hz')
+            bits.append(f'J {float(jo):.2f} Hz{_spread}')
         if dj is not None:
             bits.append(f'ΔJ {float(dj):+.2f} Hz')
         sc = self.mp_ref.get('composite_score')

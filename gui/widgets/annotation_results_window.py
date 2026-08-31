@@ -32,7 +32,7 @@ from processing.annotation_quality import promote_singlets, quality_verdict
 from processing.annotation_quality import (
     metabolite_has_anchor, metabolite_tier)
 from processing.annotation_scoring import (
-    analyte_score, apply_mcr_dj, coverage_fraction,
+    analyte_score, apply_mcr_dj, apply_per_sample_consensus, coverage_fraction,
     resolve_dj, score_signal,
     SCORING_DEFAULTS as _SCORING_DEFAULTS,
     migrate_params as _migrate_params,
@@ -1614,10 +1614,6 @@ class AnnotationResultsWindow:
             s_cosine_met = float(met.get('cosine', 0) or 0)
 
             for mp in met['matched_peaks']:
-                # ── s_ppm ────────────────────────────────────────────────────
-                ppm_diff = float(mp.get('ppm_diff', 0) or 0)
-                s_ppm    = ppm_score(ppm_diff, _sigma_ppm)
-
                 # ── s_dj ─────────────────────────────────────────────────────
                 mult_sc = str(mp.get('type') or mp.get('multiplicity')
                               or 's').lower().strip()
@@ -1626,9 +1622,21 @@ class AnnotationResultsWindow:
                     field_mhz=_field_sc, tolerance=_tol,
                     remeasure=bool(getattr(self, '_lines_dirty', False)))
 
+                # What the samples measured outranks what the mean spectrum
+                # did; MCR still has the last word inside an overlap, where the
+                # lines belong to more than one analyte.
+                _con = apply_per_sample_consensus(mp, params=self._params)
+                if _con is not None:
+                    s_dj, _dj_conf = _con
+
                 _mcr = apply_mcr_dj(mp, params=self._params)
                 if _mcr is not None:
                     s_dj, _dj_conf = _mcr
+
+                # ── s_ppm ────────────────────────────────────────────────────
+                # After the consensus, which may have replaced ppm_diff.
+                ppm_diff = float(mp.get('ppm_diff', 0) or 0)
+                s_ppm    = ppm_score(ppm_diff, _sigma_ppm)
 
                 score_signal(mp, s_ppm=s_ppm, s_dj=s_dj, dj_conf=_dj_conf,
                              coverage=s_found, params=self._params)

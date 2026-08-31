@@ -77,6 +77,32 @@ def _best_global_shift(ref, sample, max_shift_pts, use_derivative=True):
     return int(best_shift)
 
 
+def parabolic_apex(x, y, i):
+    """Sub-pixel apex position around sample ``i``, by parabolic interpolation.
+
+    Returns ``x[i]`` unchanged when the point sits on an edge or the three
+    points do not describe a curve.
+
+    The step is SIGNED. A ppm axis descends, so a positive sub-sample offset
+    has to move the position toward the next index, which is a smaller ppm; an
+    unsigned step moved it the other way, up to half a point — at a typical
+    0.00024 ppm grid that is 0.15 Hz per line, and a line pair could disagree
+    by more than ``dj_gold_hz`` for no reason but this.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = x.size
+    if not (0 < int(i) < n - 1):
+        return float(x[int(i)])
+    i = int(i)
+    y0, y1, y2 = float(y[i - 1]), float(y[i]), float(y[i + 1])
+    denom = y0 - 2 * y1 + y2
+    if abs(denom) <= 1e-12:
+        return float(x[i])
+    sub = max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom))
+    return float(x[i]) + sub * float(x[i + 1] - x[i])
+
+
 def _refine_one_center(x, y, cen, max_shift_ppm, noise_floor=0.0):
     """Sub-pixel apex of ``y`` within ±``max_shift_ppm`` of ``cen``.
 
@@ -101,16 +127,7 @@ def _refine_one_center(x, y, cen, max_shift_ppm, noise_floor=0.0):
     if peak_val <= 0 or peak_val < noise_floor:
         return float(cen), False
     apex_idx = int(np.argmax(y_bc))
-    # Parabolic sub-pixel interpolation around the apex.
-    if 0 < apex_idx < len(x_w) - 1:
-        y0, y1, y2 = (float(y_bc[apex_idx - 1]), float(y_bc[apex_idx]),
-                      float(y_bc[apex_idx + 1]))
-        denom = y0 - 2 * y1 + y2
-        if abs(denom) > 1e-12:
-            dx = abs(float(x_w[1] - x_w[0])) if len(x_w) > 1 else 0.0
-            sub = max(-0.5, min(0.5, 0.5 * (y0 - y2) / denom))
-            return float(x_w[apex_idx]) + sub * dx, True
-    return float(x_w[apex_idx]), True
+    return parabolic_apex(x_w, y_bc, apex_idx), True
 
 
 def neighbour_bounded_radius(peaks, ppm, max_shift_ppm, frac=0.5):

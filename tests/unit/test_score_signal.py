@@ -122,3 +122,74 @@ class TestStoredTerms:
         assert mp['_s_ppm'] == 0.9 and mp['_s_dj'] == 0.8
         assert mp['_s_found'] == 0.5
         assert mp['_score_breakdown']
+
+
+class TestPerSampleConsensus:
+    """What the samples measured replaces what the mean spectrum did. The mean
+    spectrum is a pointwise maximum across samples — a trace none of them is.
+    """
+
+    def _con(self, **kw):
+        base = {'ppm_centre': 1.470, 'ppm_diff': 0.002, 'ppm_n': 5,
+                'ppm_sd': 0.001, 'observed_j_hz': 7.05, 'delta_j_hz': 0.05,
+                'j_n': 5, 'j_sd': 0.12}
+        base.update(kw)
+        return base
+
+    def test_the_consensus_replaces_the_master_reading(self):
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(delta_j_hz=0.9, ppm_diff=0.04,
+                 per_sample_consensus=self._con())
+        out = apply_per_sample_consensus(mp, params=PARAMS)
+        assert mp['delta_j_hz'] == pytest.approx(0.05)
+        assert mp['ppm_diff'] == pytest.approx(0.002)
+        assert mp['observed_j_hz'] == pytest.approx(7.05)
+        assert out is not None and out[1] == 1.0
+
+    def test_it_says_where_the_numbers_came_from(self):
+        """A transformation the analyst cannot trace is one they cannot check."""
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(per_sample_consensus=self._con())
+        apply_per_sample_consensus(mp, params=PARAMS)
+        assert mp['_dj_source'] == 'per_sample'
+        assert mp['_ppm_source'] == 'per_sample'
+
+    def test_no_consensus_leaves_the_stored_value_alone(self):
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(delta_j_hz=0.9, ppm_diff=0.04)
+        assert apply_per_sample_consensus(mp, params=PARAMS) is None
+        assert mp['delta_j_hz'] == pytest.approx(0.9)
+        assert mp['ppm_diff'] == pytest.approx(0.04)
+
+    def test_a_singlet_gets_its_position_without_a_coupling(self):
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(type='s', per_sample_consensus=self._con(
+            observed_j_hz=None, delta_j_hz=None, j_n=0, j_sd=None))
+        assert apply_per_sample_consensus(mp, params=PARAMS) is None
+        assert mp['ppm_diff'] == pytest.approx(0.002)
+
+    def test_a_disagreeing_consensus_lowers_the_j_term(self):
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(per_sample_consensus=self._con(delta_j_hz=0.8))
+        s_dj, conf = apply_per_sample_consensus(mp, params=PARAMS)
+        assert s_dj == 0.0 and conf == 1.0
+
+    def test_a_confirmation_can_be_withdrawn_by_the_samples(self):
+        """The master lines agreed; the samples did not. The verdict follows
+        the samples."""
+        from processing.annotation_scoring import apply_per_sample_consensus
+        mp = _mp(delta_j_hz=0.05, per_sample_consensus=self._con(
+            delta_j_hz=0.9, ppm_diff=0.002))
+        assert is_confirmed(mp, dj_conf=1.0, params=PARAMS) is True
+        apply_per_sample_consensus(mp, params=PARAMS)
+        assert is_confirmed(mp, dj_conf=1.0, params=PARAMS) is False
+
+
+def test_expected_lines_report_where_they_came_from():
+    """A fit anchored on synthetic lines recovers the database J by
+    construction; the caller has to be able to tell that apart."""
+    import inspect
+    from gui.stages._annotation_search import _AnnotationSearchMixin as M
+    src = inspect.getsource(M._expected_line_ppms)
+    assert 'return pred, False' in src
+    assert "], True" in src, 'the synthetic fallback must flag itself'

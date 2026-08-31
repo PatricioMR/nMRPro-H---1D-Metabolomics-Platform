@@ -31,8 +31,9 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    candidate_key,
+    candidate_key, synthetic_lines,
     parse_first_j)
+from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.per_sample_signal import (
     alignment_shifts, sample_count, signal_across_samples)
@@ -370,19 +371,61 @@ class _AnnotationSearchMixin:
 
     # ── MCR ───────────────────────────────────────────────────────────────────
 
+    def _expected_line_ppms(self, r, mhz):
+        """Where this signal's lines are expected, as the fit needs them.
+
+        The stored ``predicted_lines`` are the annotation's own — they were
+        matched to detected peaks, so a fit anchored on them cannot wander onto
+        an analyte the search never considered. Synthetic lines stand in when
+        they are missing or truncated, the same fallback ``measure_multiplet``
+        already uses; a singlet falls back to its single expected position.
+
+        Returns ``(ppms, from_db)``. ``from_db`` is True for the synthetic
+        fallback, and it matters: those positions ARE the database J laid out
+        on the axis, so whatever spacing the fit then finds among them recovers
+        that J by construction. Perturbing the database J by 4 Hz moves the
+        fitted J by 3.99 Hz on that path and by 0.00 Hz on the other. A J
+        measured that way is not evidence about the J it came from, and must
+        not be aggregated as though it were.
+        """
+        pred = [float(l['ppm']) for l in (r.get('predicted_lines') or ())
+                if isinstance(l, dict) and l.get('ppm') is not None]
+        # A multiplicity the table does not know — a singlet among them — falls
+        # back to what the predicted lines themselves say, never to the generic
+        # two, which would have the fit hunt a doublet that was never claimed.
+        n_exp = expected_line_count(r.get('type') or r.get('multiplicity'),
+                                    fallback=len(pred) or 1)
+        if len(pred) >= max(2, n_exp):
+            return pred, False
+        centre = float(r.get('peak_ppm') or r.get('db_ppm') or 0.0)
+        j_db = parse_first_j(r.get('j_coupling') or '')
+        if n_exp >= 2 and j_db:
+            syn = synthetic_lines(centre, j_db, n_exp, mhz)
+            if syn:
+                return [float(l['ppm']) for l in syn], True
+        return (pred or ([centre] if centre else [])), False
+
     def _measure_results_per_sample(self, results, mhz):
         """Write each result's per-sample reading onto the result row.
 
         Annotation decides on the mean spectrum, which cannot say in how many
-        samples a signal is actually there. Detection already knows — it runs
-        per sample — so this reads what it recorded rather than re-measuring:
-        a signal can never be present here and absent from the peak list.
+        samples a signal is actually there, and whose lines are apices of a
+        pointwise maximum that no sample actually is. So each sample is read on
+        its own: the multiplet is fitted as a unit against the apices that
+        sample really has, one apex per line, and δ and J come out of that
+        assignment.
+
+        The signal's own δ and J are then the consensus of the samples that
+        measured them — stored, not yet applied, so the scoring path can say
+        explicitly where its numbers came from.
 
         Blanks and excluded samples are left out, the same selection detection
         used. Returns how many results were measured.
         """
         peaks = getattr(self.peak_stage, 'peaks', None) or []
-        if not peaks:
+        _ppm_axis = getattr(self.app, 'ppm', None)
+        _all_int = getattr(self.app, 'all_intensities', None)
+        if not peaks or _ppm_axis is None or _all_int is None:
             return 0
         n_samples = (sample_count(peaks)
                      or len(getattr(self.app, 'samples_info', ()) or ()))
@@ -390,26 +433,55 @@ class _AnnotationSearchMixin:
             getattr(self.app, 'samples_info', None), n_samples)
         pk_by_rank = {p.get('rank'): p for p in peaks}
 
+        # The thresholds are the annotation's own, so the fit calls a spacing
+        # unacceptable exactly when the score would, and the drift it allows is
+        # the analyst's own Tolerance (ppm).
+        _params = dict(SCORING_DEFAULTS)
+        try:
+            _params['dppm_gold'] = float(self.tolerance_var.get())
+        except Exception:
+            pass
+        _params.update(getattr(self, '_annotation_params', None) or {})
+
+        # A sample without this analyte must yield no apices, not noise ones —
+        # the same bar detection used when it decided a peak was real there.
+        _noise = float(getattr(self.peak_stage, 'noise_std', 0.0) or 0.0)
+        try:
+            _min_snr = float(self.peak_stage.min_snr_var.get())
+        except Exception:
+            _min_snr = 3.0
+        _floor = _noise * _min_snr
+
         n = 0
         for r in results:
             line_pks = multiplet_line_peaks(r, pk_by_rank)
             if not line_pks:
                 continue
+            _exp, _from_db = self._expected_line_ppms(r, mhz)
+            if not _exp:
+                continue
+            _fits = fit_across_samples(
+                _exp, _ppm_axis, _all_int, included=incl, field_mhz=mhz,
+                dj_bad_hz=_params['dj_bad_hz'], dj_gold_hz=_params['dj_gold_hz'],
+                max_drift_ppm=_params['dppm_gold'], noise_floor=_floor)
             _ref = r.get('peak_ppm') or r.get('db_ppm')
             out = signal_across_samples(
-                line_pks, included=incl,
+                line_pks, fits=_fits, included=incl,
                 db_ppm=r.get('db_ppm'),
                 db_j_hz=parse_first_j(r.get('j_coupling') or ''),
-                field_mhz=mhz)
+                field_mhz=mhz, n_lines=len(_exp), j_from_db=_from_db)
             # The display shift travels with the reading. The across-samples
             # view is a view: it renders these rows, it does not re-derive them.
-            _shifts = alignment_shifts(line_pks, included=incl, reference=_ref)
+            _shifts = alignment_shifts(out['per_sample'], reference=_ref)
             for _row in out['per_sample']:
                 _row['align_shift_ppm'] = _shifts.get(_row['sample_idx'])
             r['per_sample']    = out['per_sample']
             r['n_present']     = out['n_present']
             r['n_included']    = out['n_included']
             r['ppm_spread']    = out['ppm_spread']
+            r['per_sample_consensus'] = {
+                k: out[k] for k in ('ppm_centre', 'ppm_diff', 'ppm_n', 'ppm_sd',
+                                    'observed_j_hz', 'delta_j_hz', 'j_n', 'j_sd')}
             n += 1
         return n
 
