@@ -696,6 +696,10 @@ class AnnotationResultsWindow:
                 # them and measures nothing of its own, so what it shows and
                 # what the pipeline decided cannot drift apart.
                 'per_sample':      r.get('per_sample'),
+                # Without this the scoring path's apply_per_sample_consensus
+                # reads None and returns None — the samples' own ΔJ written,
+                # wired in, and silently never applied.
+                'per_sample_consensus': r.get('per_sample_consensus'),
                 'n_present':       r.get('n_present'),
                 'n_included':      r.get('n_included'),
                 'ppm_spread':      r.get('ppm_spread'),

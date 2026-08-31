@@ -324,5 +324,16 @@ def test_matched_peaks_carries_the_per_sample_counts():
                             else ARW.__init__)
     if 'n_present' not in src:                 # built elsewhere in the class
         src = inspect.getsource(ARW)
-    for key in ("'n_present'", "'n_included'"):
+    for key in ("'n_present'", "'n_included'", "'per_sample_consensus'"):
         assert key in src, f'{key} missing from the matched_peaks copy'
+
+
+def test_the_consensus_reaches_the_scoring_path():
+    """apply_per_sample_consensus reads mp['per_sample_consensus']. Leaving it
+    out of the whitelist makes the call a no-op that raises nothing: the ΔJ the
+    samples measured is computed, stored, wired in, and never applied."""
+    import inspect
+    from processing.annotation_scoring import apply_per_sample_consensus
+    reader = inspect.getsource(apply_per_sample_consensus)
+    assert "mp.get('per_sample_consensus')" in reader
+    assert "'per_sample_consensus'" in inspect.getsource(ARW)
