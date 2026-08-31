@@ -95,7 +95,8 @@ from ._quant_helpers import (
     bootstrap_fraction_ci as _bootstrap_fraction_ci,
     jr_pointwise_multiplet_area, jr_analyte_fraction, _anchor_lines_complete,
     is_unquantified_conc, multiplet_tier_penalty, multiplet_sdj_missing,
-    NQ_REASON_LOST_COMPETITION, NQ_REASON_ZERO_NAN,
+    NQ_REASON_LOST_COMPETITION, NQ_REASON_NO_SDJ,
+    NQ_REASON_UNVERIFIED_MULTIPLET, NQ_REASON_ZERO_NAN,
 )
 from processing.multiplet_line_selector import (
     select_clean_lines, matched_line_ranks, line_match_tolerance,
@@ -184,6 +185,14 @@ class _QuantCompMixin:
         _fs_stage   = (getattr(self.app, 'stages', {}) or {}).get('fullspectrum_mcr')
         _fs_regions = getattr(_fs_stage, '_mcr_regions', []) if _fs_stage else []
         _fs_mode    = bool(_fs_regions)
+        # Withdrawn before the competition, not beaten in it. Declared here so
+        # the not-quantified pass can tell the two apart whichever branch below
+        # ran — an empty set simply means nothing was withdrawn.
+        _blocked_no_sdj: set = set()
+        _blocked_unverified: set = set()
+        # Who actually entered the competition. Empty when the branch that runs
+        # one does not — an analyte cannot then be told it was outscored.
+        _competed_mids: set = set()
 
         if not _fs_mode:
             if not hasattr(self.annotation_stage, '_last_results_args') or \
@@ -903,9 +912,6 @@ class _QuantCompMixin:
             # quantifying it would fabricate a tier from unknown J (CLAUDE.md:
             # never silence data warnings). Such multiplet hits are blocked below
             # (singlets need no J and are unaffected); the blocked set is surfaced.
-            _blocked_no_sdj: set = set()
-            _blocked_unverified: set = set()
-
             # Annotation-assigned (metabolite, peak_rank) pairs — exactly the
             # peaks the Annotation Results window shows for each metabolite.
             # Quantification must compete ONLY on these; stray candidate hits the
@@ -963,6 +969,7 @@ class _QuantCompMixin:
                     continue
                 _all_non_bad.append((_compete_key(_h, _h_mid), _h_mid, _h))
             _all_non_bad.sort(key=lambda x: x[0])
+            _competed_mids = {str(_m) for _, _m, _ in _all_non_bad}
 
             if _blocked_unverified:
                 print(f'[Quant] {len(_blocked_unverified)} multiplet(s) withdrawn '
@@ -2659,6 +2666,27 @@ class _QuantCompMixin:
                 if any(mp.get('peak_rank') in _ambiguous_ranks
                        for mp in m.get('matched_peaks', []))
             }
+            def _nq_reason(mid):
+                """Why this metabolite has no number, in its own words.
+
+                A multiplet whose lines were not all found never entered the
+                competition, and neither did one whose J quality was missing.
+                Telling either of them they were outscored hides the only
+                actionable difference: those come back if detection resolves
+                the lines, a metabolite beaten by a rival does not.
+                """
+                if mid in _ambiguous_mids:
+                    return 'Ambiguous annotation - manual confirmation required'
+                # A metabolite can have one signal withdrawn and another that
+                # competed and lost; then it did lose, and saying otherwise
+                # would send the analyst looking at the wrong signal.
+                if mid not in _competed_mids:
+                    if mid in _blocked_unverified:
+                        return NQ_REASON_UNVERIFIED_MULTIPLET
+                    if mid in _blocked_no_sdj:
+                        return NQ_REASON_NO_SDJ
+                return NQ_REASON_LOST_COMPETITION
+
             _n_lost = 0
             for _lost_mid in sorted(good_met_ids):
                 if str(_lost_mid) in _quantified_mids:
@@ -2675,10 +2703,7 @@ class _QuantCompMixin:
                     'snr':               0.0,
                     'status':            'n.q.',
                     '_confidence':       0,
-                    '_status_reasons':   (
-                        ['Ambiguous annotation - manual confirmation required']
-                        if str(_lost_mid) in _ambiguous_mids
-                        else [NQ_REASON_LOST_COMPETITION]),
+                    '_status_reasons':   [_nq_reason(str(_lost_mid))],
                     '_peak':             None,
                     '_areas_per_sample': [],
                     '_concs_per_sample': [],

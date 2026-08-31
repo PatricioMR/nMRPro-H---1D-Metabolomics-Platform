@@ -29,6 +29,17 @@ from processing.integration import (
 NQ_REASON_LOST_COMPETITION = (
     'Não quantificado: perdeu a competição de picos — todos os picos atribuídos '
     'foram quantificados para metabolitos de maior score.')
+# Retirado ANTES de competir, não derrotado nele. Dizer "perdeu a competição" a
+# quem nunca competiu esconde a única coisa acionável: um multipleto cujo J não
+# foi verificado volta se a deteção o resolver, um derrotado por rival não.
+NQ_REASON_UNVERIFIED_MULTIPLET = (
+    'Não quantificado: multipleto não verificado — nem todas as linhas '
+    'esperadas foram encontradas, portanto o J nunca foi medido. Não competiu '
+    'por pico nenhum.')
+NQ_REASON_NO_SDJ = (
+    'Não quantificado: qualidade de J (s_dj) indisponível — reabra a janela de '
+    'Annotation Results para recalcular os scores antes de quantificar. Não '
+    'competiu por pico nenhum.')
 NQ_REASON_ZERO_NAN = (
     'Não quantificado: concentração 0/NaN em todas as amostras — sem sinal acima '
     'do limite de deteção.')
