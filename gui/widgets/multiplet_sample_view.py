@@ -195,12 +195,12 @@ class MultipletSampleView:
                 col=arr[:, s].astype(float),
                 present=bool(r.get('present')),
                 partial=bool(r.get('partial')),
+                collapsed=bool(r.get('collapsed')),
                 n_found=r.get('n_found'),
                 n_lines=r.get('n_lines'),
                 ppm_centre=centre,
                 j_obs=j_obs,
                 area=r.get('area'),
-                collapsed=bool(r.get('collapsed')),
                 shift=r.get('align_shift_ppm'),
             ))
 
@@ -334,7 +334,12 @@ class MultipletSampleView:
                 # a second one that could contradict it.
                 # All lines, some, or none. A partial reading still carries
                 # a δ and a J, measured from the lines that were found.
-                if r['present']:
+                if r['collapsed']:
+                    # All the lines may be there, but the apex search put two of
+                    # them in one place, so there is no spacing left to measure.
+                    # Saying so beats an unexplained blank row.
+                    ann_txt, tag = '⚠ folded', 'unverified'
+                elif r['present']:
                     ann_txt, tag = '✓', 'present'
                 elif r['partial']:
                     ann_txt = f"{r['n_found']}/{r['n_lines']}"

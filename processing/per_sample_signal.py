@@ -52,20 +52,30 @@ def _min_gap(values):
     return min((srt[i + 1] - srt[i] for i in range(len(srt) - 1)), default=None)
 
 
-def _lines_collapsed(line_peaks, sample_ppms) -> bool:
-    """Did the per-sample apex search fold this multiplet onto one line?
+def _lines_collapsed(line_peaks, found) -> bool:
+    """Did the per-sample apex search fold two of these lines onto one?
+
+    Each consecutive pair of lines FOUND is checked against the spacing its
+    indices call for: lines one apart should sit one master gap apart, lines
+    two apart should sit two. Testing the raw minimum gap instead only worked
+    for complete readings, which is how a partial reading whose two lines had
+    folded together came to be reported as a measurement.
 
     Compared against the multiplet's own master spacing rather than a fixed Hz:
     what counts as collapsed for a 3 Hz doublet is not what counts for a 12 Hz
     one.
     """
-    if len(sample_ppms) < 2:
+    if len(found) < 2:
         return False
     master = _min_gap(pk.get('ppm', 0.0) for pk in line_peaks)
-    here = _min_gap(sample_ppms)
-    if not master or master <= 0 or here is None:
+    if not master or master <= 0:
         return False
-    return here < COLLAPSE_FRACTION * master
+    srt = sorted(found)
+    for (i1, p1), (i2, p2) in zip(srt, srt[1:]):
+        expected = max(1, i2 - i1) * master
+        if abs(p2 - p1) < COLLAPSE_FRACTION * expected:
+            return True
+    return False
 
 
 def sample_count(line_peaks) -> int:
@@ -176,7 +186,7 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
     # though this sample had produced it.
     found = detected_lines(lines, sample_idx)
     ppms = [p for _, p in found]
-    collapsed = _lines_collapsed(lines, ppms) if len(ppms) == len(lines) else False
+    collapsed = _lines_collapsed(lines, found)
     centre = float(np.mean(ppms)) if (ppms and not collapsed) else None
 
     area = 0.0

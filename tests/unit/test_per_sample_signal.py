@@ -380,3 +380,50 @@ class TestPartialMultiplets:
         from processing.per_sample_signal import detected_lines
         lines = self._triplet([True, False, True])
         assert [i for i, _ in detected_lines(lines, 0)] == [0, 2]
+
+
+class TestCollapseIsCheckedOnWhateverWasFound:
+    """The check used to run only on complete readings, so a partial one whose
+    two lines had folded together was reported as a measurement — 257 of them
+    on the reference study — while complete readings that folded showed a tick
+    and an empty row with nothing to explain it.
+    """
+
+    def _triplet(self, positions, present=(True, True, True), n=2):
+        """Three lines; `positions` is where this sample recorded each one."""
+        master = [1.47 - D, 1.47, 1.47 + D]
+        return [{'ppm': m, 'ppm_per_sample': [p] * n,
+                 'aligned_per_sample': [q] * n, 'area_per_sample': [1.0] * n}
+                for m, p, q in zip(master, positions, present)]
+
+    def test_a_partial_reading_that_folded_is_refused(self):
+        from processing.per_sample_signal import signal_in_sample
+        lines = self._triplet([1.47 - D, 1.47 - D, 1.47 + D],
+                              present=(True, True, False))
+        r = signal_in_sample(lines, 0, field_mhz=MHZ)
+        assert r['collapsed'] is True
+        assert r['j_obs_hz'] is None and r['ppm_centre'] is None
+
+    def test_outer_lines_two_indices_apart_are_not_a_collapse(self):
+        """They sit 2J apart, which is what their indices call for."""
+        from processing.per_sample_signal import signal_in_sample
+        lines = self._triplet([1.47 - D, 1.47, 1.47 + D],
+                              present=(True, False, True))
+        r = signal_in_sample(lines, 0, db_j_hz=J, field_mhz=MHZ)
+        assert r['collapsed'] is False
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+
+    def test_a_complete_reading_that_folded_is_still_refused(self):
+        from processing.per_sample_signal import signal_in_sample
+        lines = self._triplet([1.47, 1.47, 1.47 + D])
+        r = signal_in_sample(lines, 0, field_mhz=MHZ)
+        assert r['present'] is True and r['collapsed'] is True
+        assert r['j_obs_hz'] is None
+
+    def test_a_clean_complete_reading_measures(self):
+        from processing.per_sample_signal import signal_in_sample
+        lines = self._triplet([1.47 - D, 1.47, 1.47 + D])
+        r = signal_in_sample(lines, 0, db_j_hz=J, field_mhz=MHZ)
+        assert r['collapsed'] is False
+        assert r['j_obs_hz'] == pytest.approx(J, abs=1e-6)
+        assert r['ppm_centre'] == pytest.approx(1.47)
