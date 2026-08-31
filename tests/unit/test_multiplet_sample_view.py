@@ -82,11 +82,31 @@ def test_a_project_without_readings_says_so():
     assert 'annotation search again' in src
 
 
-def test_the_table_has_a_spread_column_for_each_delta():
+def test_each_measured_quantity_is_followed_by_its_spread():
     from gui.widgets.multiplet_sample_view import COLS
     keys = [c[0] for c in COLS]
-    assert keys.index('dppm_sd') == keys.index('dppm') + 1
-    assert keys.index('dj_sd') == keys.index('dj') + 1
+    assert keys.index('ppm_dp') == keys.index('ppm') + 1
+    assert keys.index('jobs_dp') == keys.index('jobs') + 1
+
+
+def test_the_table_reports_measured_values_not_differences():
+    """The per-sample columns carry what was measured in that sample — its δ
+    and its J. The only Δ is the signal's own, decided by the search."""
+    from gui.widgets.multiplet_sample_view import COLS
+    heads = {c[0]: c[1] for c in COLS}
+    assert heads['ppm'] == 'δ (ppm)'
+    assert heads['jobs'] == 'J (Hz)'
+    assert 'signal' in heads['dj']
+    assert 'dppm' not in heads
+
+
+def test_the_signal_delta_j_is_read_from_the_search():
+    import inspect
+    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
+    src = inspect.getsource(V._populate)
+    assert "self.mp_ref.get('delta_j_hz')" in src
+    # Not recomputed from the per-sample J.
+    assert "- self.db_j" not in src
 
 
 def test_the_row_spread_is_distance_from_the_sample_own_group():
@@ -109,12 +129,12 @@ def test_the_group_summary_reports_that_group_spread():
     assert '_cv(djs)' not in src
 
 
-def test_delta_columns_use_the_difference_symbol():
-    """Delta is the difference; lowercase delta is the shift itself."""
+def test_the_symbols_say_which_quantity_is_which():
+    """Δ is the difference; lowercase δ is the chemical shift itself."""
     from gui.widgets.multiplet_sample_view import COLS
     heads = {c[0]: c[1] for c in COLS}
-    assert heads['dppm'].startswith('Δ')
-    assert heads['dj'].startswith('Δ')
+    assert heads['ppm'].startswith('δ')      # δ — the shift
+    assert heads['dj'].startswith('Δ')       # Δ — the difference
 
 
 

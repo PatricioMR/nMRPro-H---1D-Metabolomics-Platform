@@ -37,12 +37,12 @@ from matplotlib.backends.backend_tkagg import (
 COLS = [
     ('sample',   'Sample',       150, tk.W),
     ('group',    'Group',         80, tk.CENTER),
-    ('present',  'Detected',      80, tk.CENTER),
-    ('dppm',     'Δppm',          85, tk.CENTER),
-    ('dppm_sd',  'DP %',          65, tk.CENTER),
-    ('jobs',     'J_obs (Hz)',    85, tk.CENTER),
-    ('dj',       'ΔJ (Hz)',       75, tk.CENTER),
-    ('dj_sd',    'DP %',          65, tk.CENTER),
+    ('present',  'Detected',      75, tk.CENTER),
+    ('ppm',      'δ (ppm)',       90, tk.CENTER),
+    ('ppm_dp',   'DP %',          65, tk.CENTER),
+    ('jobs',     'J (Hz)',        75, tk.CENTER),
+    ('jobs_dp',  'DP %',          65, tk.CENTER),
+    ('dj',       'ΔJ signal',     80, tk.CENTER),
     ('area',     'Area',          95, tk.CENTER),
 ]
 
@@ -195,10 +195,7 @@ class MultipletSampleView:
                 col=arr[:, s].astype(float),
                 present=bool(r.get('present')),
                 ppm_centre=centre,
-                dppm=(centre - self.centre if centre is not None else None),
                 j_obs=j_obs,
-                dj=(j_obs - self.db_j
-                    if (j_obs is not None and self.db_j) else None),
                 area=r.get('area'),
                 collapsed=bool(r.get('collapsed')),
                 shift=r.get('align_shift_ppm'),
@@ -310,10 +307,17 @@ class MultipletSampleView:
         ppm_mean = group_means(present_rows, 'ppm_centre')
         j_mean = group_means(present_rows, 'j_obs')
 
+        # One number for the whole signal: the ΔJ the annotation search decided
+        # on. It repeats down the column because it belongs to the signal, not
+        # to any sample — it is here so the measured J beside it can be read
+        # against what the pipeline concluded.
+        _sig_dj = self.mp_ref.get('delta_j_hz')
+        _sig_djtxt = f'{float(_sig_dj):+.2f}' if _sig_dj is not None else '—'
+
         for r in self._rows:
             jtxt = f"{r['j_obs']:.2f}" if r['j_obs'] is not None else '—'
-            djtxt = f"{r['dj']:+.2f}" if r['dj'] is not None else '—'
-            dptxt = f"{r['dppm']:+.4f}" if r['dppm'] is not None else '—'
+            pptxt = (f"{r['ppm_centre']:.4f}"
+                     if r['ppm_centre'] is not None else '—')
             if r['type'] == 'BLK' or r['excluded']:
                 ann_txt, tag = '—', 'blk'
             else:
@@ -331,9 +335,9 @@ class MultipletSampleView:
             self._tree.insert(
                 '', 'end',
                 values=(r['name'], r['group'], ann_txt,
-                        dptxt, f'{d_ppm:+.3f}' if d_ppm is not None else '—',
-                        jtxt, djtxt,
-                        f'{d_j:+.2f}' if d_j is not None else '—',
+                        pptxt, f'{d_ppm:+.3f}' if d_ppm is not None else '—',
+                        jtxt, f'{d_j:+.2f}' if d_j is not None else '—',
+                        _sig_djtxt if tag != 'blk' else '—',
                         f"{r['area']:.3e}" if r['area'] is not None else '—'),
                 tags=(tag,))
         self._populate_summary()
@@ -365,10 +369,9 @@ class MultipletSampleView:
         """One closing row per group: the mean each sample above is measured
         against, and how tightly that group holds together.
 
-        The DP % cells carry the group's own spread here — the coefficient of
-        variation of the measured δ and J — while the same column above carries
-        each sample's distance from this mean. A mean's distance from itself is
-        zero and would say nothing.
+        The DP % cells carry the group's own coefficient of variation here,
+        while the same column above carries each sample's distance from this
+        mean. A mean's distance from itself is zero and would say nothing.
         """
         rows = [r for r in self._counted_rows() if r['present']]
         if not rows:
@@ -386,16 +389,14 @@ class MultipletSampleView:
 
         for grp, grows in by_group.items():
             centres = [r['ppm_centre'] for r in grows if r['ppm_centre'] is not None]
-            dppm = [r['dppm'] for r in grows if r['dppm'] is not None]
             jobs = [r['j_obs'] for r in grows if r['j_obs'] is not None]
-            djs = [r['dj'] for r in grows if r['dj'] is not None]
             areas = [r['area'] for r in grows if r['area'] is not None]
             self._tree.insert(
                 '', 'end',
                 values=(f'Mean · n = {len(grows)}', grp, '',
-                        _mean(dppm, '+.4f'), _cv(centres),
-                        _mean(jobs, '.2f'), _mean(djs, '+.2f'), _cv(jobs),
-                        _mean(areas, '.3e')),
+                        _mean(centres, '.4f'), _cv(centres),
+                        _mean(jobs, '.2f'), _cv(jobs),
+                        '', _mean(areas, '.3e')),
                 tags=('summary',))
 
     def _draw_overlay(self):
