@@ -874,6 +874,7 @@ class _QuantCompMixin:
                     'ppm_diff':     h.get('ppm_diff', h.get('ppm_error')),
                     'n_found':      _mp.get('_n_found_lines'),
                     'n_expected':   _mp.get('_n_exp_lines'),
+                    'intensity_agreement': _mp.get('intensity_agreement'),
                     'cosine':       _mp.get('_s_cosine'),
                     'manual_quality': _manual,
                     'quality':      _effective_quality(h),

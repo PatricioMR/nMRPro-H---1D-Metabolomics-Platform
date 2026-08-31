@@ -31,7 +31,7 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    candidate_key, synthetic_lines,
+    candidate_key, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
@@ -94,6 +94,7 @@ def _mcr_candidate(r):
         'ppm_diff':     r.get('ppm_diff'),
         'n_found':      r.get('_n_found_lines'),
         'n_expected':   r.get('_n_exp_lines'),
+        'intensity_agreement': r.get('intensity_agreement'),
         'cosine':       r.get('_s_cosine'),
         'quality':      r.get('annotation_quality'),
         'score':        r.get('composite_score', 0.0),
@@ -486,6 +487,21 @@ class _AnnotationSearchMixin:
             r['n_present']     = out['n_present']
             r['n_included']    = out['n_included']
             r['ppm_spread']    = out['ppm_spread']
+            # Line intensities, agreed across the samples that measured them.
+            # A triplet is 1:2:1 by the binomial theorem, so this is evidence
+            # about the claim that position cannot give — and the median over
+            # samples is what keeps one overlapped apex from deciding it.
+            _ags = []
+            for _s_i, _f in _fits.items():
+                if not _f.get('fitted'):
+                    continue
+                _a = pascal_agreement(_f.get('ranks'), _f.get('heights'),
+                                      r.get('type') or r.get('multiplicity'))
+                if _a is not None:
+                    _ags.append(_a)
+            r['intensity_agreement'] = (float(np.median(_ags)) if _ags else None)
+            r['intensity_n'] = len(_ags)
+
             r['per_sample_consensus'] = {
                 k: out[k] for k in ('ppm_centre', 'ppm_diff', 'ppm_n', 'ppm_sd',
                                     'observed_j_hz', 'delta_j_hz', 'j_n', 'j_sd')}

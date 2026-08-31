@@ -120,8 +120,9 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     """
     exp = sorted(float(p) for p in (expected_ppms or ()))
     cands = _cap([(float(p), float(h)) for p, h in (candidates or ())])
-    blank = dict(ppms=[], ranks=[], residual_hz=None, drift_ppm=None,
-                 n_alternatives=0, fitted=False, n_candidates=len(cands))
+    blank = dict(ppms=[], ranks=[], heights=[], residual_hz=None,
+                 drift_ppm=None, n_alternatives=0, fitted=False,
+                 n_candidates=len(cands))
     if not exp or not cands or field_mhz <= 0:
         return blank
 
@@ -134,7 +135,9 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
         if not within:
             return blank
         within.sort()
-        return dict(ppms=[within[0][1]], ranks=[0], residual_hz=None,
+        _h = dict((p, h) for p, h in cands)
+        return dict(ppms=[within[0][1]], ranks=[0],
+                    heights=[_h.get(within[0][1], 0.0)], residual_hz=None,
                     drift_ppm=float(within[0][0]), fitted=True,
                     n_alternatives=len(within) - 1, n_candidates=len(cands))
 
@@ -169,7 +172,12 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     alts = sum(1 for s in pool
                if s[0] == k_b and s[4] != best[4]
                and abs(s[1] - res_b) <= float(dj_gold_hz))
+    # The apex heights come along: the line intensities of a multiplicity are
+    # fixed by the binomial theorem, so how tall the chosen apices are is
+    # evidence about the claim that position alone cannot give.
+    _h = dict((p, h) for p, h in cands)
     return dict(ppms=list(best[4]), ranks=list(best[3]),
+                heights=[float(_h.get(p, 0.0)) for p in best[4]],
                 residual_hz=float(res_b), drift_ppm=float(best[2]),
                 n_alternatives=int(alts), fitted=bool(ok),
                 n_candidates=len(cands))

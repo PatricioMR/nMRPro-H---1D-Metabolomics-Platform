@@ -700,6 +700,8 @@ class AnnotationResultsWindow:
                 # reads None and returns None — the samples' own ΔJ written,
                 # wired in, and silently never applied.
                 'per_sample_consensus': r.get('per_sample_consensus'),
+                'intensity_agreement': r.get('intensity_agreement'),
+                'intensity_n':     r.get('intensity_n'),
                 'n_present':       r.get('n_present'),
                 'n_included':      r.get('n_included'),
                 'ppm_spread':      r.get('ppm_spread'),

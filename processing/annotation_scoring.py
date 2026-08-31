@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import Iterable, Sequence
+from typing import Iterable, NamedTuple, Sequence
 
 import numpy as np
 
@@ -47,6 +47,43 @@ SINGLET_TYPES_STRICT = frozenset({'s', 'singlet', ''})
 # HMDB writes p/h/hept. Both must resolve, or the expected line count silently
 # falls back to 2 and a quintet is judged complete once two of its five lines
 # are found — with J then measured from an incomplete set.
+# Relative line intensities of each multiplicity — Pascal's triangle for the
+# simple ones, and the flat or paired patterns the compound ones show. Two
+# copies of this lived in the GUI (gui/notation/multiplet_scorer and
+# gui/stages/j_resolve_stage) and disagreed on which keys existed; the
+# multiplicity tables belong together, next to LINE_COUNTS, so a name known to
+# one is known to both.
+#
+# Normalised to max = 1 on read, so a pattern can be compared with observed
+# apex heights scaled the same way.
+LINE_INTENSITIES: dict[str, tuple[float, ...]] = {
+    'd': (1, 1), 'doublet': (1, 1),
+    't': (1, 2, 1), 'triplet': (1, 2, 1),
+    'q': (1, 3, 3, 1), 'quartet': (1, 3, 3, 1),
+    'p': (1, 4, 6, 4, 1), 'pentet': (1, 4, 6, 4, 1),
+    'quint': (1, 4, 6, 4, 1), 'quintet': (1, 4, 6, 4, 1),
+    'quin': (1, 4, 6, 4, 1),
+    'h': (1, 5, 10, 10, 5, 1), 'sext': (1, 5, 10, 10, 5, 1),
+    'sextet': (1, 5, 10, 10, 5, 1),
+    'sept': (1, 6, 15, 20, 15, 6, 1), 'septet': (1, 6, 15, 20, 15, 6, 1),
+    'hept': (1, 6, 15, 20, 15, 6, 1), 'heptet': (1, 6, 15, 20, 15, 6, 1),
+    # Compound couplings: every line is one combination of the couplings, so
+    # they are equal unless two combinations coincide.
+    'dd': (1, 1, 1, 1),
+    'ddd': (1, 1, 1, 1, 1, 1, 1, 1),
+    'dt': (1, 1, 2, 2, 1, 1),
+    'td': (1, 2, 1, 1, 2, 1),
+    'dq': (1, 1, 3, 3, 3, 3, 1, 1),
+    'tt': (1, 2, 1, 2, 4, 2, 1, 2, 1),
+    'tq': (1, 3, 3, 1, 2, 6, 6, 2, 1, 3, 3, 1),
+}
+
+# Height disagreement below this is a tie. Apex heights are the noisiest
+# evidence here — a line sitting on a neighbouring analyte reads tall through
+# no fault of the assignment — so the band is looser than the cosine's.
+PASCAL_TIE = 0.10
+
+
 LINE_COUNTS: dict[str, int] = {
     'd': 2, 'doublet': 2, 't': 3, 'triplet': 3,
     'q': 4, 'quartet': 4,
@@ -500,6 +537,59 @@ def ppm_band(ppm_diff, band_ppm: float = PPM_BAND_PPM) -> int:
     return int(abs(float(ppm_diff)) / float(band_ppm))
 
 
+def pascal_agreement(ranks, heights, mult) -> float | None:
+    """How well the observed line heights follow the multiplicity's own pattern.
+
+    A triplet is 1:2:1 by the binomial theorem, not by measurement, so three
+    apices of equal height are evidence against a triplet claim however well
+    their spacing fits. That is evidence no other term in the ranking carries:
+    ΔJ and Δppm both come from position.
+
+    ``ranks`` says which expected line each height belongs to, so a partial
+    multiplet is judged on the lines it actually has — the outer pair of a
+    triplet is 1:1 and must not be scored against 1:2:1.
+
+    Returns 0-1, or None when there is nothing to judge: an unknown
+    multiplicity, fewer than two lines, or heights that are missing or all
+    zero. None is not disagreement, and the caller must not read it as such.
+
+    Heights are compared after scaling each set to its own maximum, so this
+    says nothing about concentration — only about shape.
+    """
+    pattern = LINE_INTENSITIES.get(normalize_mult(mult))
+    if not pattern:
+        return None
+    rs = list(ranks or ())
+    hs = list(heights or ())
+    if len(rs) != len(hs) or len(rs) < 2:
+        return None
+    try:
+        obs = [float(h) for h in hs]
+    except (TypeError, ValueError):
+        return None
+    if any(not np.isfinite(o) or o < 0 for o in obs):
+        return None
+    if not all(0 <= int(r) < len(pattern) for r in rs):
+        return None
+    exp = [float(pattern[int(r)]) for r in rs]
+    o_max, e_max = max(obs), max(exp)
+    if o_max <= 0 or e_max <= 0:
+        return None
+    err = [abs(o / o_max - e / e_max) for o, e in zip(obs, exp)]
+    return float(max(0.0, 1.0 - sum(err) / len(err)))
+
+
+def pascal_band(agreement, tie: float = PASCAL_TIE) -> int:
+    """Height agreement bucketed; unjudgeable sorts last.
+
+    Banded for the same reason ΔJ is: two candidates whose heights agree to
+    within the noise of a single apex must not be separated by it.
+    """
+    if agreement is None or tie <= 0:
+        return _BIG_BAND
+    return int((1.0 - float(agreement)) / float(tie))
+
+
 def is_competitor(cand) -> bool:
     """True when this candidate may compete for a peak at all.
 
@@ -521,12 +611,30 @@ def is_competitor(cand) -> bool:
                           cand.get('n_expected')) != TIER_UNCONFIRMED_MULTIPLET
 
 
+class CandidateKey(NamedTuple):
+    """The ranking key, with its criteria named.
+
+    A plain tuple compared the same way, but ``rank_candidates`` read it by
+    position — ``k[:5]``, ``k[5]``, ``k[6]`` — so inserting a criterion
+    silently made it compare the cosine against the score's tie width. Named
+    fields cost nothing at comparison time and make that impossible.
+    """
+    manual: int
+    tier: int
+    dj: int
+    ppm: int
+    quality: int
+    intensity: int
+    cosine: float
+    score: float
+
+
 def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     """Lexicographic ranking key for one candidate (lower = better).
 
     ``cand`` keys used: ``multiplicity``/``type``, ``delta_j_hz``, ``ppm_diff``,
-    ``n_found``, ``n_expected``, ``cosine``, ``manual_quality``, ``quality``,
-    ``score``.
+    ``n_found``, ``n_expected``, ``intensity_agreement``, ``cosine``,
+    ``manual_quality``, ``quality``, ``score``.
 
     Order of the evidence, strongest first:
 
@@ -539,9 +647,17 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     3. ΔJ band, then Δppm band — see the module notes on why this order.
     4. annotation quality — a candidate the annotation pipeline did not accept
        as Good must not beat one it did on a similarity tie-break.
-    5. cosine — fingerprint similarity, the only orthogonal evidence measured
+    5. line intensities — a triplet is 1:2:1 by the binomial theorem, so three
+       apices of equal height argue against the claim however well their
+       spacing fits. Position gave ΔJ and Δppm; this is the one thing height
+       says. It sits below them because an apex sharing a shoulder with a
+       neighbouring analyte reads tall through no fault of the assignment, and
+       above the cosine because it judges THIS signal rather than the
+       metabolite's fingerprint as a whole. Unjudgeable sorts last, and a
+       candidate that cannot be judged is not thereby wrong.
+    6. cosine — fingerprint similarity, the only orthogonal evidence measured
        to separate contests the criteria above leave tied.
-    6. the annotation score — last resort. It is a Δppm-weighted blend, so it
+    7. the annotation score — last resort. It is a Δppm-weighted blend, so it
        must never outrank the criteria above; it only orders what nothing else
        can.
     """
@@ -549,15 +665,16 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     quality = str(cand.get('quality') or
                   cand.get('annotation_quality') or '').lower().strip()
     mult = cand.get('multiplicity') or cand.get('type')
-    return (
-        0 if manual == 'good' else 1,
-        candidate_tier(mult, cand.get('delta_j_hz'),
-                       cand.get('n_found'), cand.get('n_expected')),
-        dj_band(cand.get('delta_j_hz'), dj_gold_hz),
-        ppm_band(cand.get('ppm_diff'), band_ppm),
-        0 if quality == 'good' else 1,
-        -float(cand.get('cosine') or 0.0),
-        -float(cand.get('score') or cand.get('composite_score') or 0.0),
+    return CandidateKey(
+        manual=0 if manual == 'good' else 1,
+        tier=candidate_tier(mult, cand.get('delta_j_hz'),
+                            cand.get('n_found'), cand.get('n_expected')),
+        dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz),
+        ppm=ppm_band(cand.get('ppm_diff'), band_ppm),
+        quality=0 if quality == 'good' else 1,
+        intensity=pascal_band(cand.get('intensity_agreement')),
+        cosine=-float(cand.get('cosine') or 0.0),
+        score=-float(cand.get('score') or cand.get('composite_score') or 0.0),
     )
 
 
@@ -570,8 +687,9 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
     verified one and never creates an ambiguity of its own.
 
     Returns ``(ordered, ambiguous)``. ``ambiguous`` is True when the top two are
-    indistinguishable on every criterion — same manual mark, same tier, same ΔJ
-    band, same Δppm band, and cosine within ``COSINE_TIE``. An ambiguous contest
+    indistinguishable on every criterion — same manual mark, tier, ΔJ band,
+    Δppm band, quality and line-intensity band, with cosine and score inside
+    their tie widths. An ambiguous contest
     has no winner: the caller must not quantify any of them from this peak.
     Reporting a number there would be inventing a decision the data does not
     support (a competitor may still win elsewhere on one of its other signals).
@@ -584,9 +702,10 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
         return ordered, False
     k0 = candidate_key(ordered[0], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
     k1 = candidate_key(ordered[1], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
-    ambiguous = (k0[:5] == k1[:5]                    # manual, tier, ΔJ, Δppm, quality
-                 and abs(k0[5] - k1[5]) < COSINE_TIE # cosine
-                 and abs(k0[6] - k1[6]) < SCORE_TIE) # annotation score
+    ambiguous = ((k0.manual, k0.tier, k0.dj, k0.ppm, k0.quality, k0.intensity)
+                 == (k1.manual, k1.tier, k1.dj, k1.ppm, k1.quality, k1.intensity)
+                 and abs(k0.cosine - k1.cosine) < COSINE_TIE
+                 and abs(k0.score - k1.score) < SCORE_TIE)
     return ordered, ambiguous
 
 
