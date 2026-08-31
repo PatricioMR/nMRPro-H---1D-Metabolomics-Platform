@@ -186,10 +186,64 @@ class TestPerSampleConsensus:
 
 
 def test_expected_lines_report_where_they_came_from():
-    """A fit anchored on synthetic lines recovers the database J by
-    construction; the caller has to be able to tell that apart."""
+    """A fit anchored on the database J recovers it by construction; the caller
+    has to be able to tell that apart. The flag follows how many lines were
+    actually confirmed, not how long the list is — a list kept full by
+    extrapolation is measured, a list of two where only one was confirmed is
+    not."""
     import inspect
     from gui.stages._annotation_search import _AnnotationSearchMixin as M
     src = inspect.getsource(M._expected_line_ppms)
-    assert 'return pred, False' in src
+    assert "n_measured = sum(1 for l in lines if l.get('measured'))" in src
+    assert 'n_measured < 2' in src
+    assert 'return pred, from_db' in src
     assert "], True" in src, 'the synthetic fallback must flag itself'
+
+
+class TestSyncKeepsTheWholeComb:
+    """A line that found no peak used to be dropped, truncating the list. A
+    later reader seeing fewer lines than the multiplicity calls for rebuilt the
+    pattern from the database J, which then reappeared in whatever was measured
+    against it — 23% of the reference study's multiplets took that path.
+    """
+
+    def _lines(self, *ppms):
+        return [{'ppm': p, 'rel_intensity': 1.0} for p in ppms]
+
+    def test_an_unfound_line_is_kept_not_dropped(self):
+        from processing.annotation_scoring import sync_predicted_lines
+        out = sync_predicted_lines(self._lines(1.00, 1.01, 1.02),
+                                   [1.001, 1.021], tolerance=0.005)
+        assert len(out) == 3
+
+    def test_the_kept_line_sits_where_the_found_ones_say(self):
+        """Two confirmed positions fix the whole comb by their index, so the
+        placed line carries the sample's spacing and not the database's."""
+        from processing.annotation_scoring import sync_predicted_lines
+        out = sync_predicted_lines(self._lines(1.00, 1.01, 1.02),
+                                   [1.000, 1.020], tolerance=0.005)
+        mid = [l for l in out if not l.get('measured')]
+        assert len(mid) == 1
+        assert mid[0]['ppm'] == pytest.approx(1.010, abs=1e-9)
+
+    def test_each_line_records_whether_it_was_confirmed(self):
+        from processing.annotation_scoring import sync_predicted_lines
+        out = sync_predicted_lines(self._lines(1.00, 1.01), [1.001],
+                                   tolerance=0.005)
+        assert sum(1 for l in out if l.get('measured')) == 1
+        assert sum(1 for l in out if not l.get('measured')) == 1
+
+    def test_one_confirmed_line_cannot_fix_a_spacing(self):
+        """With a single anchor there is nothing to extrapolate from, so the
+        original positions stand — and that is the caller's cue that the
+        pattern is the database's."""
+        from processing.annotation_scoring import sync_predicted_lines
+        out = sync_predicted_lines(self._lines(1.00, 1.01), [1.001],
+                                   tolerance=0.005)
+        kept = [l for l in out if not l.get('measured')]
+        assert kept[0]['ppm'] == pytest.approx(1.01)
+
+    def test_nothing_found_leaves_the_original_alone(self):
+        from processing.annotation_scoring import sync_predicted_lines
+        orig = self._lines(1.00, 1.01)
+        assert sync_predicted_lines(orig, [], tolerance=0.005) == orig

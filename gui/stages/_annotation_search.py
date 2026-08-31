@@ -388,15 +388,22 @@ class _AnnotationSearchMixin:
         measured that way is not evidence about the J it came from, and must
         not be aggregated as though it were.
         """
-        pred = [float(l['ppm']) for l in (r.get('predicted_lines') or ())
-                if isinstance(l, dict) and l.get('ppm') is not None]
+        lines = [l for l in (r.get('predicted_lines') or ())
+                 if isinstance(l, dict) and l.get('ppm') is not None]
+        pred = [float(l['ppm']) for l in lines]
+        # A line kept by extrapolation carries the spacing the sample showed,
+        # not the database's — but only two confirmed lines make that spacing a
+        # measurement. Below that the comb is the database's own, whatever its
+        # length, and the J found against it is not evidence about it.
+        n_measured = sum(1 for l in lines if l.get('measured'))
+        from_db = n_measured < 2 and any('measured' in l for l in lines)
         # A multiplicity the table does not know — a singlet among them — falls
         # back to what the predicted lines themselves say, never to the generic
         # two, which would have the fit hunt a doublet that was never claimed.
         n_exp = expected_line_count(r.get('type') or r.get('multiplicity'),
                                     fallback=len(pred) or 1)
         if len(pred) >= max(2, n_exp):
-            return pred, False
+            return pred, from_db
         centre = float(r.get('peak_ppm') or r.get('db_ppm') or 0.0)
         j_db = parse_first_j(r.get('j_coupling') or '')
         if n_exp >= 2 and j_db:

@@ -207,22 +207,54 @@ def sync_predicted_lines(original: Sequence[dict],
 
     Keeps the fingerprint arrows drawn in the UI identical to the lines counted
     as found, so the displayed evidence and the score share one source.
+
+    A line that found no peak is KEPT, placed where the found ones say it
+    should be — the pattern is evenly spaced, so two confirmed positions fix
+    the whole comb by their index. Dropping it truncated the list, and a later
+    reader seeing fewer lines than the multiplicity calls for had to rebuild
+    the pattern from the database J, which then reappeared in anything measured
+    against it. Extrapolating from the confirmed peaks keeps the geometry
+    measured. Each line records whether it was ``measured``; with fewer than
+    two of those there is no spacing to extrapolate from and the original
+    positions stand, which is the caller's cue that the pattern is the
+    database's, not the spectrum's.
     """
     if not found_ppms:
         return list(original or [])
     used: set = set()
     snapped: list[dict] = []
-    for line in sorted(original or [], key=lambda l: float(l.get('ppm', 0))):
+    unmatched: list[tuple[int, dict]] = []
+    fixed: list[tuple[int, float]] = []
+    for i, line in enumerate(sorted(original or [],
+                                    key=lambda l: float(l.get('ppm', 0)))):
         target = float(line.get('ppm', 0))
         avail = [fp for fp in found_ppms if fp not in used]
         best = min(avail, key=lambda fp: abs(fp - target), default=None)
         if best is not None and abs(best - target) <= tolerance:
             used.add(best)
-            snapped.append({'ppm': best,
+            fixed.append((i, float(best)))
+            snapped.append({'ppm': best, 'measured': True,
                             'rel_intensity': line.get('rel_intensity', 1.0)})
+        else:
+            unmatched.append((i, line))
+
+    # p(i) = a + b·i through the confirmed lines: b is the spacing the sample
+    # actually shows, so a line placed by it carries no database J.
+    if unmatched and len(fixed) >= 2:
+        xs = np.array([i for i, _ in fixed], dtype=float)
+        ys = np.array([p for _, p in fixed], dtype=float)
+        b, a = np.polyfit(xs, ys, 1)
+        for i, line in unmatched:
+            snapped.append({'ppm': float(a + b * i), 'measured': False,
+                            'rel_intensity': line.get('rel_intensity', 1.0)})
+    else:
+        for _i, line in unmatched:
+            snapped.append({'ppm': float(line.get('ppm', 0)), 'measured': False,
+                            'rel_intensity': line.get('rel_intensity', 1.0)})
+
     for fp in sorted(found_ppms):
         if fp not in used:
-            snapped.append({'ppm': fp, 'rel_intensity': 1.0})
+            snapped.append({'ppm': fp, 'rel_intensity': 1.0, 'measured': True})
     if not snapped:
         return list(original or [])
     max_ri = max(l['rel_intensity'] for l in snapped) or 1.0
