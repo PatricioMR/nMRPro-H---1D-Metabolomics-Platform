@@ -117,26 +117,25 @@ def test_delta_columns_use_the_difference_symbol():
     assert heads['dj'].startswith('Δ')
 
 
-def test_a_sample_without_the_signal_is_not_coloured_as_a_failure():
-    """Absent means nothing was measured there; rejected means a reading failed.
-    Sharing one colour made the six samples that carried a signal impossible to
-    pick out of sixteen identical rows.
+
+def test_the_window_shows_the_pipeline_verdict_not_one_of_its_own():
+    """The signal has ONE verdict, reached by the annotation search. Classifying
+    each sample here invented a second one, and the two contradicted each other:
+    a signal scored 0.99 and Good showed every sample as ΔJ-rejected.
     """
     import inspect
     from gui.widgets.multiplet_sample_view import MultipletSampleView as V
-    verdict = inspect.getsource(V._sample_verdict)
-    assert "'absent'" in verdict and "'rejected'" in verdict
-    build = inspect.getsource(V._build)
-    assert 'n_conf' in build, 'the header must say how many ΔJ confirms'
-    cfg = inspect.getsource(V._build)
-    assert "tag_configure('rejected'" in cfg
-    assert "tag_configure('absent'" in cfg
+    assert not hasattr(V, '_sample_verdict')
+    src = inspect.getsource(V._pipeline_verdict)
+    assert "self.mp_ref.get('annotation_quality')" in src
+    assert "self.mp_ref.get('delta_j_hz')" in src
+    # No threshold is applied here — nothing is being decided.
+    assert 'dj_gold_hz' not in src and 'dj_bad_hz' not in src
 
 
-def test_the_verdict_tags_are_distinct_per_outcome():
+def test_the_detected_column_reports_detection_only():
     import inspect
-    from gui.widgets.multiplet_sample_view import MultipletSampleView as V
-    src = inspect.getsource(V._sample_verdict)
-    tags = {t for t in ('absent', 'rejected', 'unverified', 'present')
-            if f"'{t}'" in src}
-    assert tags == {'absent', 'rejected', 'unverified', 'present'}
+    from gui.widgets.multiplet_sample_view import COLS, MultipletSampleView as V
+    assert dict((c[0], c[1]) for c in COLS)['present'] == 'Detected'
+    src = inspect.getsource(V._populate)
+    assert "ann_txt = '✓' if r['present'] else '·'" in src

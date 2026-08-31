@@ -22,7 +22,6 @@ import re
 import tkinter as tk
 from tkinter import ttk
 
-from processing.annotation_scoring import SCORING_DEFAULTS
 from processing.per_sample_signal import (
     group_means, percent_deviation, relative_sd_percent)
 import numpy as np
@@ -38,7 +37,7 @@ from matplotlib.backends.backend_tkagg import (
 COLS = [
     ('sample',   'Sample',       150, tk.W),
     ('group',    'Group',         80, tk.CENTER),
-    ('present',  'Annotated',    110, tk.CENTER),
+    ('present',  'Detected',      80, tk.CENTER),
     ('dppm',     'Δppm',          85, tk.CENTER),
     ('dppm_sd',  'DP %',          65, tk.CENTER),
     ('jobs',     'J_obs (Hz)',    85, tk.CENTER),
@@ -224,9 +223,6 @@ class MultipletSampleView:
         name = self.met.get('name', '?')
         counted = self._counted_rows()
         n_present = sum(1 for r in counted if r['present'])
-        n_conf = sum(1 for r in counted
-                     if r['present'] and r['dj'] is not None
-                     and abs(r['dj']) <= SCORING_DEFAULTS['dj_gold_hz'])
         jtxt = f"{self.db_j:.2f} Hz" if self.db_j else "—"
 
         head = ttk.Frame(self.win, padding=6)
@@ -236,9 +232,11 @@ class MultipletSampleView:
                   font=('Arial', 11, 'bold')).pack(anchor=tk.W)
         self._count_lbl = ttk.Label(
             head, foreground='#1a7a1a', font=('Arial', 10, 'bold'),
-            text=(f"Detected in {n_present} of {len(counted)} samples"
-                  f"  ·  ΔJ confirms it in {n_conf}"))
+            text=f"Detected in {n_present} of {len(counted)} samples")
         self._count_lbl.pack(anchor=tk.W)
+        _verdict = self._pipeline_verdict()
+        ttk.Label(head, text=_verdict, font=('Arial', 9, 'bold'),
+                  foreground='#333').pack(anchor=tk.W)
         if getattr(self, 'has_readings', False):
             _note, _fg = ("Values as measured by the annotation search — this "
                           "window displays, it does not re-measure."), '#666'
@@ -296,7 +294,6 @@ class MultipletSampleView:
         # the text says what the measurement concluded. Absent is neutral —
         # nothing was measured — while rejected is a reading that failed.
         self._tree.tag_configure('present', background='#eafaea')
-        self._tree.tag_configure('rejected', background='#fdeaea')
         self._tree.tag_configure('absent', background='#fafafa',
                                  foreground='#999')
         self._tree.tag_configure('blk', background='#f0f0f0', foreground='#888')
@@ -320,7 +317,12 @@ class MultipletSampleView:
             if r['type'] == 'BLK' or r['excluded']:
                 ann_txt, tag = '—', 'blk'
             else:
-                ann_txt, tag = self._sample_verdict(r)
+                # Detection's own answer, not a verdict of this window's making.
+                # The signal has ONE verdict, reached by the annotation search
+                # and shown in the header; classifying each sample here invented
+                # a second one that could contradict it.
+                ann_txt = '✓' if r['present'] else '·'
+                tag = 'present' if r['present'] else 'absent'
             if r['present']:
                 d_ppm = percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))
                 d_j = percent_deviation(r['j_obs'], j_mean.get(r['group']))
@@ -336,37 +338,28 @@ class MultipletSampleView:
                 tags=(tag,))
         self._populate_summary()
 
-    def _sample_verdict(self, r):
-        """What the annotation concluded about this signal IN THIS SAMPLE.
+    def _pipeline_verdict(self):
+        """What the annotation search decided about this signal, as it stored it.
 
-        Exploratory. The search reaches one verdict for the study; this reports
-        what its per-sample reading supports, using the pipeline's own ΔJ
-        thresholds rather than any invented here:
-
-          absent                → the lines were not all detected here
-          no ΔJ                 → present, but nothing to verify it with: a
-                                  singlet has no coupling, and lines the apex
-                                  search could not tell apart have no spacing
-          |ΔJ| <= dj_gold_hz    → confirmed in this sample
-          |ΔJ| <= dj_bad_hz     → present, coupling off
-          beyond                → present, coupling wrong
-
-        Returns ``(text, row_tag)``.
+        The verdict belongs to the signal, not to a sample: the search reaches
+        one, from the master peak positions. Reporting it here — beside the
+        per-sample numbers — is what lets the two be compared. They can
+        disagree, and when they do it is worth seeing: the master position is
+        an apex of the pointwise-max across samples, a spectrum none of them
+        actually is.
         """
-        if not r['present']:
-            # Not measured here. A blank is not a failure, and colouring it like
-            # one made the six samples that DID carry this signal impossible to
-            # pick out of sixteen identical red rows.
-            return '· not detected', 'absent'
-        dj = r['dj']
-        if dj is None:
-            return ('~ lines unresolved', 'unverified') if r.get('collapsed')                    else ('~ no J to check', 'unverified')
-        a = abs(dj)
-        if a <= SCORING_DEFAULTS['dj_gold_hz']:
-            return '✓ confirmed', 'present'
-        if a <= SCORING_DEFAULTS['dj_bad_hz']:
-            return '~ ΔJ off', 'unverified'
-        return '✗ ΔJ rejected', 'rejected'
+        q = (self.mp_ref.get('annotation_quality') or 'undecided')
+        dj = self.mp_ref.get('delta_j_hz')
+        jo = self.mp_ref.get('observed_j_hz')
+        bits = [f'Annotation verdict: {str(q).capitalize()}']
+        if jo is not None:
+            bits.append(f'J {float(jo):.2f} Hz')
+        if dj is not None:
+            bits.append(f'ΔJ {float(dj):+.2f} Hz')
+        sc = self.mp_ref.get('composite_score')
+        if sc is not None:
+            bits.append(f'score {float(sc):.3f}')
+        return '  ·  '.join(bits)
 
     def _populate_summary(self):
         """One closing row per group: the mean each sample above is measured
