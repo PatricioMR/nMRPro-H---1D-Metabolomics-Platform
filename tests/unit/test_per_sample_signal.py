@@ -290,3 +290,31 @@ class TestGroupMeans:
         from processing.per_sample_signal import group_means
         rows = [{'group': 'A', 'j_obs': 'x'}, {'group': 'A', 'j_obs': 7.0}]
         assert group_means(rows, 'j_obs')['A'] == pytest.approx(7.0)
+
+
+class TestAbsentSamplesReportNothing:
+    """An undetected line keeps its reference position, so a centre built from
+    it is the study value handed back as if it had been measured here — the
+    same number in every absent sample, which reads as data and is not.
+    """
+
+    def test_no_centre_where_the_signal_was_not_detected(self):
+        lines = _doublet(present=(False, True, True, True))
+        assert signal_in_sample(lines, 0)['ppm_centre'] is None
+        assert signal_in_sample(lines, 1)['ppm_centre'] is not None
+
+    def test_no_ppm_diff_either(self):
+        lines = _doublet(present=(False, True, True, True))
+        assert signal_in_sample(lines, 0, db_ppm=1.47)['ppm_diff'] is None
+
+    def test_area_is_still_reported(self):
+        """Integration does not depend on finding an apex."""
+        lines = _doublet(present=(False, True, True, True))
+        assert signal_in_sample(lines, 0)['area'] == pytest.approx(2.0)
+
+    def test_absent_samples_do_not_all_report_the_same_position(self):
+        """The regression this guards: every absent row showed one identical
+        Δppm, because it was the master centre repeated."""
+        lines = _doublet(present=(False, False, True, True))
+        centres = [signal_in_sample(lines, i)['ppm_centre'] for i in (0, 1)]
+        assert centres == [None, None]

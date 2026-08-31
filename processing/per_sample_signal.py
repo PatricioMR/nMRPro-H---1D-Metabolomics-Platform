@@ -97,9 +97,9 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
     """Measure one annotated signal in one sample.
 
     ``present`` is True only when EVERY line of the signal was detected in this
-    sample. ``j_obs_hz`` is the median spacing of the lines as they sit in this
-    sample, and is None for a singlet or when the signal is absent — an absent
-    line's recorded position is noise, and a J measured from it is fiction.
+    sample. Neither a centre nor a J is reported for a sample where it is not:
+    an undetected line keeps its reference position, so both would be the study
+    value handed back as though it had been measured here.
     """
     n = sample_count(line_peaks)
     lines = list(line_peaks or ())
@@ -120,7 +120,13 @@ def signal_in_sample(line_peaks, sample_idx, *, db_ppm=None, db_j_hz=None,
 
     ppms = line_positions(lines, sample_idx)
     collapsed = _lines_collapsed(lines, ppms)
-    centre = (float(np.mean(ppms)) if (ppms and not collapsed) else None)
+    # A position is reported only where the lines were actually found. Where
+    # they were not, refine_peak_centers_per_sample keeps the reference
+    # position rather than chasing noise — so a centre computed from it is the
+    # master value repeated, identical in every absent sample, and reads in the
+    # table as a measurement that was never made.
+    centre = (float(np.mean(ppms))
+              if (ppms and present and not collapsed) else None)
 
     area = 0.0
     for pk in lines:

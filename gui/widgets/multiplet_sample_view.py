@@ -344,8 +344,9 @@ class MultipletSampleView:
         thresholds rather than any invented here:
 
           absent                → the lines were not all detected here
-          no ΔJ                 → present, but nothing to verify it with
-                                  (a singlet, or lines the apex search folded)
+          no ΔJ                 → present, but nothing to verify it with: a
+                                  singlet has no coupling, and lines the apex
+                                  search could not tell apart have no spacing
           |ΔJ| <= dj_gold_hz    → confirmed in this sample
           |ΔJ| <= dj_bad_hz     → present, coupling off
           beyond                → present, coupling wrong
@@ -359,7 +360,7 @@ class MultipletSampleView:
             return '· not detected', 'absent'
         dj = r['dj']
         if dj is None:
-            return ('~ lines folded', 'unverified') if r.get('collapsed') else                    ('~ nothing to verify', 'unverified')
+            return ('~ lines unresolved', 'unverified') if r.get('collapsed')                    else ('~ no J to check', 'unverified')
         a = abs(dj)
         if a <= SCORING_DEFAULTS['dj_gold_hz']:
             return '✓ confirmed', 'present'
