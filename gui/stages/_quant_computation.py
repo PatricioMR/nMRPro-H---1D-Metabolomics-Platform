@@ -1333,8 +1333,19 @@ class _QuantCompMixin:
                 # Prefer rank-based lookup: annotation peak_rank maps directly to
                 # the detected peak used during annotation, bypassing ppm proximity
                 # search which can land on the wrong peak when lines are close.
-                p = _pk_by_rank.get(hit.get('peak_rank')) or \
-                    self._find_peak(hit.get('peak_ppm', hit.get('ppm', 0)))
+                # A hit with no peak_rank competed as a DB gap-fill: it claimed
+                # no peak slot, precisely because it has no detected apex. The
+                # ppm-proximity fallback would then hand it whichever peak sits
+                # nearest — including one another metabolite already won, which
+                # is how o-cresol came to be quantified on 3-(2-hydroxyphenyl)-
+                # propionic acid's peak 214. Such a hit is integrated over its
+                # own predicted window below, or not at all.
+                _rank_h = hit.get('peak_rank')
+                p = (_pk_by_rank.get(_rank_h) if _rank_h is not None else None)
+                if p is None and _rank_h is not None:
+                    # A rank the peak list no longer holds — detection re-ran
+                    # since annotation. Proximity is the only way back.
+                    p = self._find_peak(hit.get('peak_ppm', hit.get('ppm', 0)))
                 _synthetic_db = False
                 if p is None:
                     # No detected peak. In Multiplet mode, gap-fill: integrate the
