@@ -16,12 +16,13 @@ from gui.stages import _quant_computation as qc
 def _placement_src():
     src = inspect.getsource(qc)
     i = src.index('_assigned_mets = set()')
-    return src[i:i + 2200]
+    return src[i:src.index('greedy:', i)]
 
 
 def test_a_candidate_is_tested_on_its_lines_not_only_its_anchor():
     src = _placement_src()
     assert '_my_ranks & _assigned_peaks' in src
+    assert '_multiplet_line_peaks(_h, _pk_by_rank)' in src
 
 
 def test_the_line_check_happens_before_the_metabolite_is_placed():
@@ -43,13 +44,20 @@ def test_a_singlet_is_not_line_checked():
     assert 'if len(_my_lines) >= 2 else set()' in src
 
 
-def test_the_claim_uses_the_same_matcher_as_the_check():
-    """Claiming by one rule and checking by another would let a peak be claimed
-    under a name the check never looks for."""
-    src = inspect.getsource(qc)
-    i = src.index('_assigned_mets = set()')
-    j = src.index('greedy:', i)
-    assert src[i:j].count('matched_line_ranks(_h, _pk_by_rank)') == 2
+def test_the_claim_uses_the_matcher_that_builds_the_window():
+    """Reserving in one space and integrating in another cannot converge.
+    matched_line_ranks takes its candidates from hit['matched_peaks'], which
+    these result rows do not carry, so it fell back to the anchor alone: 196 of
+    206 multiplets claimed less than they integrated, and 31 of 86 quantified
+    analytes shared an integration window while no anchor ever collided."""
+    src = _placement_src()
+    assert src.count('_multiplet_line_peaks(_h, _pk_by_rank)') == 2
+    assert 'matched_line_ranks(' not in src, 'no call, only the note'
+
+    # The window is built from the same function, one call away.
+    win = inspect.getsource(qc)
+    i = win.index('def _multiplet_window_from_peaks')
+    assert '_multiplet_line_peaks(hit, pk_by_rank)' in win[i:i + 700]
 
 
 def test_a_blocked_candidate_still_reaches_the_not_quantified_pass():
@@ -79,14 +87,14 @@ class TestTheOtherWaysBackIn:
     def test_a_rescued_hit_is_tested_on_its_lines(self):
         src = self._rescue_src()
         assert 'def _free_of_claims' in src
-        assert 'matched_line_ranks(_r, _pk_by_rank)' in src
+        assert '_multiplet_line_peaks(_r, _pk_by_rank)' in src
 
     def test_a_rescued_hit_claims_what_it_took(self):
         """Without this the next rescue sees the peak as free and two rescued
         analytes share one signal."""
         src = self._rescue_src()
         assert '_assigned_peaks.add(_rpr)' in src
-        assert '_assigned_peaks.add(_or_r)' in src
+        assert "_assigned_peaks.add(_pk_r['rank'])" in src
 
     def test_the_apq_fallback_only_looks_at_free_peaks(self):
         """_all_peak_quant holds every matched peak of every metabolite,

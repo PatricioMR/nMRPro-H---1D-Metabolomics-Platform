@@ -1012,7 +1012,17 @@ class _QuantCompMixin:
                 # quantified twice.
                 _my_lines = ([l for l in (_h.get('predicted_lines') or [])
                               if 'ppm' in l])
-                _my_ranks = (set(matched_line_ranks(_h, _pk_by_rank))
+                # Claimed with the SAME matcher that builds the integration
+                # window. matched_line_ranks takes its candidates from
+                # hit['matched_peaks'], a key these result rows do not carry,
+                # so it fell back to the anchor alone: 196 of 206 multiplets
+                # claimed less than they integrated — one claimed nothing and
+                # integrated two peaks. Reserving in one space and integrating
+                # in another is why 31 of 86 quantified analytes shared an
+                # integration window while no anchor ever collided.
+                _my_ranks = ({p.get('rank') for p in
+                              _multiplet_line_peaks(_h, _pk_by_rank)
+                              if p.get('rank') is not None}
                              if len(_my_lines) >= 2 else set())
                 if _my_ranks & _assigned_peaks:
                     continue
@@ -1029,8 +1039,9 @@ class _QuantCompMixin:
                 # such peaks from their rightful metabolite).
                 _pl_gr = _h.get('predicted_lines') or []
                 if len([l for l in _pl_gr if 'ppm' in l]) >= 2:
-                    for _or in matched_line_ranks(_h, _pk_by_rank):
-                        _assigned_peaks.add(_or)
+                    for _pk_gr in _multiplet_line_peaks(_h, _pk_by_rank):
+                        if _pk_gr.get('rank') is not None:
+                            _assigned_peaks.add(_pk_gr['rank'])
 
             print(f'[Quant] greedy: {len(met_map)}/{len(good_met_ids)} mets placed '
                   f'using {len(_assigned_peaks)} claimed peak slots')
@@ -1163,7 +1174,8 @@ class _QuantCompMixin:
                            if 'ppm' in l]
                     if len(_rl) < 2:
                         return True
-                    return not (set(matched_line_ranks(_r, _pk_by_rank))
+                    return not ({p.get('rank') for p in
+                                 _multiplet_line_peaks(_r, _pk_by_rank)}
                                 & _assigned_peaks)
 
                 for _rmid in _rescued_mids:
@@ -1196,8 +1208,9 @@ class _QuantCompMixin:
                         _assigned_peaks.add(_rpr)
                     if len([l for l in (_best_r.get('predicted_lines') or [])
                             if 'ppm' in l]) >= 2:
-                        for _or_r in matched_line_ranks(_best_r, _pk_by_rank):
-                            _assigned_peaks.add(_or_r)
+                        for _pk_r in _multiplet_line_peaks(_best_r, _pk_by_rank):
+                            if _pk_r.get('rank') is not None:
+                                _assigned_peaks.add(_pk_r['rank'])
                     _dbg(_dbg_f,
                          f'  [RESCUE] {_rname}  mid={_rmid}'
                          f'  peak_rank={_rpr}  has_jr={_has_jr_frac}')
