@@ -245,24 +245,15 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         s2.pack(fill=tk.X, padx=6, pady=4)
 
         mf = ttk.Frame(s2); mf.pack(fill=tk.X, pady=1)
-        ttk.Label(mf, text='Signal:').pack(side=tk.LEFT)
-        # Default = whole multiplet ÷ total protons (robust qNMR): no dependence
-        # on identifying which single line was detected. Single-Line Area
-        # integrates a single line with a fractional nH and is opt-in.
+        # One integration mode: the whole multiplet, divided by its own proton
+        # count. Single-Line Area was shown disabled for months, which is a
+        # promise the software was not keeping; it comes back with the engine
+        # that will implement it. The variable stays because the saved projects
+        # and the result rows carry the mode, and dropping it would rewrite
+        # what an old project says it did.
+        ttk.Label(mf, text='Signal: whole multiplet ÷ nH').pack(side=tk.LEFT)
         self.integ_var = tk.StringVar(value='Multiplet')
-        # 'Area' (single-line trapz) is temporarily disabled — under development.
-        # Hovering the disabled option shows a tooltip explaining why.
-        _DISABLED_INTEG = {'Area'}
         self._integ_rbs = {}
-        for v, lbl in [('Multiplet', 'Multiplicity'),
-                       ('Area', 'Single-Line Area')]:
-            _rb = ttk.Radiobutton(mf, text=lbl, variable=self.integ_var,
-                                  value=v, command=self._on_integ_change)
-            _rb.pack(side=tk.LEFT, padx=4)
-            self._integ_rbs[v] = _rb
-            if v in _DISABLED_INTEG:
-                _rb.configure(state='disabled')
-                self._attach_dev_tooltip(_rb, 'Single-Line Area: em desenvolvimento.')
 
         pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
         self.proton_corr_var = tk.BooleanVar(value=True)
@@ -856,30 +847,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
     # ── Integration mode change ───────────────────────────────────────────────
 
-    def _attach_dev_tooltip(self, widget, text):
-        """Show a small 'under development' tooltip when hovering a widget.
-
-        Used for integration methods that are temporarily disabled — a disabled
-        ttk widget gives the user no feedback otherwise, so the tooltip explains
-        why the option cannot be selected. <Enter>/<Leave> still fire on disabled
-        ttk widgets (only activation is blocked)."""
-        def _show(_e=None):
-            self._hide_dev_tooltip()
-            try:
-                tw = tk.Toplevel(widget)
-                tw.wm_overrideredirect(True)
-                x = widget.winfo_rootx() + 10
-                y = widget.winfo_rooty() + widget.winfo_height() + 2
-                tw.wm_geometry(f'+{x}+{y}')
-                tk.Label(tw, text=text, justify=tk.LEFT,
-                         background='#ffffe0', relief=tk.SOLID, borderwidth=1,
-                         font=('Arial', 8), padx=4, pady=2).pack()
-                self._dev_tooltip_win = tw
-            except Exception:
-                self._dev_tooltip_win = None
-
-        widget.bind('<Enter>', _show)
-        widget.bind('<Leave>', self._hide_dev_tooltip)
 
     def _hide_dev_tooltip(self, _e=None):
         tw = getattr(self, '_dev_tooltip_win', None)
@@ -890,8 +857,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                 pass
             self._dev_tooltip_win = None
 
-    def _on_integ_change(self, *_):
-        pass   # MCR-ALS checkbox removed; nothing to disable
 
     def _on_j_resolve_change(self, *_):
         self._refresh_j_resolve_label()

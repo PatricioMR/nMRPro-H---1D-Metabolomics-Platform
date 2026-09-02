@@ -2952,10 +2952,20 @@ class _QuantCompMixin:
                     _r.setdefault('vip_score', float('nan'))
 
             self._prog_apply(99, 'Done.')
+            # Counted once, for both places that report it. Two labels reading
+            # the same list two different ways is how one of them kept saying
+            # 100 after the other was taught to say 65.
+            _n_all = len(self._quant_results)
+            _n_nq_s = sum(1 for _r_s in self._quant_results
+                          if _r_s.get('_not_quantified'))
+            _n_ok_s = _n_all - _n_nq_s
+            _n_db_s = sum(1 for _r_s in self._quant_results
+                          if _r_s.get('_synthetic_db')
+                          and not _r_s.get('_not_quantified'))
             _note     = (f' PQN×{self._pqn_factor:.3f}' if _norm_f == 'PQN' else '')
             _mcr_note = ' +MCR' if _use_mcr_f else ''
             self.run_status.config(
-                text=f'{len(self._quant_results)} metabolites '
+                text=f'{_n_ok_s} quantified  ·  {_n_nq_s} not '
                      f'[{_norm_f}{_note}{_mcr_note}]',
                 foreground='green')
             try:
@@ -2968,13 +2978,6 @@ class _QuantCompMixin:
             # not, so its length is not the number of results. Reporting it as
             # "N metabolites" read as N measurements when a third of them were
             # rows explaining why there was no measurement.
-            _n_all = len(self._quant_results)
-            _n_nq_s = sum(1 for _r_s in self._quant_results
-                          if _r_s.get('_not_quantified'))
-            _n_ok_s = _n_all - _n_nq_s
-            _n_db_s = sum(1 for _r_s in self._quant_results
-                          if _r_s.get('_synthetic_db')
-                          and not _r_s.get('_not_quantified'))
             _plural = '' if _n_ok_s == 1 else 's'
             _msg_s = (f'{_n_ok_s} metabolite{_plural} identified and '
                       f'quantified successfully')

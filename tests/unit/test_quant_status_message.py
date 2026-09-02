@@ -52,3 +52,38 @@ def test_a_row_without_the_flag_is_not_counted_as_one():
     src = _msg_src()
     i = src.index("_r_s.get('_synthetic_db')")
     assert "not _r_s.get('_not_quantified')" in src[i:i + 200]
+
+
+def test_both_labels_read_the_same_count():
+    """Two labels reading the same list two different ways is how one kept
+    saying 100 after the other was taught to say 65."""
+    src = inspect.getsource(qc)
+    assert "len(self._quant_results)} metabolites" not in src
+    i = src.index('_n_all = len(self._quant_results)')
+    j = src.index('self._status_ok(_msg_s)')
+    assert src.count('_n_all = len(self._quant_results)') == 1
+    assert 'self.run_status.config(' in src[i:j], \
+        'the run label must be built after the single count'
+
+
+def test_the_run_label_separates_quantified_from_not():
+    src = inspect.getsource(qc)
+    i = src.index('self.run_status.config(')
+    assert '_n_ok_s' in src[i:i + 300] and '_n_nq_s' in src[i:i + 300]
+
+
+def test_only_one_integration_mode_is_offered():
+    """Single-Line Area sat disabled in the panel for months, which is a
+    promise the software was not keeping."""
+    import gui.stages.quantification_stage as qs
+    src = inspect.getsource(qs)
+    assert "'Single-Line Area'" not in src, 'no widget label, only the note'
+    assert "for v, lbl in [('Multiplet'" not in src
+    assert 'Radiobutton(mf' not in src
+
+
+def test_the_mode_variable_survives_for_saved_projects():
+    """The result rows and the saved projects carry the mode; dropping it
+    would rewrite what an old project says it did."""
+    import gui.stages.quantification_stage as qs
+    assert 'self.integ_var = tk.StringVar' in inspect.getsource(qs)
