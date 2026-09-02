@@ -2229,6 +2229,11 @@ class _QuantCompMixin:
                 '_lipid_regions':    m.get('_lipid_regions'),
                 '_lipid_window':     m.get('_lipid_window'),
                 '_integ_mode':       _integ,
+                # No detected apex: the window came from the database's line
+                # positions, not from anything the spectrum showed. The number
+                # is real, what justifies it is weaker, and the table should be
+                # able to say so.
+                '_synthetic_db':     bool(m.get('_synthetic_db', False)),
                 '_ann_score':        m.get('_ann_score', 0.0),
                 '_nh':               m.get('_nh', 1.0),
                 '_blk_mean_area':    m.get('_blk_mean_area', 0.0),
@@ -2959,7 +2964,23 @@ class _QuantCompMixin:
                 self.btn_pdf.config(state='normal')
             except Exception:
                 pass
-            self._status_ok(f'Quantification: {len(self._quant_results)} metabolites')
+            # The list holds every analyte that was considered, quantified or
+            # not, so its length is not the number of results. Reporting it as
+            # "N metabolites" read as N measurements when a third of them were
+            # rows explaining why there was no measurement.
+            _n_all = len(self._quant_results)
+            _n_nq_s = sum(1 for _r_s in self._quant_results
+                          if _r_s.get('_not_quantified'))
+            _n_ok_s = _n_all - _n_nq_s
+            _n_db_s = sum(1 for _r_s in self._quant_results
+                          if _r_s.get('_synthetic_db')
+                          and not _r_s.get('_not_quantified'))
+            _msg_s = f'Quantification: {_n_ok_s} quantified'
+            if _n_db_s:
+                _msg_s += f' ({_n_db_s} without a detected peak)'
+            if _n_nq_s:
+                _msg_s += f'  ·  {_n_nq_s} not quantified'
+            self._status_ok(_msg_s)
 
             self._update_peak_list_labels()
 
