@@ -2830,6 +2830,27 @@ class _QuantCompMixin:
                   f'({_n_lost} perderam competição, {_n_nq - _n_lost} 0/NaN) '
                   f'— excluídos de export e estatística')
 
+            # Which analytes got no number, and why, in the log rather than on
+            # stdout. "34 were not quantified" is a fact; which 34 and for what
+            # reason is what an analyst can act on — a withdrawn multiplet
+            # returns when detection resolves its lines, an ambiguous one when
+            # a candidate is marked, a beaten one only if the winner is wrong.
+            if _dbg_f is not None:
+                _nq_rows = [r for r in self._quant_results
+                            if r.get('_not_quantified')]
+                _dbg(_dbg_f, '')
+                _dbg(_dbg_f, '── NOT QUANTIFIED ───────────────────────────────────')
+                _by_reason = {}
+                for _r_d in _nq_rows:
+                    _why = (_r_d.get('_status_reasons') or ['(no reason given)'])[0]
+                    _by_reason.setdefault(_why, []).append(
+                        _r_d.get('metabolite', _r_d.get('hmdb_id', '?')))
+                for _why, _who in sorted(_by_reason.items(),
+                                         key=lambda kv: -len(kv[1])):
+                    _dbg(_dbg_f, f'  [{len(_who)}] {_why}')
+                    for _nm_d in sorted(_who):
+                        _dbg(_dbg_f, f'        {_nm_d}')
+
         if _dbg_f is not None:
             _dbg(_dbg_f, '')
             _dbg(_dbg_f, '═' * 70)

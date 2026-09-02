@@ -64,3 +64,22 @@ def test_withdrawn_metabolites_still_get_a_row():
     src = inspect.getsource(qc)
     assert "'_not_quantified':   True," in src
     assert "'status':            'n.q.'," in src
+
+
+def test_every_unquantified_analyte_is_named_in_the_log_with_its_reason():
+    """"34 were not quantified" is a fact; which 34 and why is what an analyst
+    can act on. The count went to stdout and the names went nowhere."""
+    src = inspect.getsource(qc)
+    i = src.index('NOT QUANTIFIED')
+    body = src[i:i + 1200]
+    assert "_r_d.get('_status_reasons')" in body
+    assert "_r_d.get('metabolite'" in body
+    assert '_dbg(_dbg_f, f\'        {_nm_d}\')' in body
+
+
+def test_they_are_grouped_by_reason():
+    """Grouped, because the reason decides what to do next and the same action
+    serves everyone under it."""
+    src = inspect.getsource(qc)
+    i = src.index('NOT QUANTIFIED')
+    assert '_by_reason.setdefault' in src[i:i + 1200]
