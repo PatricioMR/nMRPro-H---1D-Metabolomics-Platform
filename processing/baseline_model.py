@@ -111,10 +111,6 @@ class BaselineModel:
 
     # ── Application ───────────────────────────────────────────────────────────
 
-    def param_value(self):
-        """The single width-cutoff parameter, or None for methods without one."""
-        name, _ = METHOD_PARAMS[self.method]
-        return None if name is None else self.params.get(name)
 
     def apply(self, ppm, intensities):
         """Return baseline-corrected intensities, same shape as the input.

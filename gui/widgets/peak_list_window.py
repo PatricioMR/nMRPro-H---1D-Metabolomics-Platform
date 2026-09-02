@@ -255,27 +255,7 @@ class PeakListWindow:
 
     # ── Table ─────────────────────────────────────────────────────────────────
 
-    def _status_symbol(self, status, is_anchor=False, r2=None):
-        label = {'Good': 'Good', 'Average': 'Avg', 'Poor': 'Poor'}.get(status, None)
-        if label is None:
-            return '—'
-        r2_str = f' {r2:.2f}' if (r2 is not None and r2 == r2) else ''  # nan check
-        dot = '⚓' if is_anchor else '●'
-        return f'{dot} {label}{r2_str}'
 
-    def _in_deconv_queue(self, peak):
-        """Check if this peak's region is in the deconv controller queue."""
-        if self.app is None:
-            return False
-        stage = getattr(self.app, 'stages', {}).get('peak_detection')
-        if stage is None or stage._deconv_controller is None:
-            return False
-        ctrl   = stage._deconv_controller
-        p_lo   = min(peak['start_ppm'], peak['end_ppm'])
-        p_hi   = max(peak['start_ppm'], peak['end_ppm'])
-        return any(
-            abs(min(s,e) - p_lo) < 0.001 and abs(max(s,e) - p_hi) < 0.001
-            for s, e in ctrl.regions)
 
     def scroll_to_rank(self, rank):
         """Scroll the tree to show the peak with the given rank."""

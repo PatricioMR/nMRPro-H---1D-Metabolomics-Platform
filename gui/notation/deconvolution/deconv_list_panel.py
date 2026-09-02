@@ -815,24 +815,6 @@ class DeconvListPanel:
         self.on_apply(self._current_region, self._get_params())
         self.refresh_list()
 
-    def _apply_all(self):
-        regions = self.controller.get_regions()
-        pending = [i for i, r in enumerate(regions)
-                   if r['status'] != 'deconvolved']
-        if not pending:
-            messagebox.showinfo("Info", "All regions already deconvolved.")
-            return
-        if not messagebox.askyesno(
-                "Deconvolve All",
-                f"Deconvolve {len(pending)} pending region(s)?\n"
-                "A progress window will appear.\n\nContinue?"):
-            return
-        params = self._get_params()
-        if self.on_apply_all_cb:
-            self.on_apply_all_cb(pending, params)
-        else:
-            self.controller.deconvolve_all(params)
-            self.refresh_list()
 
     def _revert_selected(self):
         if self._current_region is not None:

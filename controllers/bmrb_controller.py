@@ -98,23 +98,6 @@ class BMRBController:
             print(f"BMRB search failed: {e}")
             return self._get_fallback_data(peak_ppm, tolerance)
 
-    def search_by_peak_interval(self, peak_start: float, peak_end: float, tolerance: float = 0.05) -> List[Dict]:
-        """
-        Search BMRB for a peak interval (after deconvolution).
-
-        Args:
-            peak_start: Start of peak interval in ppm
-            peak_end: End of peak interval in ppm
-            tolerance: Additional search tolerance
-
-        Returns:
-            List of matching metabolites
-        """
-        center = (peak_start + peak_end) / 2
-        half_width = (peak_end - peak_start) / 2
-        search_tolerance = half_width + tolerance
-
-        return self.search_by_peak(center, search_tolerance)
 
     def search_multiple_peaks(self, peaks: List[Dict], tolerance: float = 0.05) -> List[Dict]:
         """
@@ -148,45 +131,6 @@ class BMRBController:
 
         return all_results
 
-    def get_metabolite_details(self, entry_id: str) -> Optional[Dict]:
-        """
-        Fetch detailed information for a BMRB metabolomics entry.
-
-        Args:
-            entry_id: BMRB entry ID (e.g., 'bmse000400')
-
-        Returns:
-            Dictionary with entry details or None
-        """
-        # Try experimental data first
-        url = f"{self.metabolomics_url}/{entry_id}-noatom.xml"
-
-        try:
-            response = self.session.get(url, timeout=10)
-            if response.status_code == 200:
-                # Parse XML (simplified - you might want proper XML parsing)
-                return {
-                    'entry_id': entry_id,
-                    'xml_data': response.text[:1000],  # Truncated for example
-                    'source': 'experimental'
-                }
-        except:
-            pass
-
-        # Try theoretical data as fallback
-        url = f"{self.metabolomics_url}/bmst{entry_id[4:]}-noatom.xml"
-        try:
-            response = self.session.get(url, timeout=10)
-            if response.status_code == 200:
-                return {
-                    'entry_id': entry_id,
-                    'xml_data': response.text[:1000],
-                    'source': 'theoretical'
-                }
-        except:
-            pass
-
-        return None
 
     def _parse_sparql_response(self, data) -> List[Dict]:
         """Parse SPARQL JSON response into list of dictionaries."""

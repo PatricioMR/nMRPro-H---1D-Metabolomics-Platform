@@ -595,18 +595,6 @@ class DeconvPlotPanel:
         ttk.Button(bf, text='Apply', command=_ok).pack(side=tk.LEFT, padx=4)
         ttk.Button(bf, text='Cancel', command=dlg.destroy).pack(side=tk.LEFT)
 
-    def _reset_bounds(self, event=None):
-        """Ctrl+R: restore original start/end ppm for the current peak."""
-        ri = self.current_region_index
-        if ri is None or self._original_bounds is None:
-            return
-        if ri >= len(self.controller.peaks):
-            return
-        p = self.controller.peaks[ri]
-        p.update(self._original_bounds)
-        # display_region won't re-snapshot because peak_idx == current
-        self.display_region(ri, self._highlighted_child)
-        print(f'   Ctrl+R: bounds reset to {self._original_bounds}')
 
     def _toggle_edit_bounds(self):
         self._edit_bounds = self._edit_var.get()
@@ -725,31 +713,8 @@ class DeconvPlotPanel:
         self.ax.set_ylim(yd + (ylim[0] - yd) * factor, yd + (ylim[1] - yd) * factor)
         self.canvas.draw_idle()
 
-    def _on_press(self, event):
-        if event.inaxes != self.ax or event.button != 1:
-            return
-        self._panning = True
-        self._pan_start = (event.xdata, event.ydata)
-        self.canvas.get_tk_widget().config(cursor='fleur')
 
-    def _on_release(self, event):
-        self._panning = False
-        self._pan_start = None
-        self.canvas.get_tk_widget().config(cursor='')
 
-    def _on_motion(self, event):
-        if not self._panning or event.inaxes != self.ax:
-            return
-        if event.xdata is None or event.ydata is None:
-            return
-        dx = self._pan_start[0] - event.xdata
-        dy = self._pan_start[1] - event.ydata
-        xlim = self.ax.get_xlim()
-        ylim = self.ax.get_ylim()
-        self.ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
-        self.ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
-        self._pan_start = (event.xdata, event.ydata)
-        self.canvas.draw_idle()
 
     def reset_view(self):
         """Restore original zoom (called by Ctrl+R in DeconvWindow)."""

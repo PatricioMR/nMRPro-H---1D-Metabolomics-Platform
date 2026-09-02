@@ -18,43 +18,6 @@ from processing.annotation_scoring import (
     rank_candidates, DJ_GOLD_HZ_DEFAULT)
 
 
-def _align_peaks_to_reference(peaks, ppm_arr, all_intensities,
-                               ref_ppm=0.0, window=0.05):
-    """
-    Return (shift_ppm, alignment_ok).
-
-    shift_ppm:    ppm offset to align reference (DSS/TSP) to ref_ppm.
-    alignment_ok: False when the reference peak could not be located —
-                  callers should reduce ppm weight and warn the user.
-    """
-    if ppm_arr is None or all_intensities is None:
-        warnings.warn(
-            "PPM alignment skipped: spectrum data unavailable. "
-            "PPM axis may be misaligned.",
-            UserWarning, stacklevel=2,
-        )
-        return 0.0, False
-    try:
-        mean_y = np.mean(all_intensities, axis=1) \
-                 if all_intensities.ndim == 2 else all_intensities
-        mask   = (ppm_arr >= ref_ppm - window) & (ppm_arr <= ref_ppm + window)
-        if not np.any(mask):
-            warnings.warn(
-                f"Calibration reference (DSS/TSP) not found within "
-                f"±{window:.3f} ppm of {ref_ppm:.3f} ppm. "
-                "Applying zero shift — PPM axis may be misaligned.",
-                UserWarning, stacklevel=2,
-            )
-            return 0.0, False
-        idx_in_win = np.argmax(mean_y[mask])
-        current    = ppm_arr[mask][idx_in_win]
-        return float(ref_ppm - current), True
-    except Exception:
-        warnings.warn(
-            "PPM alignment failed unexpectedly. Applying zero shift.",
-            UserWarning, stacklevel=2,
-        )
-        return 0.0, False
 
 
 def _assignment_sort_key(score, mp):

@@ -49,23 +49,6 @@ def _no_blk_group_mean(all_intensities, samples_info):
     return np.mean(gmeans, axis=1)
 
 
-def _reference_group_mean(all_intensities, samples_info):
-    """Mean of the non-BLK group with highest total intensity."""
-    import numpy as np
-    from collections import defaultdict
-    if all_intensities is None: return None
-    groups = defaultdict(list)
-    for i, s in enumerate(samples_info or []):
-        stype = s.get('type', s.get('label', 'Sample'))
-        if str(stype).upper() != 'BLK' and i < all_intensities.shape[1]:
-            groups[s.get('label', 'unknown')].append(i)
-    if not groups:
-        return np.mean(all_intensities, axis=1)
-    best = max(groups, key=lambda g: float(
-        np.sum(np.mean(all_intensities[:, groups[g]], axis=1))))
-    print(f'   _reference_group_mean: group "{best}" '
-          f'({len(groups[best])} sample(s)) — highest intensity')
-    return np.mean(all_intensities[:, groups[best]], axis=1)
 
 
 def _validate_region_baseline_edges(
@@ -133,71 +116,6 @@ def _validate_region_baseline_edges(
     }
 
 
-def _expand_region_to_baseline_edges(
-        ppm, intensity, lo, hi, noise_std,
-        max_expand_factor=2.5, step_points=3):
-    """Expand region until both edges satisfy baseline criteria, if possible."""
-    lo_n, hi_n = float(min(lo, hi)), float(max(lo, hi))
-    idx_lo = int(np.argmin(np.abs(ppm - lo_n)))
-    idx_hi = int(np.argmin(np.abs(ppm - hi_n)))
-    if idx_lo > idx_hi:
-        idx_lo, idx_hi = idx_hi, idx_lo
-
-    base_pts = max(1, idx_hi - idx_lo + 1)
-    max_extra = max(4, int(base_pts * max_expand_factor))
-
-    best = _validate_region_baseline_edges(ppm, intensity, lo_n, hi_n, noise_std)
-    best_lo, best_hi = lo_n, hi_n
-
-    if best.get('valid', False):
-        best['validation_mode'] = 'strict'
-        best['expanded'] = False
-        best['original_lo'] = lo_n
-        best['original_hi'] = hi_n
-        return best_lo, best_hi, best
-
-    cur_lo, cur_hi = idx_lo, idx_hi
-    expanded = 0
-    while expanded < max_extra:
-        metric = _validate_region_baseline_edges(
-            ppm, intensity, float(min(ppm[cur_lo], ppm[cur_hi])),
-            float(max(ppm[cur_lo], ppm[cur_hi])), noise_std)
-
-        if metric.get('valid', False):
-            metric['validation_mode'] = 'strict'
-            metric['expanded'] = True
-            metric['original_lo'] = lo_n
-            metric['original_hi'] = hi_n
-            return float(min(ppm[cur_lo], ppm[cur_hi])), float(max(ppm[cur_lo], ppm[cur_hi])), metric
-
-        # Expand to both sides to capture full foot-head-foot envelope.
-        moved = False
-        if cur_lo > 0:
-            new_lo = max(0, cur_lo - step_points)
-            expanded += (cur_lo - new_lo)
-            cur_lo = new_lo
-            moved = True
-        if cur_hi < (len(ppm) - 1):
-            new_hi = min(len(ppm) - 1, cur_hi + step_points)
-            expanded += (new_hi - cur_hi)
-            cur_hi = new_hi
-            moved = True
-        if not moved:
-            break
-
-        best = metric
-        best_lo = float(min(ppm[cur_lo], ppm[cur_hi]))
-        best_hi = float(max(ppm[cur_lo], ppm[cur_hi]))
-
-    # Relaxed fallback after max expansion.
-    relaxed = _validate_region_baseline_edges(
-        ppm, intensity, best_lo, best_hi, noise_std,
-        max_edge_ratio=4.0, max_tilt_ratio=3.0)
-    relaxed['validation_mode'] = 'relaxed' if relaxed.get('valid', False) else 'failed'
-    relaxed['expanded'] = True
-    relaxed['original_lo'] = lo_n
-    relaxed['original_hi'] = hi_n
-    return best_lo, best_hi, relaxed
 
 class PeakDetectionStage(BaseStage):
 

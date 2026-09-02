@@ -53,8 +53,3 @@ class DeconvParamsFrame:
             'min_snr': self.min_snr_var.get(),
             'max_peaks': self.max_peaks_var.get()
         }
-
-    def enable_buttons(self, has_selection=True, has_results=False):
-        """Enable/disable buttons based on state."""
-        self.apply_btn.config(state="normal" if has_selection else "disabled")
-        self.save_btn.config(state="normal" if has_results else "disabled")

@@ -1218,16 +1218,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         except Exception:
             self._2d_bg = None
 
-    def _unbind_2d_events(self):
-        """Remove os handlers do canvas 2D."""
-        if self._2d_canvas is not None:
-            for cid in self._2d_cids:
-                try:
-                    self._2d_canvas.mpl_disconnect(cid)
-                except Exception:
-                    pass
-        self._2d_cids = []
-        self._2d_drag = None
 
     def _on_2d_scroll(self, event):
         """Scroll: threshold no contour; intensidade nas projeções."""
@@ -1447,21 +1437,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self._2d_ax.set_ylim(min(y0, y1), max(y0, y1))
             self._2d_canvas.draw_idle()
 
-    def open_peak_debugger(self):
-        """Open the peak flow debugger for the current stage."""
-        if hasattr(self, 'stages') and 'peak_detection' in self.stages:
-            notation_stage = self.stages['peak_detection']
-            try:
-                from ParseHMDBNames import open_debugger
-                open_debugger(notation_stage)
-            except ImportError:
-                messagebox.showerror("Error",
-                                     "Debug module not found.\n"
-                                     "Please ensure debug_peak_flow.py exists in the project root.")
-            except Exception as e:
-                messagebox.showerror("Error", f"Could not open debugger:\n{str(e)}")
-        else:
-            messagebox.showinfo("Info", "Please switch to Metabolites Notation stage first.")
 
     def _open_annotation_params(self):
         """Open the Annotation Parameters dialog.

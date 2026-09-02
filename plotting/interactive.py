@@ -52,8 +52,6 @@ class InteractivePlotManager:
         self.ax.set_xlim(peak['ppm'] + margin, peak['ppm'] - margin)
         self.canvas.draw_idle()
 
-    def highlight_peak(self, peak):
-        self.zoom_to_peak(peak)
 
     # ── Peak overlay ──────────────────────────────────────────────────────────
 

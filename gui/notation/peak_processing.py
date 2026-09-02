@@ -1062,11 +1062,3 @@ class PeakProcessor:
         import copy
         return copy.deepcopy(self.peaks) if self.peaks else []
 
-    def get_buckets(self):
-        return self.buckets
-
-    def parse_region_from_text(self, region_text):
-        numbers = re.findall(r"[-+]?\d*\.\d+|\d+", region_text)
-        if len(numbers) >= 2:
-            return float(numbers[0]), float(numbers[1])
-        return None, None

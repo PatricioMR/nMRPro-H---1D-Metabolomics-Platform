@@ -65,9 +65,6 @@ class AsyncWorker:
         # O callback real é agendado no método que chama o worker
         pass
 
-    def is_running(self) -> bool:
-        """Verifica se o worker está executando."""
-        return self.running and self.thread and self.thread.is_alive()
 
     def wait(self, timeout: Optional[float] = None) -> bool:
         """

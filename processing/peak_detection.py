@@ -43,113 +43,7 @@ def diagnose_array(arr, name):
             print(f"  [ERROR] Could not convert to NumPy")
 
 
-def find_peak_boundaries_derivative(intensity, peak_idx, left_bound, right_bound, noise_std=None, min_drop=1.5):
-    """
-    Encontra limites de pico usando a primeira derivada e limiar de ruído.
-    - Limite: ponto onde derivada cruza zero (mudança de sinal) ou intensidade cai abaixo de baseline + min_drop*ruído.
-    """
-    n = len(intensity)
-    if noise_std is None:
-        noise_std = estimate_noise_region(intensity)
-    baseline = np.min(intensity)
-    threshold = baseline + min_drop * noise_std
 
-    # Derivada
-    deriv = np.gradient(intensity)
-
-    # Esquerda do ápice
-    left = peak_idx
-    for i in range(peak_idx, left_bound, -1):
-        if intensity[i] < threshold:
-            left = i
-            break
-        if deriv[i-1] <= 0 < deriv[i]:  # zero crossing (mínimo)
-            left = i
-            break
-
-    # Direita do ápice
-    right = peak_idx
-    for i in range(peak_idx, right_bound):
-        if intensity[i] < threshold:
-            right = i
-            break
-        if deriv[i] >= 0 > deriv[i+1]:  # zero crossing (mínimo)
-            right = i
-            break
-        if i+1 >= n-1:
-            break
-
-    return left, right
-
-def find_valley_points(intensity, peak_idx, left_bound, right_bound):
-    """
-    Find valley (local minimum) points that define peak boundaries.
-
-    Searches for the lowest points between the current peak and
-    adjacent peaks or baseline.
-
-    Parameters
-    ----------
-    intensity : ndarray (n,)
-        Baseline-corrected intensity
-    peak_idx : int
-        Index of the peak apex
-    left_bound : int
-        Left search boundary (previous peak or spectrum start)
-    right_bound : int
-        Right search boundary (next peak or spectrum end)
-
-    Returns
-    -------
-    left_valley : int
-        Index of left valley point (foot)
-    right_valley : int
-        Index of right valley point (foot)
-    """
-    n = len(intensity)
-
-    # Search left valley: find minimum between previous peak and current peak
-    left_search_start = max(0, left_bound)
-    left_search_end = peak_idx
-
-    if left_search_end <= left_search_start:
-        left_valley = left_search_start
-    else:
-        # Find the local minimum in this region
-        left_region = intensity[left_search_start:left_search_end + 1]
-
-        # Check for local minima using gradient sign changes
-        gradient = np.diff(left_region)
-        sign_changes = np.where(np.diff(np.sign(gradient)) > 0)[0]
-
-        if len(sign_changes) > 0:
-            # Pick the minimum closest to the peak
-            left_valley = left_search_start + sign_changes[-1] + 1
-        else:
-            # No clear minimum - use the lowest point in region
-            left_valley = left_search_start + np.argmin(left_region)
-
-    # Search right valley: find minimum between current peak and next peak
-    right_search_start = peak_idx
-    right_search_end = min(n - 1, right_bound)
-
-    if right_search_end <= right_search_start:
-        right_valley = right_search_end
-    else:
-        right_region = intensity[right_search_start:right_search_end + 1]
-
-        # Check for local minima
-        gradient = np.diff(right_region)
-        sign_changes = np.where(np.diff(np.sign(gradient)) > 0)[0]
-
-        if len(sign_changes) > 0:
-            # Pick the minimum closest to the peak
-            right_valley = right_search_start + sign_changes[0] + 1
-        else:
-            # No clear minimum - use the lowest point in region
-            right_valley = right_search_start + np.argmin(right_region)
-
-    return left_valley, right_valley
 
 
 def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
@@ -662,33 +556,8 @@ def fit_peak_quality(ppm_region, intensity_region):
     return float(best_r2), best_model, float(sym)
 
 
-def fit_gaussian_quality(ppm_region, intensity_region):
-    """Backward-compatible wrapper — delegates to fit_peak_quality."""
-    r2, _model, _sym = fit_peak_quality(ppm_region, intensity_region)
-    return r2, None
 
 
-def check_foot_at_baseline(intensity, foot_idx, noise_std,
-                            threshold_factor=3.0):
-    """
-    Return True if the intensity at foot_idx is at or near baseline.
-
-    A peak foot (valley) is considered "baseline-grounded" when its
-    intensity is ≤ threshold_factor × noise_std.  Peaks where BOTH
-    feet are grounded are isolated singlets; peaks with an ungrounded
-    foot share a valley with an adjacent peak and are part of an
-    overlapping cluster that should go to the deconvolution tool.
-
-    Parameters
-    ----------
-    intensity        : 1-D array — baseline-corrected spectrum
-    foot_idx         : int       — index of the left or right valley
-    noise_std        : float     — estimated noise standard deviation
-    threshold_factor : float     — multiplier on noise_std (default 3.0)
-    """
-    if noise_std is None or float(noise_std) <= 0:
-        return True   # cannot assess → assume grounded
-    return float(intensity[foot_idx]) <= threshold_factor * float(noise_std)
 
 
 def _second_derivative_shoulders(spectrum, distance_in_points, min_height,

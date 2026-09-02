@@ -75,10 +75,6 @@ def _local_linear_baseline(y, edge_frac=0.15, percentile=10):
 
 # ── Multiplet intensity helpers ───────────────────────────────────────────────
 
-def _binomial_coeffs(n):
-    """Pascal's triangle row n (0-indexed). Row 1 = [1,1], row 2 = [1,2,1]..."""
-    from math import comb
-    return [comb(n - 1, k) for k in range(n)]
 
 
 def _relative_intensities_from_type(mult_type, protons):
@@ -310,32 +306,6 @@ def _rri_score(exp_peaks_in_region, db_sticks, tolerance=0.02):
     return max(0.0, 1.0 - mad)
 
 
-def _cosine_similarity(exp_ppm, exp_int, db_peaks, tolerance=0.05):
-    """
-    Compute cosine similarity between experimental spectrum (as a sparse
-    vector at detected peak positions) and the DB fingerprint.
-    Only considers peaks within the experimental ppm range.
-    """
-    if not db_peaks:
-        return 0.0
-    # Build vectors aligned on the DB peak positions
-    v_exp, v_db = [], []
-    for dp in db_peaks:
-        dp_ppm = dp.get('ppm_center', dp.get('ppm', 0))
-        # Find closest experimental peak
-        diffs = [abs(ep - dp_ppm) for ep in exp_ppm]
-        if not diffs:
-            continue
-        min_diff = min(diffs)
-        idx      = diffs.index(min_diff)
-        v_db.append(float(dp.get('height', dp.get('intensity', 1.0)) or 1.0))
-        v_exp.append(exp_int[idx] if min_diff <= tolerance else 0.0)
-    if not v_exp or not any(v_exp) or not any(v_db):
-        return 0.0
-    v_exp = np.array(v_exp, dtype=float)
-    v_db  = np.array(v_db,  dtype=float)
-    norm  = np.linalg.norm(v_exp) * np.linalg.norm(v_db)
-    return float(np.dot(v_exp, v_db) / norm) if norm > 0 else 0.0
 
 
 # NNLS spectral validation is not in use. It reconstructs the whole spectrum
@@ -1062,9 +1032,6 @@ class AnnotationResultsWindow:
         except Exception:
             tolerance = 0.05
 
-        def _gauss_ppm_score(exp, db):
-            sigma = tolerance / 2.0
-            return float(np.exp(-0.5 * ((exp - db) / sigma) ** 2))
 
         # Apply: shift db_ppm in every matched peak, recompute ppm_diff / ppm_score
         # The experimental peak_ppm is NOT touched.
@@ -1821,22 +1788,6 @@ class AnnotationResultsWindow:
             manual_marks=(getattr(ann_stage, '_quality_marks', {})
                           if ann_stage else {}))
 
-    def _rank_score_map(self):
-        """rank -> {met_id: best composite_score of that metabolite's non-BDL
-        matched_peak at that rank}. Used to weigh competition by strength
-        instead of raw headcount."""
-        m = {}
-        for met in self.metabolites:
-            met_id = met.get('id', met.get('name'))
-            for mp in met['matched_peaks']:
-                rank = mp.get('peak_rank')
-                if rank is None:
-                    continue
-                sc = float(mp.get('composite_score', 0) or 0)
-                d = m.setdefault(rank, {})
-                if met_id not in d or sc > d[met_id]:
-                    d[met_id] = sc
-        return m
     def _nnls_spectral_validation(self):
         """
         Global NNLS spectral reconstruction filter. DISABLED — see
@@ -2790,15 +2741,6 @@ class AnnotationResultsWindow:
             t = (mp.get('type', '') or mp.get('multiplicity', '') or '').strip().lower()
             return t in ('m', 'multiplet')
 
-        def _qual_visible(mp):
-            # Filter out 'm' (multiplet without J) unless explicitly shown
-            if _is_mult_m(mp) and not show_mult_m:
-                return False
-            qual = mp.get('annotation_quality')
-            if qual == 'good':  return show_good
-            if qual == 'bad':   return show_bad
-            if qual == 'poor':  return show_undef  # 'poor' follows the undef filter
-            return show_undef   # None / undefined
 
         def _met_visible(met):
             """Hide metabolite entirely if ALL its matched peaks are 'm' and filter is off."""
@@ -4102,43 +4044,6 @@ class AnnotationResultsWindow:
                 return subs if subs else None
         return None
 
-    def _deconv_sub_peaks_near(self, target_ppm, tolerance=0.05):
-        """
-        Search ALL deconvolved regions for sub-peaks within `tolerance` ppm of
-        `target_ppm`. Returns (parent_rank, [sub_peak, ...]) for the region
-        whose parent peak is closest to target_ppm, or (None, None) if none found.
-
-        This allows matching DB peaks to deconvolved sub-peaks by PPM position,
-        regardless of which parent peak rank was originally matched.
-        """
-        pk_stage = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
-        if pk_stage is None:
-            return None, None
-        ctrl = getattr(pk_stage, '_deconv_controller', None)
-        if ctrl is None:
-            return None, None
-
-        best_rank  = None
-        best_subs  = None
-        best_dist  = float('inf')
-
-        for i, p in enumerate(ctrl.peaks):
-            if not p.get('_deconvolved'):
-                continue
-            res  = ctrl.results.get(i, {})
-            subs = [sp for sp in res.get('peaks', [])
-                    if sp.get('status') != 'Poor']
-            if not subs:
-                continue
-            # Check if any sub-peak is within tolerance of target_ppm
-            for sp in subs:
-                dist = abs(float(sp['ppm']) - target_ppm)
-                if dist <= tolerance and dist < best_dist:
-                    best_dist = dist
-                    best_rank = int(p.get('rank', -1))
-                    best_subs = subs   # return all sub-peaks of that region
-
-        return best_rank, best_subs
 
     # ── End helpers ───────────────────────────────────────────────────────────
 
@@ -4618,186 +4523,6 @@ class AnnotationResultsWindow:
             text=(f"{met['name']}  ·  {n_mat}/{n_db} DB signals matched  "
                   f"·  {cov:.0f}% coverage  ·  cosine {cos:.3f}"))
 
-    def _plot_peak_zoom(self, met, mp):
-        """
-        Show a single matched peak: experimental shape vs DB Lorentzian.
-
-        The DB provides ppm_center + ppm_start/end (= width at base).
-        We construct a normalised Lorentzian from those and overlay it
-        on the normalised experimental slice around the peak.
-        """
-        self.ax.clear()
-
-        exp_ppm  = float(mp['peak_ppm'])
-        db_ppm   = float(mp['db_ppm'])
-        ppm_diff = float(mp['ppm_diff'])
-
-        # Find the DB peak entry to get width
-        db_entry = next(
-            (p for p in met['db_peaks']
-             if abs(p.get('ppm_center', p.get('ppm', 0)) - db_ppm) < 0.01),
-            None)
-        if db_entry:
-            db_width = max(
-                abs(db_entry.get('ppm_end', db_ppm) -
-                    db_entry.get('ppm_start', db_ppm)),
-                0.002)
-        else:
-            db_width = 0.005   # fallback FWHM
-
-        # Zoom window: 4× the larger of db_width or fwhm of experimental peak
-        exp_peak = next(
-            (p for p in self.peaks
-             if p.get('rank') == mp.get('peak_rank')),
-            None)
-        exp_fwhm = (exp_peak.get('width_at_half', db_width)
-                    if exp_peak else db_width)
-        half_win = max(db_width * 4, exp_fwhm * 4, 0.015)
-
-        lo = min(exp_ppm, db_ppm) - half_win
-        hi = max(exp_ppm, db_ppm) + half_win
-
-        # ── Experimental shape ────────────────────────────────────────────────
-        mask  = (self.ppm >= lo) & (self.ppm <= hi)
-        x_exp = self.ppm[mask]
-        y_exp = self.mean_intensity[mask]
-
-        if len(x_exp) >= 2:
-            # Subtract linear baseline estimated from window edges before
-            # normalising, so the doublet/triplet lines fill the full y range
-            # instead of appearing as tiny bumps on top of a broad baseline hump.
-            _n = len(y_exp)
-            _en = max(2, int(_n * 0.12))
-            _xl = float(np.mean(x_exp[:_en]));  _yl = float(np.mean(y_exp[:_en]))
-            _xr = float(np.mean(x_exp[-_en:])); _yr = float(np.mean(y_exp[-_en:]))
-            if abs(_xr - _xl) > 1e-9:
-                _slope = (_yr - _yl) / (_xr - _xl)
-                y_exp_bc = y_exp - (_yl + _slope * (x_exp - _xl))
-            else:
-                y_exp_bc = y_exp - _yl
-            y_exp_bc = np.clip(y_exp_bc, 0, None)
-            y_max = float(np.max(y_exp_bc)) if np.max(y_exp_bc) > 0 else 1.0
-            y_norm = y_exp_bc / y_max
-            self.ax.fill_between(x_exp, 0, y_norm,
-                                  color='#4477aa', alpha=0.30,
-                                  label='Experimental', zorder=1)
-            self.ax.plot(x_exp, y_norm,
-                         color='#1a1a6e', linewidth=1.2, zorder=2)
-
-        # ── DB multiplet shape: sum of Lorentzians at each stick position ──────
-        # The sticks are anchored at exp_ppm (already shifted by offset above)
-        db_entry = next(
-            (p for p in met['db_peaks']
-             if abs(p.get('ppm_center', p.get('ppm', 0)) - db_ppm) < 0.01),
-            None)
-        sticks = (db_entry.get('sticks') if db_entry else None) or [(db_ppm, 1.0)]
-        # Shift sticks to align with experimental peak
-        offset  = exp_ppm - db_ppm
-        sticks  = [(sp + offset, si) for sp, si in sticks]
-        hwhm    = max(db_width / 2, 0.001)
-
-        x_db    = np.linspace(lo, hi, 600)
-        y_db    = np.zeros_like(x_db)
-        for st_ppm, st_rel in sticks:
-            y_db += st_rel * hwhm**2 / ((x_db - st_ppm)**2 + hwhm**2)
-        if y_db.max() > 0:
-            y_db /= y_db.max()
-
-        self.ax.fill_between(x_db, 0, y_db,
-                              color='#44aa44', alpha=0.25,
-                              label='DB fingerprint', zorder=1)
-        self.ax.plot(x_db, y_db,
-                     color='#1a7a1a', linewidth=1.5,
-                     linestyle='--', zorder=3)
-
-        # Individual sticks showing relative intensities
-        for st_ppm, st_rel in sticks:
-            self.ax.plot([st_ppm, st_ppm], [0, st_rel],
-                         color='#1a7a1a', linewidth=1.5,
-                         alpha=0.7, zorder=4)
-            self.ax.scatter([st_ppm], [st_rel],
-                            color='#1a7a1a', s=25, zorder=5)
-
-        # ── Centre lines ──────────────────────────────────────────────────────
-        self.ax.axvline(exp_ppm, color='#1a1a6e', linewidth=1.0,
-                        linestyle=':', alpha=0.8, zorder=4,
-                        label=f'Exp {exp_ppm:.4f}')
-        # Only draw DB reference line if it falls within the visible window
-        if lo <= db_ppm <= hi:
-            self.ax.axvline(db_ppm, color='#1a7a1a', linewidth=1.0,
-                            linestyle=':', alpha=0.8, zorder=4,
-                            label=f'DB {db_ppm:.4f}')
-
-        # ── Shift annotation ─────────────────────────────────────────────────
-        # Set xlim first so coordinate conversion is valid.
-        self.ax.set_xlim(hi + half_win * 0.1, lo - half_win * 0.1)
-
-        # Use axes-fraction coordinates so the arrow stays inside the plot
-        # even when db_ppm falls outside the visible window.
-        x_lo_lim, x_hi_lim = self.ax.get_xlim()
-        def _to_ax(ppm):
-            return (ppm - x_lo_lim) / (x_hi_lim - x_lo_lim)
-
-        x_exp_ax = _to_ax(exp_ppm)
-        x_db_ax  = _to_ax(db_ppm)
-        # Clamp db end of arrow to [0.01, 0.99] so it stays inside axes
-        x_db_clamped = max(0.01, min(0.99, x_db_ax))
-        y_ann_ax  = 0.78
-        y_text_ax = 0.84
-
-        if abs(x_exp_ax - x_db_ax) > 0.005:
-            self.ax.annotate(
-                '', xy=(x_exp_ax, y_ann_ax),
-                xytext=(x_db_clamped, y_ann_ax),
-                xycoords='axes fraction', textcoords='axes fraction',
-                arrowprops=dict(arrowstyle='<->', color='#cc5500', lw=1.2))
-        # Label: always at a safe position (centre of visible window)
-        x_label_ax = max(0.05, min(0.95, (x_exp_ax + x_db_clamped) / 2))
-        self.ax.text(x_label_ax, y_text_ax,
-                     f'Δ {ppm_diff:.4f} ppm',
-                     transform=self.ax.transAxes,
-                     ha='center', fontsize=8, color='#cc5500')
-
-        # ── Axes ──────────────────────────────────────────────────────────────
-        # xlim already set above; re-apply to be explicit.
-        self.ax.set_ylim(-0.05, 1.25)
-        self.ax.set_xlabel('δ (ppm)', fontsize=9)
-        self.ax.set_ylabel('Intensity (normalised to signal max)', fontsize=8)
-        self.ax.set_title(
-            f"{met['name']}  ·  Signal #{mp['peak_rank']}",
-            fontsize=9, fontweight='bold')
-        self.ax.legend(loc='upper right', fontsize=7)
-        self.ax.tick_params(labelsize=8)
-        self.ax.grid(True, alpha=0.2, linestyle=':')
-        self.ax.set_facecolor('#fafafa')
-        self.fig.tight_layout()
-        self.plot_canvas.draw_idle()
-
-        # Update quality card for this peak
-        self._set_q('coverage',
-                    f"Δ = {ppm_diff:.4f} ppm",
-                    '#1a7a1a' if ppm_diff < 0.005 else
-                    '#7a6000' if ppm_diff < 0.02 else '#9a0000')
-        self._set_q('cosine',
-                    f"width {db_width:.4f} ppm",
-                    '#1a7a1a' if db_width < 0.02 else '#7a6000')
-        self._set_q('n_matched',
-                    f"#{mp['peak_rank']}  {mp.get('type','')}",
-                    '#1a7a1a')
-        _pl = mp.get('predicted_lines', [])
-        if len(_pl) > 1:
-            _obs_c  = (_pl[0]['ppm'] + _pl[-1]['ppm']) / 2
-            _j_obs  = abs(_pl[-1]['ppm'] - _pl[0]['ppm']) * 600.0
-            _jdb    = mp.get('j_coupling', '')
-            self.match_info.config(
-                text=(f"{met['name']}  ·  centre {_obs_c:.4f}  →  "
-                      f"db {db_ppm:.4f}  Δ{ppm_diff:.4f} ppm  ·  "
-                      f"J_obs={_j_obs:.2f}Hz"))
-        else:
-            self.match_info.config(
-                text=(f"{met['name']}  ·  exp {exp_ppm:.4f}  →  "
-                      f"db {db_ppm:.4f}  Δ{ppm_diff:.4f} ppm  ·  "
-                      f"width {db_width:.4f} ppm"))
 
     def _set_q(self, key, text, color):
         if key in self._q_labels:
@@ -4887,67 +4612,8 @@ class AnnotationResultsWindow:
         except Exception:
             pass
 
-    def _rc_press(self, event):
-        if event.button != 3 or event.inaxes != self.ax:
-            return
-        if event.xdata is None:
-            return
-        self._rc_drag_start = event.xdata
-        # Remove old span if any
-        if self._rc_span_patch is not None:
-            try:
-                self._rc_span_patch.remove()
-            except Exception:
-                pass
-            self._rc_span_patch = None
-        self.plot_canvas.draw_idle()
 
-    def _rc_move(self, event):
-        if self._rc_drag_start is None or event.inaxes != self.ax:
-            return
-        if event.xdata is None:
-            return
-        x0, x1 = sorted([self._rc_drag_start, event.xdata])
-        if self._rc_span_patch is not None:
-            try:
-                self._rc_span_patch.remove()
-            except Exception:
-                pass
-        self._rc_span_patch = self.ax.axvspan(
-            x0, x1, color='#ff9900', alpha=0.18, zorder=10)
-        self.plot_canvas.draw_idle()
 
-    def _rc_release(self, event):
-        if event.button != 3 or self._rc_drag_start is None:
-            return
-        x_end = event.xdata
-        start  = self._rc_drag_start
-        self._rc_drag_start = None
-
-        # Remove selection span
-        if self._rc_span_patch is not None:
-            try:
-                self._rc_span_patch.remove()
-            except Exception:
-                pass
-            self._rc_span_patch = None
-
-        if x_end is None:
-            self.plot_canvas.draw_idle()
-            return
-        if self._current_dp is None:
-            self.plot_canvas.draw_idle()
-            self.match_info.config(
-                text='Select a signal in the list first, then right-drag.',
-                foreground='orange')
-            return
-
-        lo_ppm, hi_ppm = min(start, x_end), max(start, x_end)
-        if abs(hi_ppm - lo_ppm) < 0.0005:
-            self.plot_canvas.draw_idle()
-            return
-
-        self._rc_select_region(lo_ppm, hi_ppm)
 
     # Multiplicity → number of expected peaks
     _MULT_N = {
@@ -5221,49 +4887,6 @@ class AnnotationResultsWindow:
             tier_reader=read_tier_choice,
             tier_note=_TIER_NOTE)
 
-    def _open_mcr_deconv(self):
-        """Collect all Average (unconfirmed) peaks and open MCRWindow."""
-        # Gather (met_dict, mp_dict, peak_dict) for every unconfirmed match
-        app        = getattr(self, 'app', None)
-        pd_stage   = getattr(app, 'stages', {}).get('peak_detection') if app else None
-        ann_stage  = (getattr(app, 'stages', {}).get('annotation') if app else None)
-
-        undef_items = []
-        for met in self.metabolites:
-            for mp in met['matched_peaks']:
-                if mp.get('annotation_quality') is not None:
-                    continue   # skip Good and Poor — only unconfirmed
-                rank = mp.get('peak_rank')
-                peak = None
-                if pd_stage and rank is not None:
-                    peak = next((p for p in pd_stage.peaks
-                                 if p.get('rank') == rank), None)
-                if peak is None:
-                    # Build a minimal stub so the window can still open
-                    ppm = float(mp.get('peak_ppm', mp.get('db_ppm', 0)))
-                    peak = {'rank': rank or 0, 'ppm': ppm,
-                            'start_ppm': ppm - 0.015,
-                            'end_ppm':   ppm + 0.015}
-                undef_items.append((met, mp, peak))
-
-        if not undef_items:
-            from tkinter import messagebox
-            messagebox.showinfo(
-                'No Average Signals',
-                'No unconfirmed (Average) signals found.\n\n'
-                'Use Ctrl+2 on a selected signal to mark it as Average.',
-                parent=self.win)
-            return
-
-        from gui.widgets.mcr_window import MCRWindow
-        items = [{'kind': 'undef', 'met': met, 'mp': mp, 'peak': peak}
-                 for met, mp, peak in undef_items]
-        MCRWindow(
-            self.win,
-            items,
-            app,
-            ann_stage=ann_stage,
-            ann_results=self)
 
     # ── Export ────────────────────────────────────────────────────────────────
 

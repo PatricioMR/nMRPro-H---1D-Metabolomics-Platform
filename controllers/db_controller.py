@@ -53,9 +53,6 @@ class DatabaseController:
         self.current_db_path = None
         self.db_type = None
 
-    def get_available_databases(self):
-        """Return list of available database configurations."""
-        return self.AVAILABLE_DATABASES
 
     def connect(self, db_path, db_type='hmdb'):
         """

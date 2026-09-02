@@ -789,28 +789,6 @@ class FullSpectrumMCRStage(BaseStage):
         self._set_status(f'Error: {msg}', 'red')
         messagebox.showerror('MCR Analysis Error', msg)
 
-    def _open_window(self):
-        if not self._mcr_regions:
-            messagebox.showinfo('Info', 'Run the analysis first.')
-            return
-        # Only show overlapping regions (K≥2) — single-peak regions are not
-        # useful for manual deconvolution review
-        overlap_regions = [r for r in self._mcr_regions
-                           if r.get('mcr_annotation', {}).get('K', 0) >= 2]
-        if not overlap_regions:
-            messagebox.showinfo('Info',
-                'No overlapping regions found (K≥2).\n'
-                'All detected regions contain a single component.')
-            return
-        from gui.widgets.mcr_window import MCRWindow
-        items = [{'kind': 'region', 'met': None, 'mp': None, 'peak': r}
-                 for r in overlap_regions]
-        win = MCRWindow(
-            self.app.root,
-            items,
-            self.app,
-            ann_stage=self)
-        self.app._deconv_win = win
 
     # ── Worker (background thread) ────────────────────────────────────────────
 

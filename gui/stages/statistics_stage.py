@@ -832,33 +832,6 @@ class StatisticsStage:
                             else 'Other')
         return assign
 
-    def _dumbbell_category_map(self, feature_labels):
-        """metabolite name → pathway category (Metabolic/Disease/Drug/Other)."""
-        import os, sqlite3
-        from app_paths import databases_dir
-        try:
-            qr = self._pathway_quant_results(feature_labels)
-            id_by_name = {r['metabolite']: str(r.get('hmdb_id') or '') for r in qr}
-        except Exception:
-            id_by_name = {}
-        cat = {n: 'Other' for n in feature_labels}
-        try:
-            conn = sqlite3.connect(os.path.join(databases_dir(), 'hmdb_pathways.db'))
-            cur = conn.cursor()
-            for name in feature_labels:
-                hid = id_by_name.get(name, '')
-                if hid.upper().startswith('HMDB'):
-                    row = cur.execute(
-                        'SELECT p.category, COUNT(*) c FROM metabolite_pathways mp '
-                        'JOIN pathways p ON p.id = mp.pathway_id '
-                        'WHERE mp.hmdb_id = ? GROUP BY p.category '
-                        'ORDER BY c DESC LIMIT 1', (hid,)).fetchone()
-                    if row and row[0]:
-                        cat[name] = str(row[0]).capitalize()
-            conn.close()
-        except Exception:
-            pass
-        return cat
 
     def _plot_dumbbell(self, X, feature_labels, group_labels,
                        ctrl_a, ctrl_b, ga, gb, p_thr=0.05, category='all'):

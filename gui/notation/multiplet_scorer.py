@@ -872,19 +872,3 @@ def multiplicity_compat_score(expected_mult: str,
     return float(np.clip(base * observed_confidence
                          + 1.0 * (1.0 - observed_confidence), 0.0, 1.0))
 
-
-def enrich_results(results, peaks, tolerance=0.005, spectrometer_mhz=None):
-    """Add multiplet_score, multiplet_detail, predicted_lines to each result."""
-    mhz = float(spectrometer_mhz or 600.0)
-    for r in results:
-        try:
-            score, detail, lines = score_multiplet_match(
-                r, peaks, tolerance, mhz)
-            r['multiplet_score']  = score
-            r['multiplet_detail'] = detail
-            r['predicted_lines']  = lines
-        except Exception as e:
-            r['multiplet_score']  = 0.0
-            r['multiplet_detail'] = f'error: {e}'
-            r['predicted_lines']  = []
-    return results

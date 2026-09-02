@@ -383,30 +383,6 @@ class QuantPeaksWindow:
         self._tree.bind('<ButtonRelease-1>', self._on_click)
         self._populate_tree()
 
-    @staticmethod
-    def _cluster_by_proximity(candidates, gap=0.05):
-        """
-        Group candidates into multiplet signals by detected ppm proximity.
-
-        Peaks within `gap` ppm of each other belong to the same signal.
-        Returns list of [members] sorted by ppm desc.
-        """
-        if not candidates:
-            return []
-
-        def _det_ppm(c):
-            return float(c['peak'].get('ppm', c['hit_ppm']))
-
-        sorted_c = sorted(candidates, key=lambda c: -_det_ppm(c))
-        groups, current = [], [sorted_c[0]]
-        for c in sorted_c[1:]:
-            if abs(_det_ppm(c) - _det_ppm(current[-1])) <= gap:
-                current.append(c)
-            else:
-                groups.append(current)
-                current = [c]
-        groups.append(current)
-        return groups
 
     def _populate_tree(self):
         tree = self._tree

@@ -239,38 +239,6 @@ class VisualizationStage(BaseStage):
         except Exception:
             pass
 
-    def _on_type_change(self, idx, type_var):
-        """Update sample type in samples_info and refresh downstream."""
-        new_type = type_var.get()
-        self.app.samples_info[idx]['type'] = new_type
-        # Re-style the row
-        row = self.scrollable_frame.winfo_children()[idx]
-        self._style_type_row(row, new_type)
-        # Notify plot manager if peaks are drawn
-        pm = getattr(self.app, 'plot_manager', None)
-        if pm and pm._peaks_drawn:
-            try:
-                stage = self.app.stages.get('peak_detection')
-                if stage and stage.peaks:
-                    from collections import defaultdict as _dd
-                    import numpy as _np
-                    _si = self.app.samples_info
-                    _raw = self.app.all_intensities
-                    _g = _dd(list)
-                    for _i, _s in enumerate(_si):
-                        if _s.get('type', 'Sample') != 'BLK' \
-                                and _i < _raw.shape[1]:
-                            _g[_s['label']].append(_i)
-                    if _g:
-                        _gm = _np.stack(
-                            [_np.mean(_raw[:, list(_v)], axis=1)
-                             for _v in _g.values()], axis=1)
-                        mean = _np.mean(_gm, axis=1)
-                    else:
-                        mean = _np.mean(_raw, axis=1)
-                    pm.force_redraw_peaks(stage.peaks, mean, self.app.ppm)
-            except Exception as e:
-                print(f'type change redraw: {e}')
 
     def _pick_color(self, idx):
         """Open color picker for sample idx."""

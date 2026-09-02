@@ -591,14 +591,9 @@ class DeconvController:
                     done.append(r)
         return done
 
-    def get_all_sub_peaks(self):
-        return [sp for res in self.results.values()
-                for sp in res.get('peaks', [])]
 
     # ── Backward-compat shims ─────────────────────────────────────────────────
 
-    def _find_child(self, peak_idx, target_ppm):
-        return self._find_sub(peak_idx, target_ppm)
 
     @property
     def regions(self):

@@ -352,55 +352,6 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
 
 
 # ── Tabela de DB + anotação ───────────────────────────────────────────────────
-def _annotation_table(annotation_stage, avail_w):
-    ann  = annotation_stage
-    lra  = getattr(ann, '_last_results_args', None) or {}
-    db_path = (lra.get('db_path') or
-               getattr(ann, '_db_path', None) or '—')
-    db_name = Path(db_path).name if db_path != '—' else '—'
-
-    try:
-        tol = f"{float(ann.tolerance_var.get()):.3f} ppm"
-    except Exception:
-        tol = '—'
-    try:
-        mhz = f"{float(ann.spectrometer_var.get()):.0f} MHz"
-    except Exception:
-        mhz = '—'
-
-    # Contagem de resultados
-    results = lra.get('results', [])
-    n_annotated = len({r.get('metabolite', '') for r in results}) if results else '—'
-    elapsed = lra.get('elapsed', None)
-    elapsed_s = f'{elapsed:.1f} s' if elapsed else '—'
-
-    rows = [
-        ['Annotation Parameter', 'Value'],
-        ['Database file',    db_name],
-        ['Database path',    str(db_path)],
-        ['Shift tolerance',  tol],
-        ['Spectrometer',     mhz],
-        ['Annotated compounds', str(n_annotated)],
-        ['Search time',      elapsed_s],
-    ]
-    col_w = [avail_w * 0.38, avail_w * 0.55]
-    tbl = Table(rows, colWidths=col_w)
-    tbl.setStyle(TableStyle([
-        ('BACKGROUND',  (0, 0), (-1, 0), _BLUE_MID),
-        ('TEXTCOLOR',   (0, 0), (-1, 0), _WHITE),
-        ('FONTNAME',    (0, 0), (-1, 0), 'Helvetica-Bold'),
-        ('FONTSIZE',    (0, 0), (-1, -1), 8),
-        ('FONTNAME',    (0, 1), (0, -1), 'Helvetica-Bold'),
-        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [_WHITE, _GRAY_LIGHT]),
-        ('GRID',        (0, 0), (-1, -1), 0.3, _GRAY_MID),
-        ('VALIGN',      (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 5),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 5),
-        ('TOPPADDING',  (0, 0), (-1, -1), 3),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
-        ('WORDWRAP',    (1, 2), (1, 2), 1),   # path pode ser longo
-    ]))
-    return tbl
 
 
 # ── Tabela de parâmetros (pág.1) ─────────────────────────────────────────────

@@ -49,23 +49,3 @@ class BaseStage(ABC):
         if self.frame:
             self.frame.pack_forget()
 
-    def get_frame(self):
-        """
-        Return the main frame for this stage.
-
-        Returns:
-            ttk.Frame: The stage's main frame
-        """
-        return self.frame
-
-    def update_status(self, message, color="black"):
-        """
-        Update status message if status label exists.
-
-        Args:
-            message: Status message to display
-            color: Text color (default: black)
-        """
-        if hasattr(self, 'status_label'):
-            self.status_label.config(text=message, foreground=color)
-            self.app.root.update()
