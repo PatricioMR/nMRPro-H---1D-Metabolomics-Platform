@@ -193,6 +193,7 @@ class _QuantCompMixin:
         # Who actually entered the competition. Empty when the branch that runs
         # one does not — an analyte cannot then be told it was outscored.
         _competed_mids: set = set()
+        _blocked_ambiguous: set = set()
 
         if not _fs_mode:
             if not hasattr(self.annotation_stage, '_last_results_args') or \
@@ -519,20 +520,26 @@ class _QuantCompMixin:
             traceback.print_exc()
             auto_quality_marks = {}
 
-        # Build set of Good metabolites — mirrors _met_parent_qual in annotation_results_window.
+        # Which metabolites are eligible to be quantified at all.
+        # NOT the same question as the annotation tree's row colour
+        # (processing.annotation_quality.metabolite_tier), which aggregates
+        # every signal to say what the metabolite looks like overall. Here a
+        # single usable signal is enough: a metabolite contested on one peak
+        # can still quantify on another. Who owns a contested peak is settled
+        # in the competition below, not here.
         # Ensures only peaks belonging to Good metabolites are quantified.
         good_met_ids: set = set()
         try:
             _all_mets_gmi = list(getattr(self.annotation_stage, '_metabolites', []) or [])
-            # _anchor_lines keys are (met_id, peak_rank) — same check as anchor_store in _met_parent_qual
+            # _anchor_lines keys are (met_id, peak_rank).
             _anchor_lines = getattr(self.annotation_stage, '_anchor_lines', {}) or {}
             _anchor_met_ids = {str(k[0]) for k in _anchor_lines}
             for _met_gmi in _all_mets_gmi:
                 _mid_gmi = str(_met_gmi.get('id', ''))
                 _mps_gmi = _met_gmi.get('matched_peaks', [])
 
-                # Mirror _met_parent_qual: an anchor only makes the metabolite
-                # Good when the anchoring peak is itself quality-'good'. This
+                # An anchor only makes the metabolite Good when the anchoring
+                # peak is itself quality-'good'. This
                 # blocks an incomplete multiplet (J unconfirmed, not all lines
                 # found → marked 'bad' upstream) from being quantified via a
                 # stale auto_anchor flag.
@@ -542,7 +549,7 @@ class _QuantCompMixin:
                            and mp.get('auto_anchor')
                            for mp in _mps_gmi)
                 )
-                if _has_anchor_gmi and not False:
+                if _has_anchor_gmi:
                     good_met_ids.add(_mid_gmi)
                     continue
                 for _mp_gmi in _mps_gmi:
@@ -661,18 +668,6 @@ class _QuantCompMixin:
             return auto_quality_marks.get((str(h['_mid']), h.get('peak_rank')))
 
         _SINGLET_MULTS = {'s', 'br s', 'brs', 'bs', ''}
-
-        def _quant_sort_key(h):
-            base = float(h.get('composite_score', h.get('multiplet_score', 0)) or 0)
-            # Mirror the +0.20 J-bonus used in display sort (annotation_results_window.py)
-            # so that J-confirmed multiplets always beat singlets in quantification too.
-            is_singlet = (h.get('multiplicity') or '').strip().lower() in _SINGLET_MULTS
-            if not is_singlet:
-                delta_j = h.get('delta_j_hz')
-                s_dj = float(h.get('s_dj', 0) or 0)
-                if (delta_j is not None and delta_j < 0.5) or s_dj >= 1.0:
-                    base += 0.20
-            return base
 
         # Peak assignments from AnnotationResultsWindow resolve conflicts by
         # deltaJ and user selection — use them to break ties when multiple
@@ -942,6 +937,15 @@ class _QuantCompMixin:
                     continue
                 _h_q = _effective_quality(_h)
                 if _h_q == 'bad':
+                    continue
+                # An ambiguous rank has no winner. rank_candidates says so and
+                # the annotation window shows it, but quantification filtered
+                # only 'bad', so the final tie-break elected one anyway — a
+                # number where the evidence says we cannot tell which analyte
+                # this is. It competes again the moment the analyst marks one
+                # Good, which is what resolves the rank.
+                if _h_q == 'ambiguous':
+                    _blocked_ambiguous.add(_h_mid)
                     continue
                 # Only the peaks annotation assigned to this metabolite may
                 # compete (peak_rank None = DB gap-fill, allowed). When the
@@ -2690,7 +2694,7 @@ class _QuantCompMixin:
                 actionable difference: those come back if detection resolves
                 the lines, a metabolite beaten by a rival does not.
                 """
-                if mid in _ambiguous_mids:
+                if mid in _ambiguous_mids or mid in _blocked_ambiguous:
                     return 'Ambiguous annotation - manual confirmation required'
                 # A metabolite can have one signal withdrawn and another that
                 # competed and lost; then it did lose, and saying otherwise
