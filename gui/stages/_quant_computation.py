@@ -1150,11 +1150,27 @@ class _QuantCompMixin:
                     str(m.get('id', '')): m
                     for m in (getattr(self.annotation_stage, '_metabolites', []) or [])
                 }
+                def _free_of_claims(_r):
+                    """Nothing this hit would integrate is already someone's.
+
+                    The rescue tested the anchor alone, like the greedy pass
+                    once did, so a rescued analyte could take the very lines a
+                    winner was quantified on — different anchor, same signal.
+                    """
+                    if _r.get('peak_rank') in _assigned_peaks:
+                        return False
+                    _rl = [l for l in (_r.get('predicted_lines') or [])
+                           if 'ppm' in l]
+                    if len(_rl) < 2:
+                        return True
+                    return not (set(matched_line_ranks(_r, _pk_by_rank))
+                                & _assigned_peaks)
+
                 for _rmid in _rescued_mids:
                     _rhits = [_r for _r in results
                               if str(_r.get('_mid', '')) == _rmid
                               and _effective_quality(_r) == 'good'
-                              and _r.get('peak_rank') not in _assigned_peaks]
+                              and _free_of_claims(_r)]
                     if not _rhits:
                         continue
                     _best_r = min(_rhits,
@@ -1174,6 +1190,14 @@ class _QuantCompMixin:
                     _rname = (_rann_met['name'] if _rann_met
                               else _best_r.get('name', _rmid))
                     met_map[_rmid] = {'name': _rname, 'hits': [_rescued_hit]}
+                    # Claim what it took, or the next rescue sees the peak as
+                    # free and two rescued analytes share one signal.
+                    if _rpr is not None:
+                        _assigned_peaks.add(_rpr)
+                    if len([l for l in (_best_r.get('predicted_lines') or [])
+                            if 'ppm' in l]) >= 2:
+                        for _or_r in matched_line_ranks(_best_r, _pk_by_rank):
+                            _assigned_peaks.add(_or_r)
                     _dbg(_dbg_f,
                          f'  [RESCUE] {_rname}  mid={_rmid}'
                          f'  peak_rank={_rpr}  has_jr={_has_jr_frac}')
@@ -2591,11 +2615,20 @@ class _QuantCompMixin:
                     continue
                 if _apq_mid_fb not in good_met_ids:
                     continue
-                _best_apq  = None
-                _best_conc = float('-inf')
-                for _apq_e in _apq_mid_dict.values():
+                # Only peaks nobody won. _all_peak_quant holds every matched
+                # peak of every metabolite, winners included, so picking freely
+                # from it hands a loser the very signal it lost — which is what
+                # put two metabolites on one region in the results table.
+                _free_apq = {}
+                for _apq_rank, _apq_e in _apq_mid_dict.items():
                     if not isinstance(_apq_e, dict):
                         continue
+                    if _apq_rank in _assigned_peaks:
+                        continue
+                    _free_apq[_apq_rank] = _apq_e
+                _best_apq  = None
+                _best_conc = float('-inf')
+                for _apq_e in _free_apq.values():
                     _ec = float(_apq_e.get('conc_mm', float('nan')) or float('nan'))
                     if np.isfinite(_ec) and _ec > _best_conc:
                         _best_conc = _ec
