@@ -142,7 +142,7 @@ class TestGapFillCannotTakeAnOccupiedRegion:
     def test_a_gapfill_window_that_overlaps_is_refused(self):
         src = self._src()
         i = src.index('_gf_lo, _gf_hi = db_gapfill_window')
-        body = src[i:i + 900]
+        body = src[i:src.index('_synthetic_db = True', i)]
         assert '_gf_lo < _c_hi and _c_lo < _gf_hi' in body
         assert 'continue' in body
 
