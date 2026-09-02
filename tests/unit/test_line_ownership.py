@@ -121,3 +121,42 @@ def test_claimed_peaks_are_visible_to_every_path():
                    '_my_ranks & _assigned_peaks',
                    '_apq_rank in _assigned_peaks'):
         assert decl < src.index(reader), reader
+
+
+class TestGapFillCannotTakeAnOccupiedRegion:
+    """A candidate with no detected apex claims no rank, so _assigned_peaks
+    says nothing about it. Six were integrating the histidine region at
+    [7.0876, 7.1075] that L-histidine had won on peak 304, and three more
+    shared [8.1091, 8.1290]. Reserving in ppm is the only space a candidate
+    without a peak can be reserved in.
+    """
+
+    def _src(self):
+        return inspect.getsource(qc)
+
+    def test_regions_are_claimed_in_ppm_as_well_as_by_rank(self):
+        src = self._src()
+        assert '_claimed_ppm: list = []' in src
+        assert '_claimed_ppm.append(' in src
+
+    def test_a_gapfill_window_that_overlaps_is_refused(self):
+        src = self._src()
+        i = src.index('_gf_lo, _gf_hi = db_gapfill_window')
+        body = src[i:i + 900]
+        assert '_gf_lo < _c_hi and _c_lo < _gf_hi' in body
+        assert 'continue' in body
+
+    def test_every_integrated_region_is_recorded(self):
+        """Claiming only some of them would leave the rest free to be taken."""
+        src = self._src()
+        i = src.index("integ window  :")
+        assert '_claimed_ppm.append(' in src[i:i + 500]
+
+    def test_detected_peaks_are_integrated_before_gapfills(self):
+        """Otherwise processing order decides who gets a contested region, and
+        a gap-fill placed early would claim it from the analyte that has an
+        apex there."""
+        src = self._src()
+        i = src.index('met_map = dict(sorted(')
+        body = src[i:i + 400]
+        assert "peak_rank') is None" in body

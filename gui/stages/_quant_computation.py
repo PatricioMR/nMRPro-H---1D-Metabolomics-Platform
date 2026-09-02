@@ -826,6 +826,13 @@ class _QuantCompMixin:
 
         met_map = {}
         _assigned_peaks = set()   # shared by greedy + rescue
+        # Regions already being integrated, in ppm. A gap-fill candidate has no
+        # detected peak and therefore no rank to claim, so _assigned_peaks says
+        # nothing about it: six of them were integrating the histidine region
+        # at [7.0876, 7.1075] that L-histidine had won on peak 304, and three
+        # more shared [8.1091, 8.1290]. Reserving in ppm is the only space a
+        # candidate without a peak can be reserved in.
+        _claimed_ppm: list = []
         if is_lipidomics_mode:
             for h in winning_hits:
                 mid = h['_mid']
@@ -1298,6 +1305,15 @@ class _QuantCompMixin:
                    if info.get('hits') and
                    info['hits'][0].get('peak_rank') not in _mcr_overridden_peaks}
 
+        # Analytes with a detected peak are integrated first, so their windows
+        # are on record before any gap-fill candidate is offered a region. A
+        # gap-fill has no apex to justify its claim; whoever has one gets the
+        # region, and processing order should not decide that.
+        met_map = dict(sorted(
+            met_map.items(),
+            key=lambda kv: (kv[1]['hits'][0].get('peak_rank') is None,
+                            str(kv[0]))))
+
         _mcr_info        = {}
         _align_shifts    = {}   # mid → list[float] per-sample ppm shift
 
@@ -1434,6 +1450,15 @@ class _QuantCompMixin:
                              'end_idx':   max(_si, _ei),
                              'width_ppm': 0.008,
                              'rank':      hit.get('peak_rank')}
+                        # A window with no detected apex must not sit on a
+                        # region another analyte is already integrating. It has
+                        # no peak of its own to justify the claim, so the one
+                        # that does wins.
+                        if any(_gf_lo < _c_hi and _c_lo < _gf_hi
+                               for _c_lo, _c_hi in _claimed_ppm):
+                            _dbg(_dbg_f, '    SKIP: gap-fill window overlaps a '
+                                         'region already being integrated')
+                            continue
                         _synthetic_db = True
                         _met_synthetic_db = True
                     else:
@@ -1521,6 +1546,10 @@ class _QuantCompMixin:
                         _m_lo = float(min(ppm_arr[lo_i], ppm_arr[hi_i]))
                         _m_hi = float(max(ppm_arr[lo_i], ppm_arr[hi_i]))
                     _dbg(_dbg_f, f'    integ window  : [{_m_lo:.4f}, {_m_hi:.4f}] ppm  (margin={_margin:.4f})')
+                    # Every region actually integrated is recorded, so a later
+                    # candidate without a peak of its own cannot be handed it.
+                    _claimed_ppm.append((float(min(_m_lo, _m_hi)),
+                                         float(max(_m_lo, _m_hi))))
                     # Store multiplet window for visualization/export
                     hit['_multiplet_window'] = (_m_lo, _m_hi)
                     _sm_mult = (ppm_arr >= _m_lo) & (ppm_arr <= _m_hi)
