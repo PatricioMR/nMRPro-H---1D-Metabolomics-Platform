@@ -13,13 +13,18 @@ from gui.stages import _quant_computation as qc
 def _msg_src():
     src = inspect.getsource(qc)
     i = src.index('_n_all = len(self._quant_results)')
-    return src[i:i + 900]
+    return src[i:src.index('self._status_ok(_msg_s)', i)]
 
 
 def test_the_message_reports_what_was_quantified_not_the_row_count():
     src = _msg_src()
     assert '_n_ok_s = _n_all - _n_nq_s' in src
-    assert "f'Quantification: {_n_ok_s} quantified'" in src
+    assert 'identified and ' in src and 'quantified successfully' in src
+
+
+def test_it_agrees_with_itself_on_one_metabolite():
+    src = _msg_src()
+    assert "_plural = '' if _n_ok_s == 1 else 's'" in src
 
 
 def test_the_not_quantified_are_counted_separately():

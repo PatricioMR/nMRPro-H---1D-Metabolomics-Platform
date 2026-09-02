@@ -2975,9 +2975,15 @@ class _QuantCompMixin:
             _n_db_s = sum(1 for _r_s in self._quant_results
                           if _r_s.get('_synthetic_db')
                           and not _r_s.get('_not_quantified'))
-            _msg_s = f'Quantification: {_n_ok_s} quantified'
+            _plural = '' if _n_ok_s == 1 else 's'
+            _msg_s = (f'{_n_ok_s} metabolite{_plural} identified and '
+                      f'quantified successfully')
+            # The qualifiers stay: a number resting on a database-predicted
+            # window is not the same evidence as one resting on a detected
+            # peak, and an analyte that was considered and got no number is
+            # part of what the run did.
             if _n_db_s:
-                _msg_s += f' ({_n_db_s} without a detected peak)'
+                _msg_s += f'  ·  {_n_db_s} without a detected peak'
             if _n_nq_s:
                 _msg_s += f'  ·  {_n_nq_s} not quantified'
             self._status_ok(_msg_s)
