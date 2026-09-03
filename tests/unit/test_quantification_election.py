@@ -114,4 +114,4 @@ def test_every_reason_can_be_shown_to_the_analyst():
 
 
 def test_the_reasons_say_different_things():
-    assert len(set(REJECTION_TEXT.values())) == 4
+    assert len(set(REJECTION_TEXT.values())) == len(REJECTION_TEXT)

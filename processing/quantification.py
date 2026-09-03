@@ -34,6 +34,7 @@ LOST_COMPETITION = 'lost_competition'
 UNVERIFIED_MULTIPLET = 'unverified_multiplet'
 AMBIGUOUS_RANK = 'ambiguous_rank'
 NO_ELIGIBLE_SIGNAL = 'no_eligible_signal'
+NO_MEASURABLE_WINDOW = 'no_measurable_window'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -50,6 +51,11 @@ REJECTION_TEXT = {
     NO_ELIGIBLE_SIGNAL:
         'Não quantificado: nenhum sinal elegível — todos foram marcados Bad ou '
         'não têm pico detectado.',
+    NO_MEASURABLE_WINDOW:
+        'Não quantificado: sem janela mensurável — o sinal venceu a competição '
+        'mas nenhuma linha detectada delimita a região a integrar. Não se '
+        'integra onde a base de dados prevê um pico, só onde a detecção '
+        'encontrou um.',
 }
 
 
@@ -145,3 +151,38 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
 
     return Election(winners=winners, rejected=rejected,
                     claimed_peaks=frozenset(claimed))
+
+
+def eligible_metabolite_ids(metabolites, *, anchor_met_ids=(),
+                            manual_good_ids=()) -> set:
+    """Which metabolites may be quantified at all, before any peak is contested.
+
+    Not the same question as the annotation tree's row colour, which aggregates
+    every signal to say what the metabolite looks like overall. Here one usable
+    signal is enough: a metabolite that loses a contested peak can still
+    quantify on another, and judging it on its worst signal would drop analytes
+    that are perfectly measurable somewhere else.
+
+    Three ways in, and only three:
+
+    * an anchor whose anchoring peak is itself 'good' — a stale ``auto_anchor``
+      flag on an incomplete multiplet must not carry an unconfirmed J into a
+      concentration;
+    * any signal the annotation search marked 'good';
+    * a manual Good mark, which is the analyst overriding the search and is
+      the only thing that should be able to.
+    """
+    anchors = {str(m) for m in (anchor_met_ids or ())}
+    out = {str(m) for m in (manual_good_ids or ())}
+    for met in metabolites or ():
+        mid = str(met.get('id', ''))
+        if not mid:
+            continue
+        mps = met.get('matched_peaks', []) or ()
+        if mid in anchors or any(mp.get('annotation_quality') == 'good'
+                                 and mp.get('auto_anchor') for mp in mps):
+            out.add(mid)
+            continue
+        if any(mp.get('annotation_quality') == 'good' for mp in mps):
+            out.add(mid)
+    return out

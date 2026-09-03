@@ -1,162 +1,130 @@
 """The same physical lines cannot be quantified twice.
 
-The greedy allocation blocked a candidate whose ANCHOR peak was already won. A
+The old allocation blocked a candidate whose ANCHOR peak was already won. A
 multiplet also claims its line peaks — but the next candidate was only ever
 tested on its anchor, so a different anchor over the same lines walked straight
 in. On the reference study 16 of 111 quantified metabolites were integrating
 another's lines: L-alanine and hexanoic acid both on 1.4801/1.4919, L-valine,
 L-isoleucine and 2-hydroxy-3-methylbutyric acid all on 0.9912/1.0028, and
 nicotinamide with nicotinuric acid on 8.1938/8.2071.
+
+These were source-text assertions on that allocation. The election is now a
+pure function, so the same claims are made about what it does.
 """
-import inspect
+import numpy as np
+import pytest
 
-from gui.stages import _quant_computation as qc
+from processing.quantification import (
+    LOST_COMPETITION, Candidate, elect)
 
 
-def _placement_src():
-    src = inspect.getsource(qc)
-    i = src.index('_assigned_mets = set()')
-    return src[i:src.index('greedy:', i)]
+def _cand(mid, rank, lines=(), *, dj=0.0, ppm=0.0, mult='d', n=2):
+    return Candidate(
+        met_id=mid, peak_rank=rank, line_ranks=frozenset(lines),
+        evidence={'multiplicity': mult, 'delta_j_hz': dj, 'ppm_diff': ppm,
+                  'n_found': n, 'n_expected': n, 'quality': 'good',
+                  'score': 1.0})
 
 
 def test_a_candidate_is_tested_on_its_lines_not_only_its_anchor():
-    src = _placement_src()
-    assert '_my_ranks & _assigned_peaks' in src
-    assert '_multiplet_line_peaks(_h, _pk_by_rank)' in src
+    """Different anchors over the same lines is the same signal counted twice,
+    however different the anchors look."""
+    win = _cand('winner', 10, [10, 11], dj=0.0)
+    other = _cand('other', 11, [10, 11], dj=5.0)
+    e = elect([win, other], dj_gold_hz=0.5)
+    assert 'winner' in e.winners
+    assert 'other' not in e.winners
+    assert e.rejected['other'] == LOST_COMPETITION
 
 
-def test_the_line_check_happens_before_the_metabolite_is_placed():
-    """Placed first and checked after would leave the winner recorded."""
-    src = _placement_src()
-    assert src.index('_my_ranks & _assigned_peaks') < \
-        src.index('_assigned_mets.add(_h_mid)')
+def test_two_winners_never_share_a_line():
+    """The property the whole allocation exists for."""
+    cands = [_cand(f'm{i}', 10 + i, [10 + i, 11 + i], dj=i * 0.1)
+             for i in range(6)]
+    e = elect(cands, dj_gold_hz=0.5)
+    seen = set()
+    for c in e.winners.values():
+        assert not (c.line_ranks & seen)
+        seen |= set(c.line_ranks)
 
 
-def test_the_anchor_check_is_still_there():
-    src = _placement_src()
-    assert '_pr is not None and _pr in _assigned_peaks' in src
+def test_an_anchor_already_won_is_not_handed_out_again():
+    e = elect([_cand('a', 5, [5], dj=0.0), _cand('b', 5, [5], dj=9.0)],
+              dj_gold_hz=0.5)
+    assert set(e.winners) == {'a'}
 
 
-def test_a_singlet_is_not_line_checked():
-    """One line is the anchor itself; requiring two keeps a singlet from
-    blocking itself through matched_line_ranks."""
-    src = _placement_src()
-    assert 'if len(_my_lines) >= 2 else set()' in src
-
-
-def test_the_claim_uses_the_matcher_that_builds_the_window():
-    """Reserving in one space and integrating in another cannot converge.
-    matched_line_ranks takes its candidates from hit['matched_peaks'], which
-    these result rows do not carry, so it fell back to the anchor alone: 196 of
-    206 multiplets claimed less than they integrated, and 31 of 86 quantified
-    analytes shared an integration window while no anchor ever collided."""
-    src = _placement_src()
-    assert src.count('_multiplet_line_peaks(_h, _pk_by_rank)') == 2
-    assert 'matched_line_ranks(' not in src, 'no call, only the note'
-
-    # The window is built from the same function, one call away.
-    win = inspect.getsource(qc)
-    i = win.index('def _multiplet_window_from_peaks')
-    assert '_multiplet_line_peaks(hit, pk_by_rank)' in win[i:i + 700]
-
-
-def test_a_blocked_candidate_still_reaches_the_not_quantified_pass():
-    """Losing here is losing the competition, which is what it will be told —
-    the analyte is greyed out with a reason, not dropped."""
-    src = inspect.getsource(qc)
-    assert 'NQ_REASON_LOST_COMPETITION' in src
-    assert "'_not_quantified':   True," in src
+def test_losing_one_signal_costs_the_signal_not_the_analyte():
+    """A metabolite keeps competing on its other resonances. Dropping the
+    analyte because one of its peaks was contested loses a measurable analyte
+    for a reason that has nothing to do with the peak it would have used."""
+    e = elect([_cand('rival', 10, [10], dj=0.0),
+               _cand('mine', 10, [10], dj=9.0),
+               _cand('mine', 20, [20], dj=0.1)],
+              dj_gold_hz=0.5)
+    assert 'mine' in e.winners
+    assert e.winners['mine'].peak_rank == 20
 
 
 class TestTheOtherWaysBackIn:
-    """The greedy pass was fixed; the two paths that put a metabolite back
-    after it lost were not. Both run whenever JG-Deconv is enabled, which is
-    how a signal reappeared under a second metabolite in the results table.
-    """
+    """There are none. The old engine had three — a rescue pass, an APQ
+    fallback and a fill-in loop — and each re-entered a metabolite that had
+    already lost, on evidence the election had already weighed."""
 
-    def _rescue_src(self):
-        src = inspect.getsource(qc)
-        i = src.index('Rescue: Good analytes that lost all peak-rank')
-        return src[i:src.index('raw_areas = {}', i)]
+    def test_a_beaten_metabolite_stays_beaten(self):
+        e = elect([_cand('a', 1, [1], dj=0.0), _cand('b', 1, [1], dj=9.0)],
+                  dj_gold_hz=0.5)
+        assert 'b' not in e.winners
+        assert e.rejected['b'] == LOST_COMPETITION
 
-    def _apq_src(self):
-        src = inspect.getsource(qc)
-        i = src.index('APQ fallback for metabolites excluded')
-        return src[i:i + 2500]
-
-    def test_a_rescued_hit_is_tested_on_its_lines(self):
-        src = self._rescue_src()
-        assert 'def _free_of_claims' in src
-        assert '_multiplet_line_peaks(_r, _pk_by_rank)' in src
-
-    def test_a_rescued_hit_claims_what_it_took(self):
-        """Without this the next rescue sees the peak as free and two rescued
-        analytes share one signal."""
-        src = self._rescue_src()
-        assert '_assigned_peaks.add(_rpr)' in src
-        assert "_assigned_peaks.add(_pk_r['rank'])" in src
-
-    def test_the_apq_fallback_only_looks_at_free_peaks(self):
-        """_all_peak_quant holds every matched peak of every metabolite,
-        winners included."""
-        src = self._apq_src()
-        assert 'if _apq_rank in _assigned_peaks:' in src
-        assert '_free_apq' in src
-
-    def test_the_apq_fallback_still_picks_by_concentration_among_those(self):
-        """Documented as a known weakness rather than silently changed: among
-        peaks nobody won it still takes the largest number, which is magnitude
-        and not evidence."""
-        src = self._apq_src()
-        assert '_ec > _best_conc' in src
+    def test_the_engine_exposes_no_second_allocation(self):
+        """One function decides, so there is no second place for the rule to
+        drift to. Four call sites answering this question is how the anchor
+        check and the line check came to disagree."""
+        import processing.quantification as q
+        allocators = [n for n in dir(q)
+                      if n.startswith(('rescue', 'fallback', 'fill'))]
+        assert allocators == []
 
 
 def test_claimed_peaks_are_visible_to_every_path():
-    """Declared before every branch that reads it: the greedy pass, the rescue
-    and the APQ fallback each run in a different conditional, and a set defined
-    inside one of them would raise NameError in the others."""
-    src = inspect.getsource(qc)
-    decl = src.index('_assigned_peaks = set()')
-    for reader in ('_pr in _assigned_peaks',
-                   '_my_ranks & _assigned_peaks',
-                   '_apq_rank in _assigned_peaks'):
-        assert decl < src.index(reader), reader
+    """The claim set is returned, not kept private to the loop that built it —
+    that is what let a later pass integrate a region already spoken for."""
+    e = elect([_cand('a', 1, [1, 2])], dj_gold_hz=0.5)
+    assert e.claimed_peaks == frozenset({1, 2})
 
 
 class TestGapFillCannotTakeAnOccupiedRegion:
-    """A candidate with no detected apex claims no rank, so _assigned_peaks
-    says nothing about it. Six were integrating the histidine region at
-    [7.0876, 7.1075] that L-histidine had won on peak 304, and three more
-    shared [8.1091, 8.1290]. Reserving in ppm is the only space a candidate
-    without a peak can be reserved in.
+    """It cannot take any region: there is no gap-fill.
+
+    A candidate with no detected apex was integrated over a window the database
+    predicted. On the reference study 23 of 73 placed analytes had no apex and
+    15 produced a number that way — a quarter of the results measured where a
+    peak was expected rather than where one was found.
     """
 
-    def _src(self):
-        return inspect.getsource(qc)
+    def test_a_candidate_with_no_detected_peak_wins_nothing_to_integrate(self):
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0.0, 2.0, 401)
+        y = np.exp(-0.5 * ((ppm - 1.0) / 0.01) ** 2).reshape(-1, 1) * 100
+        rows = quantify(candidates=[_cand('ghost', None, [])],
+                        peaks_by_rank={}, ppm=ppm, intensities=y,
+                        samples_info=[{}], included=[0], groups={'A': [0]},
+                        dj_gold_hz=0.5)
+        row = next(r for r in rows if r['hmdb_id'] == 'ghost')
+        assert row['_not_quantified']
+        assert np.isnan(row['conc_mm'])
 
-    def test_regions_are_claimed_in_ppm_as_well_as_by_rank(self):
-        src = self._src()
-        assert '_claimed_ppm: list = []' in src
-        assert '_claimed_ppm.append(' in src
-
-    def test_a_gapfill_window_that_overlaps_is_refused(self):
-        src = self._src()
-        i = src.index('_gf_lo, _gf_hi = db_gapfill_window')
-        body = src[i:src.index('_synthetic_db = True', i)]
-        assert '_gf_lo < _c_hi and _c_lo < _gf_hi' in body
-        assert 'continue' in body
-
-    def test_every_integrated_region_is_recorded(self):
-        """Claiming only some of them would leave the rest free to be taken."""
-        src = self._src()
-        i = src.index("integ window  :")
-        assert '_claimed_ppm.append(' in src[i:i + 500]
-
-    def test_detected_peaks_are_integrated_before_gapfills(self):
-        """Otherwise processing order decides who gets a contested region, and
-        a gap-fill placed early would claim it from the analyte that has an
-        apex there."""
-        src = self._src()
-        i = src.index('met_map = dict(sorted(')
-        body = src[i:i + 400]
-        assert "peak_rank') is None" in body
+    def test_every_quantified_row_rests_on_a_detected_peak(self):
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0.0, 2.0, 401)
+        y = (np.exp(-0.5 * ((ppm - 1.0) / 0.01) ** 2) * 100).reshape(-1, 1)
+        peak = {'rank': 1, 'ppm': 1.0, 'start_ppm': 0.95, 'end_ppm': 1.05}
+        rows = quantify(candidates=[_cand('real', 1, [1])],
+                        peaks_by_rank={1: peak}, ppm=ppm, intensities=y,
+                        samples_info=[{}], included=[0], groups={'A': [0]},
+                        dj_gold_hz=0.5)
+        for r in rows:
+            if not r.get('_not_quantified') and not r.get('_is_is'):
+                assert r['_multiplet_window'] is not None
+                assert r['_peak_rank'] is not None

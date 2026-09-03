@@ -29,7 +29,8 @@ from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_integration import integrate_signal
 from processing.quant_snr import noise_level, representative_snr, window_snr
-from processing.quantification import REJECTION_TEXT, elect
+from processing.quantification import (
+    NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -91,7 +92,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                     ambiguous_ranks=ambiguous_ranks)
 
     # ── Integrate every winner, per sample ───────────────────────────────────
-    measured, per_proton_areas = {}, {}
+    # A winner whose lines bound no window is recorded as such rather than
+    # dropped. An analyte that simply vanishes between the election and the
+    # table cannot be questioned, and this is the one place where a metabolite
+    # can win and still have nothing to measure.
+    measured, per_proton_areas, unmeasurable = {}, {}, []
     for mid, cand in election.winners.items():
         lines = [peaks_by_rank[r] for r in sorted(cand.line_ranks)
                  if r in peaks_by_rank]
@@ -101,6 +106,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                                local_baseline=local_baseline, align=align,
                                blank_indices=blank_indices)
         if not out or not out['areas']:
+            unmeasurable.append(mid)
             continue
         nh = signal_nh((cand.evidence or {}).get('protons'))
         lo, hi = out['window']
@@ -143,6 +149,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 
     for mid, reason in election.rejected.items():
         rows.append(_rejected_row(mid, reason))
+    for mid in unmeasurable:
+        rows.append(_rejected_row(mid, NO_MEASURABLE_WINDOW))
 
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,

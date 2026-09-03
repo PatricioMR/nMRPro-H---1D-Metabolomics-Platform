@@ -19,11 +19,14 @@ from processing.annotation_scoring import DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
 from processing.quant_integration import integrate_sample
-from processing.quantification import Candidate
+from processing.quant_concentration import standard_per_proton
+from processing.quant_snr import noise_level, representative_snr, window_snr
+from processing.quantification import Candidate, eligible_metabolite_ids
 from processing.sample_selection import included_sample_indices
 
 
-def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None):
+def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
+                     eligible_ids=None):
     """One Candidate per annotated signal that is not marked Bad.
 
     The evidence handed over is exactly what ``candidate_key`` reads, so the
@@ -38,6 +41,8 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None):
     for met in metabolites or ():
         mid = str(met.get('id', met.get('name', '')))
         if not mid:
+            continue
+        if eligible_ids is not None and mid not in eligible_ids:
             continue
         for mp in met.get('matched_peaks', []) or ():
             if mp.get('annotation_quality') == 'bad':
@@ -93,21 +98,98 @@ def standard_areas_from_peak(ref_peak, ppm, intensities, *,
     return out
 
 
-def sample_groups(samples_info):
-    """``{group: [sample indices]}`` as the analyst labelled them."""
+def standard_vector(ref_peak, ppm, intensities, ref_nh, *,
+                    external_is_samples=None, local_baseline=True):
+    """The standard's area per proton as one value per sample.
+
+    The manual region editor recomputes a single analyte's concentration when
+    the analyst drags its window, and it has to divide by exactly what the run
+    divided by. Computing its own standard would let one row be measured
+    against a different reference than the rest of the table.
+    """
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    per = standard_per_proton(
+        standard_areas_from_peak(ref_peak, ppm, arr,
+                                 local_baseline=local_baseline),
+        ref_nh, external_samples=external_is_samples)
+    if not per:
+        return None
+    return [float(per.get(s, 0.0)) for s in range(arr.shape[1])]
+
+
+def sample_groups(samples_info, n_samples=None):
+    """``{group: [sample indices]}`` as the analyst labelled them.
+
+    Blanks are not a group. They are the measurement of what the window
+    collects without the analyte, and averaging them in with the samples would
+    pull every group mean towards the buffer.
+    """
     groups = {}
     for i, info in enumerate(samples_info or ()):
-        g = (info or {}).get('label') or (info or {}).get('group') or 'Unknown'
+        if n_samples is not None and i >= n_samples:
+            break
+        info = info or {}
+        g = info.get('label') or info.get('group') or 'Unknown'
+        if str(info.get('type', g)).upper() == 'BLK':
+            continue
         groups.setdefault(str(g), []).append(i)
     return groups
 
 
+def blank_indices(samples_info, n_samples=None):
+    """The samples labelled BLK, by the same rule the groups exclude them."""
+    out = []
+    for i, info in enumerate(samples_info or ()):
+        if n_samples is not None and i >= n_samples:
+            break
+        info = info or {}
+        lbl = info.get('label', 'Unknown')
+        if str(info.get('type', lbl)).upper() == 'BLK':
+            out.append(i)
+    return out
+
+
+def dilution_and_correction(samples_info, group_dilution, n_samples):
+    """``(dilution, correction)`` per sample, as two separate mappings.
+
+    They are separate because they enter the calculation at different points:
+    the correction factor is always applied, while the dilution cancels in the
+    ratio when the standard sits in the sample and does not when it was
+    injected on its own. Folding them into one number made that distinction
+    impossible to honour.
+    """
+    dil, corr = {}, {}
+    gd = group_dilution or {}
+    for i, info in enumerate(samples_info or ()):
+        if i >= n_samples:
+            break
+        info = info or {}
+        lbl = info.get('label', 'Unknown')
+        c = float(info.get('correction_factor', 1.0) or 1.0)
+        dil[i] = float(gd.get(lbl, 1.0)) * c
+        corr[i] = c
+    return dil, corr
+
+
+def anchor_metabolite_ids(anchor_lines):
+    """``_anchor_lines`` is keyed ``(met_id, peak_rank)``; this is the ids."""
+    return {str(k[0]) for k in (anchor_lines or {})}
+
+
+def manual_good_ids(quality_marks):
+    return {str(k[0]) for k, v in (quality_marks or {}).items() if v == 'good'}
+
+
 def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
-                     ambiguous_ranks=(), quality_marks=None, ref_peak=None,
-                     ref_nh=1.0, ref_conc=0.0, external_is_samples=None,
-                     dilution=None, correction=None, dj_gold_hz=None,
-                     annotation_params=None, use_pqn=True,
-                     local_baseline=True):
+                     ambiguous_ranks=(), quality_marks=None, anchor_lines=None,
+                     ref_peak=None, ref_nh=1.0, ref_conc=0.0,
+                     ref_name='Internal standard',
+                     external_is_samples=None, group_dilution=None,
+                     dj_gold_hz=None, annotation_params=None, use_pqn=True,
+                     local_baseline=True, proton_correction=True, align=False,
+                     subtract_blanks=False):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -124,7 +206,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
-    included = included_sample_indices(samples_info, arr.shape[1])
+    n_s = arr.shape[1]
+    ppm = np.asarray(ppm, dtype=float)
+    included = included_sample_indices(samples_info, n_s)
+    blanks = blank_indices(samples_info, n_s)
+    dilution, correction = dilution_and_correction(
+        samples_info, group_dilution, n_s)
 
     gold = dj_gold_hz
     if gold is None:
@@ -132,24 +219,47 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             'dj_gold_hz', SCORING_DEFAULTS.get('dj_gold_hz',
                                                DJ_GOLD_HZ_DEFAULT)))
 
+    eligible = eligible_metabolite_ids(
+        metabolites,
+        anchor_met_ids=anchor_metabolite_ids(anchor_lines),
+        manual_good_ids=manual_good_ids(quality_marks))
+
+    std_areas = standard_areas_from_peak(ref_peak, ppm, arr,
+                                         local_baseline=local_baseline)
+    std_snr = None
+    if ref_peak is not None and std_areas:
+        lo = min(float(ref_peak.get('start_ppm', 0)),
+                 float(ref_peak.get('end_ppm', 0)))
+        hi = max(float(ref_peak.get('start_ppm', 0)),
+                 float(ref_peak.get('end_ppm', 0)))
+        std_snr = representative_snr(window_snr(
+            ppm, arr, lo, hi, noise_level([ref_peak], ppm, arr),
+            included=included))
+
     return quantify(
         candidates=build_candidates(metabolites, peaks_by_rank,
-                                    quality_marks=quality_marks),
+                                    quality_marks=quality_marks,
+                                    eligible_ids=eligible),
         peaks_by_rank=peaks_by_rank,
-        ppm=np.asarray(ppm, dtype=float),
+        ppm=ppm,
         intensities=arr,
         samples_info=samples_info,
         included=included,
-        groups=sample_groups(samples_info),
+        groups=sample_groups(samples_info, n_s),
         dj_gold_hz=gold,
         ambiguous_ranks=ambiguous_ranks,
-        standard_areas=standard_areas_from_peak(
-            ref_peak, ppm, arr, local_baseline=local_baseline),
+        standard_areas=std_areas,
         standard_nh=ref_nh,
         standard_conc=ref_conc,
+        standard_name=ref_name,
+        standard_ppm=float((ref_peak or {}).get('ppm', 0.0)),
+        standard_snr=std_snr,
         external_standard_samples=external_is_samples,
         dilution=dilution,
         correction=correction,
         use_pqn=use_pqn,
         local_baseline=local_baseline,
+        proton_correction=proton_correction,
+        align=align,
+        blank_indices=blanks if subtract_blanks else None,
     )
