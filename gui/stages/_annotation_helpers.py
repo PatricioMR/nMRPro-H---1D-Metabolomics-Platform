@@ -15,7 +15,7 @@ import numpy as np
 import os
 import warnings
 from processing.annotation_scoring import (
-    rank_candidates, DJ_GOLD_HZ_DEFAULT)
+    corroborating_partners, rank_candidates, DJ_GOLD_HZ_DEFAULT)
 
 
 
@@ -499,6 +499,54 @@ def _multi_peak_coherence(met_id, all_peaks_by_id, observed_peaks, tolerance):
     return coherence, coverage, ratio_match
 
 
+def _metabolite_matched_ranks(met_id, all_peaks_by_id, observed_peaks,
+                              tolerance):
+    """Which detected peaks this metabolite's database fingerprint reaches.
+
+    Greedy, and each observed peak is consumed at most once: without that, two
+    database peaks close together map to the same observed peak and the
+    metabolite appears to have more independent evidence than it has.
+
+    Shared by the coherence score and by the STOCSY corroboration term, which
+    must agree about what counts as this analyte's signals — two answers to
+    that question would let a peak corroborate one and not the other.
+    """
+    db_peaks = all_peaks_by_id.get(met_id, [])
+    if len(db_peaks) <= 1:
+        return []
+    obs_ranks = [p.get('rank') for p in observed_peaks]
+    available = list(range(len(observed_peaks)))
+    matched_ranks = []
+    for db_ppm, _ in db_peaks:
+        if not available:
+            break
+        min_dist, best_i = min(
+            (abs(observed_peaks[i]['ppm'] - db_ppm), i) for i in available)
+        if min_dist <= tolerance:
+            r = obs_ranks[best_i]
+            if r is not None:
+                matched_ranks.append(r)
+            available.remove(best_i)
+    return matched_ranks
+
+
+def _stocsy_partner_count(met_id, peak_rank, all_peaks_by_id, observed_peaks,
+                          tolerance, peak_corr):
+    """How many of this analyte's other resonances co-vary with this peak.
+
+    The evidence that separates two analytes whose contested signal is
+    identical -- see ``processing.annotation_scoring.corroborating_partners``
+    for the reasoning and the reference.
+    """
+    if not peak_corr or peak_rank is None:
+        return 0
+    return corroborating_partners(
+        peak_rank,
+        _metabolite_matched_ranks(met_id, all_peaks_by_id, observed_peaks,
+                                  tolerance),
+        peak_corr)
+
+
 def _stocsy_coherence(met_id, all_peaks_by_id, observed_peaks, tolerance,
                       peak_corr):
     """Mean pairwise Pearson r across all matched peak pairs for a metabolite.
@@ -531,29 +579,8 @@ def _stocsy_coherence(met_id, all_peaks_by_id, observed_peaks, tolerance,
     """
     if not peak_corr:
         return None
-    db_peaks = all_peaks_by_id.get(met_id, [])
-    if len(db_peaks) <= 1:
-        return None   # singleton — no pairs possible
-
-    obs_ranks = [p.get('rank') for p in observed_peaks]
-
-    # Greedy matching: each observed peak consumed at most once.
-    # Without this, two DB peaks close together could map to the same
-    # observed peak, artificially inflating matched_ranks and pair count.
-    available = list(range(len(observed_peaks)))
-    matched_ranks = []
-    for db_ppm, _ in db_peaks:
-        if not available:
-            break
-        dists    = [(abs(observed_peaks[i]['ppm'] - db_ppm), i)
-                    for i in available]
-        min_dist, best_i = min(dists)
-        if min_dist <= tolerance:
-            r = obs_ranks[best_i]
-            if r is not None:
-                matched_ranks.append(r)
-            available.remove(best_i)
-
+    matched_ranks = _metabolite_matched_ranks(
+        met_id, all_peaks_by_id, observed_peaks, tolerance)
     if len(matched_ranks) < 2:
         return None
 

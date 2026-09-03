@@ -63,6 +63,11 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'n_found': mp.get('_n_found_lines'),
                     'n_expected': mp.get('_n_exp_lines'),
                     'intensity_agreement': mp.get('intensity_agreement'),
+                    # The corroboration criterion. Annotation measured it; the
+                    # election has to see the same number, or the winner here
+                    # and the winner the Annotation window shows would be
+                    # decided on different evidence.
+                    'stocsy_partners': mp.get('stocsy_partners'),
                     'cosine': mp.get('_s_cosine'),
                     'quality': mp.get('annotation_quality'),
                     'manual_quality': (qm.get((mid, rank))

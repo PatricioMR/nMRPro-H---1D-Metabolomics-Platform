@@ -120,7 +120,21 @@ class TestInTheRanking:
 
 def test_the_key_is_read_by_name_not_by_position():
     """rank_candidates used k[:5], k[5], k[6]; inserting a criterion made it
-    compare the cosine against the score's tie width."""
+    compare the cosine against the score's tie width.
+
+    Asserted as the property, not as a fixed field list: pinning the names in
+    order would fail on exactly the change it exists to make safe, and the
+    fix would be to edit this test — which teaches nobody anything.
+    """
+    import ast
+    import inspect
+
     k = candidate_key({'multiplicity': 'd'}, dj_gold_hz=0.2)
-    assert k._fields == ('manual', 'tier', 'dj', 'ppm', 'quality',
-                         'intensity', 'cosine', 'score')
+    assert {'cosine', 'score'} <= set(k._fields)
+
+    tree = ast.parse(inspect.getsource(rank_candidates))
+    subscripts = [n for n in ast.walk(tree)
+                  if isinstance(n, ast.Subscript)
+                  and isinstance(n.value, ast.Name)
+                  and n.value.id.startswith('k')]
+    assert subscripts == []

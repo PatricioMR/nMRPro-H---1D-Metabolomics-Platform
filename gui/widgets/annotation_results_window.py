@@ -661,6 +661,11 @@ class AnnotationResultsWindow:
                 'mcr_info_reason': r.get('mcr_info_reason'),
                 'mcr_shift_disagree_ppm': r.get('mcr_shift_disagree_ppm'),
                 'stocsy_coherence':r.get('stocsy_coherence'),
+                # Read by candidate_key as the corroboration criterion. Missing
+                # from this list, it would reach the ranking as None and the
+                # term would be a silent no-op -- the same failure that left
+                # per_sample_consensus wired in and never applied.
+                'stocsy_partners': r.get('stocsy_partners'),
                 # Per-sample reading, written by the annotation search. The
                 # rows travel with the signal: the across-samples view renders
                 # them and measures nothing of its own, so what it shows and

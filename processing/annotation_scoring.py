@@ -579,6 +579,80 @@ def pascal_agreement(ranks, heights, mult) -> float | None:
     return float(max(0.0, 1.0 - sum(err) / len(err)))
 
 
+# How strongly a partner resonance must co-vary with the contested peak before
+# it counts as corroborating it. Resonances of one molecule move together
+# across samples because they are the same molecule at the same concentration;
+# 0.80 is well above what unrelated metabolites reach by chance in a study of
+# this size, and well below the ~1.0 that two lines of one multiplet show.
+STOCSY_MIN_R = 0.80
+
+# Corroboration counts are bucketed rather than compared outright: one partner
+# and two partners are different kinds of evidence, four and five are not.
+STOCSY_BAND_CAP = 3
+
+
+def corroborating_partners(peak_rank, partner_ranks, peak_corr,
+                           min_r: float = STOCSY_MIN_R) -> int:
+    """How many of this analyte's other detected signals co-vary with this one.
+
+    Statistical total correlation spectroscopy: resonances belonging to the
+    same molecule rise and fall together across samples, because they are the
+    same molecule at the same concentration, while resonances of different
+    molecules do not unless the molecules happen to be regulated together.
+
+        Cloarec, O. et al. (2005). Statistical total correlation spectroscopy:
+        an exploratory approach for latent biomarker identification from
+        metabolic 1H NMR data sets. Analytical Chemistry 77(5):1282-1289.
+
+    This is the evidence that separates two analytes whose contested signal is
+    identical. L-lactic acid and N-Acetyl-L-Alanine differ by 0.001 ppm and
+    0.30 Hz at the methyl doublet they both claim — nothing about that signal
+    can tell them apart. What can is that N-acetyl-alanine has an acetyl
+    singlet at 1.999 ppm and lactate has nothing there: if the singlet tracks
+    the doublet across the study, the doublet is the acetylated compound's.
+
+    It is a count of partners above ``min_r``, not a mean r, because one strong
+    partner is real evidence that a weak second partner should not dilute. A
+    mean would let an analyte with four uncorrelated database signals lose to
+    one with none.
+
+    Returns 0 when the correlation matrix is unavailable — which must read as
+    "no corroboration measured", never as "corroboration refuted".
+    """
+    if not peak_corr or peak_rank is None:
+        return 0
+    n = 0
+    for other in partner_ranks or ():
+        if other is None or other == peak_rank:
+            continue
+        lo, hi = ((peak_rank, other) if peak_rank < other
+                  else (other, peak_rank))
+        r = peak_corr.get((lo, hi))
+        if r is not None and float(r) >= float(min_r):
+            n += 1
+    return n
+
+
+def corroboration_band(n_partners, cap: int = STOCSY_BAND_CAP) -> int:
+    """Corroborating partners as a rank band; lower is better.
+
+    Capped because the difference between one partner and two is evidence and
+    the difference between four and five is not — past the cap an analyte with
+    many database signals would outrank one with few for having a bigger
+    molecule rather than better support.
+
+    Zero partners sorts last, and it is the same band whether nothing
+    correlated or nothing was measured. That is deliberate: an unmeasured
+    correlation is not evidence against the candidate, so it must not be given
+    a worse band than a measured refutation would get.
+    """
+    try:
+        n = int(n_partners or 0)
+    except (TypeError, ValueError):
+        n = 0
+    return max(0, int(cap) - min(n, int(cap)))
+
+
 def pascal_band(agreement, tie: float = PASCAL_TIE) -> int:
     """Height agreement bucketed; unjudgeable sorts last.
 
@@ -625,6 +699,7 @@ class CandidateKey(NamedTuple):
     ppm: int
     quality: int
     intensity: int
+    corroboration: int
     cosine: float
     score: float
 
@@ -633,8 +708,8 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     """Lexicographic ranking key for one candidate (lower = better).
 
     ``cand`` keys used: ``multiplicity``/``type``, ``delta_j_hz``, ``ppm_diff``,
-    ``n_found``, ``n_expected``, ``intensity_agreement``, ``cosine``,
-    ``manual_quality``, ``quality``, ``score``.
+    ``n_found``, ``n_expected``, ``intensity_agreement``, ``stocsy_partners``,
+    ``cosine``, ``manual_quality``, ``quality``, ``score``.
 
     Order of the evidence, strongest first:
 
@@ -655,9 +730,21 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
        above the cosine because it judges THIS signal rather than the
        metabolite's fingerprint as a whole. Unjudgeable sorts last, and a
        candidate that cannot be judged is not thereby wrong.
-    6. cosine — fingerprint similarity, the only orthogonal evidence measured
-       to separate contests the criteria above leave tied.
-    7. the annotation score — last resort. It is a Δppm-weighted blend, so it
+    6. STOCSY corroboration — how many of this analyte's OTHER resonances
+       co-vary with the contested peak across the samples. Every criterion
+       above judges the contested signal alone, and 61% of this database's
+       signals have a rival within 0.005 ppm carrying the same multiplicity, so
+       for the majority of contests those criteria are looking at evidence that
+       is identical for both claimants by construction. This is the first that
+       looks anywhere else, and it is measured from the study rather than read
+       from the database. It sits below the direct evidence because a partner
+       can co-vary for reasons that are not identity — two metabolites of one
+       pathway track each other — and above the cosine and the score because
+       both of those are fingerprint blends that this asks a sharper question
+       than.
+    7. cosine — fingerprint similarity, orthogonal evidence for contests the
+       criteria above leave tied.
+    8. the annotation score — last resort. It is a Δppm-weighted blend, so it
        must never outrank the criteria above; it only orders what nothing else
        can.
     """
@@ -673,6 +760,7 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
         ppm=ppm_band(cand.get('ppm_diff'), band_ppm),
         quality=0 if quality == 'good' else 1,
         intensity=pascal_band(cand.get('intensity_agreement')),
+        corroboration=corroboration_band(cand.get('stocsy_partners')),
         cosine=-float(cand.get('cosine') or 0.0),
         score=-float(cand.get('score') or cand.get('composite_score') or 0.0),
     )
@@ -702,8 +790,13 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
         return ordered, False
     k0 = candidate_key(ordered[0], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
     k1 = candidate_key(ordered[1], dj_gold_hz=dj_gold_hz, band_ppm=band_ppm)
-    ambiguous = ((k0.manual, k0.tier, k0.dj, k0.ppm, k0.quality, k0.intensity)
-                 == (k1.manual, k1.tier, k1.dj, k1.ppm, k1.quality, k1.intensity)
+    # Every banded criterion, corroboration included. Leaving one out would
+    # declare a contest ambiguous that the ranking had in fact settled, and an
+    # ambiguous contest has no winner at all -- so the two analytes the new
+    # criterion exists to separate would both end with nothing.
+    _banded = ('manual', 'tier', 'dj', 'ppm', 'quality', 'intensity',
+               'corroboration')
+    ambiguous = (all(getattr(k0, f) == getattr(k1, f) for f in _banded)
                  and abs(k0.cosine - k1.cosine) < COSINE_TIE
                  and abs(k0.score - k1.score) < SCORE_TIE)
     return ordered, ambiguous

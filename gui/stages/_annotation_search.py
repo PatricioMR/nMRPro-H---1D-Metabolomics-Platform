@@ -27,6 +27,7 @@ from ._annotation_helpers import (
     _ask_search_mode, _pick_database,
     _multi_peak_coherence,
     _stocsy_coherence,
+    _stocsy_partner_count,
 )
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
@@ -1722,6 +1723,15 @@ class _AnnotationSearchMixin:
                     r['stocsy_coherence']   = (round(_stocsy_coh, 3)
                                                if _stocsy_coh is not None
                                                else None)
+                    # How many of THIS analyte's other resonances co-vary with
+                    # THIS peak. The coherence above is the metabolite's mean
+                    # over all its pairs and says nothing about the contested
+                    # peak in particular; this does, and it is what decides a
+                    # contest whose direct evidence is identical for both
+                    # claimants -- which is the majority of them.
+                    r['stocsy_partners'] = _stocsy_partner_count(
+                        _met_id_coh, r.get('peak_rank'), all_peaks_by_id,
+                        peaks_to_search, tolerance, _pk_corr)
                     # Database provenance is recorded, not multiplied into the
                     # score. Scaling by 0.82 (BMRB) meant a signal needed a raw
                     # 0.915 to reach the 0.75 Good threshold, and the Annotation
