@@ -28,6 +28,7 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_integration import integrate_signal
+from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import REJECTION_TEXT, elect
 
 # The status dots the results table shows. Confidence is about how much of the
@@ -71,8 +72,11 @@ def _confidence(signal) -> tuple[int, str]:
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              included, groups, dj_gold_hz, ambiguous_ranks=(),
              standard_areas=None, standard_nh=1.0, standard_conc=0.0,
+             standard_name='Internal standard', standard_ppm=0.0,
+             standard_snr=None,
              external_standard_samples=None, dilution=None, correction=None,
-             use_pqn=True, local_baseline=True) -> list[dict]:
+             use_pqn=True, local_baseline=True, proton_correction=True,
+             align=False, blank_indices=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -94,11 +98,16 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         if not lines and cand.peak_rank in peaks_by_rank:
             lines = [peaks_by_rank[cand.peak_rank]]
         out = integrate_signal(lines, ppm, intensities, included=included,
-                               local_baseline=local_baseline)
+                               local_baseline=local_baseline, align=align,
+                               blank_indices=blank_indices)
         if not out or not out['areas']:
             continue
         nh = signal_nh((cand.evidence or {}).get('protons'))
-        measured[mid] = {'signal': cand, 'nh': nh, **out}
+        lo, hi = out['window']
+        snr = window_snr(ppm, intensities, lo, hi,
+                         noise_level(lines, ppm, intensities),
+                         included=included)
+        measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr, **out}
         per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
 
     # ── Dilution correction across samples ───────────────────────────────────
@@ -122,7 +131,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         conc = concentrations(areas, nh, standard=standard,
                               standard_conc=standard_conc,
                               external=bool(external_standard_samples),
-                              dilution=dilution, correction=correction)
+                              dilution=dilution, correction=correction,
+                              proton_correction=proton_correction)
         by_group = {g: [conc[s] for s in idxs
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
@@ -133,7 +143,52 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 
     for mid, reason in election.rejected.items():
         rows.append(_rejected_row(mid, reason))
+
+    if standard_areas:
+        rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
+                                  standard_name, standard_ppm, standard_snr,
+                                  groups, standard))
     return rows
+
+
+def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
+                  standard) -> dict:
+    """The internal standard, measured like everything it standardises.
+
+    Its recovery is the check on the whole run: the standard was added at a
+    known concentration, so reading it back against itself must return that
+    concentration. When it does not, the areas it divided are not trustworthy
+    either, and the analyst needs to see that before reading any other row.
+    """
+    conc = concentrations(areas, nh, standard=standard,
+                          standard_conc=conc_nominal)
+    by_group = {g: [conc[s] for s in idxs
+                    if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
+                for g, idxs in (groups or {}).items()}
+    good = [v for v in conc.values() if np.isfinite(v) and v > 0]
+    row = _rejected_row(name, 'standard')
+    row.update({
+        'metabolite': name,
+        'hmdb_id': name,
+        'ppm': float(ppm_pos or 0.0),
+        'n_peaks': 1,
+        'raw_area': float(np.mean(list(areas.values()))) if areas else float('nan'),
+        'corr_area': float(np.mean(list(areas.values()))) if areas else float('nan'),
+        'conc_mm': float(np.mean(good)) if good else float('nan'),
+        'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
+        'snr': float(snr) if snr is not None else 0.0,
+        'status': STATUS_STRONG,
+        '_confidence': 3,
+        '_not_quantified': not good,
+        '_status_reasons': [],
+        '_nh': float(nh),
+        '_areas_per_sample': dict(areas),
+        '_concs_per_sample': conc,
+        '_concs_by_group': by_group,
+        '_is_is': True,
+    })
+    row.pop('_rejection', None)
+    return row
 
 
 def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
@@ -148,7 +203,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
         'corr_area': float(np.mean(list(info['areas'].values()))),
         'conc_mm': float(np.mean(good)) if good else float('nan'),
         'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
-        'snr': 0.0,
+        'snr': representative_snr(info.get('snr')),
         'status': dots,
         'vip_score': float('nan'),
         '_confidence': level,
@@ -164,6 +219,10 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
         '_concs_per_sample': conc,
         '_concs_by_group': by_group,
         '_pqn_factors': pqn_factors,
+        '_snr_per_sample': info.get('snr', {}),
+        '_peak_align_shifts': info.get('shifts') or None,
+        '_blk_mean_area': info.get('blank_area', float('nan')),
+        '_is_singlet': (sig.evidence or {}).get('multiplicity') == 's',
         '_ann_score': float((sig.evidence or {}).get('score') or 0.0),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # JG-Deconv is not part of this engine. The fields stay so the window
@@ -212,6 +271,10 @@ def _rejected_row(mid, reason) -> dict:
         '_concs_per_sample': {},
         '_concs_by_group': {},
         '_pqn_factors': {},
+        '_snr_per_sample': {},
+        '_peak_align_shifts': None,
+        '_blk_mean_area': float('nan'),
+        '_is_singlet': False,
         '_ann_score': 0.0,
         '_hits': [],
         '_used_j_resolve': False,

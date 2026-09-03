@@ -84,12 +84,80 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True):
         return float(np.trapz(seg, x=x))
 
 
+def window_shifts(line_peaks, *, max_shift_ppm=None) -> dict:
+    """How far each sample's window moves to follow the signal it is measuring.
+
+    A resonance drifts between samples with pH, ionic strength and temperature.
+    One window fixed at the mean position then measures the analyte in some
+    samples and its shoulder in others, and the difference enters the result as
+    a concentration difference that is really a drift.
+
+    The per-sample apex positions detection already stored (``ppm_per_sample``)
+    are the source, so the window follows the same centres the Signal List and
+    the overlays draw. A sample detection marked as not aligned keeps the
+    unshifted window rather than being moved on a centre nobody trusted.
+
+    Shifts are clamped to ``max_shift_ppm`` — a third of the window by default.
+    Beyond that the window would leave the multiplet, and a drift that large is
+    a detection problem, not something integration should quietly absorb.
+
+    Returns ``{sample: delta_ppm}``, empty when no peak carries per-sample
+    centres.
+    """
+    anchor = None
+    for pk in line_peaks or ():
+        if pk.get('ppm_per_sample'):
+            anchor = pk
+            break
+    if anchor is None:
+        return {}
+    cen = anchor.get('ppm_per_sample') or []
+    ok = anchor.get('aligned_per_sample')
+    ref = float(anchor.get('ppm', 0.0))
+    win = multiplet_window(line_peaks)
+    if max_shift_ppm is None:
+        span = window_width_ppm(*win) if win else 0.0
+        max_shift_ppm = max(span / 3.0, 0.003)
+    out = {}
+    for s, c in enumerate(cen):
+        if c is None:
+            continue
+        if ok is not None and s < len(ok) and not ok[s]:
+            continue
+        d = float(c) - ref
+        out[int(s)] = max(-max_shift_ppm, min(max_shift_ppm, d))
+    return out
+
+
+def subtract_blank(areas: dict, blank_areas: dict) -> dict:
+    """Remove the mean blank area from every sample's area.
+
+    What the blanks integrate in this window is what the window collects
+    without the analyte — buffer, residual solvent, a neighbouring skirt. It is
+    not the analyte and it is in every sample.
+
+    The result may go negative, and it is returned negative. An analyte whose
+    window integrates less than the blanks did is absent, and reporting it as
+    zero would make absence indistinguishable from a very small presence.
+    """
+    vals = [float(v) for v in (blank_areas or {}).values()
+            if v is not None and np.isfinite(v)]
+    if not vals:
+        return dict(areas or {})
+    m = float(np.mean(vals))
+    return {s: float(a) - m for s, a in (areas or {}).items()}
+
+
 def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
-                             local_baseline=True) -> dict:
+                             local_baseline=True, shifts=None) -> dict:
     """The signal's area in every sample the caller allows.
 
     ``included`` is the list of sample indices to measure — blanks and excluded
     samples belong outside it, the same selection detection and annotation use.
+
+    ``shifts`` moves each sample's window by its own drift, as
+    ``window_shifts`` computes it. A sample with no shift keeps the window
+    where it is.
 
     Returns ``{sample_idx: area}``. A sample whose window holds too few points
     is absent from the mapping rather than present with a zero: no measurement
@@ -101,9 +169,11 @@ def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
     n_s = arr.shape[1]
     idx = range(n_s) if included is None else [i for i in included
                                               if 0 <= i < n_s]
+    sh = dict(shifts or {})
     out = {}
     for s in idx:
-        a = integrate_sample(ppm, arr[:, s], lo, hi,
+        d = float(sh.get(int(s), 0.0))
+        a = integrate_sample(ppm, arr[:, s], lo + d, hi + d,
                              local_baseline=local_baseline)
         if a is not None:
             out[int(s)] = a
@@ -115,22 +185,41 @@ def window_width_ppm(lo, hi) -> float:
 
 
 def integrate_signal(line_peaks, ppm, intensities, *, included=None,
-                     local_baseline=True) -> dict:
+                     local_baseline=True, align=False, blank_indices=None):
     """Everything the caller needs about one elected signal's area.
 
-    Returns ``{'window': (lo, hi), 'width_ppm': w, 'areas': {sample: area}}``,
-    or None when the signal has no lines to bound a window with. The window
-    travels with the areas so the report can show which region produced the
-    number — a concentration whose window nobody can see is not auditable.
+    Returns ``{'window': (lo, hi), 'width_ppm': w, 'areas': {sample: area},
+    'shifts': {sample: delta}, 'blank_area': mean}``, or None when the signal
+    has no lines to bound a window with. The window and the shifts travel with
+    the areas so the report can show which region produced the number — a
+    concentration whose window nobody can see is not auditable.
+
+    ``blank_indices`` names the blank samples. They are integrated with the
+    same window as everything else and their mean is subtracted, so the
+    correction is measured in the region it corrects rather than assumed.
     """
     win = multiplet_window(line_peaks)
     if win is None:
         return None
     lo, hi = win
+    shifts = window_shifts(line_peaks) if align else {}
+    areas = integrate_across_samples(ppm, intensities, lo, hi,
+                                     included=included,
+                                     local_baseline=local_baseline,
+                                     shifts=shifts)
+    blank_area = float('nan')
+    if blank_indices:
+        blanks = integrate_across_samples(ppm, intensities, lo, hi,
+                                          included=list(blank_indices),
+                                          local_baseline=local_baseline,
+                                          shifts=shifts)
+        if blanks:
+            blank_area = float(np.mean(list(blanks.values())))
+            areas = subtract_blank(areas, blanks)
     return {
         'window': (lo, hi),
         'width_ppm': window_width_ppm(lo, hi),
-        'areas': integrate_across_samples(ppm, intensities, lo, hi,
-                                          included=included,
-                                          local_baseline=local_baseline),
+        'areas': areas,
+        'shifts': shifts,
+        'blank_area': blank_area,
     }

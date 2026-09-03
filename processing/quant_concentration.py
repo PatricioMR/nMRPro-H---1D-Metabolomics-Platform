@@ -75,8 +75,16 @@ def standard_per_proton(is_areas: dict, is_nh: float,
 
 def concentrations(areas: dict, nh: float, *, standard=None,
                    standard_conc: float = 0.0, external=False,
-                   dilution=None, correction=None) -> dict:
+                   dilution=None, correction=None,
+                   proton_correction=True) -> dict:
     """Concentration per sample, in the standard's own units.
+
+    ``proton_correction`` only has a say when there is no standard. Against a
+    standard the division by nH is not optional — the ratio of two areas is
+    only a ratio of concentrations once both are per proton — so the flag is
+    ignored there rather than allowed to produce a number that looks like a
+    concentration and is not one. Without a standard the output is an area, and
+    whether it is per proton is the analyst's choice.
 
     With a standard::
 
@@ -95,7 +103,10 @@ def concentrations(areas: dict, nh: float, *, standard=None,
     A sample the standard could not be measured in yields NaN rather than a
     number, and a NaN is not a zero.
     """
-    per = per_proton(areas, nh)
+    if standard is None and not proton_correction:
+        per = {int(s): float(a) for s, a in (areas or {}).items()}
+    else:
+        per = per_proton(areas, nh)
     dil = dict(dilution or {})
     corr = dict(correction or {})
     out = {}
