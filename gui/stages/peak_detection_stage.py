@@ -762,10 +762,14 @@ class PeakDetectionStage(BaseStage):
             self._excluded_regions = _excluded
             _n_excl = len(details.get('excluded_peaks') or ()) if isinstance(
                 details, dict) else 0
-            _lbl = f"Found {len(self.peaks)} signals"
+            # Not named _lbl: that is the overlay's progress label, and
+            # rebinding it here would make it a local of _poll, so the read at
+            # the top of the polling loop would raise before this line ever ran.
+            _count_txt = f"Found {len(self.peaks)} signals"
             if _n_excl:
-                _lbl += f"  ({_n_excl} excluded: {format_regions(_excluded)} ppm)"
-            self.peaks_count_label.config(text=_lbl)
+                _count_txt += (f"  ({_n_excl} excluded: "
+                               f"{format_regions(_excluded)} ppm)")
+            self.peaks_count_label.config(text=_count_txt)
             try:
                 self.app.btn_peak_list.config(state="normal")
             except Exception:

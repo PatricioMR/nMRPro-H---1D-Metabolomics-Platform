@@ -177,3 +177,32 @@ def test_what_was_excluded_is_reported_from_what_ran():
     src = inspect.getsource(qc._QuantCompMixin._run)
     assert "getattr(self.peak_stage, '_excluded_regions', None)" in src
     assert 'excluded_regions_var' not in src
+
+
+def test_the_polling_loop_does_not_rebind_the_overlays_widgets():
+    """A nested function that assigns a name anywhere makes that name local to
+    the whole function, so a read before the assignment raises rather than
+    reaching the enclosing scope.
+
+    Reusing `_lbl` for a piece of label text did exactly that: detection died
+    with UnboundLocalError on the first progress tick, before the assignment it
+    was shadowed by could run — and the failure surfaced as detection never
+    finishing rather than as anything about a name.
+    """
+    import ast
+    import inspect
+    import textwrap
+
+    from gui.stages import peak_detection_stage as pds
+
+    tree = ast.parse(textwrap.dedent(
+        inspect.getsource(pds.PeakDetectionStage.detect_peaks)))
+    poll = next(n for n in ast.walk(tree)
+                if isinstance(n, ast.FunctionDef) and n.name == '_poll')
+    assigned = {n.id for n in ast.walk(poll)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
+    # Widgets the overlay owns and the loop only ever reads.
+    for widget in ('_lbl', '_pct_lbl', '_progress_queue', '_result'):
+        assert widget not in assigned, (
+            f'{widget} is assigned inside _poll, which shadows the enclosing '
+            f'binding and breaks every read above the assignment')

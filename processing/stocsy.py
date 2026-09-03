@@ -68,19 +68,31 @@ def compute_peak_correlation_matrix(peaks, min_samples=3, included=None):
             continue
         eligible.append((int(p['rank']), arr))
 
+    if len(eligible) < 2:
+        return {}
+
+    # One correlation over the whole matrix rather than a Python loop over
+    # every pair. The pair count is quadratic -- a 1047-peak study is 548k
+    # pairs, which took ~25 s one np.corrcoef call at a time and blocked the
+    # detection overlay with no progress to show for it.
+    ranks = [r for r, _ in eligible]
+    M = np.vstack([a for _, a in eligible])
+    keep = np.std(M, axis=1) > 0        # a flat vector has no correlation
+    if keep.sum() < 2:
+        return {}
+    ranks = [r for r, k in zip(ranks, keep) if k]
+    with np.errstate(invalid='ignore', divide='ignore'):
+        R = np.corrcoef(M[keep])
+
     corr_dict = {}
-    n = len(eligible)
+    n = len(ranks)
     for i in range(n):
-        ri, ai = eligible[i]
-        if np.std(ai) == 0.0:
-            continue
+        ri = ranks[i]
         for j in range(i + 1, n):
-            rj, aj = eligible[j]
-            if np.std(aj) == 0.0:
-                continue
-            r = float(np.corrcoef(ai, aj)[0, 1])
+            r = float(R[i, j])
             if not np.isfinite(r):
                 continue
+            rj = ranks[j]
             lo, hi = (ri, rj) if ri < rj else (rj, ri)
             corr_dict[(lo, hi)] = r
 

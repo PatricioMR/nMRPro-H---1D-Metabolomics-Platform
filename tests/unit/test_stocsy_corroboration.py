@@ -311,3 +311,71 @@ def test_detection_correlates_over_the_included_samples():
     src = inspect.getsource(pds.PeakDetectionStage.detect_peaks)
     assert 'included_sample_indices(self.app.samples_info' in src
     assert 'included=_incl_corr' in src
+
+
+class TestTheMatrixIsComputedInOneGo:
+    """The pair count is quadratic: a 1047-peak study is 547581 pairs, and one
+    np.corrcoef call per pair took ~25 s with the detection overlay frozen on
+    it. Vectorised it is 0.53 s.
+    """
+
+    def _pairwise_reference(self, peaks):
+        """What the loop used to compute, kept here as the thing to match."""
+        import numpy as np
+        out = {}
+        elig = [(p['rank'], np.asarray(p['area_per_sample'], float))
+                for p in peaks]
+        for i, (ri, ai) in enumerate(elig):
+            if np.std(ai) == 0.0:
+                continue
+            for rj, aj in elig[i + 1:]:
+                if np.std(aj) == 0.0:
+                    continue
+                r = float(np.corrcoef(ai, aj)[0, 1])
+                if np.isfinite(r):
+                    out[(min(ri, rj), max(ri, rj))] = r
+        return out
+
+    def _peaks(self, n=40, seed=3):
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        return [{'rank': i, 'area_per_sample': rng.normal(100, 20, 37)}
+                for i in range(1, n + 1)]
+
+    def test_it_gives_the_same_answer_as_the_pairwise_loop(self):
+        import numpy as np
+        from processing.stocsy import compute_peak_correlation_matrix
+        peaks = self._peaks()
+        got = compute_peak_correlation_matrix(peaks)
+        want = self._pairwise_reference(peaks)
+        assert set(got) == set(want)
+        for k in want:
+            assert got[k] == pytest.approx(want[k], abs=1e-12)
+
+    def test_a_flat_peak_is_still_dropped(self):
+        """No variance means no correlation, and numpy would return NaN."""
+        import numpy as np
+        from processing.stocsy import compute_peak_correlation_matrix
+        peaks = self._peaks(n=3)
+        peaks[1]['area_per_sample'] = np.full(37, 5.0)
+        got = compute_peak_correlation_matrix(peaks)
+        assert all(2 not in pair for pair in got)
+        assert (1, 3) in got
+
+    def test_fewer_than_two_usable_peaks_is_an_empty_matrix(self):
+        from processing.stocsy import compute_peak_correlation_matrix
+        assert compute_peak_correlation_matrix(self._peaks(n=1)) == {}
+        assert compute_peak_correlation_matrix([]) == {}
+
+    def test_the_sample_selection_still_applies(self):
+        """Vectorising must not quietly bring the blanks back in."""
+        import numpy as np
+        from processing.stocsy import compute_peak_correlation_matrix
+        peaks = self._peaks(n=2)
+        for p in peaks:
+            p['area_per_sample'] = np.concatenate(
+                [np.zeros(5), p['area_per_sample'][5:]])
+        blanks_in = compute_peak_correlation_matrix(peaks)[(1, 2)]
+        blanks_out = compute_peak_correlation_matrix(
+            peaks, included=list(range(5, 37)))[(1, 2)]
+        assert blanks_in != pytest.approx(blanks_out)
