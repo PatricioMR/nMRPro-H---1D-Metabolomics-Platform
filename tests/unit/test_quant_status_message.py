@@ -57,3 +57,16 @@ def test_the_message_is_in_english_like_the_rest_of_the_interface():
     src = _finish_ui_src()
     assert 'identified and' in src
     assert 'quantified successfully' in src
+
+
+def test_censored_analytes_are_counted_apart_from_both():
+    """Neither a result nor a failure. The experiment looked and reported what
+    it could have seen, which is not the same as not looking."""
+    src = _finish_ui_src()
+    assert "_r.get('_censored')" in src
+    assert '_n_nq -= _n_cens' in src
+
+
+def test_the_message_names_the_limit_they_are_below():
+    src = _finish_ui_src()
+    assert 'below the limit of quantification' in src

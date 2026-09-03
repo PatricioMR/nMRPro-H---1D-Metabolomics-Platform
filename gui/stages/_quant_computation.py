@@ -157,7 +157,9 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'external_IS  : {ext_is}')
 
         ok = [r for r in rows if not r.get('_not_quantified')]
-        nq = [r for r in rows if r.get('_not_quantified')]
+        censored = [r for r in rows if r.get('_censored')]
+        nq = [r for r in rows
+              if r.get('_not_quantified') and not r.get('_censored')]
         _dbg(f, '')
         _dbg(f, '=' * 70)
         _dbg(f, f'SUMMARY TABLE  ({len(ok)} quantified, sorted by mean mM)')
@@ -192,6 +194,37 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                     f'  {is_row.get("ppm", 0):>7.4f}'
                     f'  {is_row["conc_mm"]:>9.4f}'
                     f'   recovery={rec:.1f}%')
+
+        if censored:
+            _dbg(f, '')
+            _dbg(f, '── BELOW THE LIMIT ──────────────────────────────────')
+            _dbg(f, '  Bounds, not measurements. An analyte here was looked '
+                    'for where the')
+            _dbg(f, '  database predicts it and not found; the limit is what '
+                    'this experiment')
+            _dbg(f, '  could have seen there.')
+            _dbg(f, '')
+            _dbg(f, f'  {"Metabolite":<30s}  {"region (ppm)":>16}'
+                    f'  {"LOD mM":>10}  {"LOQ mM":>10}  verdict')
+            _dbg(f, '  ' + '-' * 84)
+            for r in sorted(censored, key=lambda r: (r.get('_censored', ''),
+                                                     r.get('metabolite', ''))):
+                w = r.get('_multiplet_window') or (float('nan'),) * 2
+                _dbg(f, f'  {str(r.get("metabolite", "?"))[:30]:<30s}'
+                        f'  {w[0]:7.4f}-{w[1]:<7.4f}'
+                        f'  {r.get("_lod_mm", float("nan")):>10.4g}'
+                        f'  {r.get("_loq_mm", float("nan")):>10.4g}'
+                        f'  {r.get("status", "")}')
+            _n_ov = sum(1 for r in censored
+                        if r.get('_censored') == 'unresolved')
+            if _n_ov:
+                _dbg(f, '')
+                _dbg(f, f'  {_n_ov} marked overlap?: area well above the '
+                        'quantification limit with')
+                _dbg(f, '  no peak detected in the window. Something is there '
+                        'that detection could')
+                _dbg(f, '  not resolve. Look at those regions before trusting '
+                        'their neighbours.')
 
         _dbg(f, '')
         _dbg(f, '── NOT QUANTIFIED ───────────────────────────────────')
@@ -423,10 +456,17 @@ class _QuantCompMixin:
             _n_nq = sum(1 for _r in self._quant_results
                         if _r.get('_not_quantified'))
             _n_ok = len(self._quant_results) - _n_nq
+            # Censored analytes are counted apart from both. They are neither
+            # a result nor a failure: the experiment looked and reported what
+            # it could have seen, which is a different thing from not looking.
+            _n_cens = sum(1 for _r in self._quant_results
+                          if _r.get('_censored'))
+            _n_nq -= _n_cens
             _note = (f' PQN×{self._pqn_factor:.3f}'
                      if _norm_f == 'IS+PQN' else '')
             self.run_status.config(
-                text=f'{_n_ok} quantified  ·  {_n_nq} not [{_norm_f}{_note}]',
+                text=(f'{_n_ok} quantified  ·  {_n_cens} < LOQ  ·  '
+                      f'{_n_nq} not [{_norm_f}{_note}]'),
                 foreground='green')
             for _b in ('btn_csv', 'btn_metaboanalyst', 'btn_pdf'):
                 try:
@@ -438,6 +478,8 @@ class _QuantCompMixin:
             _plural = '' if _n_ok == 1 else 's'
             _msg = (f'{_n_ok} metabolite{_plural} identified and '
                     f'quantified successfully')
+            if _n_cens:
+                _msg += f'  ·  {_n_cens} below the limit of quantification'
             if _n_nq:
                 _msg += f'  ·  {_n_nq} not quantified'
             self._status_ok(_msg)
