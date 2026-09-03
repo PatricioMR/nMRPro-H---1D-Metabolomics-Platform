@@ -27,7 +27,10 @@ import numpy as np
 
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
-from processing.quant_integration import integrate_signal
+from processing.quant_detection_limit import (
+    BELOW_LOD, BELOW_LOQ, K_LOD, UNRESOLVED, censor, censor_text,
+    detection_limits, predicted_window)
+from processing.quant_integration import integrate_sample, integrate_signal
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect)
@@ -40,6 +43,15 @@ STATUS_STRONG = '●●●'
 STATUS_FAIR = '●●○'
 STATUS_WEAK = '●○○'
 STATUS_NONE = 'n.q.'
+
+# Censored rows carry their own marks. They are not failures and not results:
+# an upper bound is a measurement, and reading it as either of the other two
+# loses what it says.
+STATUS_CENSORED = {
+    BELOW_LOD: '< LOD',
+    BELOW_LOQ: '< LOQ',
+    UNRESOLVED: 'overlap?',
+}
 
 
 def _cv_percent(values):
@@ -77,7 +89,9 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              standard_snr=None,
              external_standard_samples=None, dilution=None, correction=None,
              use_pqn=True, local_baseline=True, proton_correction=True,
-             align=False, blank_indices=None) -> list[dict]:
+             align=False, blank_indices=None,
+             noise_sigma=None, linewidth_ppm=0.008,
+             drift_ppm=0.0) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -149,14 +163,99 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 
     for mid, reason in election.rejected.items():
         rows.append(_rejected_row(mid, reason))
+    # A winner with no detected line is not a failure to measure — it is a
+    # measurement of an upper bound, and reporting it as one is the whole of
+    # processing.quant_detection_limit.
     for mid in unmeasurable:
-        rows.append(_rejected_row(mid, NO_MEASURABLE_WINDOW))
+        rows.append(_censored_row(
+            election.winners[mid], ppm, intensities, included=included,
+            standard=standard, standard_conc=standard_conc,
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
+            drift_ppm=drift_ppm, local_baseline=local_baseline))
 
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
                                   standard_name, standard_ppm, standard_snr,
                                   groups, standard))
     return rows
+
+
+def _censored_row(cand, ppm, intensities, *, included, standard,
+                  standard_conc, noise_sigma, linewidth_ppm, drift_ppm,
+                  local_baseline) -> dict:
+    """An analyte the experiment could not see, reported as the bound it is.
+
+    The limits travel through the same chain as any concentration -- divided by
+    nH, referenced to the standard -- because a limit in area units cannot be
+    compared with the numbers in the table, and a limit nobody can compare is
+    not a limit.
+    """
+    ev = cand.evidence or {}
+    mid = cand.met_id
+    win = predicted_window(ev.get('predicted_ppms'),
+                           linewidth_ppm=linewidth_ppm, drift_ppm=drift_ppm)
+    if win is None or noise_sigma is None or not np.isfinite(noise_sigma):
+        return _rejected_row(mid, NO_MEASURABLE_WINDOW)
+    lo, hi = win
+    ppm = np.asarray(ppm, dtype=float)
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    n_pts = int(((ppm >= lo) & (ppm <= hi)).sum())
+    if n_pts < 2:
+        return _rejected_row(mid, NO_MEASURABLE_WINDOW)
+    dppm = float(abs(ppm[1] - ppm[0])) if ppm.size > 1 else 0.0
+
+    areas = {}
+    for s_i in (included if included is not None else range(arr.shape[1])):
+        if 0 <= s_i < arr.shape[1]:
+            a = integrate_sample(ppm, arr[:, s_i], lo, hi,
+                                 local_baseline=local_baseline)
+            if a is not None:
+                areas[int(s_i)] = float(a)
+    area = float(np.median(list(areas.values()))) if areas else float('nan')
+
+    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
+    verdict = censor(area, lod_a, loq_a)
+
+    nh = signal_nh(ev.get('protons'))
+    lod_mm, loq_mm = (_as_concentration(v, nh, standard, standard_conc)
+                      for v in (lod_a, loq_a))
+
+    row = _rejected_row(mid, verdict)
+    row.update({
+        'ppm': float((lo + hi) / 2.0),
+        'raw_area': area,
+        'corr_area': area,
+        'snr': (area / (lod_a / K_LOD)
+                if np.isfinite(area) and lod_a and np.isfinite(lod_a)
+                else float('nan')),
+        'status': STATUS_CENSORED[verdict],
+        '_status_reasons': [censor_text(verdict, lod_mm, loq_mm)],
+        '_censored': verdict,
+        '_lod_mm': lod_mm,
+        '_loq_mm': loq_mm,
+        '_multiplet_window': [float(lo), float(hi)],
+        '_nh': float(nh),
+        '_areas_per_sample': areas,
+        '_ann_score': float(ev.get('score') or 0.0),
+        '_hits': [cand.payload] if cand.payload is not None else [],
+        '_is_singlet': ev.get('multiplicity') == 's',
+    })
+    return row
+
+
+def _as_concentration(area, nh, standard, standard_conc) -> float:
+    """One area in the same units the table's concentrations are in."""
+    if not np.isfinite(area):
+        return float('nan')
+    per = float(area) / signal_nh(nh)
+    if not standard:
+        return per
+    refs = [v for v in standard.values() if v and np.isfinite(v) and v > 0]
+    if not refs:
+        return float('nan')
+    return per / float(np.median(refs)) * float(standard_conc)
 
 
 def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,

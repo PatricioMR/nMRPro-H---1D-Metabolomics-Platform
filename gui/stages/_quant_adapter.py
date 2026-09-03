@@ -20,6 +20,8 @@ from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
 from processing.quant_integration import integrate_sample
 from processing.quant_concentration import standard_per_proton
+from processing.quant_detection_limit import (
+    project_drift, project_linewidth, project_noise)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import Candidate, eligible_metabolite_ids
 from processing.sample_selection import included_sample_indices
@@ -68,6 +70,14 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'score': mp.get('composite_score',
                                     mp.get('multiplet_score', 0.0)),
                     'protons': mp.get('protons'),
+                    # Where the database says the lines are. Only read when
+                    # detection found none of them, to bound what could have
+                    # been there — never to place a peak.
+                    'predicted_ppms': [l.get('ppm') for l
+                                       in (mp.get('predicted_lines') or ())
+                                       if l.get('ppm') is not None]
+                                      or ([mp.get('ppm')]
+                                          if mp.get('ppm') is not None else []),
                 },
                 payload={'name': met.get('name', mid), 'met': met, 'mp': mp},
             ))
@@ -262,4 +272,10 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         proton_correction=proton_correction,
         align=align,
         blank_indices=blanks if subtract_blanks else None,
+        # For the analytes detection found nothing for: the study's own noise,
+        # linewidth and drift, so the bound reported is this experiment's and
+        # not a constant.
+        noise_sigma=project_noise(peaks),
+        linewidth_ppm=project_linewidth(peaks),
+        drift_ppm=project_drift(metabolites),
     )

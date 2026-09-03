@@ -541,6 +541,11 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._tree.tag_configure('conf1', background='#ffd6d6', foreground='#721c24')
         # Não-quantificados: cinzento, sem destaque. Razão no tooltip da coluna Conf.
         self._tree.tag_configure('nq', background='#eeeeee', foreground='#9a9a9a')
+        # Censored rows sit between the two: measured, but as a bound. Blue
+        # rather than grey, so they do not read as the run having failed on
+        # them, and not green, so they are never mistaken for a concentration.
+        self._tree.tag_configure('censored', background='#e7f0fb',
+                                 foreground='#1565C0')
 
         vsb = ttk.Scrollbar(top, orient=tk.VERTICAL,
                              command=self._tree.yview)
@@ -680,7 +685,24 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             _conf  = r.get('_confidence', 1)
             if r.get('_not_quantified'):
                 conf_tag = 'nq'
-                conc_s   = 'n.q.'
+                conc_s = 'n.q.'
+                # A censored row is not a failure to measure: it is an upper
+                # bound, and the bound is the informative part. Without the
+                # number the analyst cannot tell an absence that means
+                # something from a measurement that was never sensitive
+                # enough, and those say opposite things about the sample.
+                _cens = r.get('_censored')
+                if _cens:
+                    conf_tag = 'censored'
+                    _bound = (r.get('_lod_mm') if _cens == 'below_lod'
+                              else r.get('_loq_mm'))
+                    if _cens == 'unresolved':
+                        conc_s = 'overlap?'
+                    elif _bound is not None and np.isfinite(_bound):
+                        conc_s = (f'< {_bound:.4f}' if _is_mm
+                                  else f'< {_bound:.3e}')
+                    else:
+                        conc_s = '< LOQ'
             else:
                 conf_tag = f'conf{_conf}'
             peak_rank = r.get('_peak', {})
