@@ -85,7 +85,7 @@ class TestImports:
         assert callable(score_multiplet_match)
 
     def test_quantification_math_imports(self):
-        from gui.stages._quant_helpers import _trapz, _cv, _pqn
+        from gui.stages._quant_helpers import _trapz, _cv
         assert callable(_trapz)
         assert callable(_cv)
 

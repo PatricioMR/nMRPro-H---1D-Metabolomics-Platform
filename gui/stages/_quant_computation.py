@@ -101,46 +101,10 @@ from processing.multiplet_line_selector import (
     multiplet_line_peaks as _multiplet_line_peaks)
 
 
-def _multiplet_window_from_peaks(hit, pk_by_rank):
-    """Integration window = union of the multiplet line peaks' Peak-List
-    boundaries (left foot of the leftmost line … right foot of the rightmost),
-    i.e. exactly the peaks shown in Annotation Results. Returns [lo, hi] ppm or
-    None when no line peak can be matched."""
-    matched = _multiplet_line_peaks(hit, pk_by_rank)
-    if not matched:
-        return None
-    lo = min(min(float(pk.get('start_ppm', pk.get('ppm', 0))),
-                 float(pk.get('end_ppm',   pk.get('ppm', 0)))) for pk in matched)
-    hi = max(max(float(pk.get('start_ppm', pk.get('ppm', 0))),
-                 float(pk.get('end_ppm',   pk.get('ppm', 0)))) for pk in matched)
-    return [float(lo), float(hi)]
 
 
-DB_WINDOW_MIN_MARGIN = 0.010   # ppm — same floor as the _margin rule below
-DB_WINDOW_WIDTH_FRAC = 0.7     # ppm — same fraction of the peak width
 
 
-def db_gapfill_window(line_ppms, width_ppm=0.008):
-    """Integration window for a DB-predicted multiplet with no detected peak.
-
-    ``[min(line), max(line)]`` runs from the CENTRE of the outermost left line
-    to the CENTRE of the outermost right line, so half of each outer line's
-    area falls outside — a doublet integrates ~47% of its area while nH stays
-    the full multiplet count, halving the reported concentration. A singlet
-    degenerates further: min == max gives a zero-width window and an area of
-    exactly 0.
-
-    Both are fixed by padding with the same margin the detected-peak branch
-    uses (``max(width_ppm * 0.7, 0.010)`` ppm), so the outer lines' tails are
-    inside the window. Returns ``(lo_ppm, hi_ppm)``; ``None`` when there are no
-    lines to build a window from.
-    """
-    ppms = [float(v) for v in (line_ppms or []) if v is not None]
-    if not ppms:
-        return None
-    margin = max(float(width_ppm or 0.0) * DB_WINDOW_WIDTH_FRAC,
-                 DB_WINDOW_MIN_MARGIN)
-    return (min(ppms) - margin, max(ppms) + margin)
 
 
 def _competitor_counts(metabolites) -> dict:

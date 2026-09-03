@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 
 from ._quant_helpers import (
     _fit_lorentz_mean, _fit_lorentz_mean_with_bl, _fit_lorentz_sample,
-    _align_sample_center, _lorentz_amplitude, _lorentz_shape,
+    _lorentz_amplitude, _lorentz_shape,
     _linear_baseline,
 )
 
