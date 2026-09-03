@@ -23,6 +23,7 @@ from ._quant_adapter import (
     blank_indices, dilution_and_correction, quantify_project, sample_groups,
     standard_vector)
 from processing.sample_selection import included_sample_indices
+from processing.spectral_regions import format_regions
 
 # ── Debug logging ─────────────────────────────────────────────────────────────
 # Set to True to write a detailed quant_debug.log in the project root.
@@ -125,7 +126,8 @@ def _competitor_counts(metabolites) -> dict:
 
 
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
-                     ref_peak, ref_conc, ref_nh, ext_is, n_samples):
+                     ref_peak, ref_conc, ref_nh, ext_is, n_samples,
+                     excluded_regions):
     """The run, written down where it can be read after the window closes.
 
     Two sections earn their place. The summary table is what was measured. The
@@ -146,6 +148,9 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'proton_corr  : {proton_corr}')
         _dbg(f, f'blk_sub      : {blk_sub}')
         _dbg(f, f'window_align : {align}')
+        # What was excluded is part of what the peak list means: the same
+        # spectrum detected with a different window is a different study.
+        _dbg(f, f'excluded     : {excluded_regions}')
         _dbg(f, f'n_samples    : {n_samples}')
         _dbg(f, f'groups       : { {g: len(i) for g, i in groups.items()} }')
         if ref_peak is not None:
@@ -425,6 +430,12 @@ class _QuantCompMixin:
         _apply = _dil if (ext_is or norm_mode not in ('IS', 'IS+PQN')) else _corr
         self._last_sample_dil = np.array([_apply.get(i, 1.0)
                                           for i in range(n_s)])
+        # What detection actually applied, not what the field currently reads
+        # — the analyst can edit the field after detecting, and the peak list
+        # being quantified is the one the earlier value produced.
+        _excl = getattr(self.peak_stage, '_excluded_regions', None)
+        _excluded_used = (format_regions(_excl) if _excl
+                          else ('none' if _excl == [] else 'not recorded'))
         self._last_groups = sample_groups(si, n_s)
         self._last_blk_indices = blank_indices(si, n_s)
         self._last_non_blk_indices = included_sample_indices(si, n_s)
@@ -436,7 +447,8 @@ class _QuantCompMixin:
         _write_debug_log(rows, self._last_groups, norm_mode=norm_mode,
                          proton_corr=proton_corr, blk_sub=subtract_blanks,
                          align=align, ref_peak=ref_peak, ref_conc=ref_conc,
-                         ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s)
+                         ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
+                         excluded_regions=_excluded_used)
 
         _norm_f = norm_mode
 

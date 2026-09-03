@@ -120,3 +120,60 @@ def test_ranks_stay_contiguous_after_the_exclusion():
                          global_align=False,
                          excluded_regions=DEFAULT_EXCLUDED_REGIONS)
     assert [p['rank'] for p in peaks] == list(range(1, len(peaks) + 1))
+
+
+# ── One definition, one path ─────────────────────────────────────────────────
+
+def test_the_default_is_defined_in_exactly_one_place():
+    """A second copy of the window is a second answer waiting to disagree with
+    the first, and the analyst would have no way to tell which one ran."""
+    import pathlib
+    import re
+    hits = []
+    for f in pathlib.Path('.').rglob('*.py'):
+        if '__pycache__' in str(f) or f.as_posix().startswith('tests/'):
+            continue
+        for i, line in enumerate(
+                f.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
+            if re.match(r'\s*(WATER_REGION|DEFAULT_EXCLUDED_REGIONS)\s*=', line):
+                hits.append(f'{f.as_posix()}:{i}')
+    assert hits == ['processing/spectral_regions.py:35',
+                    'processing/spectral_regions.py:37'], hits
+
+
+def test_detection_uses_the_field_and_nothing_else():
+    """The range that runs must be the range on screen. Reading the constant
+    here instead would ignore whatever the analyst typed."""
+    import inspect
+
+    from gui.stages import peak_detection_stage as pds
+    src = inspect.getsource(pds.PeakDetectionStage.detect_peaks)
+    assert 'parse_regions(self.excluded_regions_var.get())' in src
+    assert 'DEFAULT_EXCLUDED_REGIONS' not in src
+
+
+def test_the_constant_only_seeds_the_field():
+    """Its single job is the starting value. Any other use would be a second
+    path to the same decision. Counted by name node, not by text, so the
+    import line cannot pass for a use."""
+    import ast
+    import inspect
+
+    from gui.stages import peak_detection_stage as pds
+    tree = ast.parse(inspect.getsource(pds))
+    uses = [n for n in ast.walk(tree)
+            if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            and n.id == 'DEFAULT_EXCLUDED_REGIONS']
+    assert len(uses) == 1
+
+
+def test_what_was_excluded_is_reported_from_what_ran():
+    """The analyst can edit the field after detecting, and the peak list being
+    quantified is the one the earlier value produced. Reporting the field would
+    label a run with a setting it never used."""
+    import inspect
+
+    from gui.stages import _quant_computation as qc
+    src = inspect.getsource(qc._QuantCompMixin._run)
+    assert "getattr(self.peak_stage, '_excluded_regions', None)" in src
+    assert 'excluded_regions_var' not in src
