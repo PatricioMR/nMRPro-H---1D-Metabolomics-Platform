@@ -176,7 +176,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
                                   standard_name, standard_ppm, standard_snr,
-                                  groups, standard))
+                                  groups, standard,
+                                  external_samples=external_standard_samples))
     return rows
 
 
@@ -259,14 +260,26 @@ def _as_concentration(area, nh, standard, standard_conc) -> float:
 
 
 def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
-                  standard) -> dict:
+                  standard, external_samples=None) -> dict:
     """The internal standard, measured like everything it standardises.
 
     Its recovery is the check on the whole run: the standard was added at a
     known concentration, so reading it back against itself must return that
     concentration. When it does not, the areas it divided are not trustworthy
     either, and the analyst needs to see that before reading any other row.
+
+    Read over the injections that actually contain it. An externally injected
+    standard is absent from the analytical samples by design, so integrating
+    its window there measures the baseline underneath it; averaging that in
+    drags the recovery down in proportion to how many analytical samples the
+    study has and reports a preparation failure that did not happen. On a
+    21-sample study with 5 external injections it read 57.5%.
     """
+    if external_samples:
+        keep = {int(s) for s in external_samples}
+        areas = {s: a for s, a in (areas or {}).items() if int(s) in keep}
+        groups = {g: [i for i in idxs if int(i) in keep]
+                  for g, idxs in (groups or {}).items()}
     conc = concentrations(areas, nh, standard=standard,
                           standard_conc=conc_nominal)
     by_group = {g: [conc[s] for s in idxs

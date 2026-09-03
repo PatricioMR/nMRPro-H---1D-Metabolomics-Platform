@@ -204,7 +204,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      external_is_samples=None, group_dilution=None,
                      dj_gold_hz=None, annotation_params=None, use_pqn=True,
                      local_baseline=True, proton_correction=True, align=False,
-                     subtract_blanks=False):
+                     subtract_blanks=False, noise_sigma=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -280,7 +280,15 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # For the analytes detection found nothing for: the study's own noise,
         # linewidth and drift, so the bound reported is this experiment's and
         # not a constant.
-        noise_sigma=project_noise(peaks),
+        #
+        # The caller's sigma comes first because a detected peak carries no
+        # 'noise' key -- detection keeps one noise_std for the spectrum, on the
+        # stage. Relying on the per-peak fallback made project_noise return NaN
+        # and every censored analyte fell back to "no measurable window",
+        # which turned the whole limit-of-detection path into a no-op.
+        noise_sigma=(float(noise_sigma)
+                     if noise_sigma not in (None, 0)
+                     else project_noise(peaks)),
         linewidth_ppm=project_linewidth(peaks),
         drift_ppm=project_drift(metabolites),
     )

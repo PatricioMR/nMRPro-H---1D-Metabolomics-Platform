@@ -175,3 +175,35 @@ def test_no_standard_means_no_standard_row():
     rows = quantify(candidates=[], peaks_by_rank={}, ppm=ppm, intensities=y,
                     samples_info=[{}], included=[0], groups={}, dj_gold_hz=0.5)
     assert not any(r.get('_is_is') for r in rows)
+
+
+def test_an_external_standards_recovery_is_read_where_it_was_injected():
+    """An externally injected standard is absent from the analytical samples by
+    design. Integrating its window there measures the baseline underneath it,
+    and averaging that in reports a preparation failure that did not happen —
+    on a 21-sample study with 5 injections it read 57.5% recovery."""
+    from processing.quant_engine import quantify
+    ppm = _grid()
+    y = _gauss(ppm, 1.0, 100.0).reshape(-1, 1)
+    areas = {0: 90.0, 1: 90.0}          # the injections
+    areas.update({s: 0.5 for s in range(2, 12)})   # analytical samples: no IS
+    rows = quantify(candidates=[], peaks_by_rank={}, ppm=ppm, intensities=y,
+                    samples_info=[{}], included=[0], groups={},
+                    dj_gold_hz=0.5, standard_areas=areas, standard_nh=9.0,
+                    standard_conc=5.38, standard_name='TSP',
+                    external_standard_samples=[0, 1])
+    is_row = next(r for r in rows if r.get('_is_is'))
+    assert is_row['conc_mm'] == pytest.approx(5.38, rel=0.01)
+
+
+def test_an_internal_standard_is_still_read_across_every_sample():
+    """It is in every sample there, so restricting would throw away the check."""
+    from processing.quant_engine import quantify
+    ppm = _grid()
+    y = _gauss(ppm, 1.0, 100.0).reshape(-1, 1)
+    rows = quantify(candidates=[], peaks_by_rank={}, ppm=ppm, intensities=y,
+                    samples_info=[{}], included=[0], groups={},
+                    dj_gold_hz=0.5, standard_areas={0: 90.0, 1: 45.0},
+                    standard_nh=9.0, standard_conc=1.0, standard_name='TSP')
+    is_row = next(r for r in rows if r.get('_is_is'))
+    assert len(is_row['_areas_per_sample']) == 2

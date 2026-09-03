@@ -387,6 +387,10 @@ class _QuantCompMixin:
             proton_correction=proton_corr,
             align=align,
             subtract_blanks=subtract_blanks,
+            # The spectrum's noise as detection estimated it. It lives on the
+            # detection stage, not on the peaks, and without it no analyte can
+            # be given a detection limit.
+            noise_sigma=getattr(self.peak_stage, 'noise_std', None),
         )
 
         # ── Display names and the fields the plot reads ──────────────────────
