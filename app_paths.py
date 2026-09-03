@@ -27,7 +27,7 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 # Bump these two on a release; every display string is derived from APP_VERSION.
 __version__   = "0.13"
 RELEASE_STAGE = "Alpha"
-APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"   # "NMRPro-H v0.12 Alpha"
+APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"   # "NMRPro-H v0.13 Alpha"
 
 
 def _is_frozen():
