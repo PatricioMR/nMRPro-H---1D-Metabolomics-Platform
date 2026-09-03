@@ -18,6 +18,7 @@ from .peak_alignment import global_peak_rigid_align
 from .sample_selection import included_sample_indices
 from .signal_quality import (
     classify_signal_quality, measure_fwhm_points, corrected_profile)
+from .spectral_regions import format_regions, split_excluded
 
 
 def diagnose_array(arr, name):
@@ -697,7 +698,8 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                  per_peak_max_shift_ppm=0.02,
                  per_sample_detection=False,
                  detect_shoulders=True, shoulder_curvature_k=3.0,
-                 min_group_presence=1, baseline_2d=None):
+                 min_group_presence=1, baseline_2d=None,
+                 excluded_regions=None):
     """
     Detect peaks with SNR > min_snr - WITH BASELINE CORRECTION.
 
@@ -1248,7 +1250,20 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             peak['snr'] = peak['mean_intensity'] / noise_std if noise_std > 0 else 0.0
             peak['alignment_applied'] = bool(global_align and n_samples > 1)
 
-        # STEP 11: Sort by SNR and assign rank
+        # STEP 11: Drop the suppressed regions, then sort and rank.
+        #
+        # Before ranking, so the ranks stay contiguous, and here rather than in
+        # the callers so annotation, quantification and the Signal List cannot
+        # disagree about which peaks the study contains. The residual water
+        # resonance is the reason — see processing/spectral_regions.py.
+        excluded_peaks = []
+        if excluded_regions:
+            separated_peaks, excluded_peaks = split_excluded(
+                separated_peaks, excluded_regions)
+            if excluded_peaks:
+                print(f"   Excluded {format_regions(excluded_regions)} ppm: "
+                      f"{len(excluded_peaks)} peaks dropped")
+
         _report(0.97, "Ranking peaks")
         separated_peaks.sort(key=lambda x: x['snr'], reverse=True)
         for i, peak in enumerate(separated_peaks, 1):
@@ -1278,6 +1293,8 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 'shift_points': shift_pts,
                 'shift_ppm': shift_ppm,
                 'alignment_applied': bool(global_align and n_samples > 1),
+                'excluded_regions': list(excluded_regions or ()),
+                'excluded_peaks': excluded_peaks,
             }
         return separated_peaks
 

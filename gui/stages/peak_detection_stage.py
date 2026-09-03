@@ -21,6 +21,8 @@ if certifi is not None:
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from processing.noise_estimation import estimate_noise_from_region
+from processing.spectral_regions import (
+    DEFAULT_EXCLUDED_REGIONS, format_regions, parse_regions)
 from processing.signal_quality import SIGNAL_AVERAGE
 from .base_stage import BaseStage
 
@@ -297,6 +299,19 @@ class PeakDetectionStage(BaseStage):
         ttk.Entry(pf2, textvariable=self.min_width_var,
                   width=6).pack(side=tk.LEFT, padx=2)
 
+        # Excluded regions. The residual water resonance is orders of magnitude
+        # above any metabolite and presaturation flattens whatever sits under
+        # it, so peaks there are artefact — but the reference database has 82
+        # signals between 4.5 and 4.9 ppm that will happily match one. See
+        # processing/spectral_regions.py for the protocol references.
+        pf3 = ttk.Frame(s2)
+        pf3.pack(fill=tk.X, pady=1)
+        ttk.Label(pf3, text="Exclude regions (ppm):").pack(side=tk.LEFT)
+        self.excluded_regions_var = tk.StringVar(
+            value=format_regions(DEFAULT_EXCLUDED_REGIONS))
+        ttk.Entry(pf3, textvariable=self.excluded_regions_var,
+                  width=14).pack(side=tk.LEFT, padx=2)
+
         self.btn_detect = ttk.Button(
             s2, text="🎯 Detect Signals",
             command=self.detect_peaks, state="normal")
@@ -490,6 +505,15 @@ class PeakDetectionStage(BaseStage):
         # Noise is now estimated here (no separate button). Use the optional
         # region if set; otherwise detect_peaks() estimates it internally from
         # the quietest segment (noise_std=None).
+        # Parsed here, before anything runs: a malformed region has to stop
+        # the detection with a message. Skipping it would leave the analyst
+        # believing the water is excluded while it is being detected.
+        try:
+            _excluded = parse_regions(self.excluded_regions_var.get())
+        except ValueError as exc:
+            messagebox.showerror('Excluded regions', str(exc))
+            return
+
         self.push_baseline_model()
         self._estimate_noise()
 
@@ -593,6 +617,7 @@ class PeakDetectionStage(BaseStage):
                     detect_shoulders=bool(self.detect_shoulders_var.get()),
                     shoulder_curvature_k=float(self.shoulder_k_var.get()),
                     min_group_presence=int(self.min_group_presence_var.get()),
+                    excluded_regions=_excluded,
                 )
                 _result['details'] = details
                 _result['elapsed'] = time.monotonic() - t0
@@ -730,7 +755,16 @@ class PeakDetectionStage(BaseStage):
                 p['overlapping'] = False
             self._deconv_controller = None
             self._overlaps = []
-            self.peaks_count_label.config(text=f"Found {len(self.peaks)} signals")
+            # An exclusion and a detection failure call for opposite responses,
+            # so the count says which happened rather than leaving the analyst
+            # to infer it from a smaller number.
+            self._excluded_regions = _excluded
+            _n_excl = len(details.get('excluded_peaks') or ()) if isinstance(
+                details, dict) else 0
+            _lbl = f"Found {len(self.peaks)} signals"
+            if _n_excl:
+                _lbl += f"  ({_n_excl} excluded: {format_regions(_excluded)} ppm)"
+            self.peaks_count_label.config(text=_lbl)
             try:
                 self.app.btn_peak_list.config(state="normal")
             except Exception:

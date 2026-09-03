@@ -116,6 +116,10 @@ class ProjectManager:
                 'noise_end_var':   _safe_var(pd, 'noise_end_var'),
                 'min_snr_var':     _safe_var(pd, 'min_snr_var'),
                 'min_width_var':   _safe_var(pd, 'min_width_var'),
+                # Which regions were excluded is part of what the peak list
+                # means. Reopening a project with a different exclusion would
+                # silently change which signals exist in it.
+                'excluded_regions': _safe_var(pd, 'excluded_regions_var'),
                 'per_sample_detection': bool(_safe_var(pd, 'per_sample_var')
                                              if _safe_var(pd, 'per_sample_var') is not None
                                              else True),
@@ -369,6 +373,9 @@ class ProjectManager:
             _set_var(pd, 'noise_end_var',   pd_state.get('noise_end_var'))
             _set_var(pd, 'min_snr_var',     pd_state.get('min_snr_var'))
             _set_var(pd, 'min_width_var',   pd_state.get('min_width_var'))
+            if pd_state.get('excluded_regions') is not None:
+                _set_var(pd, 'excluded_regions_var',
+                         pd_state.get('excluded_regions'))
             _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', True))
             _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', False))
             _set_var(pd, 'shoulder_k_var',  pd_state.get('shoulder_k_var'))
