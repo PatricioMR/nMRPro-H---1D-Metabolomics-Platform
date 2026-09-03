@@ -251,3 +251,63 @@ def test_the_ambiguity_check_covers_every_banded_criterion():
     banded = [f for f in k._fields if f not in ('cosine', 'score')]
     for f in banded:
         assert f"'{f}'" in src, f
+
+
+# ── Blanks manufacture correlation ───────────────────────────────────────────
+
+class TestTheCorrelationIsMeasuredOnSamplesOnly:
+    """A blank drags every peak to nothing at once, and that shared descent
+    reads as co-variation between molecules with nothing to do with each other.
+
+    Measured on 32 samples at 20% CV with five blanks appended: two independent
+    analytes read r = +0.74 to +0.80, against |r| < 0.25 over the samples
+    alone. At a 0.80 threshold that makes almost everything look corroborated.
+    """
+
+    def _peaks(self, seed=1):
+        import numpy as np
+        from processing.stocsy import compute_peak_correlation_matrix
+        rng = np.random.default_rng(seed)
+        a = np.concatenate([rng.normal(0, 2, 5), rng.normal(100, 20, 32)])
+        b = np.concatenate([rng.normal(0, 2, 5), rng.normal(80, 16, 32)])
+        return ([{'rank': 1, 'area_per_sample': a},
+                 {'rank': 2, 'area_per_sample': b}],
+                compute_peak_correlation_matrix)
+
+    def test_blanks_make_independent_analytes_look_correlated(self):
+        peaks, corr = self._peaks()
+        r = corr(peaks)[(1, 2)]
+        assert r > 0.6, r
+
+    def test_excluding_them_gives_back_the_real_correlation(self):
+        peaks, corr = self._peaks()
+        r = corr(peaks, included=list(range(5, 37)))[(1, 2)]
+        assert abs(r) < 0.4, r
+
+    def test_the_inflated_value_would_have_crossed_the_threshold(self):
+        """Which is the whole point: the criterion would have counted every
+        pair as corroborating and separated nothing."""
+        peaks, corr = self._peaks(seed=1)
+        inflated = corr(peaks)[(1, 2)]
+        honest = corr(peaks, included=list(range(5, 37)))[(1, 2)]
+        assert honest < STOCSY_MIN_R
+        assert inflated > honest + 0.4
+
+    def test_a_peak_with_too_few_included_samples_is_dropped(self):
+        peaks, corr = self._peaks()
+        assert corr(peaks, included=[0, 1]) == {}
+
+    def test_no_selection_still_uses_every_column(self):
+        peaks, corr = self._peaks()
+        assert (1, 2) in corr(peaks)
+
+
+def test_detection_correlates_over_the_included_samples():
+    """Same selection rule detection and quantification use, so a study's
+    engines cannot disagree about which samples it contains."""
+    import inspect
+
+    from gui.stages import peak_detection_stage as pds
+    src = inspect.getsource(pds.PeakDetectionStage.detect_peaks)
+    assert 'included_sample_indices(self.app.samples_info' in src
+    assert 'included=_incl_corr' in src

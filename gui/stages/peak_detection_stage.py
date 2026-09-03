@@ -21,6 +21,7 @@ if certifi is not None:
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from processing.noise_estimation import estimate_noise_from_region
+from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import (
     DEFAULT_EXCLUDED_REGIONS, format_regions, parse_regions)
 from processing.signal_quality import SIGNAL_AVERAGE
@@ -791,8 +792,16 @@ class PeakDetectionStage(BaseStage):
                 _n_s  = (int(_aint.shape[1])
                          if _aint is not None and _aint.ndim == 2 else 0)
                 self._n_samples_pk = _n_s
-                self._peak_corr = (compute_peak_correlation_matrix(self.peaks)
-                                   if _n_s >= 3 else {})
+                # Correlated over the analytical samples only. A blank drags
+                # every peak to nothing at once, and that shared descent reads
+                # as co-variation between molecules that have nothing to do
+                # with each other.
+                _incl_corr = included_sample_indices(self.app.samples_info,
+                                                     _n_s)
+                self._peak_corr = (
+                    compute_peak_correlation_matrix(self.peaks,
+                                                    included=_incl_corr)
+                    if len(_incl_corr) >= 3 else {})
             except Exception:
                 self._peak_corr = {}
 
