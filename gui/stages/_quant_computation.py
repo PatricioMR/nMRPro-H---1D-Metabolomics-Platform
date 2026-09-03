@@ -127,7 +127,7 @@ def _competitor_counts(metabolites) -> dict:
 
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                      ref_peak, ref_conc, ref_nh, ext_is, n_samples,
-                     excluded_regions):
+                     excluded_regions, local_baseline):
     """The run, written down where it can be read after the window closes.
 
     Two sections earn their place. The summary table is what was measured. The
@@ -147,6 +147,7 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'norm_mode    : {norm_mode}')
         _dbg(f, f'proton_corr  : {proton_corr}')
         _dbg(f, f'blk_sub      : {blk_sub}')
+        _dbg(f, f'local_basel. : {local_baseline}')
         _dbg(f, f'window_align : {align}')
         # What was excluded is part of what the peak list means: the same
         # spectrum detected with a different window is a different study.
@@ -452,7 +453,8 @@ class _QuantCompMixin:
                          proton_corr=proton_corr, blk_sub=subtract_blanks,
                          align=align, ref_peak=ref_peak, ref_conc=ref_conc,
                          ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
-                         excluded_regions=_excluded_used)
+                         excluded_regions=_excluded_used,
+                         local_baseline=local_baseline)
 
         _norm_f = norm_mode
 

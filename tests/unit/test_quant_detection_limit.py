@@ -223,3 +223,52 @@ def test_the_censored_row_says_which_region_it_looked_at():
                if r['hmdb_id'] == 'ghost')
     lo, hi = row['_multiplet_window']
     assert lo < 5.500 < hi
+
+
+# ── The limit describes the NET signal ───────────────────────────────────────
+
+class TestTheBackgroundIsRemovedBeforeTheComparison:
+    """Currie's limits describe what stands above the background, so an
+    integral that still contains the background cannot be compared with a limit
+    built from noise alone.
+
+    Measured on a 197-point window: pure noise on a +2 sigma offset, with no
+    peak in it at all, integrates to three times the quantification limit. All
+    28 of the reference study's censored analytes came back 'overlap?' — a
+    hundred percent in one category, which is a classifier that is not
+    classifying.
+    """
+
+    def _window(self, offset=0.0, peak_height=0.0, seed=0):
+        ppm = np.linspace(0.0, 10.0, 40001)
+        rng = np.random.default_rng(seed)
+        y = rng.normal(0.0, 1.0, ppm.size) + offset
+        if peak_height:
+            y = y + peak_height * np.exp(-0.5 * ((ppm - 5.500) / 0.002) ** 2)
+        return ppm, y.reshape(-1, 1)
+
+    def _verdict(self, **kw):
+        from processing.quant_engine import quantify
+        ppm, y = self._window(**kw)
+        rows = quantify(candidates=[_cand('ghost', [5.500])], peaks_by_rank={},
+                        ppm=ppm, intensities=y, samples_info=[{}], included=[0],
+                        groups={'A': [0]}, dj_gold_hz=0.5, noise_sigma=1.0,
+                        linewidth_ppm=0.010, drift_ppm=0.005,
+                        local_baseline=False)
+        return next(r for r in rows if r['hmdb_id'] == 'ghost')['_censored']
+
+    def test_a_raised_baseline_with_no_peak_is_still_below_the_limit(self):
+        assert self._verdict(offset=2.0) == BELOW_LOD
+
+    def test_even_a_steeply_raised_one(self):
+        assert self._verdict(offset=10.0) == BELOW_LOD
+
+    def test_a_real_peak_is_still_seen(self):
+        """The correction must not make the criterion blind."""
+        assert self._verdict(peak_height=40.0) == UNRESOLVED
+
+    def test_it_does_not_follow_the_runs_integration_setting(self):
+        """That flag governs how a quantified area is measured, where it costs
+        a known ~5% on the ratio between two analytes. Here there is no choice
+        to make, so passing local_baseline=False must change nothing."""
+        assert self._verdict(offset=5.0) == BELOW_LOD

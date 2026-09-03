@@ -190,6 +190,19 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     nH, referenced to the standard -- because a limit in area units cannot be
     compared with the numbers in the table, and a limit nobody can compare is
     not a limit.
+
+    The window is always integrated against a local baseline here, whatever the
+    run's integration setting says. Currie's limits describe the NET signal --
+    what stands above the background -- so comparing an integral that still
+    contains the background against a limit built from noise alone compares two
+    different quantities. Measured on a 197-point window: pure noise sitting on
+    an offset of +2 sigma, with no peak in it at all, integrates to three times
+    the quantification limit and is reported as an unresolved signal. Every one
+    of the reference study's 28 censored analytes came back that way.
+
+    The run's own ``local_baseline`` flag is a different decision: it governs
+    how a quantified area is measured, where it costs a known ~5% on the ratio
+    between two analytes. Here there is no choice to make.
     """
     ev = cand.evidence or {}
     mid = cand.met_id
@@ -211,7 +224,7 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     for s_i in (included if included is not None else range(arr.shape[1])):
         if 0 <= s_i < arr.shape[1]:
             a = integrate_sample(ppm, arr[:, s_i], lo, hi,
-                                 local_baseline=local_baseline)
+                                 local_baseline=True)
             if a is not None:
                 areas[int(s_i)] = float(a)
     area = float(np.median(list(areas.values()))) if areas else float('nan')
