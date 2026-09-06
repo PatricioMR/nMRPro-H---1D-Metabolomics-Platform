@@ -23,7 +23,7 @@ from ._quant_adapter import (
     blank_indices, dilution_and_correction, quantify_project, sample_groups,
     standard_vector)
 from processing.sample_selection import included_sample_indices
-from processing.spectral_regions import format_regions
+from processing.spectral_regions import format_regions, parse_regions
 
 # ── Debug logging ─────────────────────────────────────────────────────────────
 # Set to True to write a detailed quant_debug.log in the project root.
@@ -371,6 +371,22 @@ class _QuantCompMixin:
             print(f'[Quant] ambiguity check unavailable: {_amb_exc}')
             ambiguous = set()
 
+        # What detection applied, when this session ran it or a save recorded
+        # it. Otherwise the field, which is what a loaded project's detection
+        # was given -- silently using nothing is worse than using the best
+        # evidence available and saying where it came from.
+        _excl = getattr(self.peak_stage, '_excluded_regions', None)
+        _excl_src = 'as detected'
+        if _excl is None:
+            _excl_src = 'from the field, not recorded by the run'
+            try:
+                _excl = parse_regions(
+                    self.peak_stage.excluded_regions_var.get())
+            except (ValueError, AttributeError):
+                _excl = []
+        _excluded_used = (f'{format_regions(_excl)} ({_excl_src})' if _excl
+                          else 'none')
+
         self._prog_apply(20, 'Electing signals…')
         rows = quantify_project(
             metabolites=metabolites,
@@ -395,8 +411,7 @@ class _QuantCompMixin:
             # detection stage, not on the peaks, and without it no analyte can
             # be given a detection limit.
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
-            excluded_regions=getattr(self.peak_stage,
-                                     '_excluded_regions', None) or (),
+            excluded_regions=_excl or (),
         )
 
         # ── Display names and the fields the plot reads ──────────────────────
@@ -443,9 +458,6 @@ class _QuantCompMixin:
         # What detection actually applied, not what the field currently reads
         # — the analyst can edit the field after detecting, and the peak list
         # being quantified is the one the earlier value produced.
-        _excl = getattr(self.peak_stage, '_excluded_regions', None)
-        _excluded_used = (format_regions(_excl) if _excl
-                          else ('none' if _excl == [] else 'not recorded'))
         self._last_groups = sample_groups(si, n_s)
         self._last_blk_indices = blank_indices(si, n_s)
         self._last_non_blk_indices = included_sample_indices(si, n_s)

@@ -18,6 +18,8 @@ import threading
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
+from processing.spectral_regions import (
+    format_regions, parse_regions)
 
 from app_paths import APP_VERSION
 
@@ -120,6 +122,12 @@ class ProjectManager:
                 # means. Reopening a project with a different exclusion would
                 # silently change which signals exist in it.
                 'excluded_regions': _safe_var(pd, 'excluded_regions_var'),
+                # What the run actually applied, not what the field now reads.
+                # Without it a reopened project cannot say which regions its
+                # peaks were detected under, and quantification silently
+                # measures detection limits inside the suppressed solvent.
+                'excluded_regions_applied': format_regions(
+                    getattr(pd, '_excluded_regions', None) or ()) or None,
                 'per_sample_detection': bool(_safe_var(pd, 'per_sample_var')
                                              if _safe_var(pd, 'per_sample_var') is not None
                                              else True),
@@ -376,6 +384,12 @@ class ProjectManager:
             if pd_state.get('excluded_regions') is not None:
                 _set_var(pd, 'excluded_regions_var',
                          pd_state.get('excluded_regions'))
+            _applied = pd_state.get('excluded_regions_applied')
+            if _applied:
+                try:
+                    pd._excluded_regions = parse_regions(_applied)
+                except (ValueError, AttributeError):
+                    pass
             _set_var(pd, 'per_sample_var',  pd_state.get('per_sample_detection', True))
             _set_var(pd, 'detect_shoulders_var', pd_state.get('detect_shoulders', False))
             _set_var(pd, 'shoulder_k_var',  pd_state.get('shoulder_k_var'))

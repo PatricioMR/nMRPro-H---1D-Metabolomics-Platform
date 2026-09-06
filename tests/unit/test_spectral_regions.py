@@ -168,16 +168,76 @@ def test_the_constant_only_seeds_the_field():
     assert len(uses) == 1
 
 
-def test_what_was_excluded_is_reported_from_what_ran():
+def test_what_was_excluded_is_read_from_the_run_first():
     """The analyst can edit the field after detecting, and the peak list being
-    quantified is the one the earlier value produced. Reporting the field would
-    label a run with a setting it never used."""
+    quantified is the one the earlier value produced — so what the run applied
+    wins whenever it is known.
+
+    The field is the fallback, not the source. It is used only when nothing was
+    recorded, which happens for a project saved before the applied regions were
+    serialised; silently using no exclusion there let quantification measure
+    detection limits inside the suppressed solvent, and four analytes on the
+    reference study came back with limits or overlap marks on water.
+    """
     import inspect
 
     from gui.stages import _quant_computation as qc
     src = inspect.getsource(qc._QuantCompMixin._run)
-    assert "getattr(self.peak_stage, '_excluded_regions', None)" in src
-    assert 'excluded_regions_var' not in src
+    i_run = src.index("getattr(self.peak_stage, '_excluded_regions', None)")
+    i_field = src.index('excluded_regions_var')
+    assert i_run < i_field, 'the field must not be consulted first'
+    assert 'if _excl is None:' in src[i_run:i_field]
+
+
+def test_the_applied_exclusion_survives_a_save():
+    """Which regions a peak list was detected under is part of what it means.
+    Without it a reopened project cannot say, and the fallback above is all
+    that stands between the analyst and a limit measured on the solvent."""
+    import inspect
+
+    from gui import project_manager as pm
+    src = inspect.getsource(pm)
+    assert "'excluded_regions_applied'" in src
+    assert 'pd._excluded_regions = parse_regions(_applied)' in src
+
+
+def _reads_before_assignment(func):
+    """Names bound in a function's own scope whose first read precedes it."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(func)))
+    outer = tree.body[0]
+    # Nested functions and comprehensions each have their own scope: a name
+    # bound in one is not the enclosing function's local, and a comprehension
+    # binds its target after the element expression in the tree, which would
+    # read as a use before assignment when the two sit on different lines.
+    nested = {id(n) for f in ast.walk(outer)
+              if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.Lambda, ast.ListComp, ast.SetComp,
+                                ast.DictComp, ast.GeneratorExp))
+              and f is not outer
+              for n in ast.walk(f)}
+    first_store, first_load = {}, {}
+    for n in ast.walk(outer):
+        if not isinstance(n, ast.Name) or id(n) in nested:
+            continue
+        table = first_store if isinstance(n.ctx, ast.Store) else first_load
+        if n.id not in table or n.lineno < table[n.id]:
+            table[n.id] = n.lineno
+    return {name: (first_load[name], line)
+            for name, line in first_store.items()
+            if name in first_load and first_load[name] < line}
+
+
+def test_the_quantification_run_reads_nothing_before_it_is_assigned():
+    """Third time this shape has bitten. _run gathers settings and then hands
+    them to the engine, and a setting read above the line that computes it is
+    an UnboundLocalError at the moment the analyst presses the button."""
+    from gui.stages import _quant_computation as qc
+    early = _reads_before_assignment(qc._QuantCompMixin._run)
+    assert not early, f'read before assignment in _run — {early}'
 
 
 def test_the_polling_loop_reads_nothing_before_it_is_assigned():
