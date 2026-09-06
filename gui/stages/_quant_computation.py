@@ -171,10 +171,10 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'SUMMARY TABLE  ({len(ok)} quantified, sorted by mean mM)')
         _dbg(f, '=' * 70)
         gnames = [g for g in groups if g != 'BLK']
-        _dbg(f, f'  {"#":>3}  {"Metabolite":<28s}  {"ppm":>7}  {"mean mM":>9}'
-                f'  {"nH":>4}  {"SNR":>7}  {"conf":>4}'
+        _dbg(f, f'  {"#":>3}  {"Metabolite":<28s}  {"region (ppm)":>16}'
+                f'  {"mean mM":>9}  {"nH":>4}  {"SNR":>7}  {"conf":>4}'
                 + ''.join(f'  {g[:8]:<10s}' for g in gnames))
-        _dbg(f, '  ' + '-' * 118)
+        _dbg(f, '  ' + '-' * 128)
         for i, r in enumerate(sorted(
                 (r for r in ok if not r.get('_is_is')),
                 key=lambda r: (r['conc_mm'] if np.isfinite(r['conc_mm'])
@@ -186,8 +186,11 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                 m = float(np.mean(v)) if v else float('nan')
                 cv = r.get('cv_by_group', {}).get(g, float('nan'))
                 gstr += f'  {m:8.3f}(CV{cv:.0f}%)'
-            _dbg(f, f'  {i:>3}.  {r["metabolite"][:28]:<28s}'
-                    f'  {r.get("ppm", 0):>7.4f}  {r["conc_mm"]:>9.4f}'
+            _w_r = r.get('_multiplet_window')
+            _reg = (f'{_w_r[0]:7.4f}-{_w_r[1]:<7.4f}' if _w_r
+                    else f'{r.get("ppm", 0):>16.4f}')
+            _dbg(f, f'  {i:>3}.  {r["metabolite"][:28]:<28s}  {_reg:>16}'
+                    f'  {r["conc_mm"]:>9.4f}'
                     f'  {r.get("_nh", float("nan")):>4.2f}'
                     f'  {r.get("snr", float("nan")):>7.1f}'
                     f'  {str(r.get("_confidence", "?")):>4}' + gstr)

@@ -272,3 +272,22 @@ class TestTheBackgroundIsRemovedBeforeTheComparison:
         a known ~5% on the ratio between two analytes. Here there is no choice
         to make, so passing local_baseline=False must change nothing."""
         assert self._verdict(offset=5.0) == BELOW_LOD
+
+
+def test_the_limit_travels_the_same_chain_as_a_concentration():
+    """A limit on a different scale from the numbers beside it cannot be
+    compared, and a limit nobody can compare is not a limit. It left out the
+    dilution and the correction factor."""
+    from processing.quant_engine import quantify
+    ppm = np.linspace(0.0, 10.0, 10001)
+    y = np.zeros((ppm.size, 1))
+    common = dict(candidates=[_cand('ghost', [5.500])], peaks_by_rank={},
+                  ppm=ppm, intensities=y, samples_info=[{}], included=[0],
+                  groups={}, dj_gold_hz=0.5, noise_sigma=1.0,
+                  standard_areas={0: 100.0}, standard_nh=9.0,
+                  standard_conc=1.0, external_standard_samples=[0])
+    plain = next(r for r in quantify(**common)
+                 if r['hmdb_id'] == 'ghost')['_loq_mm']
+    diluted = next(r for r in quantify(**common, dilution={0: 4.0})
+                   if r['hmdb_id'] == 'ghost')['_loq_mm']
+    assert diluted == pytest.approx(plain * 4.0, rel=1e-6)

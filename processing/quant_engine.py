@@ -171,7 +171,9 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             election.winners[mid], ppm, intensities, included=included,
             standard=standard, standard_conc=standard_conc,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
-            drift_ppm=drift_ppm, local_baseline=local_baseline))
+            drift_ppm=drift_ppm, local_baseline=local_baseline,
+            external=bool(external_standard_samples),
+            dilution=dilution, correction=correction))
 
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
@@ -183,7 +185,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 
 def _censored_row(cand, ppm, intensities, *, included, standard,
                   standard_conc, noise_sigma, linewidth_ppm, drift_ppm,
-                  local_baseline) -> dict:
+                  local_baseline, external=False, dilution=None,
+                  correction=None) -> dict:
     """An analyte the experiment could not see, reported as the bound it is.
 
     The limits travel through the same chain as any concentration -- divided by
@@ -233,7 +236,10 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     verdict = censor(area, lod_a, loq_a)
 
     nh = signal_nh(ev.get('protons'))
-    lod_mm, loq_mm = (_as_concentration(v, nh, standard, standard_conc)
+    lod_mm, loq_mm = (_as_concentration(v, nh, standard, standard_conc,
+                                        external=external,
+                                        dilution=dilution,
+                                        correction=correction)
                       for v in (lod_a, loq_a))
 
     row = _rejected_row(mid, verdict)
@@ -259,17 +265,36 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     return row
 
 
-def _as_concentration(area, nh, standard, standard_conc) -> float:
-    """One area in the same units the table's concentrations are in."""
+def _as_concentration(area, nh, standard, standard_conc, *, external=False,
+                      dilution=None, correction=None) -> float:
+    """One area in the same units the table's concentrations are in.
+
+    Through ``concentrations``, the same function every quantified row uses,
+    rather than a second expression that says the same thing. It said almost
+    the same thing: it left out the dilution and the correction factor, so a
+    study that applied either had its limits on a different scale from the
+    numbers they were meant to be compared with -- and a limit that cannot be
+    compared is not a limit.
+
+    The study's typical factor is the median across samples: a bound describes
+    the run, not one injection of it.
+    """
     if not np.isfinite(area):
         return float('nan')
-    per = float(area) / signal_nh(nh)
-    if not standard:
-        return per
-    refs = [v for v in standard.values() if v and np.isfinite(v) and v > 0]
-    if not refs:
-        return float('nan')
-    return per / float(np.median(refs)) * float(standard_conc)
+    per_sample = concentrations({0: float(area)}, nh, standard=(
+        {0: float(np.median([v for v in standard.values()
+                             if v and np.isfinite(v) and v > 0]))}
+        if standard else None),
+        standard_conc=standard_conc, external=external,
+        dilution={0: _median_factor(dilution)},
+        correction={0: _median_factor(correction)})
+    return float(per_sample.get(0, float('nan')))
+
+
+def _median_factor(factors) -> float:
+    v = [float(x) for x in (factors or {}).values()
+         if x is not None and np.isfinite(x) and x > 0]
+    return float(np.median(v)) if v else 1.0
 
 
 def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
