@@ -60,6 +60,7 @@ K_LOQ = 10.0
 BELOW_LOD = 'below_lod'
 BELOW_LOQ = 'below_loq'
 UNRESOLVED = 'unresolved'
+EXCLUDED_REGION = 'excluded_region'
 
 CENSOR_TEXT = {
     BELOW_LOD:
@@ -73,6 +74,10 @@ CENSOR_TEXT = {
         'do limite de quantificação, mas a detecção não encontrou pico algum '
         'ali. Provável sobreposição com um vizinho — a área pode não ser deste '
         'analito. Verifique a região antes de usar.',
+    EXCLUDED_REGION:
+        'Não avaliável: o sinal previsto cai numa região excluída do espectro. '
+        'A detecção não procura lá e nada medido ali é do analito — na região '
+        'da água é o resíduo do solvente. Nenhum limite pode ser dado.',
 }
 
 
@@ -106,25 +111,73 @@ def detection_limits(sigma, dppm, n_points, *, k_lod=K_LOD, k_loq=K_LOQ):
 
 
 def predicted_window(predicted_ppms, *, linewidth_ppm, drift_ppm=0.0):
-    """Where the signal would be, from the database positions the search used.
+    """The window a signal would occupy, from the positions the search used.
 
-    Padded by the project's own measured linewidth, so the outer lines' tails
-    fall inside, and by its measured drift, because the resonance is not at the
-    database position in any real sample — it is near it. Both come from the
-    study rather than from a constant.
+    Its width is the signal's own: the span of the predicted lines plus one
+    linewidth on each side, so the outer lines' tails fall inside.
 
-    Padding widens the window, which raises the noise on its integral and so
-    raises the reported limit. That direction is deliberate: a wider window can
-    only make the bound more conservative, and a bound that is too tight would
-    call an analyte absent that simply drifted.
+    The drift is NOT added to the width. Where an analyte sits and how wide it
+    is are different questions, and only the second belongs in a detection
+    limit. Padding by the drift made the window 25.7 Hz for a 3.2 Hz line on
+    the reference study — eight times the linewidth, 180 points instead of 45 —
+    and since the noise on an integral grows as the root of the point count,
+    every limit came back twice what the spectrum supports. Integrating 25 Hz
+    of noise to bound a 3 Hz signal adds noise without adding signal.
+
+    The drift belongs to WHERE to look, which is ``drift_offsets``.
 
     Returns None when there are no predicted positions to build one from.
     """
     ppms = [float(v) for v in (predicted_ppms or ()) if v is not None]
     if not ppms:
         return None
-    m = abs(float(linewidth_ppm or 0.0)) + abs(float(drift_ppm or 0.0))
+    m = abs(float(linewidth_ppm or 0.0))
     return min(ppms) - m, max(ppms) + m
+
+
+def drift_offsets(drift_ppm, linewidth_ppm, *, max_steps=8):
+    """Positions to try the window at, to cover where the analyte may have gone.
+
+    A resonance is not at its database position in any real sample; it is near
+    it. So the window slides over the plausible range instead of growing to
+    cover it, and the caller keeps the position with the most signal. Sliding
+    asks "is it anywhere here?" while keeping the noise of a single window;
+    growing asks the same question and pays for the whole range in noise.
+
+    Stepped by half a linewidth, which is fine enough that a line cannot fall
+    between two positions, and capped so a study with a large drift residual
+    does not turn one measurement into hundreds.
+
+    Always includes 0.0, so an analyte that has not drifted is measured exactly
+    where the database puts it.
+    """
+    d = abs(float(drift_ppm or 0.0))
+    lw = abs(float(linewidth_ppm or 0.0))
+    if d <= 0 or lw <= 0:
+        return [0.0]
+    step = lw / 2.0
+    n = min(int(round(d / step)), int(max_steps))
+    if n <= 0:
+        return [0.0]
+    return [k * step for k in range(-n, n + 1)]
+
+
+def window_is_excluded(lo, hi, excluded_regions) -> bool:
+    """Whether the window overlaps a region detection was told to ignore.
+
+    Nothing measured in an excluded region belongs to the analyte — in the
+    water window it is the suppressed solvent, which is orders of magnitude
+    above any metabolite. Giving it a detection limit reports the solvent as
+    the analyte's bound; classifying it as unresolved signal reports the
+    solvent as a buried analyte. On the reference study both happened:
+    4-pyridoxic acid and guanosine came back with limits, saligenin and
+    trans-4-hydroxy-L-proline came back marked as overlaps, and all four
+    windows sat inside 4.50-5.00 ppm.
+    """
+    for r_lo, r_hi in (excluded_regions or ()):
+        if float(lo) < float(r_hi) and float(r_lo) < float(hi):
+            return True
+    return False
 
 
 def censor(area, lod_area, loq_area) -> str:

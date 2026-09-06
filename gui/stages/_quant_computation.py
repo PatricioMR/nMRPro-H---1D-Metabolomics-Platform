@@ -395,6 +395,8 @@ class _QuantCompMixin:
             # detection stage, not on the peaks, and without it no analyte can
             # be given a detection limit.
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
+            excluded_regions=getattr(self.peak_stage,
+                                     '_excluded_regions', None) or (),
         )
 
         # ── Display names and the fields the plot reads ──────────────────────

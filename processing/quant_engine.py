@@ -28,8 +28,9 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_detection_limit import (
-    BELOW_LOD, BELOW_LOQ, K_LOD, UNRESOLVED, censor, censor_text,
-    detection_limits, predicted_window)
+    BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, UNRESOLVED, censor,
+    censor_text, detection_limits, drift_offsets, predicted_window,
+    window_is_excluded)
 from processing.quant_integration import integrate_sample, integrate_signal
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
@@ -51,6 +52,7 @@ STATUS_CENSORED = {
     BELOW_LOD: '< LOD',
     BELOW_LOQ: '< LOQ',
     UNRESOLVED: 'overlap?',
+    EXCLUDED_REGION: 'excluded',
 }
 
 
@@ -91,7 +93,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              use_pqn=True, local_baseline=True, proton_correction=True,
              align=False, blank_indices=None,
              noise_sigma=None, linewidth_ppm=0.008,
-             drift_ppm=0.0) -> list[dict]:
+             drift_ppm=0.0, excluded_regions=()) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -173,7 +175,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
             drift_ppm=drift_ppm, local_baseline=local_baseline,
             external=bool(external_standard_samples),
-            dilution=dilution, correction=correction))
+            dilution=dilution, correction=correction,
+            excluded_regions=excluded_regions))
 
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
@@ -186,7 +189,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 def _censored_row(cand, ppm, intensities, *, included, standard,
                   standard_conc, noise_sigma, linewidth_ppm, drift_ppm,
                   local_baseline, external=False, dilution=None,
-                  correction=None) -> dict:
+                  correction=None, excluded_regions=()) -> dict:
     """An analyte the experiment could not see, reported as the bound it is.
 
     The limits travel through the same chain as any concentration -- divided by
@@ -223,14 +226,47 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         return _rejected_row(mid, NO_MEASURABLE_WINDOW)
     dppm = float(abs(ppm[1] - ppm[0])) if ppm.size > 1 else 0.0
 
-    areas = {}
-    for s_i in (included if included is not None else range(arr.shape[1])):
-        if 0 <= s_i < arr.shape[1]:
-            a = integrate_sample(ppm, arr[:, s_i], lo, hi,
-                                 local_baseline=True)
-            if a is not None:
-                areas[int(s_i)] = float(a)
-    area = float(np.median(list(areas.values()))) if areas else float('nan')
+    # Where the analyte may have drifted to, tried one position at a time and
+    # the best kept. Widening the window to cover the range instead would pay
+    # for the whole range in noise, while a signal only ever occupies one
+    # window's worth of it — on the reference study that made every limit
+    # twice what the spectrum supports.
+    idx = list(included if included is not None else range(arr.shape[1]))
+    best_area, areas, best_off = float('-inf'), {}, 0.0
+    for off in drift_offsets(drift_ppm, linewidth_ppm):
+        here = {}
+        for s_i in idx:
+            if 0 <= s_i < arr.shape[1]:
+                a = integrate_sample(ppm, arr[:, s_i], lo + off, hi + off,
+                                     local_baseline=True)
+                if a is not None:
+                    here[int(s_i)] = float(a)
+        if not here:
+            continue
+        med = float(np.median(list(here.values())))
+        if med > best_area:
+            best_area, areas, best_off = med, here, off
+    if not areas:
+        return _rejected_row(mid, NO_MEASURABLE_WINDOW)
+    lo, hi = lo + best_off, hi + best_off
+    area = best_area
+
+    # An excluded region holds no analyte by construction: what is measured
+    # there is the suppressed solvent. It gets neither a limit nor a verdict
+    # about signal — a limit would report the solvent as the analyte's bound,
+    # and an "unresolved" would report it as a buried analyte.
+    if window_is_excluded(lo, hi, excluded_regions):
+        row = _rejected_row(mid, EXCLUDED_REGION)
+        row.update({
+            'ppm': float((lo + hi) / 2.0),
+            'status': STATUS_CENSORED[EXCLUDED_REGION],
+            '_status_reasons': [censor_text(EXCLUDED_REGION, float('nan'),
+                                            float('nan'))],
+            '_censored': EXCLUDED_REGION,
+            '_multiplet_window': [float(lo), float(hi)],
+            '_hits': [cand.payload] if cand.payload is not None else [],
+        })
+        return row
 
     lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
     verdict = censor(area, lod_a, loq_a)

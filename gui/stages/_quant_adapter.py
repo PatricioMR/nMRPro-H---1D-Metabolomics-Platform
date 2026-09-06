@@ -205,7 +205,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      external_is_samples=None, group_dilution=None,
                      dj_gold_hz=None, annotation_params=None, use_pqn=True,
                      local_baseline=True, proton_correction=True, align=False,
-                     subtract_blanks=False, noise_sigma=None):
+                     subtract_blanks=False, noise_sigma=None,
+                     excluded_regions=()):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -298,4 +299,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # resolution warning uses, so the project has one linewidth.
         linewidth_ppm=(measure_linewidth_ppm(ppm, arr, peaks) or 0.008),
         drift_ppm=project_drift(metabolites),
+        # Detection was told to ignore these; nothing measured there is the
+        # analyte's, so no limit can be read from them either.
+        excluded_regions=excluded_regions,
     )

@@ -10,9 +10,9 @@ import numpy as np
 import pytest
 
 from processing.quant_detection_limit import (
-    BELOW_LOD, BELOW_LOQ, K_LOD, K_LOQ, UNRESOLVED, censor, censor_text,
-    detection_limits, integration_noise, predicted_window, project_drift,
-    project_noise)
+    BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, K_LOQ, UNRESOLVED, censor,
+    censor_text, detection_limits, drift_offsets, integration_noise,
+    predicted_window, project_drift, project_noise, window_is_excluded)
 
 
 class TestIntegrationNoise:
@@ -50,11 +50,23 @@ class TestTheWindow:
         lo, hi = predicted_window([1.474, 1.486], linewidth_ppm=0.0)
         assert (lo, hi) == pytest.approx((1.474, 1.486))
 
-    def test_it_is_padded_by_the_measured_linewidth_and_drift(self):
-        """Both come from the study. A resonance is not at its database
-        position in any real sample — it is near it."""
-        lo, hi = predicted_window([1.480], linewidth_ppm=0.004, drift_ppm=0.002)
-        assert (lo, hi) == pytest.approx((1.474, 1.486))
+    def test_it_is_padded_by_the_linewidth_only(self):
+        """One linewidth each side, so the outer lines' tails fall inside."""
+        lo, hi = predicted_window([1.480], linewidth_ppm=0.004)
+        assert (lo, hi) == pytest.approx((1.476, 1.484))
+
+    def test_the_drift_does_not_widen_it(self):
+        """Where an analyte sits and how wide it is are different questions,
+        and only the second belongs in a detection limit.
+
+        Padding by the drift made the window 25.7 Hz for a 3.2 Hz line on the
+        reference study — 180 points instead of 45 — and since the noise on an
+        integral grows as the root of the point count, every limit came back
+        twice what the spectrum supports."""
+        plain = predicted_window([1.480], linewidth_ppm=0.004)
+        drifted = predicted_window([1.480], linewidth_ppm=0.004,
+                                   drift_ppm=0.016)
+        assert drifted == pytest.approx(plain)
 
     def test_a_singlet_does_not_get_a_zero_width_window(self):
         lo, hi = predicted_window([1.480], linewidth_ppm=0.004)
@@ -63,12 +75,84 @@ class TestTheWindow:
     def test_no_predicted_positions_means_no_window(self):
         assert predicted_window([], linewidth_ppm=0.004) is None
 
-    def test_padding_only_makes_the_bound_more_conservative(self):
-        """A wider window integrates more noise, so the limit rises. A bound
-        that is too tight would call an analyte absent that merely drifted."""
-        narrow = detection_limits(1.0, 0.001, 20)[1]
-        wide = detection_limits(1.0, 0.001, 80)[1]
-        assert wide > narrow
+    def test_a_wider_window_costs_a_higher_limit(self):
+        """Which is why the width is the signal's and not the search range's:
+        noise comes in with the extra points, signal does not."""
+        narrow = detection_limits(1.0, 0.001, 45)[1]
+        wide = detection_limits(1.0, 0.001, 180)[1]
+        assert wide == pytest.approx(narrow * 2.0, rel=0.01)
+
+
+class TestSlidingRatherThanWidening:
+    """A resonance is near its database position, not on it. The window slides
+    over the plausible range and the best position is kept, instead of growing
+    to cover the range and paying for all of it in noise."""
+
+    def test_it_always_tries_the_database_position(self):
+        assert 0.0 in drift_offsets(0.016, 0.005)
+
+    def test_it_covers_the_drift_in_both_directions(self):
+        off = drift_offsets(0.016, 0.005)
+        assert min(off) <= -0.014 and max(off) >= 0.014
+
+    def test_the_step_cannot_let_a_line_fall_between_positions(self):
+        """Half a linewidth, so any line is inside some window."""
+        off = sorted(drift_offsets(0.016, 0.005))
+        assert max(b - a for a, b in zip(off, off[1:])) <= 0.005
+
+    def test_no_drift_means_one_position(self):
+        assert drift_offsets(0.0, 0.005) == [0.0]
+        assert drift_offsets(None, 0.005) == [0.0]
+
+    def test_a_large_drift_does_not_become_hundreds_of_measurements(self):
+        assert len(drift_offsets(5.0, 0.001)) <= 17
+
+
+class TestAnExcludedRegionIsNotAssessable:
+    """Nothing measured in an excluded region belongs to the analyte. In the
+    water window it is the suppressed solvent, orders of magnitude above any
+    metabolite. On the reference study four analytes were given limits or
+    marked as overlaps on windows sitting inside 4.50-5.00 ppm."""
+
+    def test_a_window_inside_the_region_is_caught(self):
+        assert window_is_excluded(4.62, 4.67, [(4.50, 5.00)])
+
+    def test_a_window_that_merely_touches_it_is_caught(self):
+        assert window_is_excluded(4.45, 4.52, [(4.50, 5.00)])
+
+    def test_a_window_outside_is_not(self):
+        assert not window_is_excluded(1.47, 1.49, [(4.50, 5.00)])
+
+    def test_no_regions_excludes_nothing(self):
+        assert not window_is_excluded(4.62, 4.67, [])
+        assert not window_is_excluded(4.62, 4.67, None)
+
+    def test_the_engine_gives_it_no_limit_and_no_signal_verdict(self):
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0.0, 10.0, 10001)
+        y = (5e5 * np.exp(-0.5 * ((ppm - 4.70) / 0.02) ** 2)).reshape(-1, 1)
+        rows = quantify(candidates=[_cand('ghost', [4.70])], peaks_by_rank={},
+                        ppm=ppm, intensities=y, samples_info=[{}], included=[0],
+                        groups={}, dj_gold_hz=0.5, noise_sigma=1.0,
+                        linewidth_ppm=0.006, local_baseline=False,
+                        excluded_regions=[(4.50, 5.00)])
+        row = next(r for r in rows if r['hmdb_id'] == 'ghost')
+        assert row['_censored'] == EXCLUDED_REGION
+        assert row['status'] == 'excluded'
+        assert not np.isfinite(row.get('_loq_mm', float('nan')))
+
+    def test_without_the_solvent_being_excluded_it_is_read_as_an_overlap(self):
+        """The behaviour being corrected: the residual water reported as an
+        analyte detection could not resolve."""
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0.0, 10.0, 10001)
+        y = (5e5 * np.exp(-0.5 * ((ppm - 4.70) / 0.02) ** 2)).reshape(-1, 1)
+        rows = quantify(candidates=[_cand('ghost', [4.70])], peaks_by_rank={},
+                        ppm=ppm, intensities=y, samples_info=[{}], included=[0],
+                        groups={}, dj_gold_hz=0.5, noise_sigma=1.0,
+                        linewidth_ppm=0.006, local_baseline=False)
+        row = next(r for r in rows if r['hmdb_id'] == 'ghost')
+        assert row['_censored'] == UNRESOLVED
 
 
 class TestTheThreeOutcomes:
