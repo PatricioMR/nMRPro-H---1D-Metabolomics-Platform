@@ -1146,14 +1146,44 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 _m_i, _s_i = _quiet_segment_stats(corrected_2d[:, i])
                 _thr_s[i] = _m_i + _s_i * min_snr
 
-            def _passes_presence(peak):
+            def _detected_in(peak):
+                """Which samples this peak was actually DETECTED in.
+
+                Per-sample detection knows the answer exactly — it is the
+                union's presence vector, already on the peak. Asking the
+                spectrum instead ("is the intensity here above the noise?")
+                answers a different question, and on the flank of a strong
+                line the answer is yes in every sample. A fragment detected as
+                an apex in one sample of sixteen then passed a filter written
+                to remove exactly that, at any threshold.
+
+                Measured on a 21-sample study: L-alanine's methyl doublet had
+                two such fragments beside it, detected in 1 and 2 samples, and
+                the annotation matched alanine to them instead of to the two
+                real lines detected in all 16 — they sat 0.003 ppm closer to
+                the database position. 129 of 394 peaks in that project were
+                detected in fewer than three samples of any group.
+
+                Falls back to the intensity test only when there is no
+                presence vector, which is the single-spectrum path where no
+                per-sample detection ran.
+                """
+                pres = peak.get('aligned_per_sample')
+                if pres:
+                    return {_i for _i in _grp_of
+                            if _i < len(pres) and pres[_i]}
                 idx = int(peak.get('index', 0))
                 if idx < 0 or idx >= corrected_2d.shape[0]:
-                    return True
+                    return set(_grp_of)
+                return {_i for _i in _grp_of
+                        if float(corrected_2d[idx, _i]) >= _thr_s[_i]}
+
+            def _passes_presence(peak):
+                _in = _detected_in(peak)
                 cnt = {}
-                for _i, _g in _grp_of.items():
-                    if float(corrected_2d[idx, _i]) >= _thr_s[_i]:
-                        cnt[_g] = cnt.get(_g, 0) + 1
+                for _i in _in:
+                    _g = _grp_of[_i]
+                    cnt[_g] = cnt.get(_g, 0) + 1
                 for _g, _sz in _grp_size.items():
                     if cnt.get(_g, 0) >= min(int(min_group_presence), _sz):
                         return True
