@@ -29,8 +29,8 @@ from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, UNRESOLVED, censor,
-    censor_text, detection_limits, drift_offsets, predicted_window,
-    window_is_excluded)
+    censor_text, detection_limits, drift_offsets, local_noise_sigma,
+    predicted_window, window_is_excluded)
 from processing.quant_integration import integrate_sample, integrate_signal
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
@@ -268,7 +268,14 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         })
         return row
 
-    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
+    # The noise of THIS region, not of the quiet one the global estimate came
+    # from. On the reference study six analytes contesting the histidine
+    # imidazole region were handed identical limits because the global sigma
+    # knew nothing about how crowded it is.
+    sigma_here = local_noise_sigma(ppm, arr, lo, hi,
+                                   linewidth_ppm=linewidth_ppm,
+                                   global_sigma=noise_sigma) or noise_sigma
+    lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
     verdict = censor(area, lod_a, loq_a)
 
     nh = signal_nh(ev.get('protons'))
@@ -291,6 +298,7 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         '_censored': verdict,
         '_lod_mm': lod_mm,
         '_loq_mm': loq_mm,
+        '_noise_sigma': float(sigma_here),
         '_multiplet_window': [float(lo), float(hi)],
         '_nh': float(nh),
         '_areas_per_sample': areas,

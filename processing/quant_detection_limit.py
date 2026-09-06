@@ -233,3 +233,86 @@ def project_drift(metabolites) -> float:
             if v is not None and np.isfinite(float(v)):
                 d.append(abs(float(v)))
     return float(np.median(d)) if d else 0.0
+
+
+# How far either side of the window to look when estimating the local noise,
+# in linewidths. Wide enough to contain the baseline structure the window sits
+# on, narrow enough that it is still the same neighbourhood.
+LOCAL_NOISE_BAND_LINEWIDTHS = 8.0
+
+# 1 / Phi^-1(3/4). Turns a median absolute deviation into the standard
+# deviation it corresponds to for normally distributed values.
+MAD_TO_SIGMA = 1.4826
+
+
+def local_noise_sigma(ppm, intensity, lo, hi, *, linewidth_ppm,
+                      global_sigma=None, band_linewidths=None):
+    """The uncertainty of an integral in THIS region, not in a quiet one.
+
+    A detection limit built on the spectrometer's electronic noise answers
+    "how small a signal would stand out over an empty baseline". In a crowded
+    region that is the wrong question: what limits the measurement there is not
+    the noise floor but the neighbours' skirts, and the limit comes back
+    optimistic in exactly the places it matters.
+
+    The symptom on the reference study: six analytes claiming the histidine
+    imidazole region at 7.0926-7.1025 ppm were given identical limits, differing
+    only by their proton counts, because the window width and the global sigma
+    were the same for all of them. The limit had no way to know that region is
+    contested.
+
+    Measured here as a robust scale over a band around the window, after
+    removing the local linear trend. The median absolute deviation is used
+    rather than the standard deviation because a band in a crowded region is
+    mostly peak, and a plain standard deviation would report the peaks
+    themselves as noise:
+
+        Rousseeuw, P.J. & Croux, C. (1993). Alternatives to the median absolute
+        deviation. Journal of the American Statistical Association
+        88(424):1273-1283.
+
+    Where more than half the band really is signal the MAD rises, and it should:
+    a region that crowded cannot be measured down to the noise floor, and
+    saying so is the point.
+
+    The band flanks the window and excludes it, so what is being measured
+    cannot raise the bar it has to clear.
+
+    Never returns less than ``global_sigma``. The instrument's noise is a floor
+    on what any region can achieve, and a local estimate below it would promise
+    a sensitivity the spectrometer does not have.
+    """
+    x = np.asarray(ppm, dtype=float)
+    y = np.asarray(intensity, dtype=float)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    floor = (float(global_sigma)
+             if global_sigma and np.isfinite(global_sigma) else None)
+    if x.size != y.size or x.size < 4:
+        return floor
+    lw = abs(float(linewidth_ppm or 0.0))
+    if lw <= 0:
+        return floor
+    k = float(band_linewidths if band_linewidths is not None
+              else LOCAL_NOISE_BAND_LINEWIDTHS)
+    lo, hi = (min(lo, hi), max(lo, hi))
+    # The band flanks the window and excludes it. A noise estimate that
+    # contained what is being measured would let a real signal raise its own
+    # detection limit until it could never exceed it — the residual water,
+    # which is orders of magnitude above any metabolite, came back reported as
+    # below the limit of detection.
+    m = (((x >= lo - k * lw) & (x < lo))
+         | ((x > hi) & (x <= hi + k * lw)))
+    if m.sum() < 8:
+        return floor
+    xb, yb = x[m], y[m]
+    order = np.argsort(xb)
+    xb, yb = xb[order], yb[order]
+    # The trend is the baseline the window's own integration will subtract;
+    # what is left is what that subtraction cannot account for.
+    slope, intercept = np.polyfit(xb, yb, 1)
+    resid = yb - (slope * xb + intercept)
+    sigma = MAD_TO_SIGMA * float(np.median(np.abs(resid - np.median(resid))))
+    if not np.isfinite(sigma) or sigma <= 0:
+        return floor
+    return max(sigma, floor) if floor is not None else sigma

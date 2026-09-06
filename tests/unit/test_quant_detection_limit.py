@@ -141,9 +141,16 @@ class TestAnExcludedRegionIsNotAssessable:
         assert row['status'] == 'excluded'
         assert not np.isfinite(row.get('_loq_mm', float('nan')))
 
-    def test_without_the_solvent_being_excluded_it_is_read_as_an_overlap(self):
-        """The behaviour being corrected: the residual water reported as an
-        analyte detection could not resolve."""
+    def test_without_the_exclusion_the_solvent_gets_a_misleading_verdict(self):
+        """Which is why the exclusion exists rather than a cleverer verdict.
+
+        Left unexcluded, the residual water is judged like an analyte: its own
+        flanks make the local noise enormous, so the limit is enormous, and it
+        reports as below the limit of detection — a mountain, called absent.
+        Before the local noise estimate it reported as an unresolved analyte
+        instead. Both readings are wrong, and neither can be fixed by tuning:
+        nothing measured in a suppressed region belongs to any analyte.
+        """
         from processing.quant_engine import quantify
         ppm = np.linspace(0.0, 10.0, 10001)
         y = (5e5 * np.exp(-0.5 * ((ppm - 4.70) / 0.02) ** 2)).reshape(-1, 1)
@@ -152,7 +159,7 @@ class TestAnExcludedRegionIsNotAssessable:
                         groups={}, dj_gold_hz=0.5, noise_sigma=1.0,
                         linewidth_ppm=0.006, local_baseline=False)
         row = next(r for r in rows if r['hmdb_id'] == 'ghost')
-        assert row['_censored'] == UNRESOLVED
+        assert row['_censored'] != EXCLUDED_REGION
 
 
 class TestTheThreeOutcomes:
@@ -378,3 +385,87 @@ def test_the_limit_travels_the_same_chain_as_a_concentration():
     diluted = next(r for r in quantify(**common, dilution={0: 4.0})
                    if r['hmdb_id'] == 'ghost')['_loq_mm']
     assert diluted == pytest.approx(plain * 4.0, rel=1e-6)
+
+
+class TestTheNoiseIsTheRegionsOwn:
+    """A limit built on the spectrometer's quiet region answers "how small a
+    signal would stand out over an empty baseline". In a crowded region that is
+    the wrong question, and it comes back optimistic exactly where it matters.
+
+    The symptom: six analytes claiming the histidine imidazole region at
+    7.0926-7.1025 ppm were handed identical limits, differing only by proton
+    count, because the window width and the global sigma were the same for all
+    of them.
+    """
+
+    PPM = np.linspace(6.0, 8.0, 8001)
+    LO, HI = 7.0926, 7.1025
+    LW = 0.0054
+
+    def _noise(self, seed=0):
+        return np.random.default_rng(seed).normal(0, 5.0, self.PPM.size)
+
+    def _peak(self, centre, height, width=0.004):
+        return height * np.exp(-0.5 * ((self.PPM - centre) / width) ** 2)
+
+    def _sigma(self, y, **kw):
+        from processing.quant_detection_limit import local_noise_sigma
+        args = dict(linewidth_ppm=self.LW, global_sigma=5.0)
+        args.update(kw)
+        return local_noise_sigma(self.PPM, y, self.LO, self.HI, **args)
+
+    def test_a_quiet_region_sits_at_the_instrument_floor(self):
+        assert self._sigma(self._noise()) == pytest.approx(5.0, rel=0.3)
+
+    def test_a_crowded_region_reports_a_higher_uncertainty(self):
+        crowded = self._noise() + self._peak(7.13, 3000.0)
+        assert self._sigma(crowded) > 10 * 5.0
+
+    def test_a_signal_does_not_raise_its_own_limit(self):
+        """The band flanks the window and excludes it. Including it would let a
+        real signal lift the bar until it could never clear it — the residual
+        water came back reported as below the limit of detection."""
+        inside = self._noise() + self._peak(7.0975, 3000.0)
+        assert self._sigma(inside) < 3 * 5.0
+
+    def test_it_never_promises_better_than_the_instrument(self):
+        """A local estimate below the noise floor would claim a sensitivity the
+        spectrometer does not have."""
+        assert self._sigma(self._noise(), global_sigma=500.0) == 500.0
+
+    def test_the_scale_is_robust_to_the_peaks_in_the_band(self):
+        """A plain standard deviation would report the neighbours themselves as
+        noise. The MAD reflects the baseline while under half the band is peak,
+        compared over the same points."""
+        y = self._noise() + self._peak(7.13, 3000.0)
+        band = (((self.PPM >= self.LO - 8 * self.LW) & (self.PPM < self.LO))
+                | ((self.PPM > self.HI) & (self.PPM <= self.HI + 8 * self.LW)))
+        plain_sd = float(np.std(y[band]))
+        assert self._sigma(y) < plain_sd
+
+    def test_no_linewidth_means_no_local_estimate(self):
+        assert self._sigma(self._noise(), linewidth_ppm=0.0) == 5.0
+
+    def test_a_band_with_too_few_points_falls_back_to_the_floor(self):
+        from processing.quant_detection_limit import local_noise_sigma
+        ppm = np.linspace(7.09, 7.11, 6)
+        assert local_noise_sigma(ppm, np.zeros(6), 7.0926, 7.1025,
+                                 linewidth_ppm=self.LW,
+                                 global_sigma=5.0) == 5.0
+
+    def test_the_engine_uses_it(self):
+        """Measured and not reaching the decision is this code base's recurring
+        failure."""
+        import inspect
+
+        from processing import quant_engine as qe
+        src = inspect.getsource(qe._censored_row)
+        assert 'local_noise_sigma(' in src
+        assert 'detection_limits(sigma_here' in src
+
+    def test_two_analytes_in_regions_of_different_crowding_get_different_limits(self):
+        """The point of the whole change."""
+        from processing.quant_detection_limit import detection_limits
+        quiet = self._sigma(self._noise())
+        crowded = self._sigma(self._noise() + self._peak(7.13, 3000.0))
+        assert detection_limits(crowded, 0.00025, 41)[1] >             detection_limits(quiet, 0.00025, 41)[1] * 5
