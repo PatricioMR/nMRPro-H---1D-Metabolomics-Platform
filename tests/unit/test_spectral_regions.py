@@ -11,8 +11,8 @@ import pytest
 
 from processing.spectral_regions import (
     DEFAULT_EXCLUDED_REGIONS, WATER_REGION, format_regions,
-    in_excluded_region, parse_regions, split_excluded,
-    unresolvable_split_warning)
+    SPLIT_WARNING_FRAC, in_excluded_region, measure_linewidth_ppm,
+    parse_regions, split_excluded, unresolvable_split_warning)
 
 
 def test_the_water_region_is_excluded_by_default():
@@ -217,51 +217,57 @@ class TestUnresolvableSplitWarning:
     finds inside it are noise: the same resonance peaks here in one sample and
     there in another, and a per-sample union turns those into master peaks.
 
-    Measured on a 21-sample mouse serum study, median linewidth 4.12 Hz, with
-    min_distance at 1.80 Hz: L-alanine's methyl doublet had two artefacts on
-    its flanks — 1.4758 on the rising edge, 1.4877 in the valley between the
-    real lines — each carrying about 1% of a real line's area. Annotation
-    matched alanine to those two instead of to the doublet, and the window
-    built from their feet clipped a real line out, reporting alanine at
-    0.045 mM.
+    Measured on a 21-sample mouse serum study whose linewidth, read off the
+    trace, is 3.22 Hz. L-alanine's methyl doublet had two artefacts on its
+    flanks — 1.4758 on the rising edge, 1.4877 in the valley between the real
+    lines — each carrying about 1% of a real line's area. Annotation matched
+    alanine to those two instead of to the doublet, and the window built from
+    their feet clipped a real line out, reporting alanine at 0.045 mM.
 
-        min_distance   artefacts   real lines
-          1.80 Hz          2           2
-          2.40 Hz          2           2
-          3.00 Hz          0           2
-          4.14 Hz          0           2
+        min_distance   artefacts   real lines   flank artefacts, whole study
+          1.80 Hz          2           2          66 of 533  (12.4%)
+          2.40 Hz          2           2          53 of 441  (12.0%)
+          3.00 Hz          0           2          37 of 361  (10.2%)
+          4.14 Hz          0           2          22 of 301  ( 7.3%)
     """
 
-    PEAKS = [{'width_ppm': 0.00686}] * 9      # the study's median linewidth
+    LW = 3.22 / 600.71          # the study's linewidth, measured on the trace
+
+    def _warn(self, hz):
+        return unresolvable_split_warning(self.LW, hz / 600.71, 600.71)
 
     def test_it_warns_at_the_setting_that_produced_the_artefacts(self):
-        assert unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
+        assert self._warn(1.80)
 
     def test_it_warns_at_the_next_setting_up_that_still_did(self):
-        assert unresolvable_split_warning(self.PEAKS, 0.004, 600.71)
+        assert self._warn(2.40)
 
     def test_it_is_quiet_at_the_setting_that_removed_them(self):
-        assert unresolvable_split_warning(self.PEAKS, 0.005, 600.71) is None
+        assert self._warn(3.00) is None
 
-    def test_it_is_quiet_at_the_full_linewidth(self):
-        assert unresolvable_split_warning(self.PEAKS, 0.0069, 600.71) is None
+    def test_it_is_quiet_above_that(self):
+        assert self._warn(4.14) is None
+
+    def test_the_boundary_lands_near_one_full_linewidth(self):
+        """Where the physics puts it: two Lorentzians separate into two maxima
+        at roughly one FWHM. A threshold far from that would be a fudge."""
+        assert 0.7 < SPLIT_WARNING_FRAC <= 1.0
 
     def test_the_message_names_both_numbers(self):
         """A warning that does not say what to compare against cannot be acted
         on, and the analyst has no other way to see the linewidth."""
-        msg = unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
-        assert '0.0030' in msg and '1.80' in msg
-        assert '0.0069' in msg and '4.12' in msg
+        msg = self._warn(1.80)
+        assert '1.80' in msg and '3.22' in msg
 
     def test_the_scale_is_the_studys_own_linewidth_not_a_constant(self):
         """Linewidth is a property of the shim and of T2. A study shimmed
         twice as well must be allowed twice the resolution."""
-        sharp = [{'width_ppm': 0.002}] * 9
-        assert unresolvable_split_warning(sharp, 0.003, 600.71) is None
-        assert unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
+        sharp = 1.0 / 600.71
+        assert unresolvable_split_warning(sharp, 1.80 / 600.71, 600.71) is None
+        assert self._warn(1.80)
 
-    def test_no_peaks_means_no_claim(self):
-        assert unresolvable_split_warning([], 0.003) is None
+    def test_no_linewidth_means_no_claim(self):
+        assert unresolvable_split_warning(None, 0.003) is None
 
     def test_it_only_warns_and_never_changes_the_setting(self):
         """Which splittings a study can resolve is the analyst's call. This
@@ -274,3 +280,59 @@ class TestUnresolvableSplitWarning:
         after = src[i:i + 700]
         assert 'min_width_var.set' not in after
         assert 'self._status(' in after
+
+
+class TestLinewidthIsMeasuredOnTheTrace:
+    """Every width the detector records moves with the setting being judged.
+
+    On one dataset, sweeping min_distance from 1.80 to 4.14 Hz, the median
+    width_ppm ran 4.40 -> 7.81 Hz and the median FWHM 1.70 -> 2.77 Hz on the
+    same spectra — because splitting one line into fragments makes each
+    fragment narrower, and merging neighbours makes each valley-to-valley
+    width wider. A threshold built on either advises a value that, once
+    applied, moves the measurement again. Read off the trace it held at
+    3.37 / 3.22 / 3.22 / 3.22 Hz.
+    """
+
+    def _spectrum(self, fwhm_ppm=0.0056):
+        import numpy as np
+        ppm = np.linspace(0.0, 10.0, 20001)
+        hw = fwhm_ppm / 2.0
+        y = np.zeros_like(ppm)
+        for c in (1.5, 3.0, 5.0, 7.5):
+            y += 1000.0 * hw ** 2 / ((ppm - c) ** 2 + hw ** 2)
+        peaks = [{'ppm': c, 'height': 1000.0} for c in (1.5, 3.0, 5.0, 7.5)]
+        return ppm, y, peaks
+
+    def test_it_recovers_the_width_it_was_given(self):
+        ppm, y, peaks = self._spectrum(0.0056)
+        assert measure_linewidth_ppm(ppm, y, peaks) == pytest.approx(
+            0.0056, rel=0.05)
+
+    def test_it_does_not_read_the_peaks_recorded_boundaries(self):
+        """That is the whole point: those move with min_distance."""
+        ppm, y, peaks = self._spectrum(0.0056)
+        for p in peaks:
+            p['width_ppm'] = 0.05          # nonsense, must be ignored
+            p['fwhm_pts'] = 3
+        assert measure_linewidth_ppm(ppm, y, peaks) == pytest.approx(
+            0.0056, rel=0.05)
+
+    def test_a_two_dimensional_matrix_is_averaged(self):
+        import numpy as np
+        ppm, y, peaks = self._spectrum(0.0056)
+        X = np.column_stack([y, y * 2.0])
+        assert measure_linewidth_ppm(ppm, X, peaks) == pytest.approx(
+            0.0056, rel=0.05)
+
+    def test_no_peaks_means_no_measurement(self):
+        ppm, y, _ = self._spectrum()
+        assert measure_linewidth_ppm(ppm, y, []) is None
+
+    def test_a_line_that_never_falls_to_half_is_not_measured(self):
+        """A walk that runs to the edge measured the neighbourhood, not the
+        line, and a number from it would be an invented linewidth."""
+        import numpy as np
+        ppm = np.linspace(0.0, 10.0, 2001)
+        assert measure_linewidth_ppm(
+            ppm, np.ones_like(ppm), [{'ppm': 5.0, 'height': 1.0}]) is None

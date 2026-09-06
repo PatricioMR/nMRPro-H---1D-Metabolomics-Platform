@@ -23,8 +23,8 @@ if certifi is not None:
 from processing.noise_estimation import estimate_noise_from_region
 from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import (
-    DEFAULT_EXCLUDED_REGIONS, format_regions, parse_regions,
-    unresolvable_split_warning)
+    DEFAULT_EXCLUDED_REGIONS, format_regions, measure_linewidth_ppm,
+    parse_regions, unresolvable_split_warning)
 from processing.signal_quality import SIGNAL_AVERAGE
 from .base_stage import BaseStage
 
@@ -776,8 +776,19 @@ class PeakDetectionStage(BaseStage):
             # apices that close are more likely two readings of one line. Said
             # out loud rather than corrected: which splittings a study can
             # resolve is the analyst's call.
+            #
+            # The linewidth is measured on the trace over the analytical
+            # samples. Every width the detector records moves with the setting
+            # being judged -- median width_ppm ran 4.40 to 7.81 Hz across this
+            # sweep on one dataset and FWHM 1.70 to 2.77, while the trace held
+            # at 3.22 -- a threshold built on either of the first two would
+            # advise a value that moves the measurement again.
+            _lw_incl = included_sample_indices(self.app.samples_info, _n_s)
+            _all_lw = np.asarray(self.app.all_intensities, dtype=float)
+            _corr_for_lw = (_all_lw[:, _lw_incl] if _lw_incl else _all_lw)
             _split_warn = unresolvable_split_warning(
-                self.peaks, self.min_width_var.get(),
+                measure_linewidth_ppm(self.app.ppm, _corr_for_lw, self.peaks),
+                self.min_width_var.get(),
                 float(getattr(self.annotation_stage, 'spectrometer_var',
                               None).get())
                 if getattr(self, 'annotation_stage', None) is not None
