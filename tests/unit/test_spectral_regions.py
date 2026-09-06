@@ -11,7 +11,8 @@ import pytest
 
 from processing.spectral_regions import (
     DEFAULT_EXCLUDED_REGIONS, WATER_REGION, format_regions,
-    in_excluded_region, parse_regions, split_excluded)
+    in_excluded_region, parse_regions, split_excluded,
+    unresolvable_split_warning)
 
 
 def test_the_water_region_is_excluded_by_default():
@@ -206,3 +207,70 @@ def test_the_polling_loop_does_not_rebind_the_overlays_widgets():
         assert widget not in assigned, (
             f'{widget} is assigned inside _poll, which shadows the enclosing '
             f'binding and breaks every read above the assignment')
+
+
+# ── A splitting narrower than the linewidth is not a splitting ───────────────
+
+class TestUnresolvableSplitWarning:
+    """Two Lorentzians are resolved when their separation approaches their
+    width. Below that they merge into one contour, and the maxima a detector
+    finds inside it are noise: the same resonance peaks here in one sample and
+    there in another, and a per-sample union turns those into master peaks.
+
+    Measured on a 21-sample mouse serum study, median linewidth 4.12 Hz, with
+    min_distance at 1.80 Hz: L-alanine's methyl doublet had two artefacts on
+    its flanks — 1.4758 on the rising edge, 1.4877 in the valley between the
+    real lines — each carrying about 1% of a real line's area. Annotation
+    matched alanine to those two instead of to the doublet, and the window
+    built from their feet clipped a real line out, reporting alanine at
+    0.045 mM.
+
+        min_distance   artefacts   real lines
+          1.80 Hz          2           2
+          2.40 Hz          2           2
+          3.00 Hz          0           2
+          4.14 Hz          0           2
+    """
+
+    PEAKS = [{'width_ppm': 0.00686}] * 9      # the study's median linewidth
+
+    def test_it_warns_at_the_setting_that_produced_the_artefacts(self):
+        assert unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
+
+    def test_it_warns_at_the_next_setting_up_that_still_did(self):
+        assert unresolvable_split_warning(self.PEAKS, 0.004, 600.71)
+
+    def test_it_is_quiet_at_the_setting_that_removed_them(self):
+        assert unresolvable_split_warning(self.PEAKS, 0.005, 600.71) is None
+
+    def test_it_is_quiet_at_the_full_linewidth(self):
+        assert unresolvable_split_warning(self.PEAKS, 0.0069, 600.71) is None
+
+    def test_the_message_names_both_numbers(self):
+        """A warning that does not say what to compare against cannot be acted
+        on, and the analyst has no other way to see the linewidth."""
+        msg = unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
+        assert '0.0030' in msg and '1.80' in msg
+        assert '0.0069' in msg and '4.12' in msg
+
+    def test_the_scale_is_the_studys_own_linewidth_not_a_constant(self):
+        """Linewidth is a property of the shim and of T2. A study shimmed
+        twice as well must be allowed twice the resolution."""
+        sharp = [{'width_ppm': 0.002}] * 9
+        assert unresolvable_split_warning(sharp, 0.003, 600.71) is None
+        assert unresolvable_split_warning(self.PEAKS, 0.003, 600.71)
+
+    def test_no_peaks_means_no_claim(self):
+        assert unresolvable_split_warning([], 0.003) is None
+
+    def test_it_only_warns_and_never_changes_the_setting(self):
+        """Which splittings a study can resolve is the analyst's call. This
+        makes the number they are working against visible, nothing more."""
+        import inspect
+
+        from gui.stages import peak_detection_stage as pds
+        src = inspect.getsource(pds.PeakDetectionStage.detect_peaks)
+        i = src.index('unresolvable_split_warning')
+        after = src[i:i + 700]
+        assert 'min_width_var.set' not in after
+        assert 'self._status(' in after

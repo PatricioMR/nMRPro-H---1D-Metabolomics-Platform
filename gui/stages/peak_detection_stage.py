@@ -23,7 +23,8 @@ if certifi is not None:
 from processing.noise_estimation import estimate_noise_from_region
 from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import (
-    DEFAULT_EXCLUDED_REGIONS, format_regions, parse_regions)
+    DEFAULT_EXCLUDED_REGIONS, format_regions, parse_regions,
+    unresolvable_split_warning)
 from processing.signal_quality import SIGNAL_AVERAGE
 from .base_stage import BaseStage
 
@@ -770,6 +771,21 @@ class PeakDetectionStage(BaseStage):
                 _count_txt += (f"  ({_n_excl} excluded: "
                                f"{format_regions(_excluded)} ppm)")
             self.peaks_count_label.config(text=_count_txt)
+
+            # A splitting narrower than the linewidth cannot be resolved, and
+            # apices that close are more likely two readings of one line. Said
+            # out loud rather than corrected: which splittings a study can
+            # resolve is the analyst's call.
+            _split_warn = unresolvable_split_warning(
+                self.peaks, self.min_width_var.get(),
+                float(getattr(self.annotation_stage, 'spectrometer_var',
+                              None).get())
+                if getattr(self, 'annotation_stage', None) is not None
+                and getattr(self.annotation_stage, 'spectrometer_var', None)
+                is not None else 600.0)
+            if _split_warn:
+                print(f'[Detection] {_split_warn}')
+                self._status(_split_warn, 'orange')
             try:
                 self.app.btn_peak_list.config(state="normal")
             except Exception:

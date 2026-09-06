@@ -36,6 +36,13 @@ WATER_REGION = (4.50, 5.00)
 
 DEFAULT_EXCLUDED_REGIONS = [WATER_REGION]
 
+# Below this fraction of the measured linewidth, two apices are more likely two
+# readings of one line than two lines. Measured, not assumed: on the study in
+# unresolvable_split_warning the artefacts were still there at 0.58 of the
+# linewidth and gone at 0.73, so the boundary is somewhere between. 0.70 sits
+# inside that bracket.
+SPLIT_WARNING_FRAC = 0.70
+
 
 def parse_regions(text):
     """Read regions from the string the settings field holds.
@@ -87,3 +94,54 @@ def split_excluded(peaks, regions):
         (dropped if in_excluded_region(pk.get('ppm'), regions)
          else kept).append(pk)
     return kept, dropped
+
+
+def unresolvable_split_warning(peaks, min_distance_ppm, mhz=600.0):
+    """A warning when detection may split one line into several.
+
+    Two Lorentzians are resolved when their separation approaches their width.
+    Below that they merge into one contour, and the maxima a detector finds
+    inside that contour are noise, not lines: the same resonance yields an
+    apex here in one sample and there in another, and a per-sample union turns
+    those into separate master peaks.
+
+    Linewidth is a property of the shim and of T2, so it is near enough uniform
+    across a spectrum -- which makes the study's own median linewidth the right
+    scale to compare against, rather than a constant.
+
+    Measured on a 21-sample mouse serum study, median linewidth 4.12 Hz, with
+    min_distance at 1.80 Hz: L-alanine's methyl doublet had two artefacts
+    detected on its flanks, at 1.4758 (on the rising edge) and 1.4877 (in the
+    valley between the real lines), each with about 1% of a real line's area.
+    Annotation matched alanine to those two rather than to the doublet, and the
+    integration window built from their feet clipped one real line out --
+    reporting alanine at 0.045 mM, roughly a tenth of what the region holds.
+
+        min_distance   artefacts   real lines
+          1.80 Hz          2           2
+          2.40 Hz          2           2
+          3.00 Hz          0           2
+          4.14 Hz          0           2
+
+    They are still there at 0.58 of the linewidth and gone at 0.73, so the
+    boundary lies between. Returns None when the setting is at or above
+    ``SPLIT_WARNING_FRAC`` of the measured linewidth, and a message naming both
+    numbers when it is below -- a warning, never a change: which splittings a
+    study can resolve is the analyst's call, and this only makes sure the
+    number they are working against is visible.
+    """
+    import numpy as _np
+    w = [float(p.get('width_ppm')) for p in (peaks or ())
+         if p.get('width_ppm') and float(p['width_ppm']) > 0]
+    if not w or not min_distance_ppm:
+        return None
+    lw = float(_np.median(w))
+    if float(min_distance_ppm) >= lw * SPLIT_WARNING_FRAC:
+        return None
+    return (f'Min Distance is {min_distance_ppm:.4f} ppm '
+            f'({min_distance_ppm * mhz:.2f} Hz) but this spectrum\'s median '
+            f'linewidth is {lw:.4f} ppm ({lw * mhz:.2f} Hz). A splitting '
+            f'narrower than the linewidth cannot be resolved, so apices that '
+            f'close are more likely two readings of one line than two lines. '
+            f'Consider at least {lw * SPLIT_WARNING_FRAC:.4f} ppm '
+            f'({lw * SPLIT_WARNING_FRAC * mhz:.2f} Hz).')
