@@ -783,9 +783,12 @@ class PeakDetectionStage(BaseStage):
             # sweep on one dataset and FWHM 1.70 to 2.77, while the trace held
             # at 3.22 -- a threshold built on either of the first two would
             # advise a value that moves the measurement again.
-            _lw_incl = included_sample_indices(self.app.samples_info, _n_s)
             _all_lw = np.asarray(self.app.all_intensities, dtype=float)
-            _corr_for_lw = (_all_lw[:, _lw_incl] if _lw_incl else _all_lw)
+            _lw_incl = included_sample_indices(
+                self.app.samples_info,
+                _all_lw.shape[1] if _all_lw.ndim == 2 else 1)
+            _corr_for_lw = (_all_lw[:, _lw_incl]
+                            if _lw_incl and _all_lw.ndim == 2 else _all_lw)
             _split_warn = unresolvable_split_warning(
                 measure_linewidth_ppm(self.app.ppm, _corr_for_lw, self.peaks),
                 self.min_width_var.get(),

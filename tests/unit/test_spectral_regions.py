@@ -180,15 +180,23 @@ def test_what_was_excluded_is_reported_from_what_ran():
     assert 'excluded_regions_var' not in src
 
 
-def test_the_polling_loop_does_not_rebind_the_overlays_widgets():
-    """A nested function that assigns a name anywhere makes that name local to
-    the whole function, so a read before the assignment raises rather than
-    reaching the enclosing scope.
+def test_the_polling_loop_reads_nothing_before_it_is_assigned():
+    """Twice now a name has been used in _poll above the line that binds it.
 
-    Reusing `_lbl` for a piece of label text did exactly that: detection died
-    with UnboundLocalError on the first progress tick, before the assignment it
-    was shadowed by could run — and the failure surfaced as detection never
-    finishing rather than as anything about a name.
+    A name assigned anywhere in a function is local to all of it, so a read
+    above the assignment raises UnboundLocalError instead of reaching the
+    enclosing scope. Both times the failure surfaced as "detection never
+    finishes", which says nothing about a name:
+
+      * `_lbl` — the overlay's progress label, reused for a piece of label
+        text further down, so the read at the top of the loop died on the
+        first progress tick;
+      * `_n_s` — the sample count, assigned in the STOCSY block below and
+        read by the linewidth measurement above it.
+
+    Checked on the parse tree: for every name bound in _poll's own scope, the
+    first read must not come before the first binding. Nested function bodies
+    are excluded — a closure is evaluated when it runs, not where it sits.
     """
     import ast
     import inspect
@@ -200,13 +208,27 @@ def test_the_polling_loop_does_not_rebind_the_overlays_widgets():
         inspect.getsource(pds.PeakDetectionStage.detect_peaks)))
     poll = next(n for n in ast.walk(tree)
                 if isinstance(n, ast.FunctionDef) and n.name == '_poll')
-    assigned = {n.id for n in ast.walk(poll)
-                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Store)}
-    # Widgets the overlay owns and the loop only ever reads.
-    for widget in ('_lbl', '_pct_lbl', '_progress_queue', '_result'):
-        assert widget not in assigned, (
-            f'{widget} is assigned inside _poll, which shadows the enclosing '
-            f'binding and breaks every read above the assignment')
+
+    nested = {id(n) for f in ast.walk(poll)
+              if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef,
+                                ast.Lambda)) and f is not poll
+              for n in ast.walk(f)}
+    own = [n for n in ast.walk(poll)
+           if isinstance(n, ast.Name) and id(n) not in nested]
+
+    first_store, first_load = {}, {}
+    for n in own:
+        table = first_store if isinstance(n.ctx, ast.Store) else first_load
+        table.setdefault(n.id, n.lineno)
+        if n.lineno < table[n.id]:
+            table[n.id] = n.lineno
+
+    early = {name: (first_load[name], line)
+             for name, line in first_store.items()
+             if name in first_load and first_load[name] < line}
+    assert not early, (
+        'read before assignment in _poll (name: read line, assign line) — '
+        f'{early}')
 
 
 # ── A splitting narrower than the linewidth is not a splitting ───────────────
