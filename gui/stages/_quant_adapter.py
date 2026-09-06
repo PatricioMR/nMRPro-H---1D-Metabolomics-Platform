@@ -21,8 +21,9 @@ from processing.quant_engine import quantify
 from processing.quant_integration import integrate_sample
 from processing.quant_concentration import standard_per_proton
 from processing.quant_detection_limit import (
-    project_drift, project_linewidth, project_noise)
+    project_drift, project_noise)
 from processing.quant_snr import noise_level, representative_snr, window_snr
+from processing.spectral_regions import measure_linewidth_ppm
 from processing.quantification import Candidate, eligible_metabolite_ids
 from processing.sample_selection import included_sample_indices
 
@@ -289,6 +290,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         noise_sigma=(float(noise_sigma)
                      if noise_sigma not in (None, 0)
                      else project_noise(peaks)),
-        linewidth_ppm=project_linewidth(peaks),
+        # Measured on the trace, not from the peaks' recorded widths. Those
+        # are valley-to-valley and move with min_distance -- 4.40 to 7.81 Hz
+        # across one sweep on one dataset -- so a window padded by them would
+        # be wide or narrow according to a detection setting rather than to
+        # the spectrum. It is the same measurement the detection panel's
+        # resolution warning uses, so the project has one linewidth.
+        linewidth_ppm=(measure_linewidth_ppm(ppm, arr, peaks) or 0.008),
         drift_ppm=project_drift(metabolites),
     )

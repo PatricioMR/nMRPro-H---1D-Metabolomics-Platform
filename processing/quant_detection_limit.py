@@ -158,18 +158,6 @@ def censor_text(verdict, lod_mm, loq_mm) -> str:
     return CENSOR_TEXT[verdict].format(lod=_fmt(lod_mm), loq=_fmt(loq_mm))
 
 
-def project_linewidth(peaks) -> float:
-    """The study's typical linewidth, as the median of what detection measured.
-
-    Median over the detected peaks rather than a constant: linewidth depends on
-    shimming and on the sample, and a padding derived from one study's peaks is
-    the one padding that describes that study.
-    """
-    w = [float(p.get('width_ppm')) for p in (peaks or ())
-         if p.get('width_ppm') and float(p['width_ppm']) > 0]
-    return float(np.median(w)) if w else 0.008
-
-
 def project_noise(peaks) -> float:
     """The noise level detection estimated, as the median over the peaks."""
     n = [float(p.get('noise')) for p in (peaks or ())

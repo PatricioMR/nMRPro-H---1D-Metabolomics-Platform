@@ -12,7 +12,7 @@ import pytest
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, K_LOD, K_LOQ, UNRESOLVED, censor, censor_text,
     detection_limits, integration_noise, predicted_window, project_drift,
-    project_linewidth, project_noise)
+    project_noise)
 
 
 class TestIntegrationNoise:
@@ -109,13 +109,16 @@ class TestTheReason:
 
 
 class TestProjectMeasurements:
-    def test_linewidth_is_the_median_of_what_detection_measured(self):
-        peaks = [{'width_ppm': 0.004}, {'width_ppm': 0.006},
-                 {'width_ppm': 0.008}]
-        assert project_linewidth(peaks) == pytest.approx(0.006)
+    def test_the_linewidth_comes_from_the_trace_not_from_the_peak_widths(self):
+        """width_ppm is valley-to-valley and moves with min_distance, so a
+        window padded by it would be wide or narrow according to a detection
+        setting rather than to the spectrum. One linewidth per project."""
+        import inspect
 
-    def test_no_peaks_falls_back_rather_than_failing(self):
-        assert project_linewidth([]) > 0
+        from gui.stages import _quant_adapter as a
+        src = inspect.getsource(a.quantify_project)
+        assert 'measure_linewidth_ppm(ppm, arr, peaks)' in src
+        assert 'project_linewidth' not in src
 
     def test_noise_is_the_median_detection_estimate(self):
         assert project_noise([{'noise': 2.0}, {'noise': 4.0}]) == 3.0
