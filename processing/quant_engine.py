@@ -28,7 +28,7 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
-    fraction_in_window, overlap_components, resolve_contested,
+    claimants_in_window, fraction_in_window, resolve_contested,
     subtract_neighbours)
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
@@ -36,7 +36,7 @@ from processing.quant_detection_limit import (
     local_noise_sigma, predicted_window, strength_band, window_is_excluded)
 from processing.quant_integration import (
     integrate_sample, integrate_signal, lorentzian_captured_fraction,
-    pascal_weights)
+    multiplet_window, pascal_weights)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect, is_competitor)
@@ -138,10 +138,10 @@ SHARED_MAX_CONFIDENCE = 2
 MIN_OWN_SHARE = 0.5
 
 
-def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
-                       included, local_baseline, align, blank_indices,
-                       linewidth_ppm):
-    """Every group of candidate signals that share lines, integrated once.
+def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
+                    included, local_baseline, align, blank_indices,
+                    linewidth_ppm):
+    """One window per candidate signal, and everybody whose lines reach it.
 
     Built over the candidates and not over the election's winners, because a
     winner has exactly one window here and a claimant of that window could then
@@ -149,23 +149,30 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
     metabolite's other matched signals, clean and merely unused by the
     election, are what measure it.
 
-    A component whose window contains a detected peak belonging to none of its
-    claimants is refused: the mass balance would be missing a term, and the
-    analyte credited with the remainder would be credited with that peak too.
+    One window per signal, and not one per connected group of overlapping
+    signals. Overlap is transitive and the groups are not: with A on lines
+    1-2, B on 2-3 and C on 3-4, the group is one window with three claimants
+    and two unknowns, although A and C do not touch. As three windows it is
+    three equations, each with the claimants that actually reach it. On the
+    reference study the grouped form left 49 of 70 contested windows with more
+    unknowns than equations.
 
-    Each claimant is weighed by the fraction of ITS OWN lines that the window
-    holds, not by one capture fraction for the window. The balance is
+    Each claimant is weighed by the fraction of ITS OWN lines the window holds.
+    The balance is
 
         A(W) = sum over claimants of  concentration * protons * fraction
 
     and the fraction is a term of it, never a test the window has to pass. An
     earlier version refused any window holding less than 75% of its lines --
-    the threshold the capture correction uses to decide whether it is worth
-    applying -- and on the reference study that threw away 69 of 113 windows,
-    among them the uncontested ones that would have anchored the rest. Nothing
-    could be solved because nothing was left to solve against. Foot-to-foot
-    windows in a crowded region are narrow by construction: the feet are the
-    valleys, and the valleys are close when the neighbours are.
+    the threshold the capture correction uses to decide whether a correction is
+    worth applying -- and that threw away 69 of 113 windows, among them the
+    uncontested ones that would have anchored the rest. Foot-to-foot windows in
+    a crowded region are narrow by construction: the feet are the valleys, and
+    the valleys are close when the neighbours are.
+
+    A window containing a detected peak that no candidate claims is refused.
+    That peak is a term the balance does not have, and the analyte credited
+    with the remainder would be credited with it.
     """
     sigs, by_key = [], {}
     counts = {'candidates': 0, 'no_lines': 0, 'not_competitor': 0,
@@ -187,76 +194,100 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
         if not nh or not np.isfinite(nh) or nh <= 0:
             counts['no_protons'] += 1
             continue
-        sigs.append({'met_id': str(c.met_id), 'nh': nh, 'ranks': ranks})
-        by_key.setdefault((str(c.met_id), frozenset(ranks)), c)
-
-    windows, reasons = [], {}
-    for comp in overlap_components(sigs):
-        counts['components'] += 1
-        n_cl = len(comp['claimants'])
-        if n_cl > 1:
-            counts['contested'] += 1
-        # How wide the widest contest got. Overlap is transitive here -- A
-        # shares a line with B and B with C -- so in a crowded spectrum the
-        # components can chain into one region holding half the analytes, and
-        # a window with fifty claimants has forty-nine unknowns and resolves
-        # nothing. If this number is large, that is what happened.
-        if n_cl > counts['largest']:
-            counts['largest'] = n_cl
-            counts['largest_lines'] = len(comp['ranks'])
-        ranks = list(comp['ranks'])
-        lines = [peaks_by_rank[r] for r in ranks if r in peaks_by_rank]
-        if len(lines) != len(ranks):
+        key = (str(c.met_id), frozenset(ranks))
+        if key in by_key:
+            continue
+        by_key[key] = c
+        own = [peaks_by_rank[r] for r in ranks if r in peaks_by_rank]
+        if len(own) != len(ranks):
             counts['no_window'] += 1
             continue
-        out = integrate_signal(lines, ppm, intensities, included=included,
+        sigs.append({'met_id': str(c.met_id), 'nh': float(nh),
+                     'ranks': tuple(ranks), 'peaks': own,
+                     'ppms': [float(pk.get('ppm', 0.0)) for pk in own],
+                     'weights': pascal_weights(len(own))})
+
+    hwhm = float(linewidth_ppm) / 2.0
+    claimed_ranks = {r for sig in sigs for r in sig['ranks']}
+    windows, reasons = [], {}
+    for sig in sigs:
+        win = multiplet_window(sig['peaks'])
+        if win is None:
+            counts['no_window'] += 1
+            continue
+        lo, hi = win
+        key = '%s@%s' % (sig['met_id'],
+                         '_'.join(str(r) for r in sig['ranks']))
+        counts['components'] += 1
+
+        unclaimed = [r for r, pk in peaks_by_rank.items()
+                     if int(r) not in claimed_ranks
+                     and lo <= float(pk.get('ppm', -1e9)) <= hi]
+        if unclaimed:
+            counts['foreign_peak'] += 1
+            reasons[key] = {
+                'claimants': [(sig['met_id'], sig['nh'])],
+                'reason': ('%d detected peak(s) inside the window are matched '
+                           'to no analyte; the balance would be missing a term'
+                           % len(unclaimed))}
+            continue
+
+        # Only the signals near enough to put anything here. The fraction says
+        # how much, and below MIN_CLAIM_FRACTION it says almost nothing.
+        contributions, fractions, geometry, own_ranks = [], {}, {}, {}
+        for other in sigs:
+            if min(other['ppms']) > hi + 40.0 * hwhm:
+                continue
+            if max(other['ppms']) < lo - 40.0 * hwhm:
+                continue
+            f = fraction_in_window(other['ppms'], other['weights'], lo, hi,
+                                   hwhm, local_baseline=local_baseline)
+            if not f or f <= 0:
+                continue
+            contributions.append((other['met_id'], other['nh'], f))
+            mid = other['met_id']
+            # Two fractions, and they answer different questions. The one with
+            # the baseline in it is the term of the balance -- what integrating
+            # this window actually returns for this analyte. The bare
+            # geometric one is whether the window is looking at the analyte at
+            # all, which is what the floor on reporting asks: a straight line
+            # drawn through a signal's own tails is a property of how it was
+            # measured, not evidence that the signal is elsewhere.
+            g = (fraction_in_window(other['ppms'], other['weights'], lo, hi,
+                                    hwhm)
+                 if local_baseline else f)
+            if f > fractions.get(mid, 0.0):
+                fractions[mid] = float(f)
+                geometry[mid] = float(g) if g and g > 0 else float(f)
+                own_ranks[mid] = other['ranks']
+        claimants = claimants_in_window(contributions)
+        if not claimants:
+            continue
+
+        n_cl = len(claimants)
+        if n_cl > 1:
+            counts['contested'] += 1
+        if n_cl > counts['largest']:
+            counts['largest'] = n_cl
+            counts['largest_lines'] = len(sig['ranks'])
+
+        out = integrate_signal(sig['peaks'], ppm, intensities,
+                               included=included,
                                local_baseline=local_baseline, align=align,
                                blank_indices=blank_indices)
         if not out or not out['areas']:
             counts['no_window'] += 1
             continue
-        lo, hi = out['window']
-        foreign = [r for r, pk in peaks_by_rank.items()
-                   if int(r) not in comp['ranks']
-                   and lo <= float(pk.get('ppm', -1e9)) <= hi]
-        if foreign:
-            counts['foreign_peak'] += 1
-            reasons[comp['key']] = {
-                'claimants': comp['claimants'],
-                'reason': ('%d detected peak(s) inside the window belong to '
-                           'no claimant; the balance would be missing a term'
-                           % len(foreign))}
-            continue
-        fractions, geometry, weighted = {}, {}, []
-        for mid, nh in comp['claimants']:
-            own = [peaks_by_rank[r] for r in comp['lines'][mid]
-                   if r in peaks_by_rank]
-            ppms = [float(pk.get('ppm', 0.0)) for pk in own]
-            wts = pascal_weights(len(own))
-            # Two fractions, and they answer different questions. The one with
-            # the baseline in it is the term of the balance -- what the
-            # integration of this window actually returns for this analyte.
-            # The bare geometric one is whether the window is looking at the
-            # analyte at all, and that is what the floor below is about: a
-            # straight line drawn through a signal's own tails is a property
-            # of how it was measured, not evidence that the signal is
-            # elsewhere.
-            f = fraction_in_window(ppms, wts, lo, hi, linewidth_ppm / 2.0,
-                                   local_baseline=local_baseline)
-            g = (fraction_in_window(ppms, wts, lo, hi, linewidth_ppm / 2.0)
-                 if local_baseline else f)
-            if not f or f <= 0:
-                f = 1.0
-            fractions[mid] = float(f)
-            geometry[mid] = float(g) if g and g > 0 else float(f)
-            weighted.append((mid, float(nh) * float(f)))
-        windows.append({**comp, 'areas': dict(out['areas']),
-                        'window': (lo, hi), 'fractions': fractions,
-                        'geometry': geometry,
-                        'claimants': weighted, 'protons': dict(comp['claimants']),
-                        'peaks': lines,
-                        'shifts': out.get('shifts'),
-                        'blank_area': out.get('blank_area', float('nan'))})
+        windows.append({
+            'key': key, 'ranks': sig['ranks'], 'owner': sig['met_id'],
+            'claimants': claimants, 'areas': dict(out['areas']),
+            'window': (lo, hi), 'fractions': fractions, 'geometry': geometry,
+            'lines': own_ranks,
+            'protons': {m: (nh_eff / fractions[m]) for m, nh_eff in claimants
+                        if fractions.get(m)},
+            'peaks': sig['peaks'],
+            'shifts': out.get('shifts'),
+            'blank_area': out.get('blank_area', float('nan'))})
     return windows, by_key, reasons, counts
 
 
@@ -269,7 +300,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
     loop produces, so a share and an uncontested area travel through
     concentration, confidence and the row builder by one path.
     """
-    windows, by_key, reasons, counts = _component_windows(
+    windows, by_key, reasons, counts = _signal_windows(
         candidates, peaks_by_rank, ppm, intensities, included=included,
         local_baseline=local_baseline, align=align,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm)
@@ -277,6 +308,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
     counts['resolved'] = len(shares)
     counts['unsolved'] = len(why)
     by_win = {w['key']: w for w in windows}
+    best: dict = {}
     for key, text in why.items():
         reasons[key] = {'claimants': by_win[key]['claimants'],
                         'reason': text}
@@ -312,8 +344,15 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
             areas = {s_i: a / f for s_i, a in areas.items()}
             med = (float(np.median(list(areas.values()))) if areas
                    else float('nan'))
-            own = [pk for pk in w['peaks']
-                   if pk.get('rank') in set(w['lines'][mid])]
+            # It may be reached by several windows. The one built on its own
+            # signal measures it; failing that, the one holding most of it.
+            better = (mid == w.get('owner'),
+                      float((w.get('geometry') or {}).get(mid, 0.0)))
+            if better <= best.get(mid, (False, -1.0)):
+                continue
+            best[mid] = better
+            own = [peaks_by_rank[r] for r in (w['lines'].get(mid) or ())
+                   if r in peaks_by_rank]
             out[mid] = {
                 'signal': cand, 'nh': float(protons[mid]), 'snr': snr,
                 'captured': f,

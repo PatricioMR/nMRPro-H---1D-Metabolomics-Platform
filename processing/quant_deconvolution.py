@@ -292,77 +292,34 @@ def resolve_contested(windows, *, max_passes=5,
     return out, reasons
 
 
-def overlap_components(signals):
-    """One window per group of candidate signals that cannot be taken apart.
+# A contributor below this share of a window is inside the measurement's own
+# noise. Counting it adds an unknown -- and an unknown is what stops a window
+# being solved at all -- in exchange for a term smaller than the error on the
+# terms that matter.
+MIN_CLAIM_FRACTION = 0.05
 
-    Two metabolites matched to overlapping sets of detected lines have no
-    separate windows to be integrated in: any window holding all of one's lines
-    holds part of the other's. The groups are the connected components of that
-    overlap, and each becomes a single window with several claimants.
 
-    This is why the components are built over every candidate and not over the
-    election's winners. A metabolite is elected on one signal, so its window is
-    the only one it has here; a claimant of that window can then never be
-    anchored anywhere and every contest ends in two unknowns. Its OTHER matched
-    signals -- clean, uncontested, and simply unused by the election -- are what
-    measure it, and they exist only in the candidate list.
+def claimants_in_window(contributions, *, min_claim=MIN_CLAIM_FRACTION):
+    """Who is in this window, and how many protons' worth of each.
 
-    ``signals`` are ``{'met_id', 'nh', 'ranks'}``. A metabolite appearing twice
-    in one component contributes both signals to it, so its proton counts add:
-    two of its lines inside one window is twice the signal. The same ranks
-    twice is the same signal listed twice and counts once.
+    ``contributions`` are ``(met_id, nh, fraction)`` -- one per candidate
+    signal whose lines reach the window, the fraction being how much of that
+    signal the window holds. A metabolite with two signals reaching in
+    contributes both: two of its lines inside one window is twice the signal.
 
-    Returns ``[{'key', 'ranks', 'claimants'}]``, claimants ordered by met_id so
-    that two runs over the same data give the same answer.
+    Returns ``[(met_id, nh * fraction)]``, ordered by met_id so two runs over
+    the same data give the same answer. That product is what the balance
+    needs -- the window measures ``concentration * protons * fraction`` of each
+    claimant, so passing it as the proton count lets one linear solver serve
+    windows whose claimants are each cut off at a different place.
     """
-    parent: dict = {}
-
-    def find(r):
-        parent.setdefault(r, r)
-        while parent[r] != r:
-            parent[r] = parent[parent[r]]
-            r = parent[r]
-        return r
-
-    def union(a, b):
-        ra, rb = find(a), find(b)
-        if ra != rb:
-            parent[ra] = rb
-
-    sigs = []
-    for s in signals or ():
-        ranks = frozenset(int(r) for r in (s.get('ranks') or ()))
-        nh = s.get('nh')
-        if not ranks or not nh or float(nh) <= 0:
+    per_met: dict = {}
+    for mid, nh, f in contributions or ():
+        try:
+            eff = float(nh) * float(f)
+        except (TypeError, ValueError):
             continue
-        sigs.append((str(s.get('met_id')), float(nh), ranks))
-        first = min(ranks)
-        for r in ranks:
-            union(r, first)
-
-    comps: dict = {}
-    for mid, nh, ranks in sigs:
-        root = find(min(ranks))
-        c = comps.setdefault(root, {'ranks': set(), 'nh': {}, 'seen': set(),
-                                    'lines': {}})
-        c['ranks'] |= ranks
-        if (mid, ranks) in c['seen']:
+        if not np.isfinite(eff) or float(f) < float(min_claim) or eff <= 0:
             continue
-        c['seen'].add((mid, ranks))
-        c['nh'][mid] = c['nh'].get(mid, 0.0) + nh
-        c['lines'][mid] = c['lines'].get(mid, frozenset()) | ranks
-
-    out = []
-    for c in comps.values():
-        ranks = tuple(sorted(c['ranks']))
-        out.append({
-            'key': 'r' + '_'.join(str(r) for r in ranks),
-            'ranks': ranks,
-            'claimants': [(m, c['nh'][m]) for m in sorted(c['nh'])],
-            # Which of the window's lines are whose. A claimant's share of the
-            # window is not the window's own geometry but that of its own
-            # lines, and in a crowded region those differ a great deal.
-            'lines': {m: tuple(sorted(c['lines'][m])) for m in sorted(c['nh'])},
-        })
-    out.sort(key=lambda w: w['ranks'])
-    return out
+        per_met[str(mid)] = per_met.get(str(mid), 0.0) + eff
+    return [(m, per_met[m]) for m in sorted(per_met)]

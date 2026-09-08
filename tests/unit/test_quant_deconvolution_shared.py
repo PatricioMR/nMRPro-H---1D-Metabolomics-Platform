@@ -20,8 +20,8 @@ import numpy as np
 import pytest
 
 from processing.quant_deconvolution import (
-    MIN_RESIDUE_SHARE, anchor_per_proton, overlap_components,
-    resolve_contested)
+    MIN_CLAIM_FRACTION, MIN_RESIDUE_SHARE, anchor_per_proton,
+    claimants_in_window, resolve_contested)
 
 
 def _w(key, claimants, **areas):
@@ -119,56 +119,43 @@ class TestSplit:
         assert shares == {}
 
 
-class TestComponents:
-    """Which candidate signals cannot be integrated apart."""
+class TestClaimants:
+    """Who counts as being in a window, and for how many protons.
 
-    def test_signals_sharing_a_line_become_one_window(self):
-        comps = overlap_components([
-            {'met_id': 'a', 'nh': 3.0, 'ranks': [7]},
-            {'met_id': 'b', 'nh': 1.0, 'ranks': [7]}])
-        assert len(comps) == 1
-        assert comps[0]['claimants'] == [('a', 3.0), ('b', 1.0)]
+    A window measures ``concentration * protons * fraction`` of each claimant,
+    the fraction being how much of that claimant's signal falls inside. That
+    product is what the balance needs, so it is what this returns: one linear
+    solver then serves windows whose claimants are each cut off at a different
+    place.
+    """
 
-    def test_signals_sharing_no_line_stay_apart(self):
-        comps = overlap_components([
-            {'met_id': 'a', 'nh': 3.0, 'ranks': [1]},
-            {'met_id': 'b', 'nh': 1.0, 'ranks': [9]}])
-        assert len(comps) == 2
+    def test_a_claimant_counts_for_the_part_of_it_the_window_holds(self):
+        assert claimants_in_window([('a', 3.0, 0.5)]) == [('a', 1.5)]
 
-    def test_overlap_chains(self):
-        """A signal on lines 1-2 and one on 2-3 are in the same window, because
-        no window holds all of the first without holding part of the second."""
-        comps = overlap_components([
-            {'met_id': 'a', 'nh': 2.0, 'ranks': [1, 2]},
-            {'met_id': 'b', 'nh': 2.0, 'ranks': [2, 3]}])
-        assert len(comps) == 1
-        assert comps[0]['ranks'] == (1, 2, 3)
+    def test_two_signals_of_one_metabolite_in_a_window_add_up(self):
+        """Two of its lines inside one window is twice the signal."""
+        assert claimants_in_window(
+            [('a', 2.0, 1.0), ('a', 3.0, 1.0)]) == [('a', 5.0)]
 
-    def test_two_signals_of_one_metabolite_in_a_window_add_their_protons(self):
-        comps = overlap_components([
-            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]},
-            {'met_id': 'a', 'nh': 3.0, 'ranks': [1, 2]}])
-        assert comps[0]['claimants'] == [('a', 5.0)]
+    def test_a_contribution_below_the_floor_is_not_a_claimant(self):
+        """Counting it adds an unknown -- and an unknown is what stops a
+        window being solved -- for a term smaller than the error on the terms
+        that matter."""
+        assert claimants_in_window(
+            [('a', 3.0, 1.0),
+             ('b', 3.0, MIN_CLAIM_FRACTION / 2.0)]) == [('a', 3.0)]
 
-    def test_the_same_signal_listed_twice_counts_once(self):
-        comps = overlap_components([
-            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]},
-            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]}])
-        assert comps[0]['claimants'] == [('a', 2.0)]
-
-    def test_a_signal_with_no_lines_is_not_a_claimant(self):
-        """It was matched to nothing, so it is contributing nothing that can be
-        subtracted, and counting it would add an unknown that blocks the
-        window for the analytes that are there."""
-        assert overlap_components([{'met_id': 'a', 'nh': 3.0,
-                                    'ranks': []}]) == []
+    def test_a_contribution_at_the_floor_counts(self):
+        got = dict(claimants_in_window([('b', 3.0, MIN_CLAIM_FRACTION)]))
+        assert 'b' in got
 
     def test_the_order_does_not_depend_on_the_input_order(self):
-        a = overlap_components([{'met_id': 'z', 'nh': 1.0, 'ranks': [5]},
-                                {'met_id': 'a', 'nh': 2.0, 'ranks': [5]}])
-        b = overlap_components([{'met_id': 'a', 'nh': 2.0, 'ranks': [5]},
-                                {'met_id': 'z', 'nh': 1.0, 'ranks': [5]}])
-        assert a == b
+        a = claimants_in_window([('z', 1.0, 1.0), ('a', 2.0, 1.0)])
+        b = claimants_in_window([('a', 2.0, 1.0), ('z', 1.0, 1.0)])
+        assert a == b == [('a', 2.0), ('z', 1.0)]
+
+    def test_nothing_at_all_claims_nothing(self):
+        assert claimants_in_window([]) == []
 
 
 class TestInTheEngine:
