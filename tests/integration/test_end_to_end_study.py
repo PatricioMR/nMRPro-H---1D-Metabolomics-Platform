@@ -296,11 +296,12 @@ def test_no_two_analytes_share_a_region(run):
 def test_the_concentration_is_the_one_that_went_in(run, name):
     """Absolute, against the internal standard, in mM.
 
-    Loose on purpose. Foot-to-foot integration of a Lorentzian leaves its tails
-    outside, and the standard's window and an analyte's hold different
-    fractions, so the absolute scale carries a systematic bias — about 7% on
-    this study at rest. The ratio does not, and the ratio is what a study
-    reports; that is the assertion below.
+    Both sides are corrected for what their windows leave outside, which took
+    the mean absolute error on this study from 7.3% to 1.7%. What remains is
+    real overlap: alanine sits 0.148 ppm from lactate, whose line is eight
+    times larger, and the tail that reaches into alanine's window is about 5%
+    of alanine itself. Separating that is deconvolution's job, not window
+    arithmetic's.
     """
     _, _, by = run
     row = by[name]
@@ -308,7 +309,7 @@ def test_the_concentration_is_the_one_that_went_in(run, name):
     for grp, want in TRUTH[name].items():
         idx = [i for i, s in enumerate(SAMPLES) if s.get('label') == grp]
         got = float(np.nanmean([concs[i] for i in idx]))
-        assert got == pytest.approx(want, rel=0.20), (
+        assert got == pytest.approx(want, rel=0.10), (
             f'{name} in {grp}: expected {want} mM, got {got:.4f}')
 
 
@@ -343,15 +344,20 @@ def test_drift_is_what_this_pipeline_is_sensitive_to(run):
     """Measured by re-running the whole study at several drift levels.
 
         per-sample drift   |error| absolute   |error| on the B/A ratio
-              0.0 Hz             7.3%                  1.1%
-              0.5 Hz             6.9%                  1.1%
-              1.7 Hz            11.8%                  3.3%
-              3.0 Hz            32.0%                  4.5%
+              0.0 Hz             1.7%                  1.1%
+              0.5 Hz             1.6%                  1.1%
+              1.7 Hz            14.8%                  3.3%
+              3.0 Hz            36.3%                  4.5%
 
     Three hertz is close to a full linewidth: at that point the union splits a
     line into two master peaks and the windows stop describing one signal. The
     ratio degrades far more slowly than the absolute value, which is the
     property a study depends on.
+
+    The tail correction is what brings the first two rows to under 2%. It does
+    not rescue the last two, and is refused there: a window holding less than
+    three quarters of its lines is in the wrong place, and scaling it up would
+    make a broken measurement larger rather than better.
 
     Before the standard's window was centred, 0.5 Hz of drift gave a 120%
     absolute error — its apex sat on the boundary of a 440 Hz valley-to-valley

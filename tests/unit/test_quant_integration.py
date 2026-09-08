@@ -134,3 +134,77 @@ class TestWholeSignal:
     def test_a_signal_with_no_lines_yields_nothing(self):
         x = np.linspace(1.40, 1.55, 100)
         assert integrate_signal([], x, np.zeros((100, 2))) is None
+
+
+class TestWhatTheWindowLeavesOutside:
+    """A Lorentzian's tails never end, so a finite window always loses some.
+
+    How much depends on the width in half-widths and on how many lines share
+    it, so two signals integrated foot to foot lose different fractions and the
+    ratio between them carries the difference. On a study whose answer was
+    known, every analyte came back about 7% high against a standard whose
+    window held 94% of its line while a doublet's held 83%.
+
+    Correcting both sides took the mean absolute error from 7.3% to 1.7%.
+    """
+
+    G = 0.0027                      # hwhm of a 3.2 Hz line at 600 MHz
+
+    def _f(self, ppms, weights, half):
+        from processing.quant_integration import lorentzian_captured_fraction
+        return lorentzian_captured_fraction(ppms, weights, -half, half, self.G)
+
+    def test_a_wider_window_holds_more(self):
+        assert self._f([0.0], [1.0], 0.03) > self._f([0.0], [1.0], 0.01)
+
+    def test_it_never_reaches_one(self):
+        """The tails are infinite. A correction that claimed otherwise would be
+        claiming the lineshape ends."""
+        assert self._f([0.0], [1.0], 0.5) < 1.0
+
+    def test_a_multiplet_loses_less_than_a_singlet_in_the_same_window(self):
+        """Only the outer lines have a tail outside; the inner ones are fully
+        inside. Which is why correcting needs the line positions and not just
+        the width."""
+        from processing.quant_integration import pascal_weights
+        singlet = self._f([0.0], [1.0], 0.0127)
+        quartet = self._f([-0.018, -0.006, 0.006, 0.018],
+                          pascal_weights(4), 0.0247)
+        assert quartet > singlet
+
+    def test_it_matches_the_analytic_value_for_one_line(self):
+        """(2/pi) arctan(w/g), which is the Lorentzian cumulative."""
+        import numpy as np
+        half = 0.0135                                  # 5 half-widths
+        want = (2 / np.pi) * np.arctan(half / self.G)
+        assert self._f([0.0], [1.0], half) == pytest.approx(want, rel=1e-9)
+
+    def test_a_window_holding_too_little_is_refused(self):
+        """A window with 60% of its lines is not a tight window — it is one in
+        the wrong place, or around lines that were split. Dividing by 0.60
+        turns a broken measurement into a broken measurement 1.7 times
+        larger."""
+        from processing.quant_integration import MIN_TRUSTED_CAPTURE
+        assert 0.5 < MIN_TRUSTED_CAPTURE < 1.0
+        assert self._f([0.0], [1.0], 0.002) is None
+
+    def test_no_linewidth_means_no_correction(self):
+        from processing.quant_integration import lorentzian_captured_fraction
+        assert lorentzian_captured_fraction([0.0], [1.0], -0.01, 0.01, 0) is None
+
+    def test_the_standard_is_corrected_the_same_way(self):
+        """A standard measured differently from what it standardises is not a
+        standard, and the difference goes into every concentration."""
+        import inspect
+
+        from gui.stages import _quant_adapter as a
+        src = inspect.getsource(a.standard_areas_from_peak)
+        assert 'lorentzian_captured_fraction' in src
+        assert '/ captured' in src
+
+    def test_pascal_weights_are_the_binomial_row(self):
+        from processing.quant_integration import pascal_weights
+        assert pascal_weights(1) == [1.0]
+        assert pascal_weights(2) == [1.0, 1.0]
+        assert pascal_weights(3) == [1.0, 2.0, 1.0]
+        assert pascal_weights(4) == [1.0, 3.0, 3.0, 1.0]

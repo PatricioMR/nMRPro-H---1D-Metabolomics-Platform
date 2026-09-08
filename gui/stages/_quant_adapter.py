@@ -18,7 +18,8 @@ import numpy as np
 from processing.annotation_scoring import DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
-from processing.quant_integration import integrate_sample
+from processing.quant_integration import (
+    integrate_sample, lorentzian_captured_fraction)
 from processing.quant_concentration import standard_per_proton
 from processing.quant_detection_limit import (
     project_drift, project_noise)
@@ -146,12 +147,18 @@ def standard_areas_from_peak(ref_peak, ppm, intensities, *,
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
+    # Corrected for what the window leaves outside, the same way an analyte's
+    # area is. Uncorrected, the standard held 94% of its line while a doublet
+    # held 83%, and every concentration in the study carried the difference.
+    captured = lorentzian_captured_fraction(
+        [float(ref_peak.get('ppm', 0.0))], [1.0], lo, hi,
+        (linewidth_ppm or 0.0) / 2.0) or 1.0
     out = {}
     for s in range(arr.shape[1]):
         a = integrate_sample(ppm, arr[:, s], lo, hi,
                              local_baseline=local_baseline)
         if a is not None:
-            out[s] = abs(float(a))
+            out[s] = abs(float(a)) / captured
     return out
 
 

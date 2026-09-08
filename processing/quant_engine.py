@@ -31,7 +31,9 @@ from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
     local_noise_sigma, predicted_window, strength_band, window_is_excluded)
-from processing.quant_integration import integrate_sample, integrate_signal
+from processing.quant_integration import (
+    integrate_sample, integrate_signal, lorentzian_captured_fraction,
+    pascal_weights)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect)
@@ -152,6 +154,19 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             continue
         nh = signal_nh((cand.evidence or {}).get('protons'))
         lo, hi = out['window']
+        # What the window left outside. A Lorentzian's tails never end, and how
+        # much a window holds depends on its width in half-widths and on how
+        # many lines share it -- so two signals integrated foot to foot lose
+        # different fractions, and the ratio between them carries the
+        # difference. On a study whose answer was known every analyte came back
+        # about 7% high against a standard whose own window held 94% of its
+        # line while a doublet's held 83%.
+        captured = lorentzian_captured_fraction(
+            [float(p.get('ppm', 0.0)) for p in lines],
+            pascal_weights(len(lines)), lo, hi, linewidth_ppm / 2.0)
+        if captured:
+            out['areas'] = {s_i: a / captured
+                            for s_i, a in out['areas'].items()}
         # One noise for the whole of quantification. The SNR column used to
         # reconstruct its own from the peak's recorded ratio, which disagreed
         # with the limits beside it by a factor of two and, over a baseline
@@ -176,7 +191,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         detected = {s_i: bool(np.isfinite(v) and v >= K_LOD)
                     for s_i, v in snr.items()}
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
-                         'detected': detected,
+                         'captured': captured, 'detected': detected,
                          'lod_area': lod_a, 'loq_area': loq_a,
                          'area_median': med_area,
                          'strength': strength_band(med_area, loq_a), **out}
@@ -492,6 +507,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_lod_mm': lod_mm,
         '_loq_mm': loq_mm,
         '_strength': info.get('strength'),
+        '_captured_fraction': info.get('captured'),
         '_status_reasons': ([] if info.get('strength', 3) >= 3 else
                             [f'Weak signal: the measured area does not reach '
                              f'{STRONG_ABOVE_LOQ:.0f}x the limit of '
