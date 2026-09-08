@@ -381,7 +381,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         local_baseline=local_baseline, align=align,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
         noise_sigma=noise_sigma)
-    per_proton, why = solve_windows(windows)
+    per_proton, why, solver_stats = solve_windows(windows)
 
     # Which window speaks for each metabolite. The one built on its own signal
     # measures it; failing that, the one holding most of it. It decides the
@@ -439,10 +439,33 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
             'shared_with': [m for m, _ in w['claimants'] if m != mid],
         }
 
+    # A window's own refusal belongs to the signal it was built on, and to no
+    # one else. An analyte reaching 5% into somebody else's window is not
+    # answerable for that window failing, and marking it so penalised analytes
+    # that had a clean window of their own.
     for entry in reasons.values():
-        for mid, _nh in entry['claimants']:
-            if mid not in out:
-                why.setdefault(mid, entry['reason'])
+        mid = entry['claimants'][0][0] if entry['claimants'] else None
+        if mid is not None and mid not in out:
+            why.setdefault(mid, entry['reason'])
+
+    # What an analyte is answerable for. A refusal costs it confidence only
+    # when the window that measures it is one it shares -- there the number
+    # really is an upper bound holding somebody else's signal. A column the
+    # joint system could not pin down, on a window nobody else is in, is a
+    # statement about the system and not about that measurement: its own
+    # window measured it, and the direct measurement stands.
+    #
+    # Read off which lines more than one metabolite is matched to, rather than
+    # off the windows: a window refused before it was ever built has no
+    # claimant list, and the analyte sharing that peak is exactly the one that
+    # needs saying so.
+    owners: dict = {}
+    for (mid, ranks) in by_key:
+        for r in ranks:
+            owners.setdefault(int(r), set()).add(mid)
+    sharing = {mid for (mid, ranks) in by_key
+               for r in ranks if len(owners.get(int(r), ())) > 1}
+    penalised = {mid: t for mid, t in why.items() if mid in sharing}
 
     if diagnostics is not None:
         tally: dict = {}
@@ -451,9 +474,11 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
             tally[key] = tally.get(key, 0) + 1
         counts['resolved'] = len(out)
         counts['unsolved'] = len(why)
-        diagnostics['shared'] = {**counts, 'reasons': tally,
-                                 'metabolites': sorted(out)}
-    return out, why
+        diagnostics['shared'] = {**counts, **(solver_stats or {}),
+                                 'reasons': tally,
+                                 'metabolites': sorted(out),
+                                 'penalised': len(penalised)}
+    return out, penalised
 
 
 

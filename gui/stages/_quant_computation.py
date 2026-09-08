@@ -277,6 +277,21 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                         f'one analyte.')
                 _dbg(f, f'  {sh.get("resolved", 0)} split, '
                         f'{sh.get("unsolved", 0)} not.')
+                _dbg(f, f'  System: {sh.get("rows", 0)} equations, '
+                        f'{sh.get("columns", 0)} unknowns. Refused '
+                        f'{sh.get("refused_indeterminate", 0)} as '
+                        f'indeterminate (no window separates them from '
+                        f'another analyte), '
+                        f'{sh.get("refused_imprecise", 0)} as too imprecise '
+                        f'(own standard error over half the value), '
+                        f'{sh.get("refused_empty", 0)} left nothing by the '
+                        f'other claimants.')
+                _dbg(f, f'  Variance inflation: median '
+                        f'{sh.get("vif_median", 0):.1f}, 90th percentile '
+                        f'{sh.get("vif_p90", 0):.1f}, '
+                        f'{sh.get("vif_infinite", 0)} infinite. Median '
+                        f'relative standard error '
+                        f'{100 * sh.get("rsd_median", 0):.0f}%.')
                 _dbg(f, f'  Widest contest: {sh.get("largest", 0)} analytes '
                         f'over {sh.get("largest_lines", 0)} lines. Overlap is '
                         f'transitive, so a crowded region can chain into one '

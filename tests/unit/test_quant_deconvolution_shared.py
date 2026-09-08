@@ -42,11 +42,11 @@ def _w(key, claimants, **areas):
 
 class TestTheJointSolution:
     def test_a_window_with_one_claimant_measures_that_claimant(self):
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0)])
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0)])
         assert pp['lac'][0] == pytest.approx(100.0)
 
     def test_the_known_claimant_gives_the_rest_away(self):
-        pp, why = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, why, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                  _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                     s0=450.0)])
         assert pp['ala'][0] == pytest.approx(50.0)
@@ -55,7 +55,7 @@ class TestTheJointSolution:
     def test_the_winner_is_corrected_and_not_only_the_loser(self):
         """300 of that window's 450 are lactate's, and the analyte elected on
         it was credited with all 450."""
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                   s0=450.0)])
         assert pp['lac'][0] == pytest.approx(100.0)
@@ -63,7 +63,7 @@ class TestTheJointSolution:
     def test_it_reaches_through_a_chain(self):
         """Alanine is measured only through the window it shares with lactate,
         and glycine only through the one it shares with alanine."""
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                   s0=450.0),
                                _w('w3', [('ala', 3.0), ('gli', 2.0)],
@@ -73,7 +73,7 @@ class TestTheJointSolution:
     def test_two_claimants_and_nothing_else_report_nothing(self):
         """One equation, two unknowns, and no other window to constrain them.
         This is the case the one-window-at-a-time cascade was limited to."""
-        pp, why = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        pp, why, _st = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
         assert pp == {}
         assert 'do not separate it from' in why['x']
 
@@ -81,39 +81,39 @@ class TestTheJointSolution:
         """The whole reason for solving them together. Neither analyte has a
         window of its own; between them the two windows still say which is
         which, because they are not in the same proportions."""
-        pp, why = solve_windows([_w('w1', [('x', 1.0), ('y', 2.0)], s0=50.0),
+        pp, why, _st = solve_windows([_w('w1', [('x', 1.0), ('y', 2.0)], s0=50.0),
                                  _w('w2', [('x', 3.0), ('y', 1.0)], s0=50.0)])
         assert pp['x'][0] == pytest.approx(10.0)
         assert pp['y'][0] == pytest.approx(20.0)
 
     def test_a_refusal_names_what_it_could_not_be_separated_from(self):
-        _, why = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        _pp, why, _st = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
         assert 'y' in why['x'] and 'x' in why['y']
 
     def test_a_window_nobody_kept_does_not_spoil_the_rest(self):
         """Its whole area would otherwise become a residual and inflate the
         standard error of every column that WAS determined."""
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                   s0=450.0),
                                _w('w3', [('x', 1.0), ('y', 1.0)], s0=80.0)])
         assert pp['ala'][0] == pytest.approx(50.0)
 
     def test_each_sample_is_solved_on_its_own(self):
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0, s1=600.0),
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0, s1=600.0),
                                _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                   s0=450.0, s1=900.0)])
         assert pp['ala'] == {0: pytest.approx(50.0), 1: pytest.approx(100.0)}
 
     def test_no_concentration_comes_back_negative(self):
         """A negative one would let an analyte pay for another's excess."""
-        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, _, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                   s0=250.0)])
         assert all(v >= 0 for d in pp.values() for v in d.values())
 
     def test_an_analyte_the_balance_leaves_nothing_gets_no_number(self):
-        pp, why = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+        pp, why, _st = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
                                  _w('w2', [('lac', 3.0), ('ala', 3.0)],
                                     s0=300.0)])
         assert 'ala' not in pp
@@ -124,17 +124,20 @@ class TestTheJointSolution:
         nearer the one whose area is better measured."""
         clean = {**_w('w1', [('lac', 3.0)], s0=300.0), 'weight': 10.0}
         noisy = {**_w('w2', [('lac', 3.0)], s0=600.0), 'weight': 0.1}
-        pp, _ = solve_windows([clean, noisy])
+        pp, _, _st = solve_windows([clean, noisy])
         assert pp['lac'][0] < 150.0
 
     def test_nothing_at_all_solves_nothing(self):
-        assert solve_windows([]) == ({}, {})
+        assert solve_windows([]) == ({}, {}, {})
 
-    def test_the_threshold_is_the_classical_one(self):
-        """Ten is a rule of thumb and O'Brien 2007 is right that it is only
-        that. The alternative is not a better number, it is reporting
-        concentrations nobody can attribute."""
-        assert MAX_VIF == 10.0
+    def test_the_design_threshold_is_not_the_precision_threshold(self):
+        """Two questions get confused here. "Can these be told apart at all"
+        is about the design and needs columns that are near-multiples of each
+        other; "how well is this pinned down" is about the data and is the
+        standard error's job. Refusing at the classical VIF of 10 -- 90%
+        reproducible, so imprecise rather than indeterminate -- threw out 157
+        of the reference study's 159 analytes, clean windows included."""
+        assert MAX_VIF >= 1000.0
 
 
 class TestClaimants:
@@ -364,3 +367,28 @@ class TestTheSwitch:
         rows = TestInTheEngine()._run()
         assert rows['B']['_used_j_resolve'] is True
         assert rows['B']['_j_resolve_frac'] < 1.0
+
+
+class TestWhatARefusalCosts:
+    """A refusal must cost confidence only where it is about the measurement.
+
+    Refusing at the classical VIF of 10 marked 157 of the reference study's
+    159 analytes, and every one of them then read two dots — including
+    analytes measured on windows nobody else is in, whose own measurement the
+    joint system never touched. Losing precision in a system is not the same
+    as a window holding somebody else's signal, and only the second is a
+    statement about the number in the table.
+    """
+
+    def test_an_analyte_on_a_window_of_its_own_is_not_marked(self):
+        rows = TestInTheEngine()._run()
+        assert not rows['A']['_shared_with']
+        assert not any('Shared window' in t
+                       for t in rows['A']['_status_reasons'])
+
+    def test_an_analyte_sharing_a_peak_is_marked_when_it_is_not_split(self):
+        """Its number is then the whole of a window it holds with another, so
+        it is an upper bound and the row has to say so."""
+        rows = TestInTheEngine()._run(foot=0.0012)
+        assert any('not split' in t for t in rows['B']['_status_reasons'])
+        assert rows['B']['_confidence'] <= 2

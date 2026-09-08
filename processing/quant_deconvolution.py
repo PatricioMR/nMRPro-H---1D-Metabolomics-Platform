@@ -224,15 +224,31 @@ def claimants_in_window(contributions, *, min_claim=MIN_CLAIM_FRACTION):
 #     Weljie, A.M. et al. (2006). Targeted profiling: quantitative analysis of
 #     1H NMR metabolomics data. Analytical Chemistry 78:4430-4442.
 
-# A column whose variance is inflated more than this by the others is one the
-# data does not separate. Ten is the classical rule of thumb, and O'Brien 2007
-# is right that it is only that -- but the alternative here is not a better
-# threshold, it is reporting numbers nobody can attribute.
-MAX_VIF = 10.0
+# Two questions get confused here and only one of them is the variance
+# inflation factor's.
+#
+# "Can these two analytes be told apart at all" is a question about the
+# design: columns that are exact multiples of each other carry no information
+# that separates them, and no amount of signal would help. That is a VIF of
+# infinity, and near it R2 above 0.999.
+#
+# "How well is this one pinned down" is a question about the data, and its
+# answer is the standard error. A VIF of 10 -- the classical rule of thumb --
+# says a column is 90% reproducible by the others, which makes it imprecise,
+# not indeterminate. Refusing at 10 threw out 157 of the reference study's 159
+# analytes, including ones with clean windows of their own, and called a loss
+# of precision an impossibility.
+#
+# So the threshold here is only for the first question, and the standard error
+# below decides the second. A column that is genuinely ill-conditioned still
+# fails, because its standard error is what the conditioning inflates.
+#
+#     O'Brien, R.M. (2007). A caution regarding rules of thumb for variance
+#     inflation factors. Quality & Quantity 41:673-690.
+MAX_VIF = 1000.0
 
-# And a concentration whose own standard error is more than half of it says
-# the same thing in the other language: the system admits it, but it does not
-# pin it down.
+# A concentration whose own standard error is more than half of it is one the
+# windows admit but do not determine.
 MAX_RSD = 0.5
 
 
@@ -278,7 +294,7 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
     protons times the fraction of it the window holds, because that product is
     what multiplies the concentration in the balance.
 
-    Returns ``(per_proton, reasons)``. ``per_proton[met][sample]`` is the area
+    Returns ``(per_proton, reasons, stats)``. ``per_proton[met][sample]`` is the area
     one proton of that metabolite's whole signal is worth -- the same quantity
     an uncontested window would have divided out, so it travels onward by the
     same path. ``reasons[met]`` says why a metabolite got none.
@@ -301,7 +317,7 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
 
     wins = [w for w in (windows or ()) if w.get('claimants') and w.get('areas')]
     if not wins:
-        return {}, {}
+        return {}, {}, {}
     mets = sorted({str(m) for w in wins for m, _ in w['claimants']})
     col = {m: i for i, m in enumerate(mets)}
     samples = sorted({int(s) for w in wins for s in w['areas']})
@@ -322,9 +338,10 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
         if i not in live:
             reasons[mets[i]] = 'it contributes nothing to any window measured'
     if not live:
-        return {}, reasons
+        return {}, reasons, {}
 
     vif, partner = _vif(design[:, live])
+    refused_vif: list = []
     keep = []
     for k, i in enumerate(live):
         if vif[k] <= max_vif:
@@ -336,8 +353,10 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
             'the windows do not separate it from %s -- they appear together '
             'in the same proportions, so no arithmetic can say which of them '
             'the area belongs to' % (who or 'the other claimants'))
+        refused_vif.append(mets[i])
     if not keep:
-        return {}, reasons
+        return {}, reasons, {'columns': len(mets), 'rows': len(wins),
+                             'refused_indeterminate': len(refused_vif)}
 
     # A window left with no column of its own -- every claimant in it refused
     # -- is no longer an equation about anything kept. Leaving it in the system
@@ -370,6 +389,7 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
                 rsd_max[i] = max(rsd_max[i], se / float(x[k]))
             per_proton.setdefault(mets[i], {})[int(s)] = float(x[k])
 
+    refused_empty, refused_rsd = [], []
     for i in keep:
         m = mets[i]
         vals = [v for v in (per_proton.get(m) or {}).values() if v > 0]
@@ -377,9 +397,23 @@ def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
             per_proton.pop(m, None)
             reasons[m] = ('the balance leaves it nothing: what the other '
                           'claimants account for fills the windows it is in')
+            refused_empty.append(m)
         elif rsd_max[i] > max_rsd:
             per_proton.pop(m, None)
             reasons[m] = ('its own standard error reaches %.0f%% of it -- the '
                           'windows admit this analyte but do not pin it down'
                           % (100.0 * rsd_max[i]))
-    return per_proton, reasons
+            refused_rsd.append(m)
+    stats = {
+        'columns': len(mets), 'rows': len(wins),
+        'vif_median': float(np.median(vif)) if len(vif) else 0.0,
+        'vif_p90': float(np.percentile(vif[np.isfinite(vif)], 90))
+                   if np.isfinite(vif).any() else float('inf'),
+        'vif_infinite': int((~np.isfinite(vif)).sum()),
+        'refused_indeterminate': len(refused_vif),
+        'refused_imprecise': len(refused_rsd),
+        'refused_empty': len(refused_empty),
+        'rsd_median': float(np.median([rsd_max[i] for i in keep]))
+                      if keep else 0.0,
+    }
+    return per_proton, reasons, stats
