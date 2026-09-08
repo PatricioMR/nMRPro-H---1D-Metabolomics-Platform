@@ -47,7 +47,14 @@ def noise_level(line_peaks, ppm, intensities) -> float | None:
 
 
 def window_snr(ppm, intensities, lo, hi, noise, *, included=None) -> dict:
-    """``{sample: SNR}`` for one window, from the window's own apex.
+    """``{sample: SNR}`` for one window: its height above its own baseline.
+
+    Height, not absolute intensity. A window sitting on a baseline offset would
+    otherwise report that offset as signal — in the sugar region of one study
+    the raw intensity ran from -1.04e5 to +3.98e4, so the number said far more
+    about where the baseline was than about the analyte. The window's own
+    endpoints define the baseline, the same straight line the integration
+    subtracts, so the SNR and the area describe the same measurement.
 
     NaN when the noise level is unknown — an unmeasured SNR is not a zero, and
     a zero would read as "no signal here" rather than "nobody looked".
@@ -65,7 +72,15 @@ def window_snr(ppm, intensities, lo, hi, noise, *, included=None) -> dict:
     m = (ppm >= lo) & (ppm <= hi)
     if not m.any():
         return {int(s): float('nan') for s in idx}
-    return {int(s): float(np.max(arr[m, s])) / float(noise) for s in idx}
+    out = {}
+    for s in idx:
+        seg = arr[m, s]
+        if seg.size < 2:
+            out[int(s)] = float('nan')
+            continue
+        base = np.linspace(float(seg[0]), float(seg[-1]), seg.size)
+        out[int(s)] = float(np.max(seg - base)) / float(noise)
+    return out
 
 
 def representative_snr(snr_by_sample) -> float:

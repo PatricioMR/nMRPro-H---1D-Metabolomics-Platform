@@ -207,3 +207,39 @@ def test_an_internal_standard_is_still_read_across_every_sample():
                     standard_nh=9.0, standard_conc=1.0, standard_name='TSP')
     is_row = next(r for r in rows if r.get('_is_is'))
     assert len(is_row['_areas_per_sample']) == 2
+
+
+def test_the_snr_is_a_height_not_an_absolute_intensity():
+    """A window on a baseline offset would otherwise report the offset as
+    signal. In the sugar region of one study the raw intensity ran from
+    -1.04e5 to +3.98e4, and the SNR said more about where the baseline sat
+    than about the analyte."""
+    ppm = _grid()
+    signal = _gauss(ppm, 1.0, 100.0)
+    on_the_floor = signal
+    on_a_hill = signal + 50000.0
+    flat = window_snr(ppm, on_the_floor.reshape(-1, 1), 0.95, 1.05, noise=1.0)
+    hill = window_snr(ppm, on_a_hill.reshape(-1, 1), 0.95, 1.05, noise=1.0)
+    assert hill[0] == pytest.approx(flat[0], rel=1e-6)
+
+
+def test_it_uses_the_window_endpoints_as_the_baseline():
+    """The same straight line the integration subtracts, so the SNR and the
+    area describe one measurement rather than two."""
+    ppm = _grid()
+    y = (_gauss(ppm, 1.0, 100.0) + 10.0 * ppm).reshape(-1, 1)
+    snr = window_snr(ppm, y, 0.95, 1.05, noise=1.0)
+    assert snr[0] == pytest.approx(100.0, rel=0.05)
+
+
+def test_quantification_measures_its_snr_against_the_same_noise_as_its_limits():
+    """Two answers to "how loud is the noise" put an SNR of 3149 beside a
+    concentration of 0.008 mM."""
+    import inspect
+
+    from processing import quant_engine as qe
+    src = inspect.getsource(qe.quantify)
+    i_sigma = src.index('sigma_here = local_noise_sigma')
+    i_snr = src.index('snr = window_snr(')
+    assert i_sigma < i_snr, 'the noise must be settled before the SNR uses it'
+    assert 'window_snr(ppm, intensities, lo, hi, sigma_here' in src

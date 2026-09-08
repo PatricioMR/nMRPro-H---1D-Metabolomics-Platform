@@ -150,12 +150,15 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             continue
         nh = signal_nh((cand.evidence or {}).get('protons'))
         lo, hi = out['window']
-        snr = window_snr(ppm, intensities, lo, hi,
-                         noise_level(lines, ppm, intensities),
-                         included=included)
+        # One noise for the whole of quantification. The SNR column used to
+        # reconstruct its own from the peak's recorded ratio, which disagreed
+        # with the limits beside it by a factor of two and, over a baseline
+        # offset, produced an SNR of 3149 for an analyte at 0.008 mM.
         sigma_here = local_noise_sigma(ppm, intensities, lo, hi,
                                        linewidth_ppm=linewidth_ppm,
                                        global_sigma=noise_sigma) or noise_sigma
+        snr = window_snr(ppm, intensities, lo, hi, sigma_here,
+                         included=included)
         n_pts = int(((np.asarray(ppm, dtype=float) >= lo)
                      & (np.asarray(ppm, dtype=float) <= hi)).sum())
         _p = np.asarray(ppm, dtype=float)
