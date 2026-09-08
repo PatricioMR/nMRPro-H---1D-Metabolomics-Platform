@@ -90,18 +90,59 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
     return out
 
 
+def standard_window(ref_peak, linewidth_ppm=None, other_peaks=()):
+    """A window centred on the standard, not one bounded by its neighbours.
+
+    Detection records a peak's extent valley to valley, which for a peak with
+    no close neighbour on one side is wildly asymmetric: measured on a
+    synthetic study, TSP at 0.0 ppm got ``[-0.0117, +0.7206]`` — its apex at
+    1.6% of a window 440 Hz wide, because nothing stood between it and the next
+    signal 0.72 ppm away. At one drift setting the apex landed exactly on the
+    boundary and half the peak was integrated away, and since every
+    concentration is divided by this area, every concentration in that study
+    more than doubled.
+
+    Nothing could have shown it from the results: the standard's recovery is
+    computed against itself and reads 1.00 whatever the window does.
+
+    So the window is symmetric about the apex and sized by the study's
+    linewidth. Five half-widths holds about 87% of a Lorentzian, and the same
+    fraction for every signal measured this way, which is what a ratio needs.
+
+    It is shortened only by a real neighbour — half the distance to the nearest
+    other detected peak — never by the recorded extent, which is the
+    unreliable quantity being corrected. Clamping to that extent instead made
+    the window swing between 4.6 and 31.8 Hz across drift settings on the
+    synthetic study, since the boundary it clamped to was itself an artefact.
+    """
+    apex = float(ref_peak.get('ppm', 0.0))
+    lw = abs(float(linewidth_ppm or 0.0))
+    if lw <= 0:
+        lw = abs(float(ref_peak.get('width_ppm', 0.0) or 0.0)) or 0.006
+    half = 5.0 * lw
+    rank = ref_peak.get('rank')
+    gaps = [abs(float(p.get('ppm', apex)) - apex)
+            for p in (other_peaks or ())
+            if p.get('rank') != rank and p.get('ppm') is not None]
+    gaps = [g for g in gaps if g > 0]
+    if gaps:
+        half = min(half, min(gaps) / 2.0)
+    return apex - half, apex + half
+
+
 def standard_areas_from_peak(ref_peak, ppm, intensities, *,
-                             local_baseline=True):
+                             local_baseline=True, linewidth_ppm=None,
+                             other_peaks=()):
     """The reference's area in every sample, integrated exactly as an analyte.
 
-    The same window rule and the same baseline: a standard measured differently
-    from what it standardises is not a standard, and the ratio would carry the
-    difference into every concentration in the study.
+    The same baseline, and a window centred on the signal — see
+    ``standard_window`` for why the recorded extent will not do. A standard
+    measured differently from what it standardises is not a standard, and the
+    difference goes into every concentration in the study.
     """
     if ref_peak is None:
         return {}
-    lo = min(float(ref_peak.get('start_ppm', 0)), float(ref_peak.get('end_ppm', 0)))
-    hi = max(float(ref_peak.get('start_ppm', 0)), float(ref_peak.get('end_ppm', 0)))
+    lo, hi = standard_window(ref_peak, linewidth_ppm, other_peaks)
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
@@ -310,14 +351,14 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         anchor_met_ids=anchor_metabolite_ids(anchor_lines),
         manual_good_ids=manual_good_ids(quality_marks))
 
+    _lw = measure_linewidth_ppm(ppm, arr, peaks) or 0.008
     std_areas = standard_areas_from_peak(ref_peak, ppm, arr,
-                                         local_baseline=local_baseline)
+                                         local_baseline=local_baseline,
+                                         linewidth_ppm=_lw,
+                                         other_peaks=peaks or ())
     std_snr = None
     if ref_peak is not None and std_areas:
-        lo = min(float(ref_peak.get('start_ppm', 0)),
-                 float(ref_peak.get('end_ppm', 0)))
-        hi = max(float(ref_peak.get('start_ppm', 0)),
-                 float(ref_peak.get('end_ppm', 0)))
+        lo, hi = standard_window(ref_peak, _lw, peaks or ())
         std_snr = representative_snr(window_snr(
             ppm, arr, lo, hi, noise_level([ref_peak], ppm, arr),
             included=included))
@@ -366,7 +407,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # be wide or narrow according to a detection setting rather than to
         # the spectrum. It is the same measurement the detection panel's
         # resolution warning uses, so the project has one linewidth.
-        linewidth_ppm=(measure_linewidth_ppm(ppm, arr, peaks) or 0.008),
+        linewidth_ppm=_lw,
         drift_ppm=project_drift(metabolites),
         # Detection was told to ignore these; nothing measured there is the
         # analyte's, so no limit can be read from them either.

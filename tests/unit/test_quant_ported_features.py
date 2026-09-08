@@ -243,3 +243,15 @@ def test_quantification_measures_its_snr_against_the_same_noise_as_its_limits():
     i_snr = src.index('snr = window_snr(')
     assert i_sigma < i_snr, 'the noise must be settled before the SNR uses it'
     assert 'window_snr(ppm, intensities, lo, hi, sigma_here' in src
+
+
+def test_a_peak_on_the_window_edge_still_has_a_height():
+    """The endpoint line runs through the signal when an apex sits on a window
+    edge — a spectrum that ends there, or a window clipped by the axis. On a
+    synthetic study whose axis began at 0.0 ppm with the standard at 0.0, the
+    line ran from the apex down to the tail and the height came out zero: the
+    internal standard was reported with no signal at all."""
+    ppm = _grid()
+    y = _gauss(ppm, 0.0, 100.0).reshape(-1, 1)     # apex at the axis start
+    snr = window_snr(ppm, y, 0.0, 0.05, noise=1.0)
+    assert snr[0] > 50, 'a peak at the edge must not read as no signal'

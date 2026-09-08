@@ -79,7 +79,16 @@ def window_snr(ppm, intensities, lo, hi, noise, *, included=None) -> dict:
             out[int(s)] = float('nan')
             continue
         base = np.linspace(float(seg[0]), float(seg[-1]), seg.size)
-        out[int(s)] = float(np.max(seg - base)) / float(noise)
+        height = float(np.max(seg - base))
+        if height <= 0.0:
+            # The endpoint line ran through the signal, which happens when an
+            # apex sits on a window edge — a spectrum that ends there, or a
+            # window clipped by the axis. Measured on a synthetic study whose
+            # axis began at 0.0 ppm with the standard at 0.0: the line ran from
+            # the apex down to the tail and the height came out zero, so the
+            # internal standard was reported with no signal at all.
+            height = float(np.max(seg) - np.min(seg))
+        out[int(s)] = height / float(noise)
     return out
 
 
