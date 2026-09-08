@@ -28,9 +28,9 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_detection_limit import (
-    BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, UNRESOLVED, censor,
-    censor_text, detection_limits, drift_offsets, local_noise_sigma,
-    predicted_window, window_is_excluded)
+    BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
+    UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
+    local_noise_sigma, predicted_window, strength_band, window_is_excluded)
 from processing.quant_integration import integrate_sample, integrate_signal
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
@@ -66,8 +66,11 @@ def _cv_percent(values):
     return float(np.std(v, ddof=1) / m * 100.0)
 
 
-def _confidence(signal) -> tuple[int, str]:
-    """How much of the expected evidence this signal carried.
+_DOTS = {3: STATUS_STRONG, 2: STATUS_FAIR, 1: STATUS_WEAK}
+
+
+def _structural_evidence(signal) -> int:
+    """How much of the expected evidence this signal's SHAPE carried.
 
     Three: the multiplet was complete and its coupling agreed. Two: complete,
     coupling off but inside the gate. One: everything else that still produced
@@ -78,10 +81,31 @@ def _confidence(signal) -> tuple[int, str]:
     complete = (n_f is not None and n_e is not None and n_f >= n_e)
     dj = ev.get('delta_j_hz')
     if complete and dj is not None and abs(float(dj)) <= 0.20:
-        return 3, STATUS_STRONG
+        return 3
     if complete and dj is not None:
-        return 2, STATUS_FAIR
-    return 1, STATUS_WEAK
+        return 2
+    return 1
+
+
+def _confidence(signal, strength=None) -> tuple[int, str]:
+    """What the result is worth: the worse of its shape and its size.
+
+    Two independent things can spoil a number and neither can make up for the
+    other. A textbook multiplet measured at the quantification limit is a
+    confident identity and an imprecise quantity; a towering singlet with a
+    rival on its peak is the reverse. Averaging them would let either hide the
+    other, so the lower one stands.
+
+    ``strength`` is the band from ``strength_band`` — 3 when the area clears
+    the quantification limit by the agreed factor, 2 otherwise. It never
+    reaches 1: an analyte whose peak was identified and whose contest it won is
+    not made doubtful by being scarce, and being under the limit says the
+    quantity is small, not that the assignment was wrong.
+    """
+    level = _structural_evidence(signal)
+    if strength is not None:
+        level = min(level, int(strength))
+    return level, _DOTS[level]
 
 
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
@@ -129,7 +153,20 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         snr = window_snr(ppm, intensities, lo, hi,
                          noise_level(lines, ppm, intensities),
                          included=included)
-        measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr, **out}
+        sigma_here = local_noise_sigma(ppm, intensities, lo, hi,
+                                       linewidth_ppm=linewidth_ppm,
+                                       global_sigma=noise_sigma) or noise_sigma
+        n_pts = int(((np.asarray(ppm, dtype=float) >= lo)
+                     & (np.asarray(ppm, dtype=float) <= hi)).sum())
+        _p = np.asarray(ppm, dtype=float)
+        dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
+        lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
+        med_area = (float(np.median(list(out['areas'].values())))
+                    if out['areas'] else float('nan'))
+        measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
+                         'lod_area': lod_a, 'loq_area': loq_a,
+                         'area_median': med_area,
+                         'strength': strength_band(med_area, loq_a), **out}
         per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
 
     # ── Dilution correction across samples ───────────────────────────────────
@@ -159,9 +196,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
-        level, dots = _confidence(info['signal'])
+        level, dots = _confidence(info['signal'], info.get('strength'))
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
-                         pqn_factors))
+                         pqn_factors, standard, standard_conc,
+                         bool(external_standard_samples), dilution,
+                         correction))
 
     for mid, reason in election.rejected.items():
         rows.append(_rejected_row(mid, reason))
@@ -393,9 +432,17 @@ def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
     return row
 
 
-def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
+def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
+         standard=None, standard_conc=0.0, external=False, dilution=None,
+         correction=None) -> dict:
     lo, hi = info['window']
     sig = info['signal']
+    nh_ = info['nh']
+    lod_mm, loq_mm = (_as_concentration(info.get(k), nh_, standard,
+                                        standard_conc, external=external,
+                                        dilution=dilution,
+                                        correction=correction)
+                      for k in ('lod_area', 'loq_area'))
     return {
         'hmdb_id': mid,
         'metabolite': mid,
@@ -411,7 +458,6 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
         '_confidence': level,
         '_integ_mode': 'Multiplet',
         '_not_quantified': not good,
-        '_status_reasons': [] if good else [REJECTION_TEXT.get('zero', '')],
         '_peak': None,
         '_peak_rank': sig.peak_rank,
         '_display_peak_rank': sig.peak_rank,
@@ -426,6 +472,18 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
         '_blk_mean_area': info.get('blank_area', float('nan')),
         '_is_singlet': (sig.evidence or {}).get('multiplicity') == 's',
         '_ann_score': float((sig.evidence or {}).get('score') or 0.0),
+        # Every quantified analyte carries its own limits now. Without them
+        # nobody could tell a number ten times the limit from one at 1.1x, and
+        # the confidence had no way to say which it was.
+        '_lod_mm': lod_mm,
+        '_loq_mm': loq_mm,
+        '_strength': info.get('strength'),
+        '_status_reasons': ([] if info.get('strength', 3) >= 3 else
+                            [f'Sinal fraco: a área medida não chega a '
+                             f'{STRONG_ABOVE_LOQ:.0f}x o limite de '
+                             f'quantificação ({loq_mm:.4g} mM). O analito foi '
+                             f'identificado e ganhou o seu pico; a quantidade '
+                             f'é que é pequena, e o número menos preciso.']),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # JG-Deconv is not part of this engine. The fields stay so the window
         # keeps working, and they say plainly that nothing was applied rather

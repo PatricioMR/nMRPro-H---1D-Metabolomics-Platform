@@ -316,3 +316,39 @@ def local_noise_sigma(ppm, intensity, lo, hi, *, linewidth_ppm,
     if not np.isfinite(sigma) or sigma <= 0:
         return floor
     return max(sigma, floor) if floor is not None else sigma
+
+
+# How far above the quantification limit a signal must sit before its strength
+# stops limiting what the result is worth. Three times, chosen by the analyst:
+# at the limit itself a number is defensible but not strong, and a factor of
+# three is where the counting statistics stop dominating.
+STRONG_ABOVE_LOQ = 3.0
+
+# The floor a weak signal falls to, never below. A signal that was identified,
+# won its peak and then measured near or under the limit is not bad evidence
+# about identity -- it is good evidence about a small quantity, and the
+# distinction belongs in the number's worth rather than in a verdict on whether
+# the analyte is there.
+WEAK_STRENGTH = 2
+STRONG_STRENGTH = 3
+
+
+def strength_band(area, loq_area, *, strong_multiple=STRONG_ABOVE_LOQ) -> int:
+    """How much the measured area is worth on its own, 3 (strong) or 2.
+
+    Only two values, and 2 is the floor. An analyte whose peak was identified
+    and whose contest it won is not made doubtful by being scarce: being under
+    the quantification limit says the quantity is small and the number
+    imprecise, not that the assignment was wrong. What it must not do is read
+    as strong.
+
+    Unknown limits leave the strength unjudged and return the strong band, so
+    a missing noise estimate cannot silently mark every analyte weak — the
+    caller's other evidence then decides alone.
+    """
+    if (area is None or loq_area is None
+            or not np.isfinite(area) or not np.isfinite(loq_area)
+            or loq_area <= 0):
+        return STRONG_STRENGTH
+    return (STRONG_STRENGTH if float(area) >= float(strong_multiple) * float(loq_area)
+            else WEAK_STRENGTH)

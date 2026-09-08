@@ -469,3 +469,116 @@ class TestTheNoiseIsTheRegionsOwn:
         quiet = self._sigma(self._noise())
         crowded = self._sigma(self._noise() + self._peak(7.13, 3000.0))
         assert detection_limits(crowded, 0.00025, 41)[1] >             detection_limits(quiet, 0.00025, 41)[1] * 5
+
+
+class TestTheResultIsWorthTheWorseOfItsTwoEvidences:
+    """Two independent things spoil a number and neither makes up for the other.
+
+    A textbook multiplet measured at the quantification limit is a confident
+    identity and an imprecise quantity; a towering singlet with a rival on its
+    peak is the reverse. Averaging would let either hide the other.
+
+    Until now the dots read only the shape: a metabolite at 1.1x its limit got
+    the same three dots as one at a hundred times, and no quantified analyte
+    was given a limit at all — only the ones that could not be measured were.
+    """
+
+    def _sig(self, mult='d', n_found=2, n_expected=2, dj=0.1):
+        from processing.quantification import Candidate
+        return Candidate(met_id='M', peak_rank=1,
+                         evidence={'multiplicity': mult, 'n_found': n_found,
+                                   'n_expected': n_expected,
+                                   'delta_j_hz': dj})
+
+    def test_a_perfect_multiplet_at_the_limit_is_not_strong(self):
+        from processing.quant_engine import _confidence
+        assert _confidence(self._sig(dj=0.05), strength=2)[0] == 2
+
+    def test_a_big_singlet_is_not_strong_either(self):
+        """Its identity is what is doubtful, and size cannot answer that."""
+        from processing.quant_engine import _confidence
+        assert _confidence(self._sig(mult='s', n_found=1, n_expected=1,
+                                     dj=None), strength=3)[0] == 1
+
+    def test_a_perfect_multiplet_well_above_the_limit_is_strong(self):
+        from processing.quant_engine import _confidence
+        assert _confidence(self._sig(dj=0.05), strength=3)[0] == 3
+
+    def test_without_a_strength_the_shape_decides_alone(self):
+        """A missing noise estimate must not silently mark everything weak."""
+        from processing.quant_engine import _confidence
+        assert _confidence(self._sig(dj=0.05))[0] == 3
+
+
+class TestStrengthNeverCallsAnIdentifiedAnalyteBad:
+    """It floors at two dots. An analyte whose peak was identified and whose
+    contest it won is not made doubtful by being scarce: under the limit says
+    the quantity is small and the number imprecise, not that the assignment was
+    wrong."""
+
+    def test_far_below_the_limit_still_floors_at_two(self):
+        from processing.quant_detection_limit import strength_band
+        assert strength_band(0.001, 10.0) == 2
+
+    def test_at_the_limit_is_two(self):
+        from processing.quant_detection_limit import strength_band
+        assert strength_band(10.0, 10.0) == 2
+
+    def test_the_agreed_multiple_is_where_strong_starts(self):
+        from processing.quant_detection_limit import (
+            STRONG_ABOVE_LOQ, strength_band)
+        assert STRONG_ABOVE_LOQ == 3.0
+        assert strength_band(30.0, 10.0) == 3
+        assert strength_band(29.9, 10.0) == 2
+
+    def test_an_unknown_limit_does_not_penalise(self):
+        from processing.quant_detection_limit import strength_band
+        assert strength_band(50.0, float('nan')) == 3
+        assert strength_band(50.0, None) == 3
+
+
+def test_every_quantified_row_carries_its_own_limits():
+    """Without them nobody can tell a number ten times the limit from one at
+    1.1x, and the confidence had no way to say which it was."""
+    from processing.quant_engine import quantify
+    ppm = np.linspace(0.0, 10.0, 10001)
+    y = (1e4 * np.exp(-0.5 * ((ppm - 5.0) / 0.004) ** 2)
+         + np.random.default_rng(0).normal(0, 1.0, ppm.size)).reshape(-1, 1)
+    peak = {'rank': 1, 'ppm': 5.0, 'start_ppm': 4.99, 'end_ppm': 5.01,
+            'noise': 1.0, 'snr': 100.0}
+    from processing.quantification import Candidate
+    cand = Candidate(met_id='M', peak_rank=1, line_ranks=frozenset([1]),
+                     evidence={'multiplicity': 's', 'n_found': 1,
+                               'n_expected': 1, 'delta_j_hz': None,
+                               'protons': 1.0})
+    rows = quantify(candidates=[cand], peaks_by_rank={1: peak}, ppm=ppm,
+                    intensities=y, samples_info=[{}], included=[0],
+                    groups={'A': [0]}, dj_gold_hz=0.5, noise_sigma=1.0,
+                    linewidth_ppm=0.006, local_baseline=False)
+    row = next(r for r in rows if r['hmdb_id'] == 'M')
+    assert not row['_not_quantified']
+    assert np.isfinite(row['_lod_mm']) and np.isfinite(row['_loq_mm'])
+    assert row['_strength'] in (2, 3)
+
+
+def test_a_weak_row_says_why_it_is_capped():
+    """Two dots with no reason is a verdict the analyst cannot check."""
+    from processing.quant_engine import quantify
+    ppm = np.linspace(0.0, 10.0, 10001)
+    y = (3.0 * np.exp(-0.5 * ((ppm - 5.0) / 0.004) ** 2)
+         + np.random.default_rng(0).normal(0, 1.0, ppm.size)).reshape(-1, 1)
+    peak = {'rank': 1, 'ppm': 5.0, 'start_ppm': 4.99, 'end_ppm': 5.01,
+            'noise': 1.0, 'snr': 3.0}
+    from processing.quantification import Candidate
+    cand = Candidate(met_id='M', peak_rank=1, line_ranks=frozenset([1]),
+                     evidence={'multiplicity': 'd', 'n_found': 2,
+                               'n_expected': 2, 'delta_j_hz': 0.05,
+                               'protons': 1.0})
+    rows = quantify(candidates=[cand], peaks_by_rank={1: peak}, ppm=ppm,
+                    intensities=y, samples_info=[{}], included=[0],
+                    groups={'A': [0]}, dj_gold_hz=0.5, noise_sigma=1.0,
+                    linewidth_ppm=0.006, local_baseline=False)
+    row = next(r for r in rows if r['hmdb_id'] == 'M')
+    if row['_strength'] == 2:
+        assert row['_confidence'] == 2
+        assert 'limite de quantifica' in row['_status_reasons'][0]
