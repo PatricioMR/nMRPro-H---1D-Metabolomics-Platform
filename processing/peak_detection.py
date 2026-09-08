@@ -637,6 +637,37 @@ def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
     return sorted(set(apices))
 
 
+def _linewidth_points(reference, apex_indices, n_top=30):
+    """The reference spectrum's linewidth in points, at half maximum.
+
+    Read off the trace at the tallest apices, walking out to half height. Not
+    from the peaks' recorded extents: those are valley to valley and move with
+    the very setting this is used to choose. A walk that runs to the edge, or
+    one whose apex is not above the half level it is compared against, is
+    discarded rather than counted as a very wide line.
+
+    Returns None when nothing can be measured.
+    """
+    y = np.asarray(reference, dtype=float)
+    idx = sorted((int(i) for i in (apex_indices or ())
+                  if 0 <= int(i) < y.size), key=lambda i: -y[i])[:int(n_top)]
+    widths = []
+    for i in idx:
+        half = y[i] / 2.0
+        if not np.isfinite(half) or half <= 0:
+            continue
+        li = i
+        while li > 0 and y[li] > half:
+            li -= 1
+        ri = i
+        while ri < y.size - 1 and y[ri] > half:
+            ri += 1
+        if li == 0 or ri == y.size - 1 or ri <= li:
+            continue
+        widths.append(ri - li)
+    return int(round(float(np.median(widths)))) if widths else None
+
+
 def _consensus_apices(per_sample_idx, n_points, merge_tol_pts):
     """Merge per-sample apex indices into a consensus master set (union).
 
@@ -981,11 +1012,31 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                     col, sig_s, mh_s, min_snr, distance_in_points,
                     detect_shoulders=detect_shoulders,
                     shoulder_curvature_k=shoulder_curvature_k))
-            # Merge tolerance only absorbs cross-sample alignment jitter of the
-            # SAME line — it must stay well below distance_in_points (the minimum
-            # spacing between distinct apices), or separate multiplet lines /
-            # neighbouring peaks collapse into one blob.
+            # Merge tolerance absorbs the drift of the SAME line between
+            # samples. Half the minimum spacing was not enough: at
+            # min_distance 0.004-0.005 ppm that is 1.2-1.5 Hz, while a
+            # resonance drifts 1.7 Hz between the groups of the reference
+            # study. A line then lands in two clusters and becomes two master
+            # peaks, each present only in the samples on its side of the drift
+            # — which also makes them look group-specific, and manufactures a
+            # difference where there is one molecule.
+            #
+            # The physical bound is the linewidth: two apices closer than that
+            # are not two resolved lines, whatever put them there. Measured
+            # here on the detection reference from a first pass's apices, at
+            # 0.7 of it so a genuine splitting the detector is allowed to
+            # resolve is still kept apart, and never below the old value so
+            # this cannot merge less than before.
             merge_tol_pts = max(1, distance_in_points // 2)
+            _first, _ = _consensus_apices(per_sample_idx, n_points,
+                                          merge_tol_pts)
+            _lw_pts = _linewidth_points(detection_ref, _first)
+            if _lw_pts:
+                merge_tol_pts = max(merge_tol_pts,
+                                    min(int(round(0.7 * _lw_pts)),
+                                        max(1, distance_in_points - 1)))
+                print(f"   Linewidth on the reference: {_lw_pts} pts; "
+                      f"merge tolerance {merge_tol_pts} pts")
             cons_idx, presence = _consensus_apices(
                 per_sample_idx, n_points, merge_tol_pts)
             print(f"   Per-sample union: {sum(len(x) for x in per_sample_idx)} raw "

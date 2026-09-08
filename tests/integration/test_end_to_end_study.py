@@ -346,18 +346,20 @@ def test_drift_is_what_this_pipeline_is_sensitive_to(run):
         per-sample drift   |error| absolute   |error| on the B/A ratio
               0.0 Hz             1.7%                  1.1%
               0.5 Hz             1.6%                  1.1%
-              1.7 Hz            14.8%                  3.3%
-              3.0 Hz            36.3%                  4.5%
+              1.7 Hz             2.8%                  1.2%
+              3.0 Hz            10.0%                  3.4%
 
-    Three hertz is close to a full linewidth: at that point the union splits a
-    line into two master peaks and the windows stop describing one signal. The
-    ratio degrades far more slowly than the absolute value, which is the
-    property a study depends on.
+    The tail correction brings the first two rows under 2%; the merge
+    tolerance, taken from the linewidth rather than from half the minimum
+    spacing, brings the third from 14.8% to 2.8% and the fourth from 36.3% to
+    10.0%. Before it, a line that drifted further than 1.2-1.5 Hz landed in two
+    clusters and became two master peaks — each present only in the samples on
+    its side of the drift, which also made them look group-specific.
 
-    The tail correction is what brings the first two rows to under 2%. It does
-    not rescue the last two, and is refused there: a window holding less than
-    three quarters of its lines is in the wrong place, and scaling it up would
-    make a broken measurement larger rather than better.
+    Three hertz is close to a full linewidth and is where it still breaks down:
+    one analyte of the five stops being quantified there. The ratio degrades far
+    more slowly than the absolute value, which is the property a study depends
+    on.
 
     Before the standard's window was centred, 0.5 Hz of drift gave a 120%
     absolute error — its apex sat on the boundary of a 440 Hz valley-to-valley

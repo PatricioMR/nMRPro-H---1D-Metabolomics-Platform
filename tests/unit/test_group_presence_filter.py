@@ -126,3 +126,66 @@ def test_without_per_sample_detection_it_still_has_an_answer():
         X[:, s] += _gauss(6.500, 4000.0)
     found = [p['ppm'] for p in _detect(X, per_sample_detection=False)]
     assert any(abs(v - 6.500) < 0.01 for v in found), found
+
+
+class TestOneLineDoesNotBecomeTwoMasterPeaks:
+    """The union merged apices within half the minimum spacing — 1.2 to 1.5 Hz
+    at the settings in use — while a resonance drifts 1.7 Hz between the groups
+    of the reference study. A line then landed in two clusters and became two
+    master peaks, each present only in the samples on its side of the drift,
+    which also made them look group-specific and manufactured a difference
+    where there is one molecule.
+
+    The bound is the linewidth: two apices closer than that are not two
+    resolved lines, whatever put them there.
+    """
+
+    def test_the_linewidth_is_read_off_the_reference_trace(self):
+        """Not from the peaks' recorded extents, which are valley to valley and
+        move with the very setting this is used to choose."""
+        from processing.peak_detection import _linewidth_points
+        x = np.arange(4001, dtype=float)
+        g = 20.0
+        y = 1000.0 * g ** 2 / ((x - 2000.0) ** 2 + g ** 2)
+        assert _linewidth_points(y, [2000]) == pytest.approx(2 * g, rel=0.1)
+
+    def test_a_peak_that_never_falls_to_half_is_not_counted(self):
+        """A walk that runs to the edge measured the neighbourhood, and would
+        report a very wide line."""
+        from processing.peak_detection import _linewidth_points
+        assert _linewidth_points(np.ones(500), [250]) is None
+
+    def test_nothing_to_measure_gives_no_answer(self):
+        from processing.peak_detection import _linewidth_points
+        assert _linewidth_points(np.zeros(100), []) is None
+
+    def test_a_drifting_line_stays_one_peak(self):
+        """The whole point. Two groups whose shared line sits 1.7 Hz apart."""
+        from processing.peak_detection import detect_peaks
+        ppm = np.linspace(0.0, 10.0, 20001)
+        drift = 1.7 / 600.71
+        cols = []
+        for k in range(8):
+            c = 3.0 + (drift if k >= 4 else 0.0)
+            cols.append(500.0 * np.exp(-0.5 * ((ppm - c) / 0.0027) ** 2)
+                        + np.random.default_rng(k).normal(0, 1.0, ppm.size))
+        info = ([{'label': 'A', 'type': 'Sample'}] * 4
+                + [{'label': 'B', 'type': 'Sample'}] * 4)
+        pk = detect_peaks(ppm, np.column_stack(cols), noise_std=1.0,
+                          min_snr=6.0, min_distance=0.005,
+                          baseline_correct=False, global_align=False,
+                          samples_info=info, per_sample_detection=True,
+                          detect_shoulders=False, min_group_presence=3)
+        near = [p for p in pk if abs(float(p['ppm']) - 3.0) < 0.02]
+        assert len(near) == 1, (
+            f'one resonance became {len(near)} peaks: '
+            f"{[round(float(p['ppm']), 4) for p in near]}")
+
+    def test_the_tolerance_never_reaches_the_minimum_spacing(self):
+        """Merging at or beyond it would collapse a splitting the detector was
+        told it may resolve."""
+        import inspect
+
+        from processing.peak_detection import detect_peaks
+        src = inspect.getsource(detect_peaks)
+        assert 'max(1, distance_in_points - 1)' in src
