@@ -28,18 +28,20 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
-    claimants_in_window, fraction_in_window, resolve_contested,
-    subtract_neighbours)
+    MIN_CLAIM_FRACTION, claimants_in_window, fraction_in_window,
+    solve_windows, subtract_neighbours)
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
-    local_noise_sigma, predicted_window, strength_band, window_is_excluded)
+    integration_noise, local_noise_sigma, predicted_window, strength_band,
+    window_is_excluded)
 from processing.quant_integration import (
     integrate_sample, integrate_signal, lorentzian_captured_fraction,
-    multiplet_window, pascal_weights)
+    multiplet_window, pascal_weights, refine_apex_ppm)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
-    NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect, is_competitor)
+    LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect,
+    is_competitor)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -140,7 +142,7 @@ MIN_OWN_SHARE = 0.5
 
 def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
                     included, local_baseline, align, blank_indices,
-                    linewidth_ppm):
+                    linewidth_ppm, noise_sigma=None):
     """One window per candidate signal, and everybody whose lines reach it.
 
     Built over the candidates and not over the election's winners, because a
@@ -208,6 +210,20 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
                      'weights': pascal_weights(len(own))})
 
     hwhm = float(linewidth_ppm) / 2.0
+    # Where the lines really are, to better than the grid. Every fraction below
+    # is evaluated at the window's edges, and the trapezium the local baseline
+    # removes is read off the lineshape there -- half a grid point of error in
+    # an apex moves it more than anything else in the model.
+    _arr = np.asarray(intensities, dtype=float)
+    if _arr.ndim == 1:
+        _arr = _arr.reshape(-1, 1)
+    _cols = [c for c in (included or range(_arr.shape[1]))
+             if 0 <= c < _arr.shape[1]]
+    _ref = _arr[:, _cols].mean(axis=1) if _cols else _arr.mean(axis=1)
+    _apex = {}
+    for sig in sigs:
+        sig['ppms'] = [_apex.setdefault(r, refine_apex_ppm(ppm, _ref, pk_ppm))
+                       for r, pk_ppm in zip(sig['ranks'], sig['ppms'])]
     claimed_ranks = {r for sig in sigs for r in sig['ranks']}
     windows, reasons = [], {}
     for sig in sigs:
@@ -216,6 +232,17 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
             counts['no_window'] += 1
             continue
         lo, hi = win
+        # The bounds the integration will actually use. A window whose ends
+        # fall between grid points is integrated between the points inside it,
+        # and the local baseline's line is drawn through THOSE -- so a model
+        # evaluated at the requested ends is describing a window half a point
+        # wider at each side. Where the trapezium is large that half point is
+        # the difference between agreeing with the integral to 0.06% and being
+        # 7% under it.
+        _in = np.asarray(ppm, dtype=float)
+        _in = _in[(_in >= lo) & (_in <= hi)]
+        if _in.size >= 2:
+            lo, hi = float(_in.min()), float(_in.max())
         key = '%s@%s' % (sig['met_id'],
                          '_'.join(str(r) for r in sig['ranks']))
         counts['components'] += 1
@@ -262,6 +289,17 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
                 own_ranks[mid] = other['ranks']
         claimants = claimants_in_window(contributions)
         if not claimants:
+            # Not even the signal the window was built on reaches the floor:
+            # the window is so much narrower than the line that what the local
+            # baseline removes is most of what it holds. Said, not skipped --
+            # a window that vanishes without a word is how a step comes to look
+            # like it is not there.
+            counts['thin_share'] += 1
+            reasons[key] = {
+                'claimants': [(sig['met_id'], sig['nh'])],
+                'reason': ('the window is too narrow for the line: after the '
+                           'baseline it holds under %.0f%% of any claimant'
+                           % (100.0 * MIN_CLAIM_FRACTION))}
             continue
 
         n_cl = len(claimants)
@@ -278,8 +316,18 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
         if not out or not out['areas']:
             counts['no_window'] += 1
             continue
+        # One over the noise on this window's area, so a wide noisy window
+        # does not outvote a narrow clean one in the joint solution.
+        _p = np.asarray(ppm, dtype=float)
+        n_pts = int(((_p >= lo) & (_p <= hi)).sum())
+        dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
+        noise_area = (integration_noise(noise_sigma, dppm, n_pts)
+                      if noise_sigma else None)
         windows.append({
             'key': key, 'ranks': sig['ranks'], 'owner': sig['met_id'],
+            'weight': (1.0 / float(noise_area)
+                       if noise_area and np.isfinite(noise_area)
+                       and noise_area > 0 else 1.0),
             'claimants': claimants, 'areas': dict(out['areas']),
             'window': (lo, hi), 'fractions': fractions, 'geometry': geometry,
             'lines': own_ranks,
@@ -289,100 +337,6 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
             'shifts': out.get('shifts'),
             'blank_area': out.get('blank_area', float('nan'))})
     return windows, by_key, reasons, counts
-
-
-def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
-                    included, local_baseline, align, blank_indices,
-                    linewidth_ppm, noise_sigma, diagnostics=None):
-    """What each analyte's own share of a shared peak is.
-
-    Returns ``({met_id: info}, reasons)`` with the same shape the integration
-    loop produces, so a share and an uncontested area travel through
-    concentration, confidence and the row builder by one path.
-    """
-    windows, by_key, reasons, counts = _signal_windows(
-        candidates, peaks_by_rank, ppm, intensities, included=included,
-        local_baseline=local_baseline, align=align,
-        blank_indices=blank_indices, linewidth_ppm=linewidth_ppm)
-    shares, why = resolve_contested(windows)
-    counts['resolved'] = len(shares)
-    counts['unsolved'] = len(why)
-    by_win = {w['key']: w for w in windows}
-    best: dict = {}
-    for key, text in why.items():
-        reasons[key] = {'claimants': by_win[key]['claimants'],
-                        'reason': text}
-    out = {}
-    for key, split in shares.items():
-        w = by_win[key]
-        lo, hi = w['window']
-        snr, lod_a, loq_a = _window_limits(
-            ppm, intensities, lo, hi, included=included,
-            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
-        protons = dict(w['protons'])
-        for mid, areas in split.items():
-            cand = by_key.get((mid, frozenset(w['ranks'])))
-            if cand is None:
-                cand = next((c for (m, r), c in by_key.items()
-                             if m == mid and r <= set(w['ranks'])), None)
-            if cand is None or mid not in protons:
-                continue
-            # The share is what fell inside the window; the analyte's area is
-            # what its whole signal is worth, which is the share divided by
-            # the part of it the window held. Below half, that division
-            # multiplies the error more than it corrects the area, and what is
-            # being reported is mostly outside the region it was measured in.
-            f = float((w.get('fractions') or {}).get(mid, 1.0))
-            g = float((w.get('geometry') or {}).get(mid, f))
-            if g < MIN_OWN_SHARE:
-                counts['thin_share'] += 1
-                reasons.setdefault(key, {
-                    'claimants': w['claimants'],
-                    'reason': ('the window holds only %.0f%% of this '
-                               'analyte\'s own lines' % (100.0 * g))})
-                continue
-            areas = {s_i: a / f for s_i, a in areas.items()}
-            med = (float(np.median(list(areas.values()))) if areas
-                   else float('nan'))
-            # It may be reached by several windows. The one built on its own
-            # signal measures it; failing that, the one holding most of it.
-            better = (mid == w.get('owner'),
-                      float((w.get('geometry') or {}).get(mid, 0.0)))
-            if better <= best.get(mid, (False, -1.0)):
-                continue
-            best[mid] = better
-            own = [peaks_by_rank[r] for r in (w['lines'].get(mid) or ())
-                   if r in peaks_by_rank]
-            out[mid] = {
-                'signal': cand, 'nh': float(protons[mid]), 'snr': snr,
-                'captured': f,
-                'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
-                             for s_i, v in snr.items()},
-                'lines': [float(pk.get('ppm', 0.0)) for pk in own],
-                'weights': pascal_weights(len(own)),
-                'lod_area': lod_a, 'loq_area': loq_a, 'area_median': med,
-                'strength': strength_band(med, loq_a),
-                'window': (lo, hi), 'areas': dict(areas),
-                'width_ppm': abs(hi - lo), 'shifts': w.get('shifts'),
-                'blank_area': w.get('blank_area', float('nan')),
-                'shared_with': [m for m in protons if m != mid],
-            }
-
-    # Why an analyte that shares a peak still has no number of its own. Keyed
-    # by metabolite because that is what the reader is holding when they ask.
-    per_met = {}
-    for entry in reasons.values():
-        for mid, _nh in entry['claimants']:
-            if mid in out:
-                continue
-            per_met.setdefault(mid, entry['reason'])
-    if diagnostics is not None:
-        tally: dict = {}
-        for entry in reasons.values():
-            tally[entry['reason']] = tally.get(entry['reason'], 0) + 1
-        diagnostics['shared'] = {**counts, 'reasons': tally,
-                                 'metabolites': sorted(out)}
-    return out, per_met
 
 
 def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
@@ -403,6 +357,104 @@ def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
     dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
     lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
     return snr, lod_a, loq_a
+
+
+def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
+                    included, local_baseline, align, blank_indices,
+                    linewidth_ppm, noise_sigma, diagnostics=None):
+    """What each analyte's own share of the shared peaks is.
+
+    Every window is one equation and they are solved together, because they are
+    not independent problems: a metabolite appears in as many windows as it has
+    signals and each holds a different fraction of it. One at a time, a window
+    with two claimants and no independent measurement of either has two
+    unknowns and yields nothing -- 215 of the reference study's 242 contested
+    windows were of that kind. Together they are 291 equations in about 130
+    unknowns.
+
+    Returns ``({met_id: info}, reasons)`` with the same shape the integration
+    loop produces, so a share and an uncontested area travel through
+    concentration, confidence and the row builder by one path.
+    """
+    windows, by_key, reasons, counts = _signal_windows(
+        candidates, peaks_by_rank, ppm, intensities, included=included,
+        local_baseline=local_baseline, align=align,
+        blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
+        noise_sigma=noise_sigma)
+    per_proton, why = solve_windows(windows)
+
+    # Which window speaks for each metabolite. The one built on its own signal
+    # measures it; failing that, the one holding most of it. It decides the
+    # region, the limits and the proton count the row reports -- the
+    # concentration itself came from all of them at once.
+    home: dict = {}
+    for w in windows:
+        for mid, _nh_eff in w['claimants']:
+            better = (mid == w.get('owner'),
+                      float((w.get('geometry') or {}).get(mid, 0.0)))
+            if better > home.get(mid, ((False, -1.0), None))[0]:
+                home[mid] = (better, w)
+
+    out = {}
+    for mid, by_sample in per_proton.items():
+        entry = home.get(mid)
+        if entry is None:
+            continue
+        w = entry[1]
+        cand = by_key.get((mid, frozenset(w['lines'].get(mid) or ())))
+        if cand is None:
+            cand = next((c for (m, r), c in by_key.items() if m == mid), None)
+        if cand is None:
+            continue
+        g = float((w.get('geometry') or {}).get(mid, 1.0))
+        if g < MIN_OWN_SHARE:
+            counts['thin_share'] += 1
+            why.setdefault(mid, 'no window holds as much as half of it; the '
+                                'closest holds %.0f%%' % (100.0 * g))
+            continue
+        nh = float((w.get('protons') or {}).get(mid, 0.0))
+        if nh <= 0:
+            continue
+        lo, hi = w['window']
+        snr, lod_a, loq_a = _window_limits(
+            ppm, intensities, lo, hi, included=included,
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
+        areas = {int(s_i): float(v) * nh for s_i, v in by_sample.items()}
+        med = (float(np.median(list(areas.values()))) if areas
+               else float('nan'))
+        own = [peaks_by_rank[r] for r in (w['lines'].get(mid) or ())
+               if r in peaks_by_rank]
+        out[mid] = {
+            'signal': cand, 'nh': nh, 'snr': snr,
+            'captured': float((w.get('fractions') or {}).get(mid, 1.0)),
+            'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
+                         for s_i, v in snr.items()},
+            'lines': [float(pk.get('ppm', 0.0)) for pk in own],
+            'weights': pascal_weights(len(own)),
+            'lod_area': lod_a, 'loq_area': loq_a, 'area_median': med,
+            'strength': strength_band(med, loq_a),
+            'window': (lo, hi), 'areas': areas,
+            'width_ppm': abs(hi - lo), 'shifts': w.get('shifts'),
+            'blank_area': w.get('blank_area', float('nan')),
+            'shared_with': [m for m, _ in w['claimants'] if m != mid],
+        }
+
+    for entry in reasons.values():
+        for mid, _nh in entry['claimants']:
+            if mid not in out:
+                why.setdefault(mid, entry['reason'])
+
+    if diagnostics is not None:
+        tally: dict = {}
+        for text in why.values():
+            key = text.split(' -- ')[0].split(';')[0]
+            tally[key] = tally.get(key, 0) + 1
+        counts['resolved'] = len(out)
+        counts['unsolved'] = len(why)
+        diagnostics['shared'] = {**counts, 'reasons': tally,
+                                 'metabolites': sorted(out)}
+    return out, why
+
 
 
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
@@ -540,7 +592,13 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                              'shared_with': info['shared_with'],
                              'strength': info['strength'],
                              'area_median': info['area_median']}
-        elif mid in election.rejected:
+        elif election.rejected.get(mid) == LOST_COMPETITION:
+            # Only this one. Losing a contested peak is a verdict about which
+            # analyte owns an area, and the balance answers exactly that. The
+            # other rejections are verdicts about identity -- an ambiguous rank
+            # says the search could not tell two candidates apart, an
+            # unverified multiplet that the lines were never found -- and no
+            # amount of arithmetic on areas settles who a signal belongs to.
             measured[mid] = info
             recovered.add(mid)
         else:

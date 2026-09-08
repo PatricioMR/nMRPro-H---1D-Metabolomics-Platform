@@ -147,151 +147,6 @@ def subtract_neighbours(signals, hwhm, *, max_fraction=0.5):
     return out, removed
 
 
-# ── Two analytes on one peak ─────────────────────────────────────────────────
-# The other half of what overlap does, and the larger one: on the reference
-# study 61 analytes ended with no number because another won the peak they
-# shared. The election is right to give a peak to one owner -- two analytes
-# integrating the same area is the defect that started this work -- but the
-# area itself belongs to both, and the winner is currently credited with all
-# of it.
-#
-# The accounting is linear and needs no new measurement. A window's area is the
-# sum over its claimants of concentration times protons. Where a claimant has a
-# signal of its own that nobody contests, that signal says what its
-# concentration is; subtract what it must be contributing here, and what
-# remains belongs to the rest. If exactly one claimant is unaccounted for, the
-# remainder is its area. If more than one is, the window has one equation and
-# two unknowns and nothing is reported.
-#
-# This is the shape of targeted profiling, and of the JG-Deconv stage's phases
-# 1 to 3, rebuilt where it can be tested.
-
-# A residue smaller than this share of the window is the difference between two
-# larger numbers, and its error is the sum of theirs. Reporting it as a
-# concentration would give an analyte a number built from other analytes'
-# uncertainty.
-MIN_RESIDUE_SHARE = 0.10
-
-
-def anchor_per_proton(windows):
-    """``{met_id: {sample: area per proton}}`` from windows nobody contests.
-
-    A signal with one claimant measures that claimant and nothing else, so its
-    area over its proton count is what one proton of that metabolite is worth
-    in this study. Everything else is solved against these.
-
-    A metabolite with several uncontested signals is averaged over them by the
-    median, so one bad window cannot set the scale for the rest.
-    """
-    per_met: dict = {}
-    for w in windows or ():
-        claimants = list(w.get('claimants') or ())
-        if len(claimants) != 1:
-            continue
-        mid, nh = claimants[0]
-        if not nh or float(nh) <= 0:
-            continue
-        for s, a in (w.get('areas') or {}).items():
-            if a is None or not np.isfinite(a):
-                continue
-            per_met.setdefault(str(mid), {}).setdefault(int(s), []).append(
-                float(a) / float(nh))
-    return {mid: {s: float(np.median(v)) for s, v in by_s.items()}
-            for mid, by_s in per_met.items()}
-
-
-def resolve_contested(windows, *, max_passes=5,
-                      min_residue_share=MIN_RESIDUE_SHARE):
-    """Split each contested window between the analytes that claim it.
-
-    Returns ``(shares, reasons)``. ``shares`` maps each solved window's key to
-    ``{met_id: {sample: area}}`` — every claimant's own part of it, the
-    unaccounted one's being the remainder and each other's what its own clean
-    signal says it must be contributing here.
-
-    The whole window is returned and not only the remainder, because the
-    metabolite that won it is currently credited with all of it. Splitting the
-    area is as much a correction to the winner as it is a number for the
-    analyte that had none.
-
-    ``reasons`` says why a window resolved nothing.
-
-    Cascading: a metabolite solved on one window becomes an anchor for the
-    next, so a chain of overlaps unwinds from whatever clean signal it touches.
-    Bounded, because a cascade that does not settle is a cascade feeding on its
-    own output.
-
-    Nothing is invented. Every number here is a measured area minus the
-    contributions of metabolites whose concentrations another window measured.
-    A window with two unaccounted claimants has one equation and two unknowns
-    and reports nothing at all.
-    """
-    anchors = anchor_per_proton(windows)
-    out: dict = {}
-    solved: set = set()
-    reasons: dict = {}
-    contested = [w for w in (windows or ())
-                 if len(w.get('claimants') or ()) > 1]
-
-    for _ in range(int(max_passes)):
-        progress = False
-        for w in contested:
-            key = w.get('key')
-            if key in solved:
-                continue
-            claimants = list(w.get('claimants') or ())
-            unknown = [(m, nh) for m, nh in claimants
-                       if str(m) not in anchors]
-            if len(unknown) > 1:
-                reasons[key] = ('%d claimants with no signal of their own — '
-                                'one equation, %d unknowns'
-                                % (len(unknown), len(unknown)))
-                continue
-            if not unknown:
-                reasons[key] = ('every claimant already measured elsewhere; '
-                                'the window adds nothing')
-                continue
-            mid_u, nh_u = unknown[0]
-            if not nh_u or float(nh_u) <= 0:
-                reasons[key] = 'the unaccounted claimant has no proton count'
-                continue
-            split: dict = {}
-            ok = True
-            for s, total in (w.get('areas') or {}).items():
-                if total is None or not np.isfinite(total):
-                    continue
-                parts = {}
-                for m, nh in claimants:
-                    if str(m) in anchors:
-                        parts[str(m)] = (anchors[str(m)].get(int(s),
-                                                             float('nan'))
-                                         * float(nh))
-                known = sum(parts.values())
-                if not np.isfinite(known):
-                    continue
-                residue = float(total) - float(known)
-                if residue <= 0 or residue < min_residue_share * float(total):
-                    ok = False
-                    break
-                parts[str(mid_u)] = residue
-                for m, a in parts.items():
-                    split.setdefault(m, {})[int(s)] = float(a)
-            if not ok or str(mid_u) not in split:
-                reasons[key] = ('what the known claimants account for leaves '
-                                'no measurable remainder')
-                continue
-            out[key] = split
-            anchors[str(mid_u)] = {s: a / float(nh_u)
-                                   for s, a in split[str(mid_u)].items()}
-            solved.add(key)
-            reasons.pop(key, None)
-            progress = True
-        if not progress:
-            break
-
-    return out, reasons
-
-
 # A contributor below this share of a window is inside the measurement's own
 # noise. Counting it adds an unknown -- and an unknown is what stops a window
 # being solved at all -- in exchange for a term smaller than the error on the
@@ -323,3 +178,208 @@ def claimants_in_window(contributions, *, min_claim=MIN_CLAIM_FRACTION):
             continue
         per_met[str(mid)] = per_met.get(str(mid), 0.0) + eff
     return [(m, per_met[m]) for m in sorted(per_met)]
+
+
+# ── Two analytes on one peak ─────────────────────────────────────────────────
+# The other half of what overlap does, and the larger one: on the reference
+# study 61 analytes ended with no number because another won the peak they
+# shared. The election is right to give a peak to one owner -- two analytes
+# integrating the same area is the defect that started this work -- but the
+# area itself belongs to both, and the winner was credited with all of it.
+#
+# Every window is one equation. Its area is the sum over its claimants of
+# concentration times protons times the fraction of that claimant the window
+# holds, and the fraction is computed above from where the lines are. Nothing
+# in it is fitted to the trace: the shape of the equation comes from the
+# database and from detection, and only the concentrations are unknown.
+#
+# Solved one window at a time this reaches almost nothing. A window with two
+# claimants and no independent measurement of either has one equation and two
+# unknowns, and on the reference study 215 of 242 contested windows were of
+# that kind. But the windows are not independent problems -- a metabolite
+# appears in as many of them as it has signals, with a different fraction in
+# each -- so together they are 291 equations in about 130 unknowns, and
+# overdetermined. Solved together, a metabolite with no clean signal anywhere
+# is still determined by the several windows it appears in, provided those
+# windows distinguish it from everything else in them.
+#
+# "Provided" is the whole difficulty, and it is what the old JG-Deconv stage
+# had no answer for: it fitted everything and reported everything, including
+# analytes whose column the data could not separate from another's. Two
+# metabolites that appear in exactly the same windows in exactly the same
+# proportions cannot be told apart by any amount of arithmetic, and a solver
+# will still return a number for each. So every column is tested for whether
+# the data determines it, and the ones that are not determined get no
+# concentration and a reason naming what they could not be separated from.
+#
+#     Lawson, C.L. & Hanson, R.J. (1974). Solving Least Squares Problems.
+#     Prentice-Hall. Chapter 23: the non-negative least squares algorithm.
+#
+#     Belsley, D.A., Kuh, E. & Welsch, R.E. (1980). Regression Diagnostics:
+#     Identifying Influential Data and Sources of Collinearity. Wiley.
+#
+#     O'Brien, R.M. (2007). A caution regarding rules of thumb for variance
+#     inflation factors. Quality & Quantity 41:673-690.
+#
+#     Weljie, A.M. et al. (2006). Targeted profiling: quantitative analysis of
+#     1H NMR metabolomics data. Analytical Chemistry 78:4430-4442.
+
+# A column whose variance is inflated more than this by the others is one the
+# data does not separate. Ten is the classical rule of thumb, and O'Brien 2007
+# is right that it is only that -- but the alternative here is not a better
+# threshold, it is reporting numbers nobody can attribute.
+MAX_VIF = 10.0
+
+# And a concentration whose own standard error is more than half of it says
+# the same thing in the other language: the system admits it, but it does not
+# pin it down.
+MAX_RSD = 0.5
+
+
+def _vif(design):
+    """How much each column's variance is inflated by the other columns.
+
+    ``1 / (1 - R2)`` for each column regressed on the rest, which is the
+    definition. A column the others reproduce exactly has infinite VIF and is
+    not identifiable at all; one they cannot reproduce has VIF 1.
+
+    Returns ``(vif, partner)`` -- the partner being the other column that
+    contributes most to reproducing it, so a refusal can name what an analyte
+    could not be separated from rather than only that it could not.
+    """
+    m = np.asarray(design, dtype=float)
+    n_col = m.shape[1]
+    vif = np.ones(n_col, dtype=float)
+    partner = [None] * n_col
+    if n_col < 2:
+        return vif, partner
+    for i in range(n_col):
+        y = m[:, i]
+        ss = float(y @ y)
+        if ss <= 0:
+            vif[i] = np.inf
+            continue
+        rest = np.delete(m, i, axis=1)
+        coef, *_ = np.linalg.lstsq(rest, y, rcond=None)
+        resid = y - rest @ coef
+        r2 = 1.0 - float(resid @ resid) / ss
+        vif[i] = np.inf if r2 >= 1.0 - 1e-12 else 1.0 / (1.0 - r2)
+        if coef.size:
+            k = int(np.argmax(np.abs(coef)))
+            partner[i] = k if k < i else k + 1
+    return vif, partner
+
+
+def solve_windows(windows, *, max_vif=MAX_VIF, max_rsd=MAX_RSD):
+    """Every window at once: what one proton of each metabolite is worth.
+
+    ``windows`` are ``{'key', 'claimants': [(met_id, nh * fraction)],
+    'areas': {sample: area}, 'weight': w}``. The claimant's number is already
+    protons times the fraction of it the window holds, because that product is
+    what multiplies the concentration in the balance.
+
+    Returns ``(per_proton, reasons)``. ``per_proton[met][sample]`` is the area
+    one proton of that metabolite's whole signal is worth -- the same quantity
+    an uncontested window would have divided out, so it travels onward by the
+    same path. ``reasons[met]`` says why a metabolite got none.
+
+    Non-negative, because a concentration is not negative and letting one go
+    negative lets it pay for another's excess. ``weight`` is one over the
+    noise on that window's area, so a wide noisy window does not outvote a
+    narrow clean one; equal weights when it is not given.
+
+    The columns are the same in every sample, so identifiability is decided
+    once, and the standard errors then come per sample from that sample's own
+    residual.
+
+    The windows overlap, so their residuals are correlated and the standard
+    errors below are optimistic. They are used as a floor -- a column already
+    too uncertain under a generous assumption is certainly too uncertain --
+    never as the reported precision.
+    """
+    from scipy.optimize import nnls
+
+    wins = [w for w in (windows or ()) if w.get('claimants') and w.get('areas')]
+    if not wins:
+        return {}, {}
+    mets = sorted({str(m) for w in wins for m, _ in w['claimants']})
+    col = {m: i for i, m in enumerate(mets)}
+    samples = sorted({int(s) for w in wins for s in w['areas']})
+
+    weight = np.array([float(w.get('weight') or 1.0) for w in wins])
+    weight[~np.isfinite(weight) | (weight <= 0)] = 1.0
+
+    design = np.zeros((len(wins), len(mets)), dtype=float)
+    for r, w in enumerate(wins):
+        for m, nh_eff in w['claimants']:
+            design[r, col[str(m)]] += float(nh_eff)
+    design *= weight[:, None]
+
+    reasons: dict = {}
+    norms = np.linalg.norm(design, axis=0)
+    live = [i for i in range(len(mets)) if norms[i] > 0]
+    for i in range(len(mets)):
+        if i not in live:
+            reasons[mets[i]] = 'it contributes nothing to any window measured'
+    if not live:
+        return {}, reasons
+
+    vif, partner = _vif(design[:, live])
+    keep = []
+    for k, i in enumerate(live):
+        if vif[k] <= max_vif:
+            keep.append(i)
+            continue
+        j = partner[k]
+        who = mets[live[j]] if j is not None and j < len(live) else None
+        reasons[mets[i]] = (
+            'the windows do not separate it from %s -- they appear together '
+            'in the same proportions, so no arithmetic can say which of them '
+            'the area belongs to' % (who or 'the other claimants'))
+    if not keep:
+        return {}, reasons
+
+    # A window left with no column of its own -- every claimant in it refused
+    # -- is no longer an equation about anything kept. Leaving it in the system
+    # makes its whole area a residual, which inflates the standard error of
+    # every column that IS kept and can refuse an analyte the rest of the
+    # windows determine exactly.
+    m_keep = design[:, keep]
+    has_col = m_keep.any(axis=1)
+    per_proton: dict = {}
+    rsd_max = {i: 0.0 for i in keep}
+    for s in samples:
+        b = np.array([float(w['areas'].get(s, np.nan)) for w in wins])
+        ok = np.isfinite(b) & has_col
+        if ok.sum() < 1:
+            continue
+        a_s, b_s = m_keep[ok] * 1.0, b[ok] * weight[ok]
+        try:
+            x, _ = nnls(a_s, b_s)
+        except Exception:
+            continue
+        resid = b_s - a_s @ x
+        dof = max(int(ok.sum()) - len(keep), 1)
+        sigma = float(np.sqrt(float(resid @ resid) / dof))
+        for k, i in enumerate(keep):
+            n_i = float(np.linalg.norm(a_s[:, k]))
+            if n_i <= 0:
+                continue
+            se = sigma * float(np.sqrt(max(vif[live.index(i)], 1.0))) / n_i
+            if x[k] > 0:
+                rsd_max[i] = max(rsd_max[i], se / float(x[k]))
+            per_proton.setdefault(mets[i], {})[int(s)] = float(x[k])
+
+    for i in keep:
+        m = mets[i]
+        vals = [v for v in (per_proton.get(m) or {}).values() if v > 0]
+        if not vals:
+            per_proton.pop(m, None)
+            reasons[m] = ('the balance leaves it nothing: what the other '
+                          'claimants account for fills the windows it is in')
+        elif rsd_max[i] > max_rsd:
+            per_proton.pop(m, None)
+            reasons[m] = ('its own standard error reaches %.0f%% of it -- the '
+                          'windows admit this analyte but do not pin it down'
+                          % (100.0 * rsd_max[i]))
+    return per_proton, reasons

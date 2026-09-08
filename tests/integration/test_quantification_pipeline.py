@@ -92,19 +92,30 @@ def test_the_ratio_between_two_analytes_survives_their_different_nh():
     assert _analyte_ratio(local_baseline=False) == pytest.approx(0.6, rel=0.02)
 
 
-def test_the_local_baseline_biases_that_ratio_by_about_five_percent():
-    """Measured, and the reason the panel calls it a fallback.
+def test_the_local_baseline_no_longer_biases_that_ratio():
+    """It used to, and the bias is gone because the trapezium is now modelled.
 
-    A straight line between the two feet of a lorentzian sits on the peak's own
-    tails, so subtracting it removes signal — and removes proportionally more
-    from the taller line. Foot to foot over raw data reads 0.593 against a true
-    0.600; with the local baseline it reads 0.564.
+    A straight line between a lorentzian's two feet sits on the peak's own
+    tails, so subtracting it removes signal, and removes proportionally more
+    from the line whose window is narrower in half-widths. This read 0.564
+    against a true 0.600, and was written down as the cost of the option.
 
-    This is not a defect to fix here. It is the cost of the option, and it
-    belongs written down next to the number it moves, so nobody reads a 5%
-    group difference that is really a baseline choice.
+    The shared-window balance had to model that trapezium to attribute a
+    narrow window's area between its claimants, and the same expression
+    corrects the area of a window with only one. Two details decide whether it
+    is worth 0.06% or 7%: the apex refined off the grid, and the window's
+    bounds taken where the integration actually put them rather than where
+    they were asked for.
     """
-    assert _analyte_ratio(local_baseline=True) == pytest.approx(0.564, abs=0.01)
+    assert _analyte_ratio(local_baseline=True) == pytest.approx(0.600,
+                                                                abs=0.01)
+
+
+def test_the_two_baseline_settings_now_agree():
+    """They are answering the same question about the same spectrum. That they
+    used to differ by 5% was the defect, not the measurement."""
+    assert _analyte_ratio(local_baseline=True) == pytest.approx(
+        _analyte_ratio(local_baseline=False), rel=0.01)
 
 
 def test_no_two_analytes_are_measured_on_the_same_region():

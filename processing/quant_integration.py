@@ -297,3 +297,53 @@ def pascal_weights(n_lines):
     for _ in range(max(int(n_lines), 1) - 1):
         row = [a + b for a, b in zip([0.0] + row, row + [0.0])]
     return row
+
+
+def refine_apex_ppm(ppm, trace, apex_ppm, *, search=2):
+    """Where the line really peaks, between the two points either side of it.
+
+    Detection reports an apex as the grid point holding the largest value, so
+    the position it gives is out by up to half a point. That is harmless while
+    the position is only used to place a window, and it stops being harmless
+    the moment a model is evaluated AT the window's edges: the local baseline's
+    trapezium is computed from the lineshape's height there, and a signal
+    shifted by a fraction of its half width moves that height a long way.
+
+    Measured on a study whose answer was known: two doublets, one integrated
+    with a window whose edges fell on the grid and one whose did not, came back
+    with a concentration ratio of 0.52 against a true 0.60. With the apices
+    refined the same arithmetic gives 0.600.
+
+    A parabola through the apex and its two neighbours, which is the standard
+    estimator for a sampled peak and exact for a parabolic top. Returns the
+    original position when there is nothing to fit or the fit does not put the
+    vertex between the neighbours -- a vertex outside them means the three
+    points are not describing a maximum.
+    """
+    x = np.asarray(ppm, dtype=float)
+    y = np.asarray(trace, dtype=float)
+    if x.size < 3 or y.size != x.size:
+        return float(apex_ppm)
+    i = int(np.argmin(np.abs(x - float(apex_ppm))))
+    lo = max(1, i - int(search))
+    hi = min(x.size - 2, i + int(search))
+    if hi < lo:
+        return float(apex_ppm)
+    i = int(lo + np.argmax(y[lo:hi + 1]))
+    a, b, c = float(y[i - 1]), float(y[i]), float(y[i + 1])
+    # On the reciprocal, because 1/L is exactly a parabola for a Lorentzian:
+    #     1/L(x) = ((x - p)^2 + g^2) / (A g)
+    # so three samples of it give the apex exactly, where three samples of L
+    # itself only approximate the top. The same expression falls back to the
+    # plain parabola when a sample is not positive, which is where the
+    # reciprocal has no meaning.
+    if a > 0 and b > 0 and c > 0:
+        a, b, c = 1.0 / a, 1.0 / b, 1.0 / c
+    denom = a - 2.0 * b + c
+    if denom == 0.0:
+        return float(apex_ppm)
+    delta = 0.5 * (a - c) / denom
+    if not np.isfinite(delta) or abs(delta) > 0.5:
+        return float(apex_ppm)
+    step = float(x[i + 1] - x[i - 1]) / 2.0
+    return float(x[i] + delta * step)

@@ -6,22 +6,33 @@ stop. But the area belongs to both, and until the split existed the winner was
 credited with all of it while the other was credited with nothing. On the
 reference study 61 analytes ended with ``lost_competition`` and no number.
 
-The accounting is linear and introduces no new measurement. A window's area is
-the sum over its claimants of concentration times protons; a claimant measured
-on a clean window of its own says what it must be contributing here; the rest
-belongs to whoever is left. One unaccounted claimant is one equation with one
-unknown. Two is one equation with two, and nothing is reported.
+Every window is one equation: its area is the sum over its claimants of
+concentration times protons times the fraction of that claimant the window
+holds. Nothing in the equation is fitted to the trace — its shape comes from
+the database and from detection, and only the concentrations are unknown.
 
-    Targeted profiling, as in Weljie et al. (2006), Analytical Chemistry
-    78:4430-4442 — the concentration of a metabolite fixed on one resonance
-    constrains every other resonance it has.
+One window at a time this reaches almost nothing: a window with two claimants
+and no independent measurement of either has one equation and two unknowns,
+and 215 of the reference study's 242 contested windows were of that kind. But
+a metabolite appears in as many windows as it has signals, each holding a
+different fraction of it, so together they are 291 equations in about 130
+unknowns and overdetermined.
+
+The difficulty is not solving them; it is that a solver returns a number for
+every column whether or not the data determines it. Two metabolites appearing
+in the same windows in the same proportions cannot be told apart by any amount
+of arithmetic. That is what the old JG-Deconv stage had no answer for, and it
+is the whole of what these tests are about.
+
+    Lawson & Hanson (1974), Solving Least Squares Problems, ch. 23 — NNLS.
+    Belsley, Kuh & Welsch (1980), Regression Diagnostics — collinearity.
+    Weljie et al. (2006), Analytical Chemistry 78:4430 — targeted profiling.
 """
 import numpy as np
 import pytest
 
 from processing.quant_deconvolution import (
-    MIN_CLAIM_FRACTION, MIN_RESIDUE_SHARE, anchor_per_proton,
-    claimants_in_window, resolve_contested)
+    MAX_VIF, MIN_CLAIM_FRACTION, claimants_in_window, solve_windows)
 
 
 def _w(key, claimants, **areas):
@@ -29,94 +40,101 @@ def _w(key, claimants, **areas):
             'areas': {int(k[1:]): v for k, v in areas.items()}}
 
 
-class TestAnchors:
+class TestTheJointSolution:
     def test_a_window_with_one_claimant_measures_that_claimant(self):
-        a = anchor_per_proton([_w('w1', [('lac', 3.0)], s0=300.0)])
-        assert a == {'lac': {0: 100.0}}
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0)])
+        assert pp['lac'][0] == pytest.approx(100.0)
 
-    def test_a_contested_window_anchors_nobody(self):
-        assert anchor_per_proton(
-            [_w('w1', [('lac', 3.0), ('ala', 3.0)], s0=300.0)]) == {}
-
-    def test_several_clean_windows_are_averaged_by_the_median(self):
-        """One bad window must not set the scale for the rest."""
-        a = anchor_per_proton([_w('w1', [('lac', 3.0)], s0=300.0),
-                               _w('w2', [('lac', 1.0)], s0=100.0),
-                               _w('w3', [('lac', 1.0)], s0=400.0)])
-        assert a['lac'][0] == pytest.approx(100.0)
-
-    def test_a_claimant_with_no_protons_is_not_an_anchor(self):
-        assert anchor_per_proton([_w('w1', [('x', 0.0)], s0=300.0)]) == {}
-
-
-class TestSplit:
     def test_the_known_claimant_gives_the_rest_away(self):
-        w = [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0)]
-        shares, reasons = resolve_contested(w)
-        assert shares['w2']['ala'][0] == pytest.approx(150.0)
-        assert not reasons
+        pp, why = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                                 _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                    s0=450.0)])
+        assert pp['ala'][0] == pytest.approx(50.0)
+        assert not why
 
     def test_the_winner_is_corrected_and_not_only_the_loser(self):
-        """The whole window comes back, because the winner was credited with
-        all of it and 300 of these 450 are not its own."""
-        shares, _ = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
-        assert shares['w2']['lac'][0] == pytest.approx(300.0)
+        """300 of that window's 450 are lactate's, and the analyte elected on
+        it was credited with all 450."""
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                               _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                  s0=450.0)])
+        assert pp['lac'][0] == pytest.approx(100.0)
 
-    def test_it_cascades(self):
-        """A metabolite solved on one window anchors the next, so a chain of
-        overlaps unwinds from whatever clean signal it touches."""
-        shares, _ = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0),
-             _w('w3', [('ala', 3.0), ('gli', 2.0)], s0=250.0)])
-        assert shares['w3']['gli'][0] == pytest.approx(100.0)
+    def test_it_reaches_through_a_chain(self):
+        """Alanine is measured only through the window it shares with lactate,
+        and glycine only through the one it shares with alanine."""
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                               _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                  s0=450.0),
+                               _w('w3', [('ala', 3.0), ('gli', 2.0)],
+                                  s0=250.0)])
+        assert pp['gli'][0] == pytest.approx(50.0)
 
-    def test_two_unknowns_report_nothing(self):
-        shares, reasons = resolve_contested(
-            [_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
-        assert shares == {}
-        assert 'two unknowns' in reasons['w1'] or '2 unknowns' in reasons['w1']
+    def test_two_claimants_and_nothing_else_report_nothing(self):
+        """One equation, two unknowns, and no other window to constrain them.
+        This is the case the one-window-at-a-time cascade was limited to."""
+        pp, why = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        assert pp == {}
+        assert 'do not separate it from' in why['x']
 
-    def test_a_residue_smaller_than_its_own_error_is_refused(self):
-        """It is the difference of two larger numbers and carries the sum of
-        their errors; reporting it would build a concentration out of another
-        analyte's uncertainty."""
-        total = 300.0 / (1.0 - MIN_RESIDUE_SHARE / 2.0)
-        shares, reasons = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=total)])
-        assert 'ala' not in shares.get('w2', {})
-        assert reasons['w2']
+    def test_but_two_windows_in_different_proportions_do_report(self):
+        """The whole reason for solving them together. Neither analyte has a
+        window of its own; between them the two windows still say which is
+        which, because they are not in the same proportions."""
+        pp, why = solve_windows([_w('w1', [('x', 1.0), ('y', 2.0)], s0=50.0),
+                                 _w('w2', [('x', 3.0), ('y', 1.0)], s0=50.0)])
+        assert pp['x'][0] == pytest.approx(10.0)
+        assert pp['y'][0] == pytest.approx(20.0)
 
-    def test_a_negative_residue_is_refused(self):
-        shares, reasons = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=250.0)])
-        assert shares == {}
-        assert reasons['w2']
+    def test_a_refusal_names_what_it_could_not_be_separated_from(self):
+        _, why = solve_windows([_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        assert 'y' in why['x'] and 'x' in why['y']
 
-    def test_every_claimant_already_measured_adds_nothing(self):
-        shares, reasons = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0),
-             _w('w2', [('ala', 3.0)], s0=150.0),
-             _w('w3', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
-        assert 'w3' not in shares
-        assert reasons['w3']
+    def test_a_window_nobody_kept_does_not_spoil_the_rest(self):
+        """Its whole area would otherwise become a residual and inflate the
+        standard error of every column that WAS determined."""
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                               _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                  s0=450.0),
+                               _w('w3', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        assert pp['ala'][0] == pytest.approx(50.0)
 
-    def test_each_sample_is_split_on_its_own(self):
-        shares, _ = resolve_contested(
-            [_w('w1', [('lac', 3.0)], s0=300.0, s1=600.0),
-             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0, s1=900.0)])
-        assert shares['w2']['ala'] == {0: pytest.approx(150.0),
-                                       1: pytest.approx(300.0)}
+    def test_each_sample_is_solved_on_its_own(self):
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0, s1=600.0),
+                               _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                  s0=450.0, s1=900.0)])
+        assert pp['ala'] == {0: pytest.approx(50.0), 1: pytest.approx(100.0)}
 
-    def test_nothing_is_invented_where_there_is_no_anchor(self):
-        shares, _ = resolve_contested(
-            [_w('w1', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
-        assert shares == {}
+    def test_no_concentration_comes_back_negative(self):
+        """A negative one would let an analyte pay for another's excess."""
+        pp, _ = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                               _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                  s0=250.0)])
+        assert all(v >= 0 for d in pp.values() for v in d.values())
+
+    def test_an_analyte_the_balance_leaves_nothing_gets_no_number(self):
+        pp, why = solve_windows([_w('w1', [('lac', 3.0)], s0=300.0),
+                                 _w('w2', [('lac', 3.0), ('ala', 3.0)],
+                                    s0=300.0)])
+        assert 'ala' not in pp
+        assert why['ala']
+
+    def test_a_noisier_window_counts_for_less(self):
+        """Two windows disagreeing about one analyte; the answer must sit
+        nearer the one whose area is better measured."""
+        clean = {**_w('w1', [('lac', 3.0)], s0=300.0), 'weight': 10.0}
+        noisy = {**_w('w2', [('lac', 3.0)], s0=600.0), 'weight': 0.1}
+        pp, _ = solve_windows([clean, noisy])
+        assert pp['lac'][0] < 150.0
+
+    def test_nothing_at_all_solves_nothing(self):
+        assert solve_windows([]) == ({}, {})
+
+    def test_the_threshold_is_the_classical_one(self):
+        """Ten is a rule of thumb and O'Brien 2007 is right that it is only
+        that. The alternative is not a better number, it is reporting
+        concentrations nobody can attribute."""
+        assert MAX_VIF == 10.0
 
 
 class TestClaimants:
@@ -291,12 +309,13 @@ class TestInTheEngine:
         rows = self._run(foot=0.004, local_baseline=True)
         assert self._area(rows['B']) == pytest.approx(200.0, rel=0.10)
 
-    def test_a_window_holding_less_than_half_of_a_signal_is_not_split(self):
-        """Dividing by the fraction then multiplies the error faster than it
-        corrects the area. The winner keeps the whole window, and the row says
-        the number is an upper bound rather than leaving it to be read as a
-        concentration."""
-        rows = self._run(foot=0.0012)      # 0.6 half-widths, about 37%
+    def test_a_window_too_narrow_for_its_line_is_not_split(self):
+        """At 0.6 half-widths the window holds 30% of the line and the local
+        baseline takes 25 of those, so nothing in it is worth attributing.
+        The winner keeps the whole window and the row says the number is an
+        upper bound rather than leaving it to be read as a concentration."""
+        rows = self._run(foot=0.0012)
         assert not rows['B']['_shared_with']
-        assert any('not split' in t for t in rows['B']['_status_reasons'])
+        assert any('not split' in t for t in rows['B']['_status_reasons']), (
+            rows['B']['_status_reasons'])
         assert rows['B']['_confidence'] <= 2
