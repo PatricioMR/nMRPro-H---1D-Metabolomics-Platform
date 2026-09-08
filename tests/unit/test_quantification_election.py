@@ -115,3 +115,72 @@ def test_every_reason_can_be_shown_to_the_analyst():
 
 def test_the_reasons_say_different_things():
     assert len(set(REJECTION_TEXT.values())) == len(REJECTION_TEXT)
+
+
+class TestEligibilityAsksWhetherSomethingWasSeen:
+    """Not whether the search was confident about what it was.
+
+    'Good' is what the annotation search says when it has settled an identity.
+    A signal it left undecided is not thereby absent — it is a peak that was
+    found and not adjudicated. Requiring 'good' meant a metabolite whose real
+    signals were all undecided could only get in through a signal that was NOT
+    undecided, and until 2026-09-08 that was routinely a singlet with no
+    detected peak: no peak means no rivals and an empty window, so "alone and
+    uncontested" promoted it to Good and made it an anchor.
+
+    Measured on the reference study, end to end:
+
+        rule                          quantified   strong  fair  weak
+        good-only, with the ghosts        48         15      9    24
+        peak-bearing and not bad          97         15      9    73
+
+    Every analyte the wider rule adds is a singlet marked weak. The strong and
+    fair counts do not move, which is the property that makes the widening
+    honest: it reports more, at a confidence that says so.
+    """
+
+    def _met(self, mid, mps):
+        return {'id': mid, 'matched_peaks': mps}
+
+    def test_a_signal_with_a_peak_and_no_verdict_is_enough(self):
+        from processing.quantification import eligible_metabolite_ids
+        met = self._met('M1', [{'peak_rank': 7, 'annotation_quality': None}])
+        assert eligible_metabolite_ids([met]) == {'M1'}
+
+    def test_a_signal_with_no_peak_is_not(self):
+        """The hole this closes: nothing was seen, so nothing was identified."""
+        from processing.quantification import eligible_metabolite_ids
+        met = self._met('M1', [{'peak_rank': None,
+                                'annotation_quality': None}])
+        assert eligible_metabolite_ids([met]) == set()
+
+    def test_a_bad_signal_is_not(self):
+        from processing.quantification import eligible_metabolite_ids
+        met = self._met('M1', [{'peak_rank': 7,
+                                'annotation_quality': 'bad'}])
+        assert eligible_metabolite_ids([met]) == set()
+
+    def test_one_usable_signal_carries_the_metabolite(self):
+        from processing.quantification import eligible_metabolite_ids
+        met = self._met('M1', [{'peak_rank': 7, 'annotation_quality': 'bad'},
+                               {'peak_rank': 9, 'annotation_quality': None}])
+        assert eligible_metabolite_ids([met]) == {'M1'}
+
+    def test_good_still_gets_in_without_a_rank(self):
+        """A manual or search Good is a judgement about identity, and it is not
+        this function's place to overrule it."""
+        from processing.quantification import eligible_metabolite_ids
+        met = self._met('M1', [{'peak_rank': None,
+                                'annotation_quality': 'good'}])
+        assert eligible_metabolite_ids([met]) == {'M1'}
+
+    def test_eligibility_is_not_a_verdict_on_identity(self):
+        """Which signal is measured is the election's; how much the number is
+        worth is the confidence's. Letting a metabolite in says only that
+        something was found to measure."""
+        from processing.quant_engine import _confidence
+        from processing.quantification import Candidate
+        singlet = Candidate(met_id='M1', peak_rank=7,
+                            evidence={'multiplicity': 's', 'n_found': 1,
+                                      'n_expected': 1, 'delta_j_hz': None})
+        assert _confidence(singlet)[0] == 1

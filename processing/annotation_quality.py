@@ -81,9 +81,21 @@ def promote_singlets(metabolites, peaks, *, params, manual_marks=None):
     another detected signal in its window that it might equally be, and another
     metabolite laying claim to the same peak.
 
+      no detected peak           → undecided. Nothing was found to judge.
       Δppm >= tolerance          → Bad. No database singlet sits here.
       contested                  → undecided. One does, but which is undecided.
       alone and uncontested      → Good, and an anchor.
+
+    The first rule exists because the other three read absence as innocence. A
+    singlet with no detected peak has no rival, because rivals are counted per
+    peak and it holds none, and nothing in its window, because its window is
+    empty — so "alone and uncontested" was satisfied most completely by the
+    signals that were not there at all. They were promoted to Good and made
+    anchors, and then won the quantification election over the same
+    metabolite's signals that did have peaks. Every censored analyte on the
+    reference study reached that state this way: sodium fumarate, guanine,
+    trimethylamine, histamine, L-histidine and L-carnosine each won on a
+    peakless singlet while their own detected multiplets sat marked bad.
 
     The window is ±the annotation tolerance around the detected peak — the same
     number that decided the candidate was worth considering. Three rules used to
@@ -112,6 +124,15 @@ def promote_singlets(metabolites, peaks, *, params, manual_marks=None):
             if not is_singlet_like(mult, strict=True):
                 continue
             if (met.get('id'), mp.get('peak_rank')) in manual_marks:
+                continue
+
+            centre_pk = float(mp.get('peak_ppm') or mp.get('db_ppm') or 0)
+            if (mp.get('peak_rank') is None
+                    and not any(abs(v - centre_pk) <= tol for v in peak_ppms)):
+                mp['annotation_quality'] = QUALITY_UNDECIDED
+                mp['auto_anchor'] = False
+                mp.setdefault('_status_reasons', []).append(
+                    'Singlet with no detected peak — nothing found to judge')
                 continue
 
             if float(mp.get('ppm_diff', 0) or 0) >= tol:

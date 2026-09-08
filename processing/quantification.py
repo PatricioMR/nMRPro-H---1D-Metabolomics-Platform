@@ -163,14 +163,36 @@ def eligible_metabolite_ids(metabolites, *, anchor_met_ids=(),
     quantify on another, and judging it on its worst signal would drop analytes
     that are perfectly measurable somewhere else.
 
-    Three ways in, and only three:
+    Four ways in, and only four:
 
     * an anchor whose anchoring peak is itself 'good' — a stale ``auto_anchor``
       flag on an incomplete multiplet must not carry an unconfirmed J into a
       concentration;
     * any signal the annotation search marked 'good';
+    * any signal with a DETECTED PEAK that the search did not mark 'bad';
     * a manual Good mark, which is the analyst overriding the search and is
       the only thing that should be able to.
+
+    The third exists because the first two ask a harder question than
+    eligibility needs. 'Good' is what the search says when it is confident
+    about identity, and a signal it left undecided is not thereby absent — it
+    is a peak that was found and not adjudicated. Requiring 'good' meant a
+    metabolite whose real signals were all undecided could only get in through
+    a signal that was NOT undecided, and until 2026-09-08 that was routinely a
+    singlet with no detected peak at all: with no peak there are no rivals and
+    an empty window, so "alone and uncontested" promoted it to Good and made it
+    an anchor. See ``processing.annotation_quality.promote_singlets``.
+
+    Closing that hole alone took the reference study from 92 eligible
+    metabolites to 51, and 26 of the 41 lost had a signal with a detected peak
+    that was not marked bad — adenosine, ATP, AMP, L-cystine, dopamine,
+    pyridoxine and thiamine among them, all of which were being quantified on
+    real windows. The defect was calling a thing identified that was never
+    seen, not the existence of those analytes.
+
+    Eligibility is not a verdict on identity. Which of a metabolite's signals
+    is measured is settled by the election, and how much the result is worth is
+    settled by the evidence that travels with it.
     """
     anchors = {str(m) for m in (anchor_met_ids or ())}
     out = {str(m) for m in (manual_good_ids or ())}
@@ -184,5 +206,9 @@ def eligible_metabolite_ids(metabolites, *, anchor_met_ids=(),
             out.add(mid)
             continue
         if any(mp.get('annotation_quality') == 'good' for mp in mps):
+            out.add(mid)
+            continue
+        if any(mp.get('peak_rank') is not None
+               and mp.get('annotation_quality') != 'bad' for mp in mps):
             out.add(mid)
     return out

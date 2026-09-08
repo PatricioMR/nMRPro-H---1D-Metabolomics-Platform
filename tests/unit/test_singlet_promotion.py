@@ -172,3 +172,75 @@ class TestManualMarksArePreserved:
         mets = [{'id': 'A', 'matched_peaks': [_mp(1, 3.20, 0.002)]}]
         assert promote_singlets(mets, [{'ppm': 3.20}],
                                 params={'dppm_gold': 0.05}) == 1
+
+
+class TestASingletWithNoPeakIsNotAloneItIsAbsent:
+    """The other rules read absence as innocence.
+
+    Rivals are counted per peak, and a signal with no peak holds none. Its
+    window is empty, so nothing contests it there either. "Alone and
+    uncontested" was therefore satisfied most completely by the signals that
+    were not in the spectrum at all — they became Good, and anchors.
+
+    Every censored analyte on the reference study reached that state this way.
+    Sodium fumarate, guanine, trimethylamine, histamine, L-histidine and
+    L-carnosine each won the quantification election on a peakless singlet
+    marked Good, while the same metabolite's detected multiplets sat marked
+    bad: histamine's triplet at 3.2518 had all three lines found and lost to
+    its own singlet at 7.0976, where nothing was detected.
+    """
+
+    PARAMS = {'dppm_gold': 0.05}
+
+    def _run(self, mps, peaks):
+        from processing.annotation_quality import promote_singlets
+        mets = [{'id': 'M1', 'matched_peaks': mps}]
+        promote_singlets(mets, peaks, params=self.PARAMS)
+        return mps
+
+    def test_it_is_not_promoted(self):
+        mp = {'type': 's', 'peak_rank': None, 'db_ppm': 7.0976,
+              'ppm_diff': 0.0}
+        self._run([mp], [{'ppm': 2.50, 'rank': 5}])
+        assert mp['annotation_quality'] != 'good'
+
+    def test_it_does_not_become_an_anchor(self):
+        """An anchor makes its whole metabolite eligible to be quantified."""
+        mp = {'type': 's', 'peak_rank': None, 'db_ppm': 7.0976,
+              'ppm_diff': 0.0}
+        self._run([mp], [{'ppm': 2.50, 'rank': 5}])
+        assert not mp.get('auto_anchor')
+
+    def test_the_reason_says_nothing_was_found(self):
+        mp = {'type': 's', 'peak_rank': None, 'db_ppm': 7.0976,
+              'ppm_diff': 0.0}
+        self._run([mp], [{'ppm': 2.50, 'rank': 5}])
+        assert 'no detected peak' in mp['_status_reasons'][-1]
+
+    def test_a_singlet_with_a_peak_is_still_promoted(self):
+        """The rule must not cost the case it was written for."""
+        mp = {'type': 's', 'peak_rank': 5, 'peak_ppm': 2.50, 'db_ppm': 2.50,
+              'ppm_diff': 0.001}
+        self._run([mp], [{'ppm': 2.50, 'rank': 5}])
+        assert mp['annotation_quality'] == 'good'
+        assert mp['auto_anchor']
+
+    def test_a_peak_sitting_in_the_window_still_counts(self):
+        """The rank can be absent while a detected peak is plainly there; the
+        window is what decides, not the bookkeeping."""
+        mp = {'type': 's', 'peak_rank': None, 'peak_ppm': 2.50,
+              'db_ppm': 2.50, 'ppm_diff': 0.001}
+        self._run([mp], [{'ppm': 2.501, 'rank': 5}])
+        assert mp['annotation_quality'] == 'good'
+
+    def test_the_metabolites_detected_signal_can_now_win(self):
+        """The consequence: with the peakless singlet no longer Good, the
+        election sees the signals that have peaks."""
+        peakless = {'type': 's', 'peak_rank': None, 'db_ppm': 7.0976,
+                    'ppm_diff': 0.0}
+        detected = {'type': 's', 'peak_rank': 5, 'peak_ppm': 2.50,
+                    'db_ppm': 2.50, 'ppm_diff': 0.001}
+        self._run([peakless, detected], [{'ppm': 2.50, 'rank': 5}])
+        good = [mp for mp in (peakless, detected)
+                if mp.get('annotation_quality') == 'good']
+        assert good == [detected]

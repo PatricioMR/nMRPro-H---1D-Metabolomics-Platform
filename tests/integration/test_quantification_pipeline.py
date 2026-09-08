@@ -174,12 +174,27 @@ def test_an_ambiguous_rank_blocks_both_claimants():
     assert not got['HMDB0000190']['_not_quantified']
 
 
-def test_a_metabolite_with_no_good_signal_is_not_eligible():
-    """Eligibility is a metabolite-level gate: one usable signal is enough, and
-    none at all means it never reaches the election."""
+def test_a_signal_with_a_peak_and_no_verdict_is_still_measured():
+    """Eligibility asks whether something was found, not whether the search
+    settled its identity. A peak the search left undecided is a peak that was
+    found; how much the number is worth is the confidence's job."""
     s = _study()
     for mp in s['metabolites'][0]['matched_peaks']:
         mp['annotation_quality'] = 'average'
+    got = _by_name(_run(s))
+    assert not got['HMDB0000161']['_not_quantified']
+
+
+def test_a_metabolite_whose_signals_have_no_peaks_is_not_eligible():
+    """The hole that closed: a signal with no detected peak has no rivals and
+    an empty window, so "alone and uncontested" promoted it to Good and it won
+    the election over the metabolite's own detected signals."""
+    s = _study()
+    for mp in s['metabolites'][0]['matched_peaks']:
+        mp['annotation_quality'] = None
+        mp['peak_rank'] = None
+        mp['predicted_lines'] = []
+        mp['matched_line_ranks'] = []
     got = _by_name(_run(s))
     assert 'HMDB0000161' not in got
 
