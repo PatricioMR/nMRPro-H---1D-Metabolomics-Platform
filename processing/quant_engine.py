@@ -45,14 +45,16 @@ STATUS_FAIR = '●●○'
 STATUS_WEAK = '●○○'
 STATUS_NONE = 'n.q.'
 
-# Censored rows carry their own marks. They are not failures and not results:
-# an upper bound is a measurement, and reading it as either of the other two
-# loses what it says.
+# Every censored row reads as weak confidence in the Conf column, and its
+# reason says which kind of weakness. The column answers one question -- how
+# much is this worth -- and putting a second vocabulary in it ("< LOQ",
+# "overlap?") made the reader translate between two scales to compare two rows.
+# The bound itself still travels, in the concentration column and the reason.
 STATUS_CENSORED = {
-    BELOW_LOD: '< LOD',
-    BELOW_LOQ: '< LOQ',
-    UNRESOLVED: 'overlap?',
-    EXCLUDED_REGION: 'excluded',
+    BELOW_LOD: STATUS_WEAK,
+    BELOW_LOQ: STATUS_WEAK,
+    UNRESOLVED: STATUS_WEAK,
+    EXCLUDED_REGION: STATUS_WEAK,
 }
 
 
@@ -482,11 +484,12 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_loq_mm': loq_mm,
         '_strength': info.get('strength'),
         '_status_reasons': ([] if info.get('strength', 3) >= 3 else
-                            [f'Sinal fraco: a área medida não chega a '
-                             f'{STRONG_ABOVE_LOQ:.0f}x o limite de '
-                             f'quantificação ({loq_mm:.4g} mM). O analito foi '
-                             f'identificado e ganhou o seu pico; a quantidade '
-                             f'é que é pequena, e o número menos preciso.']),
+                            [f'Weak signal: the measured area does not reach '
+                             f'{STRONG_ABOVE_LOQ:.0f}x the limit of '
+                             f'quantification ({loq_mm:.4g} mM). The analyte '
+                             f'was identified and won its peak; it is the '
+                             f'quantity that is small, and the number less '
+                             f'precise.']),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # JG-Deconv is not part of this engine. The fields stay so the window
         # keeps working, and they say plainly that nothing was applied rather

@@ -100,7 +100,7 @@ class TestWhoGetsNothing:
         assert by['A']['_not_quantified'] is False
         assert by['B']['_not_quantified'] is True
         assert by['B']['status'] == STATUS_NONE
-        assert by['B']['_status_reasons'][0].startswith('Não quantificado')
+        assert by['B']['_status_reasons'][0].startswith('Not quantified')
 
     def test_an_ambiguous_rank_leaves_both_without_a_number(self):
         rows = _run([_cand('A', 1, [1, 2]), _cand('B', 1, [1, 2])],

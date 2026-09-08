@@ -38,24 +38,21 @@ NO_MEASURABLE_WINDOW = 'no_measurable_window'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
-        'Não quantificado: perdeu a competição — cada pico que este analito '
-        'reivindica foi ganho por outro com evidência melhor.',
+        'Not quantified: lost the competition — every peak this analyte claims '
+        'was won by another with better evidence.',
     UNVERIFIED_MULTIPLET:
-        'Não quantificado: multipleto não verificado — nem todas as linhas '
-        'esperadas foram encontradas, portanto o J nunca foi medido. Não '
-        'competiu por pico nenhum.',
+        'Not quantified: unverified multiplet — not all the expected lines '
+        'were found, so J was never measured. It competed for no peak.',
     AMBIGUOUS_RANK:
-        'Não quantificado: identidade ambígua — os candidatos a este pico '
-        'empatam em toda a evidência disponível. Marque um como Good para '
-        'resolver.',
+        'Not quantified: ambiguous identity — the candidates for this peak tie '
+        'on every piece of evidence available. Mark one Good to resolve it.',
     NO_ELIGIBLE_SIGNAL:
-        'Não quantificado: nenhum sinal elegível — todos foram marcados Bad ou '
-        'não têm pico detectado.',
+        'Not quantified: no eligible signal — every one was marked Bad or has '
+        'no detected peak.',
     NO_MEASURABLE_WINDOW:
-        'Não quantificado: sem janela mensurável — o sinal venceu a competição '
-        'mas nenhuma linha detectada delimita a região a integrar. Não se '
-        'integra onde a base de dados prevê um pico, só onde a detecção '
-        'encontrou um.',
+        'Not quantified: no measurable window — the signal won its contest but '
+        'no detected line bounds a region to integrate. Nothing is integrated '
+        'where the database predicts a peak, only where detection found one.',
 }
 
 

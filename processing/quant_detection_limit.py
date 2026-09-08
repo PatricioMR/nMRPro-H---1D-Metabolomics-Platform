@@ -64,20 +64,22 @@ EXCLUDED_REGION = 'excluded_region'
 
 CENSOR_TEXT = {
     BELOW_LOD:
-        'Abaixo do limite de detecção: a região prevista pela base de dados não '
-        'contém sinal acima do ruído. O analito está ausente ou abaixo de {lod}.',
+        'Below the limit of detection: the region the database predicts holds '
+        'no signal above the noise. The analyte is absent, or below {lod}.',
     BELOW_LOQ:
-        'Abaixo do limite de quantificação: há sinal na região prevista, mas '
-        'não o suficiente para medir. A concentração está entre {lod} e {loq}.',
+        'Below the limit of quantification: there is signal in the predicted '
+        'region but not enough of it to measure. The concentration lies '
+        'between {lod} and {loq}.',
     UNRESOLVED:
-        'Sinal presente, não resolvido: a região prevista contém área bem acima '
-        'do limite de quantificação, mas a detecção não encontrou pico algum '
-        'ali. Provável sobreposição com um vizinho — a área pode não ser deste '
-        'analito. Verifique a região antes de usar.',
+        'Signal present, not resolved: the predicted region holds area well '
+        'above the quantification limit, yet detection found no peak there. '
+        'Likely overlap with a neighbour — the area may not be this '
+        "analyte's. Check the region before using it.",
     EXCLUDED_REGION:
-        'Não avaliável: o sinal previsto cai numa região excluída do espectro. '
-        'A detecção não procura lá e nada medido ali é do analito — na região '
-        'da água é o resíduo do solvente. Nenhum limite pode ser dado.',
+        'Not assessable: the predicted signal falls in a region excluded from '
+        'the spectrum. Detection does not look there, and nothing measured '
+        'there belongs to the analyte — in the water window it is the residual '
+        'solvent. No limit can be given.',
 }
 
 

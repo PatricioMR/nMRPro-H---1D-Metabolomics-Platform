@@ -13,6 +13,7 @@ from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, K_LOQ, UNRESOLVED, censor,
     censor_text, detection_limits, drift_offsets, integration_noise,
     predicted_window, project_drift, project_noise, window_is_excluded)
+from processing.quant_engine import STATUS_WEAK
 
 
 class TestIntegrationNoise:
@@ -138,7 +139,8 @@ class TestAnExcludedRegionIsNotAssessable:
                         excluded_regions=[(4.50, 5.00)])
         row = next(r for r in rows if r['hmdb_id'] == 'ghost')
         assert row['_censored'] == EXCLUDED_REGION
-        assert row['status'] == 'excluded'
+        assert row['status'] == STATUS_WEAK
+        assert 'excluded from' in row['_status_reasons'][0].lower()
         assert not np.isfinite(row.get('_loq_mm', float('nan')))
 
     def test_without_the_exclusion_the_solvent_gets_a_misleading_verdict(self):
@@ -196,7 +198,7 @@ class TestTheReason:
                                         float('nan')).lower()
 
     def test_the_unresolved_reason_tells_the_analyst_to_look(self):
-        assert 'sobreposi' in censor_text(UNRESOLVED, 0.01, 0.03).lower()
+        assert 'overlap' in censor_text(UNRESOLVED, 0.01, 0.03).lower()
 
 
 class TestProjectMeasurements:
@@ -254,7 +256,10 @@ def test_an_empty_region_is_reported_as_below_the_detection_limit():
     rows = _quantify(np.zeros_like(ppm))
     row = next(r for r in rows if r['hmdb_id'] == 'ghost')
     assert row['_censored'] == BELOW_LOD
-    assert row['status'] == '< LOD'
+    # The Conf column answers one question — how much is this worth. Which
+    # kind of weakness it is lives in the reason.
+    assert row['status'] == STATUS_WEAK
+    assert 'below the limit of detection' in row['_status_reasons'][0].lower()
 
 
 def test_the_bound_is_reported_in_the_tables_own_units():
@@ -581,4 +586,4 @@ def test_a_weak_row_says_why_it_is_capped():
     row = next(r for r in rows if r['hmdb_id'] == 'M')
     if row['_strength'] == 2:
         assert row['_confidence'] == 2
-        assert 'limite de quantifica' in row['_status_reasons'][0]
+        assert 'limit of quantification' in row['_status_reasons'][0]

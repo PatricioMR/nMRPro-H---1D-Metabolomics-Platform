@@ -108,9 +108,11 @@ class TestDeterminism:
 
 
 def test_every_reason_can_be_shown_to_the_analyst():
+    """English, like the rest of the interface, and each one names both what
+    happened and what would change it."""
     for reason in (LOST_COMPETITION, UNVERIFIED_MULTIPLET, AMBIGUOUS_RANK,
                    NO_ELIGIBLE_SIGNAL):
-        assert REJECTION_TEXT[reason].startswith('Não quantificado')
+        assert REJECTION_TEXT[reason].startswith('Not quantified')
 
 
 def test_the_reasons_say_different_things():

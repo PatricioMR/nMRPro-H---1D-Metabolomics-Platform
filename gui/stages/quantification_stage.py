@@ -541,11 +541,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._tree.tag_configure('conf1', background='#ffd6d6', foreground='#721c24')
         # Não-quantificados: cinzento, sem destaque. Razão no tooltip da coluna Conf.
         self._tree.tag_configure('nq', background='#eeeeee', foreground='#9a9a9a')
-        # Censored rows sit between the two: measured, but as a bound. Blue
-        # rather than grey, so they do not read as the run having failed on
-        # them, and not green, so they are never mistaken for a concentration.
-        self._tree.tag_configure('censored', background='#e7f0fb',
-                                 foreground='#1565C0')
 
         vsb = ttk.Scrollbar(top, orient=tk.VERTICAL,
                              command=self._tree.yview)
@@ -693,16 +688,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                 # enough, and those say opposite things about the sample.
                 _cens = r.get('_censored')
                 if _cens:
-                    conf_tag = 'censored'
+                    # Poor quality, coloured like any other poor row. Reading
+                    # as a special case invited the analyst to treat it as a
+                    # third kind of result; it is a weak one, and the reason
+                    # says which kind of weakness.
+                    conf_tag = 'conf1'
                     _bound = (r.get('_lod_mm') if _cens == 'below_lod'
                               else r.get('_loq_mm'))
-                    if _cens == 'unresolved':
-                        conc_s = 'overlap?'
-                    elif _bound is not None and np.isfinite(_bound):
+                    if _bound is not None and np.isfinite(_bound):
                         conc_s = (f'< {_bound:.4f}' if _is_mm
                                   else f'< {_bound:.3e}')
                     else:
-                        conc_s = '< LOQ'
+                        conc_s = 'n.q.'
             else:
                 conf_tag = f'conf{_conf}'
             peak_rank = r.get('_peak', {})
