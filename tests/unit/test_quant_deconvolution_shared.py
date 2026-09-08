@@ -1,0 +1,259 @@
+"""Two analytes on one peak: what each of them owns of it.
+
+The election gives a contested peak to a single owner, and it is right to —
+two metabolites integrating the same area is what this engine was built to
+stop. But the area belongs to both, and until the split existed the winner was
+credited with all of it while the other was credited with nothing. On the
+reference study 61 analytes ended with ``lost_competition`` and no number.
+
+The accounting is linear and introduces no new measurement. A window's area is
+the sum over its claimants of concentration times protons; a claimant measured
+on a clean window of its own says what it must be contributing here; the rest
+belongs to whoever is left. One unaccounted claimant is one equation with one
+unknown. Two is one equation with two, and nothing is reported.
+
+    Targeted profiling, as in Weljie et al. (2006), Analytical Chemistry
+    78:4430-4442 — the concentration of a metabolite fixed on one resonance
+    constrains every other resonance it has.
+"""
+import numpy as np
+import pytest
+
+from processing.quant_deconvolution import (
+    MIN_RESIDUE_SHARE, anchor_per_proton, overlap_components,
+    resolve_contested)
+
+
+def _w(key, claimants, **areas):
+    return {'key': key, 'claimants': claimants,
+            'areas': {int(k[1:]): v for k, v in areas.items()}}
+
+
+class TestAnchors:
+    def test_a_window_with_one_claimant_measures_that_claimant(self):
+        a = anchor_per_proton([_w('w1', [('lac', 3.0)], s0=300.0)])
+        assert a == {'lac': {0: 100.0}}
+
+    def test_a_contested_window_anchors_nobody(self):
+        assert anchor_per_proton(
+            [_w('w1', [('lac', 3.0), ('ala', 3.0)], s0=300.0)]) == {}
+
+    def test_several_clean_windows_are_averaged_by_the_median(self):
+        """One bad window must not set the scale for the rest."""
+        a = anchor_per_proton([_w('w1', [('lac', 3.0)], s0=300.0),
+                               _w('w2', [('lac', 1.0)], s0=100.0),
+                               _w('w3', [('lac', 1.0)], s0=400.0)])
+        assert a['lac'][0] == pytest.approx(100.0)
+
+    def test_a_claimant_with_no_protons_is_not_an_anchor(self):
+        assert anchor_per_proton([_w('w1', [('x', 0.0)], s0=300.0)]) == {}
+
+
+class TestSplit:
+    def test_the_known_claimant_gives_the_rest_away(self):
+        w = [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0)]
+        shares, reasons = resolve_contested(w)
+        assert shares['w2']['ala'][0] == pytest.approx(150.0)
+        assert not reasons
+
+    def test_the_winner_is_corrected_and_not_only_the_loser(self):
+        """The whole window comes back, because the winner was credited with
+        all of it and 300 of these 450 are not its own."""
+        shares, _ = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
+        assert shares['w2']['lac'][0] == pytest.approx(300.0)
+
+    def test_it_cascades(self):
+        """A metabolite solved on one window anchors the next, so a chain of
+        overlaps unwinds from whatever clean signal it touches."""
+        shares, _ = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0),
+             _w('w3', [('ala', 3.0), ('gli', 2.0)], s0=250.0)])
+        assert shares['w3']['gli'][0] == pytest.approx(100.0)
+
+    def test_two_unknowns_report_nothing(self):
+        shares, reasons = resolve_contested(
+            [_w('w1', [('x', 1.0), ('y', 1.0)], s0=80.0)])
+        assert shares == {}
+        assert 'two unknowns' in reasons['w1'] or '2 unknowns' in reasons['w1']
+
+    def test_a_residue_smaller_than_its_own_error_is_refused(self):
+        """It is the difference of two larger numbers and carries the sum of
+        their errors; reporting it would build a concentration out of another
+        analyte's uncertainty."""
+        total = 300.0 / (1.0 - MIN_RESIDUE_SHARE / 2.0)
+        shares, reasons = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=total)])
+        assert 'ala' not in shares.get('w2', {})
+        assert reasons['w2']
+
+    def test_a_negative_residue_is_refused(self):
+        shares, reasons = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=250.0)])
+        assert shares == {}
+        assert reasons['w2']
+
+    def test_every_claimant_already_measured_adds_nothing(self):
+        shares, reasons = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0),
+             _w('w2', [('ala', 3.0)], s0=150.0),
+             _w('w3', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
+        assert 'w3' not in shares
+        assert reasons['w3']
+
+    def test_each_sample_is_split_on_its_own(self):
+        shares, _ = resolve_contested(
+            [_w('w1', [('lac', 3.0)], s0=300.0, s1=600.0),
+             _w('w2', [('lac', 3.0), ('ala', 3.0)], s0=450.0, s1=900.0)])
+        assert shares['w2']['ala'] == {0: pytest.approx(150.0),
+                                       1: pytest.approx(300.0)}
+
+    def test_nothing_is_invented_where_there_is_no_anchor(self):
+        shares, _ = resolve_contested(
+            [_w('w1', [('lac', 3.0), ('ala', 3.0)], s0=450.0)])
+        assert shares == {}
+
+
+class TestComponents:
+    """Which candidate signals cannot be integrated apart."""
+
+    def test_signals_sharing_a_line_become_one_window(self):
+        comps = overlap_components([
+            {'met_id': 'a', 'nh': 3.0, 'ranks': [7]},
+            {'met_id': 'b', 'nh': 1.0, 'ranks': [7]}])
+        assert len(comps) == 1
+        assert comps[0]['claimants'] == [('a', 3.0), ('b', 1.0)]
+
+    def test_signals_sharing_no_line_stay_apart(self):
+        comps = overlap_components([
+            {'met_id': 'a', 'nh': 3.0, 'ranks': [1]},
+            {'met_id': 'b', 'nh': 1.0, 'ranks': [9]}])
+        assert len(comps) == 2
+
+    def test_overlap_chains(self):
+        """A signal on lines 1-2 and one on 2-3 are in the same window, because
+        no window holds all of the first without holding part of the second."""
+        comps = overlap_components([
+            {'met_id': 'a', 'nh': 2.0, 'ranks': [1, 2]},
+            {'met_id': 'b', 'nh': 2.0, 'ranks': [2, 3]}])
+        assert len(comps) == 1
+        assert comps[0]['ranks'] == (1, 2, 3)
+
+    def test_two_signals_of_one_metabolite_in_a_window_add_their_protons(self):
+        comps = overlap_components([
+            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]},
+            {'met_id': 'a', 'nh': 3.0, 'ranks': [1, 2]}])
+        assert comps[0]['claimants'] == [('a', 5.0)]
+
+    def test_the_same_signal_listed_twice_counts_once(self):
+        comps = overlap_components([
+            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]},
+            {'met_id': 'a', 'nh': 2.0, 'ranks': [1]}])
+        assert comps[0]['claimants'] == [('a', 2.0)]
+
+    def test_a_signal_with_no_lines_is_not_a_claimant(self):
+        """It was matched to nothing, so it is contributing nothing that can be
+        subtracted, and counting it would add an unknown that blocks the
+        window for the analytes that are there."""
+        assert overlap_components([{'met_id': 'a', 'nh': 3.0,
+                                    'ranks': []}]) == []
+
+    def test_the_order_does_not_depend_on_the_input_order(self):
+        a = overlap_components([{'met_id': 'z', 'nh': 1.0, 'ranks': [5]},
+                                {'met_id': 'a', 'nh': 2.0, 'ranks': [5]}])
+        b = overlap_components([{'met_id': 'a', 'nh': 2.0, 'ranks': [5]},
+                                {'met_id': 'z', 'nh': 1.0, 'ranks': [5]}])
+        assert a == b
+
+
+class TestInTheEngine:
+    """The split as ``quantify`` applies it, on a spectrum built to be shared.
+
+    Two metabolites: one with a clean singlet of its own and a second signal
+    buried under the other's peak, and one whose only signal is that buried
+    peak. Only the first can be anchored, so the second is measurable only by
+    subtraction — which is the case the whole thing exists for.
+    """
+
+    @staticmethod
+    def _study():
+        ppm = np.linspace(0.0, 10.0, 20001)
+        y = np.zeros_like(ppm)
+
+        def line(centre, area, hwhm=0.002):
+            return area / np.pi * hwhm / ((ppm - centre) ** 2 + hwhm ** 2)
+
+        # A: 3 protons alone at 1.00, 3 protons at 3.00 sharing with B.
+        # B: 2 protons at 3.00 and nowhere else.
+        y += line(1.000, 300.0)
+        y += line(3.000, 300.0) + line(3.000, 200.0)
+        return ppm, y.reshape(-1, 1)
+
+    def _run(self, **kw):
+        from processing.quantification import Candidate
+        ppm, y = self._study()
+        # Feet at 25 half-widths: far enough out that the straight local
+        # baseline has almost no Lorentzian pedestal to eat, so what is
+        # left in the numbers is the split and not the integration.
+        peaks = {0: {'ppm': 1.000, 'start_ppm': 0.950, 'end_ppm': 1.050},
+                 1: {'ppm': 3.000, 'start_ppm': 2.950, 'end_ppm': 3.050}}
+        ev_s = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+                'delta_j_hz': 0.0}
+        cands = [
+            Candidate('A', 0, frozenset({0}), {**ev_s, 'protons': 3.0}),
+            Candidate('A', 1, frozenset({1}), {**ev_s, 'protons': 3.0}),
+            Candidate('B', 1, frozenset({1}), {**ev_s, 'protons': 2.0}),
+        ]
+        from processing.quant_engine import quantify
+        rows = quantify(candidates=cands, peaks_by_rank=peaks, ppm=ppm,
+                        intensities=y,
+                        samples_info=[{'label': 'A', 'type': 'Sample'}],
+                        included=[0], groups={'A': [0]}, dj_gold_hz=0.2,
+                        use_pqn=False, linewidth_ppm=0.004,
+                        noise_sigma=1e-6, **kw)
+        return {r['metabolite']: r for r in rows}
+
+    def test_the_analyte_that_lost_the_peak_now_has_a_number(self):
+        rows = self._run()
+        assert not rows['B']['_not_quantified'], rows['B']['_status_reasons']
+
+    def test_the_share_is_the_area_that_is_actually_its_own(self):
+        rows = self._run()
+        area = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
+        # Within the few percent the local baseline takes off the Lorentzian
+        # pedestal at the feet, which the capture correction then puts back --
+        # the two disagree by about 2.5% at this width. That is integration,
+        # not the split: the ratio below is exact.
+        assert area == pytest.approx(200.0, rel=0.05)
+
+    def test_the_winner_keeps_only_its_own_share(self):
+        """Without the split it was credited with all 500 of the window."""
+        rows = self._run()
+        area = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
+        assert area == pytest.approx(300.0, rel=0.05)
+
+    def test_the_two_shares_are_in_the_proportion_they_were_built_in(self):
+        """Whatever the integration loses at the feet it loses from both, so
+        the proportion is the part the split is answerable for."""
+        rows = self._run()
+        a = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
+        b = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
+        assert b / a == pytest.approx(200.0 / 300.0, rel=0.01)
+
+    def test_a_shared_area_never_reads_three_dots(self):
+        """It rests on another analyte's concentration and on the claimant list
+        being complete, neither of which the multiplet's shape can vouch for.
+        """
+        rows = self._run()
+        assert rows['B']['_confidence'] <= 2
+        assert any('Shared window' in t
+                   for t in rows['B']['_status_reasons'])
+
+    def test_the_reason_names_who_it_is_shared_with(self):
+        rows = self._run()
+        assert rows['B']['_shared_with'] == ['A']

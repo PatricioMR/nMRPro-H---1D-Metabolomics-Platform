@@ -238,11 +238,15 @@ def test_quantification_measures_its_snr_against_the_same_noise_as_its_limits():
     import inspect
 
     from processing import quant_engine as qe
-    src = inspect.getsource(qe.quantify)
+    src = inspect.getsource(qe._window_limits)
     i_sigma = src.index('sigma_here = local_noise_sigma')
     i_snr = src.index('snr = window_snr(')
     assert i_sigma < i_snr, 'the noise must be settled before the SNR uses it'
     assert 'window_snr(ppm, intensities, lo, hi, sigma_here' in src
+    # And one place computes it, so a second window -- a shared one, split
+    # between claimants -- cannot reach its own answer by another route.
+    whole = inspect.getsource(qe)
+    assert whole.count('local_noise_sigma(ppm, intensities') == 1
 
 
 def test_a_peak_on_the_window_edge_still_has_a_height():

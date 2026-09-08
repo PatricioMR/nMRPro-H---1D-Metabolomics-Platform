@@ -235,6 +235,28 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                 _dbg(f, '  not resolve. Look at those regions before trusting '
                         'their neighbours.')
 
+        shared = [r for r in rows if r.get('_shared_with')]
+        if shared:
+            _dbg(f, '')
+            _dbg(f, '── SHARED WINDOWS ───────────────────────────────────')
+            _dbg(f, '  Peaks two or more analytes sit on. The area is split '
+                    'by what each')
+            _dbg(f, '  claimant\'s own clean signal says it must be '
+                    'contributing here, so the')
+            _dbg(f, '  numbers below depend on those signals as well as on '
+                    'this window.')
+            _dbg(f, '  A split area never reads three dots.')
+            _dbg(f, '')
+            _dbg(f, f'  {"Metabolite":<30s}  {"region (ppm)":>16}'
+                    f'  {"mean mM":>9}  shares the window with')
+            _dbg(f, '  ' + '-' * 90)
+            for r in sorted(shared, key=lambda r: str(r.get('metabolite', ''))):
+                w = r.get('_multiplet_window') or (float('nan'),) * 2
+                _dbg(f, f'  {str(r.get("metabolite", "?"))[:30]:<30s}'
+                        f'  {w[0]:7.4f}-{w[1]:<7.4f}'
+                        f'  {r.get("conc_mm", float("nan")):>9.4f}'
+                        f'  {", ".join(r.get("_shared_with") or ())}')
+
         _dbg(f, '')
         _dbg(f, '── NOT QUANTIFIED ───────────────────────────────────')
         by_reason: dict = {}

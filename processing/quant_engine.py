@@ -27,7 +27,8 @@ import numpy as np
 
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
-from processing.quant_deconvolution import subtract_neighbours
+from processing.quant_deconvolution import (
+    overlap_components, resolve_contested, subtract_neighbours)
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
@@ -37,7 +38,7 @@ from processing.quant_integration import (
     pascal_weights)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
-    NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect)
+    NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect, is_competitor)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -92,7 +93,7 @@ def _structural_evidence(signal) -> int:
     return 1
 
 
-def _confidence(signal, strength=None) -> tuple[int, str]:
+def _confidence(signal, strength=None, shared=False) -> tuple[int, str]:
     """What the result is worth: the worse of its shape and its size.
 
     Two independent things can spoil a number and neither can make up for the
@@ -100,6 +101,11 @@ def _confidence(signal, strength=None) -> tuple[int, str]:
     confident identity and an imprecise quantity; a towering singlet with a
     rival on its peak is the reverse. Averaging them would let either hide the
     other, so the lower one stands.
+
+    ``shared`` says the area was not measured on a window of its own but
+    resolved out of one held with other analytes. That caps it at two dots
+    whatever its shape: the number then rests on somebody else's concentration
+    being right and on the list of claimants being complete.
 
     ``strength`` is the band from ``strength_band`` — 3 when the area clears
     the quantification limit by the agreed factor, 2 otherwise. It never
@@ -110,7 +116,165 @@ def _confidence(signal, strength=None) -> tuple[int, str]:
     level = _structural_evidence(signal)
     if strength is not None:
         level = min(level, int(strength))
+    if shared:
+        level = min(level, SHARED_MAX_CONFIDENCE)
     return level, _DOTS[level]
+
+
+# A share resolved by subtraction is worth less than an area measured on a
+# window nobody else is in, however clean the multiplet's shape. It rests on
+# another analyte's concentration, and on the assumption that the claimants
+# listed are all of them. Two dots, never three.
+SHARED_MAX_CONFIDENCE = 2
+
+
+def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
+                       included, local_baseline, align, blank_indices,
+                       linewidth_ppm):
+    """Every group of candidate signals that share lines, integrated once.
+
+    Built over the candidates and not over the election's winners, because a
+    winner has exactly one window here and a claimant of that window could then
+    never be anchored anywhere -- every contest would end in two unknowns. The
+    metabolite's other matched signals, clean and merely unused by the
+    election, are what measure it.
+
+    A component whose window contains a detected peak belonging to none of its
+    claimants is refused: the mass balance would be missing a term, and the
+    analyte credited with the remainder would be credited with that peak too.
+    """
+    sigs, by_key = [], {}
+    for c in candidates or ():
+        ranks = sorted(int(r) for r in (c.line_ranks or ()))
+        if not ranks and c.peak_rank is not None:
+            ranks = [int(c.peak_rank)]
+        if not ranks or not is_competitor(c.evidence):
+            continue
+        nh = signal_nh((c.evidence or {}).get('protons'))
+        if not nh or not np.isfinite(nh) or nh <= 0:
+            continue
+        sigs.append({'met_id': str(c.met_id), 'nh': nh, 'ranks': ranks})
+        by_key.setdefault((str(c.met_id), frozenset(ranks)), c)
+
+    windows, reasons = [], {}
+    for comp in overlap_components(sigs):
+        ranks = list(comp['ranks'])
+        lines = [peaks_by_rank[r] for r in ranks if r in peaks_by_rank]
+        if len(lines) != len(ranks):
+            continue
+        out = integrate_signal(lines, ppm, intensities, included=included,
+                               local_baseline=local_baseline, align=align,
+                               blank_indices=blank_indices)
+        if not out or not out['areas']:
+            continue
+        lo, hi = out['window']
+        foreign = [r for r, pk in peaks_by_rank.items()
+                   if int(r) not in comp['ranks']
+                   and lo <= float(pk.get('ppm', -1e9)) <= hi]
+        if foreign:
+            reasons[comp['key']] = {
+                'claimants': comp['claimants'],
+                'reason': ('%d detected peak(s) inside the window belong to '
+                           'no claimant; the balance would be missing a term'
+                           % len(foreign))}
+            continue
+        captured = lorentzian_captured_fraction(
+            [float(pk.get('ppm', 0.0)) for pk in lines],
+            [1.0] * len(lines), lo, hi, linewidth_ppm / 2.0)
+        if not captured:
+            reasons[comp['key']] = {
+                'claimants': comp['claimants'],
+                'reason': ('the window holds too little of its own lines to '
+                           'be compared with the window that anchors the '
+                           'subtraction')}
+            continue
+        areas = {s_i: a / captured for s_i, a in out['areas'].items()}
+        windows.append({**comp, 'areas': areas, 'window': (lo, hi),
+                        'captured': captured, 'lines': lines,
+                        'shifts': out.get('shifts'),
+                        'blank_area': out.get('blank_area', float('nan'))})
+    return windows, by_key, reasons
+
+
+def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
+                    included, local_baseline, align, blank_indices,
+                    linewidth_ppm, noise_sigma):
+    """What each analyte's own share of a shared peak is.
+
+    Returns ``({met_id: info}, reasons)`` with the same shape the integration
+    loop produces, so a share and an uncontested area travel through
+    concentration, confidence and the row builder by one path.
+    """
+    windows, by_key, reasons = _component_windows(
+        candidates, peaks_by_rank, ppm, intensities, included=included,
+        local_baseline=local_baseline, align=align,
+        blank_indices=blank_indices, linewidth_ppm=linewidth_ppm)
+    shares, why = resolve_contested(windows)
+    by_win = {w['key']: w for w in windows}
+    for key, text in why.items():
+        reasons[key] = {'claimants': by_win[key]['claimants'],
+                        'reason': text}
+    out = {}
+    for key, split in shares.items():
+        w = by_win[key]
+        lo, hi = w['window']
+        snr, lod_a, loq_a = _window_limits(
+            ppm, intensities, lo, hi, included=included,
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
+        claimed = dict(w['claimants'])
+        for mid, areas in split.items():
+            cand = by_key.get((mid, frozenset(w['ranks'])))
+            if cand is None:
+                cand = next((c for (m, r), c in by_key.items()
+                             if m == mid and r <= set(w['ranks'])), None)
+            if cand is None or mid not in claimed:
+                continue
+            med = (float(np.median(list(areas.values()))) if areas
+                   else float('nan'))
+            out[mid] = {
+                'signal': cand, 'nh': float(claimed[mid]), 'snr': snr,
+                'captured': w['captured'],
+                'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
+                             for s_i, v in snr.items()},
+                'lines': [float(pk.get('ppm', 0.0)) for pk in w['lines']],
+                'weights': [1.0] * len(w['lines']),
+                'lod_area': lod_a, 'loq_area': loq_a, 'area_median': med,
+                'strength': strength_band(med, loq_a),
+                'window': (lo, hi), 'areas': dict(areas),
+                'width_ppm': abs(hi - lo), 'shifts': w.get('shifts'),
+                'blank_area': w.get('blank_area', float('nan')),
+                'shared_with': [m for m in claimed if m != mid],
+            }
+
+    # Why an analyte that shares a peak still has no number of its own. Keyed
+    # by metabolite because that is what the reader is holding when they ask.
+    per_met = {}
+    for entry in reasons.values():
+        for mid, _nh in entry['claimants']:
+            if mid in out:
+                continue
+            per_met.setdefault(mid, entry['reason'])
+    return out, per_met
+
+
+def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
+                   linewidth_ppm):
+    """The SNR and the detection limits of one window, from one noise.
+
+    One noise for the whole of quantification. The SNR column used to
+    reconstruct its own from the peak's recorded ratio, which disagreed with
+    the limits beside it by a factor of two and, over a baseline offset,
+    produced an SNR of 3149 for an analyte at 0.008 mM.
+    """
+    sigma_here = local_noise_sigma(ppm, intensities, lo, hi,
+                                   linewidth_ppm=linewidth_ppm,
+                                   global_sigma=noise_sigma) or noise_sigma
+    snr = window_snr(ppm, intensities, lo, hi, sigma_here, included=included)
+    _p = np.asarray(ppm, dtype=float)
+    n_pts = int(((_p >= lo) & (_p <= hi)).sum())
+    dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
+    lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
+    return snr, lod_a, loq_a
 
 
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
@@ -168,20 +332,9 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
-        # One noise for the whole of quantification. The SNR column used to
-        # reconstruct its own from the peak's recorded ratio, which disagreed
-        # with the limits beside it by a factor of two and, over a baseline
-        # offset, produced an SNR of 3149 for an analyte at 0.008 mM.
-        sigma_here = local_noise_sigma(ppm, intensities, lo, hi,
-                                       linewidth_ppm=linewidth_ppm,
-                                       global_sigma=noise_sigma) or noise_sigma
-        snr = window_snr(ppm, intensities, lo, hi, sigma_here,
-                         included=included)
-        n_pts = int(((np.asarray(ppm, dtype=float) >= lo)
-                     & (np.asarray(ppm, dtype=float) <= hi)).sum())
-        _p = np.asarray(ppm, dtype=float)
-        dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
-        lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
+        snr, lod_a, loq_a = _window_limits(
+            ppm, intensities, lo, hi, included=included,
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
         med_area = (float(np.median(list(out['areas'].values())))
                     if out['areas'] else float('nan'))
         # Which samples actually show this signal, at the same ratio the
@@ -225,6 +378,36 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             per_proton_areas[k] = {s_i: a / v['nh']
                                    for s_i, a in v['areas'].items()}
 
+    # ── Two analytes on one peak ───────────────────────────────────────
+    # The election gives a contested peak to one owner, which is right -- two
+    # analytes integrating the same area is the defect that started this work.
+    # But the area belongs to both, and until here the winner was credited with
+    # all of it while the other was credited with nothing. Where every claimant
+    # but one is measured elsewhere, subtracting what those must be
+    # contributing leaves the rest, and the rest is arithmetic on measured
+    # quantities rather than an estimate.
+    shared, shared_reasons = _resolve_shared(
+        candidates, peaks_by_rank, ppm, intensities, included=included,
+        local_baseline=local_baseline, align=align,
+        blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
+        noise_sigma=noise_sigma)
+    recovered = set()
+    for mid, info in shared.items():
+        if mid in measured:
+            # Its number came from a window it does not hold alone; what it
+            # holds of that window is this.
+            measured[mid] = {**measured[mid], 'areas': info['areas'],
+                             'shared_with': info['shared_with'],
+                             'strength': info['strength'],
+                             'area_median': info['area_median']}
+        elif mid in election.rejected:
+            measured[mid] = info
+            recovered.add(mid)
+        else:
+            continue
+        per_proton_areas[mid] = {s_i: a / measured[mid]['nh']
+                                 for s_i, a in measured[mid]['areas'].items()}
+
     # ── Dilution correction across samples ───────────────────────────────────
     # PQN before the standard: it corrects how concentrated the sample is, and
     # the standard then says what the corrected signal is worth. Running it
@@ -252,14 +435,17 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
-        level, dots = _confidence(info['signal'], info.get('strength'))
+        level, dots = _confidence(info['signal'], info.get('strength'),
+                                  shared=bool(info.get('shared_with')))
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
                          pqn_factors, standard, standard_conc,
                          bool(external_standard_samples), dilution,
                          correction))
 
     for mid, reason in election.rejected.items():
-        rows.append(_rejected_row(mid, reason))
+        if mid in recovered:
+            continue
+        rows.append(_rejected_row(mid, reason, shared_reasons.get(mid)))
     # A winner with no detected line is not a failure to measure — it is a
     # measurement of an upper bound, and reporting it as one is the whole of
     # processing.quant_detection_limit.
@@ -537,13 +723,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_strength': info.get('strength'),
         '_captured_fraction': info.get('captured'),
         '_neighbour_share': info.get('neighbour_share', 0.0),
-        '_status_reasons': ([] if info.get('strength', 3) >= 3 else
-                            [f'Weak signal: the measured area does not reach '
-                             f'{STRONG_ABOVE_LOQ:.0f}x the limit of '
-                             f'quantification ({loq_mm:.4g} mM). The analyte '
-                             f'was identified and won its peak; it is the '
-                             f'quantity that is small, and the number less '
-                             f'precise.']),
+        '_shared_with': list(info.get('shared_with') or ()),
+        '_status_reasons': (_shared_reason(info)
+                            + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # JG-Deconv is not part of this engine. The fields stay so the window
         # keeps working, and they say plainly that nothing was applied rather
@@ -557,7 +739,30 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
     }
 
 
-def _rejected_row(mid, reason) -> dict:
+def _weak_reason(info, loq_mm) -> list:
+    """Said when the area does not clear the quantification limit by the
+    agreed factor. The identity is not in question here — only the precision.
+    """
+    if info.get('strength', 3) >= 3:
+        return []
+    return [f'Weak signal: the measured area does not reach '
+            f'{STRONG_ABOVE_LOQ:.0f}x the limit of quantification '
+            f'({loq_mm:.4g} mM). The analyte was identified and won its peak; '
+            f'it is the quantity that is small, and the number less precise.']
+
+
+def _shared_reason(info) -> list:
+    """What the reader needs to know about an area that was shared."""
+    with_ = list(info.get('shared_with') or ())
+    if not with_:
+        return []
+    return [f'Shared window: the signal is held with {", ".join(with_)}. '
+            f'This area is what remains once their own measurements account '
+            f'for what they contribute here, so it depends on those being '
+            f'right and on there being no other analyte in the window.']
+
+
+def _rejected_row(mid, reason, shared_reason=None) -> dict:
     """A metabolite with no number still gets a row, and says why.
 
     An analyte that disappears from the table cannot be questioned, and the
@@ -580,7 +785,10 @@ def _rejected_row(mid, reason) -> dict:
         '_confidence': 0,
         '_integ_mode': 'Multiplet',
         '_not_quantified': True,
-        '_status_reasons': [REJECTION_TEXT.get(reason, str(reason))],
+        '_status_reasons': ([REJECTION_TEXT.get(reason, str(reason))]
+                            + ([f'Its share of the shared window could not be '
+                                f'resolved: {shared_reason}']
+                               if shared_reason else [])),
         '_rejection': reason,
         '_peak': None,
         '_peak_rank': None,
