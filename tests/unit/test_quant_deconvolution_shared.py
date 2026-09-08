@@ -174,10 +174,10 @@ class TestComponents:
 class TestInTheEngine:
     """The split as ``quantify`` applies it, on a spectrum built to be shared.
 
-    Two metabolites: one with a clean singlet of its own and a second signal
-    buried under the other's peak, and one whose only signal is that buried
-    peak. Only the first can be anchored, so the second is measurable only by
-    subtraction — which is the case the whole thing exists for.
+    Two metabolites: A with a clean singlet of its own and a second signal
+    under B's peak, and B whose only signal is that shared peak. A is the only
+    one that can be anchored, so whichever of them loses the peak is
+    measurable only by subtraction.
     """
 
     @staticmethod
@@ -194,20 +194,29 @@ class TestInTheEngine:
         y += line(3.000, 300.0) + line(3.000, 200.0)
         return ppm, y.reshape(-1, 1)
 
-    def _run(self, **kw):
+    def _run(self, foot=0.050, a_prefers_the_shared_peak=False, **kw):
         from processing.quantification import Candidate
         ppm, y = self._study()
-        # Feet at 25 half-widths: far enough out that the straight local
-        # baseline has almost no Lorentzian pedestal to eat, so what is
+        # Feet at 25 half-widths by default: far enough out that the straight
+        # local baseline has almost no Lorentzian pedestal to eat, so what is
         # left in the numbers is the split and not the integration.
-        peaks = {0: {'ppm': 1.000, 'start_ppm': 0.950, 'end_ppm': 1.050},
-                 1: {'ppm': 3.000, 'start_ppm': 2.950, 'end_ppm': 3.050}}
-        ev_s = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
-                'delta_j_hz': 0.0}
+        peaks = {0: {'ppm': 1.000, 'rank': 0,
+                     'start_ppm': 1.000 - foot, 'end_ppm': 1.000 + foot},
+                 1: {'ppm': 3.000, 'rank': 1,
+                     'start_ppm': 3.000 - foot, 'end_ppm': 3.000 + foot}}
+        ev = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+              'delta_j_hz': 0.0}
+        # Score is the election's last tie-break, so it is what decides which
+        # of the two signals A is elected on -- and therefore which analyte
+        # ends up owning the shared peak and which has to be recovered from it.
+        a_clean, a_shared = (0.5, 1.0) if a_prefers_the_shared_peak else (1.0, 0.5)
         cands = [
-            Candidate('A', 0, frozenset({0}), {**ev_s, 'protons': 3.0}),
-            Candidate('A', 1, frozenset({1}), {**ev_s, 'protons': 3.0}),
-            Candidate('B', 1, frozenset({1}), {**ev_s, 'protons': 2.0}),
+            Candidate('A', 0, frozenset({0}),
+                      {**ev, 'protons': 3.0, 'score': a_clean}),
+            Candidate('A', 1, frozenset({1}),
+                      {**ev, 'protons': 3.0, 'score': a_shared}),
+            Candidate('B', 1, frozenset({1}),
+                      {**ev, 'protons': 2.0, 'score': 0.1}),
         ]
         from processing.quant_engine import quantify
         rows = quantify(candidates=cands, peaks_by_rank=peaks, ppm=ppm,
@@ -218,32 +227,31 @@ class TestInTheEngine:
                         noise_sigma=1e-6, **kw)
         return {r['metabolite']: r for r in rows}
 
-    def test_the_analyte_that_lost_the_peak_now_has_a_number(self):
-        rows = self._run()
-        assert not rows['B']['_not_quantified'], rows['B']['_status_reasons']
+    @staticmethod
+    def _area(row):
+        return float(np.mean(list(row['_areas_per_sample'].values())))
 
-    def test_the_share_is_the_area_that_is_actually_its_own(self):
-        rows = self._run()
-        area = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
-        # Within the few percent the local baseline takes off the Lorentzian
-        # pedestal at the feet, which the capture correction then puts back --
-        # the two disagree by about 2.5% at this width. That is integration,
-        # not the split: the ratio below is exact.
-        assert area == pytest.approx(200.0, rel=0.05)
+    # ── the winner of a shared peak was credited with all of it ──────────────
 
-    def test_the_winner_keeps_only_its_own_share(self):
-        """Without the split it was credited with all 500 of the window."""
+    def test_the_winner_of_a_shared_peak_keeps_only_its_own_share(self):
+        """B wins the peak at 3.00 and used to be credited with the whole 500,
+        300 of which is A's."""
         rows = self._run()
-        area = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
-        assert area == pytest.approx(300.0, rel=0.05)
+        assert self._area(rows['B']) == pytest.approx(200.0, rel=0.05)
+
+    def test_the_claimant_that_did_not_win_it_gets_a_number_too(self):
+        """A is elected on its clean singlet, so the shared peak is not what
+        measures it -- but its part of that peak is now accounted for and not
+        silently handed to B."""
+        rows = self._run()
+        assert self._area(rows['A']) == pytest.approx(300.0, rel=0.05)
 
     def test_the_two_shares_are_in_the_proportion_they_were_built_in(self):
         """Whatever the integration loses at the feet it loses from both, so
         the proportion is the part the split is answerable for."""
         rows = self._run()
-        a = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
-        b = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
-        assert b / a == pytest.approx(200.0 / 300.0, rel=0.01)
+        assert (self._area(rows['B']) / self._area(rows['A'])
+                == pytest.approx(200.0 / 300.0, rel=0.01))
 
     def test_a_shared_area_never_reads_three_dots(self):
         """It rests on another analyte's concentration and on the claimant list
@@ -251,9 +259,57 @@ class TestInTheEngine:
         """
         rows = self._run()
         assert rows['B']['_confidence'] <= 2
-        assert any('Shared window' in t
-                   for t in rows['B']['_status_reasons'])
+        assert any('Shared window' in t for t in rows['B']['_status_reasons'])
 
     def test_the_reason_names_who_it_is_shared_with(self):
         rows = self._run()
         assert rows['B']['_shared_with'] == ['A']
+
+    # ── the analyte that lost the peak outright ──────────────────────────────
+
+    def test_the_analyte_that_lost_the_competition_now_has_a_number(self):
+        """The 61 on the reference study. A wins the shared peak, so B has no
+        peak of its own anywhere and the election gives it nothing. Its
+        concentration exists all the same: A is anchored on its clean singlet,
+        and what A cannot account for in the shared window is B."""
+        rows = self._run(a_prefers_the_shared_peak=True)
+        assert not rows['B']['_not_quantified'], rows['B']['_status_reasons']
+        assert self._area(rows['B']) == pytest.approx(200.0, rel=0.05)
+
+    def test_recovering_it_does_not_leave_a_second_row_saying_it_lost(self):
+        rows = self._run(a_prefers_the_shared_peak=True)
+        assert rows['B'].get('_rejection') is None
+
+    # ── narrow windows, which is what a crowded region produces ──────────────
+
+    def test_a_narrow_window_still_splits(self):
+        """Foot to foot in a crowded region is narrow by construction: the feet
+        are the valleys and the valleys are close when the neighbours are.
+        Requiring a window to hold 75% of its lines -- the threshold the
+        capture correction uses to decide whether it is worth applying --
+        threw away 69 of the reference study's 113 windows, the uncontested
+        ones among them, and left nothing to solve anything against.
+
+        At two half-widths a Lorentzian window holds about 70%.
+        """
+        rows = self._run(foot=0.004)
+        assert self._area(rows['B']) == pytest.approx(200.0, rel=0.10)
+
+    def test_the_narrow_window_accounts_for_the_baseline_it_subtracts(self):
+        """The local baseline is a straight line through the signal's own
+        tails, so it takes away a trapezium of the area being measured -- at
+        two half-widths, most of what the window holds. Modelling only the
+        Lorentzian tail and not the trapezium put this at 127 instead of 200.
+        """
+        rows = self._run(foot=0.004, local_baseline=True)
+        assert self._area(rows['B']) == pytest.approx(200.0, rel=0.10)
+
+    def test_a_window_holding_less_than_half_of_a_signal_is_not_split(self):
+        """Dividing by the fraction then multiplies the error faster than it
+        corrects the area. The winner keeps the whole window, and the row says
+        the number is an upper bound rather than leaving it to be read as a
+        concentration."""
+        rows = self._run(foot=0.0012)      # 0.6 half-widths, about 37%
+        assert not rows['B']['_shared_with']
+        assert any('not split' in t for t in rows['B']['_status_reasons'])
+        assert rows['B']['_confidence'] <= 2

@@ -28,7 +28,8 @@ import numpy as np
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
-    overlap_components, resolve_contested, subtract_neighbours)
+    fraction_in_window, overlap_components, resolve_contested,
+    subtract_neighbours)
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
@@ -102,10 +103,12 @@ def _confidence(signal, strength=None, shared=False) -> tuple[int, str]:
     rival on its peak is the reverse. Averaging them would let either hide the
     other, so the lower one stands.
 
-    ``shared`` says the area was not measured on a window of its own but
-    resolved out of one held with other analytes. That caps it at two dots
-    whatever its shape: the number then rests on somebody else's concentration
-    being right and on the list of claimants being complete.
+    ``shared`` says the window is not this analyte's alone -- either the area
+    was resolved out of one held with others, or it is a window that could not
+    be split and so still holds somebody else's signal. Two dots either way,
+    whatever the multiplet's shape: in the first case the number rests on
+    another analyte's concentration being right, and in the second it is an
+    upper bound wearing a concentration's clothes.
 
     ``strength`` is the band from ``strength_band`` — 3 when the area clears
     the quantification limit by the agreed factor, 2 otherwise. It never
@@ -127,6 +130,13 @@ def _confidence(signal, strength=None, shared=False) -> tuple[int, str]:
 # listed are all of them. Two dots, never three.
 SHARED_MAX_CONFIDENCE = 2
 
+# Below this, the window holds less of an analyte's signal than it leaves
+# outside, and dividing the share by it multiplies the error faster than it
+# corrects the area. The claimant still counts in the balance -- its
+# contribution to the window is real and gets subtracted -- it simply does not
+# get a concentration out of a window that is mostly not looking at it.
+MIN_OWN_SHARE = 0.5
+
 
 def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
                        included, local_baseline, align, blank_indices,
@@ -142,11 +152,25 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
     A component whose window contains a detected peak belonging to none of its
     claimants is refused: the mass balance would be missing a term, and the
     analyte credited with the remainder would be credited with that peak too.
+
+    Each claimant is weighed by the fraction of ITS OWN lines that the window
+    holds, not by one capture fraction for the window. The balance is
+
+        A(W) = sum over claimants of  concentration * protons * fraction
+
+    and the fraction is a term of it, never a test the window has to pass. An
+    earlier version refused any window holding less than 75% of its lines --
+    the threshold the capture correction uses to decide whether it is worth
+    applying -- and on the reference study that threw away 69 of 113 windows,
+    among them the uncontested ones that would have anchored the rest. Nothing
+    could be solved because nothing was left to solve against. Foot-to-foot
+    windows in a crowded region are narrow by construction: the feet are the
+    valleys, and the valleys are close when the neighbours are.
     """
     sigs, by_key = [], {}
     counts = {'candidates': 0, 'no_lines': 0, 'not_competitor': 0,
               'no_protons': 0, 'components': 0, 'contested': 0,
-              'no_window': 0, 'foreign_peak': 0, 'poor_capture': 0,
+              'no_window': 0, 'foreign_peak': 0, 'thin_share': 0,
               'largest': 0, 'largest_lines': 0}
     for c in candidates or ():
         counts['candidates'] += 1
@@ -203,20 +227,34 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
                            'no claimant; the balance would be missing a term'
                            % len(foreign))}
             continue
-        captured = lorentzian_captured_fraction(
-            [float(pk.get('ppm', 0.0)) for pk in lines],
-            [1.0] * len(lines), lo, hi, linewidth_ppm / 2.0)
-        if not captured:
-            counts['poor_capture'] += 1
-            reasons[comp['key']] = {
-                'claimants': comp['claimants'],
-                'reason': ('the window holds too little of its own lines to '
-                           'be compared with the window that anchors the '
-                           'subtraction')}
-            continue
-        areas = {s_i: a / captured for s_i, a in out['areas'].items()}
-        windows.append({**comp, 'areas': areas, 'window': (lo, hi),
-                        'captured': captured, 'lines': lines,
+        fractions, geometry, weighted = {}, {}, []
+        for mid, nh in comp['claimants']:
+            own = [peaks_by_rank[r] for r in comp['lines'][mid]
+                   if r in peaks_by_rank]
+            ppms = [float(pk.get('ppm', 0.0)) for pk in own]
+            wts = pascal_weights(len(own))
+            # Two fractions, and they answer different questions. The one with
+            # the baseline in it is the term of the balance -- what the
+            # integration of this window actually returns for this analyte.
+            # The bare geometric one is whether the window is looking at the
+            # analyte at all, and that is what the floor below is about: a
+            # straight line drawn through a signal's own tails is a property
+            # of how it was measured, not evidence that the signal is
+            # elsewhere.
+            f = fraction_in_window(ppms, wts, lo, hi, linewidth_ppm / 2.0,
+                                   local_baseline=local_baseline)
+            g = (fraction_in_window(ppms, wts, lo, hi, linewidth_ppm / 2.0)
+                 if local_baseline else f)
+            if not f or f <= 0:
+                f = 1.0
+            fractions[mid] = float(f)
+            geometry[mid] = float(g) if g and g > 0 else float(f)
+            weighted.append((mid, float(nh) * float(f)))
+        windows.append({**comp, 'areas': dict(out['areas']),
+                        'window': (lo, hi), 'fractions': fractions,
+                        'geometry': geometry,
+                        'claimants': weighted, 'protons': dict(comp['claimants']),
+                        'peaks': lines,
                         'shifts': out.get('shifts'),
                         'blank_area': out.get('blank_area', float('nan'))})
     return windows, by_key, reasons, counts
@@ -249,29 +287,46 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         snr, lod_a, loq_a = _window_limits(
             ppm, intensities, lo, hi, included=included,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
-        claimed = dict(w['claimants'])
+        protons = dict(w['protons'])
         for mid, areas in split.items():
             cand = by_key.get((mid, frozenset(w['ranks'])))
             if cand is None:
                 cand = next((c for (m, r), c in by_key.items()
                              if m == mid and r <= set(w['ranks'])), None)
-            if cand is None or mid not in claimed:
+            if cand is None or mid not in protons:
                 continue
+            # The share is what fell inside the window; the analyte's area is
+            # what its whole signal is worth, which is the share divided by
+            # the part of it the window held. Below half, that division
+            # multiplies the error more than it corrects the area, and what is
+            # being reported is mostly outside the region it was measured in.
+            f = float((w.get('fractions') or {}).get(mid, 1.0))
+            g = float((w.get('geometry') or {}).get(mid, f))
+            if g < MIN_OWN_SHARE:
+                counts['thin_share'] += 1
+                reasons.setdefault(key, {
+                    'claimants': w['claimants'],
+                    'reason': ('the window holds only %.0f%% of this '
+                               'analyte\'s own lines' % (100.0 * g))})
+                continue
+            areas = {s_i: a / f for s_i, a in areas.items()}
             med = (float(np.median(list(areas.values()))) if areas
                    else float('nan'))
+            own = [pk for pk in w['peaks']
+                   if pk.get('rank') in set(w['lines'][mid])]
             out[mid] = {
-                'signal': cand, 'nh': float(claimed[mid]), 'snr': snr,
-                'captured': w['captured'],
+                'signal': cand, 'nh': float(protons[mid]), 'snr': snr,
+                'captured': f,
                 'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
                              for s_i, v in snr.items()},
-                'lines': [float(pk.get('ppm', 0.0)) for pk in w['lines']],
-                'weights': [1.0] * len(w['lines']),
+                'lines': [float(pk.get('ppm', 0.0)) for pk in own],
+                'weights': pascal_weights(len(own)),
                 'lod_area': lod_a, 'loq_area': loq_a, 'area_median': med,
                 'strength': strength_band(med, loq_a),
                 'window': (lo, hi), 'areas': dict(areas),
                 'width_ppm': abs(hi - lo), 'shifts': w.get('shifts'),
                 'blank_area': w.get('blank_area', float('nan')),
-                'shared_with': [m for m in claimed if m != mid],
+                'shared_with': [m for m in protons if m != mid],
             }
 
     # Why an analyte that shares a peak still has no number of its own. Keyed
@@ -432,6 +487,12 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
         noise_sigma=noise_sigma, diagnostics=diagnostics)
     recovered = set()
+    # A window that resolved nothing leaves its winner credited with the whole
+    # of it, including the part that is somebody else's. That has to be on the
+    # row: a number silently left too large is worse than one refused.
+    for mid, why in shared_reasons.items():
+        if mid in measured and mid not in shared:
+            measured[mid]['unshared_reason'] = why
     for mid, info in shared.items():
         if mid in measured:
             # Its number came from a window it does not hold alone; what it
@@ -475,8 +536,10 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
-        level, dots = _confidence(info['signal'], info.get('strength'),
-                                  shared=bool(info.get('shared_with')))
+        level, dots = _confidence(
+            info['signal'], info.get('strength'),
+            shared=bool(info.get('shared_with')
+                        or info.get('unshared_reason')))
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
                          pqn_factors, standard, standard_conc,
                          bool(external_standard_samples), dilution,
@@ -795,7 +858,13 @@ def _shared_reason(info) -> list:
     """What the reader needs to know about an area that was shared."""
     with_ = list(info.get('shared_with') or ())
     if not with_:
-        return []
+        why = info.get('unshared_reason')
+        if not why:
+            return []
+        return [f'Shared window, not split: this area is the whole of a '
+                f'window other analytes also sit in, so it is an upper bound '
+                f'on what belongs to this one. It could not be split because '
+                f'{why}.']
     return [f'Shared window: the signal is held with {", ".join(with_)}. '
             f'This area is what remains once their own measurements account '
             f'for what they contribute here, so it depends on those being '
