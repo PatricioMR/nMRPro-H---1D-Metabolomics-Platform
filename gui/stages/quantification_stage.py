@@ -270,14 +270,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
         self._ext_is_indices = []
         self.mcr_var = tk.BooleanVar(value=False)   # kept for internal MCR-MCR path
-        self.j_resolve_var = tk.BooleanVar(value=False)
+        # The overlap correction the JG-Deconv checkbox used to promise. The
+        # box is the same question -- should windows two analytes sit in be
+        # split between them -- answered by the engine that now does it, so it
+        # keeps the variable and the saved projects keep working.
+        self.deconv_var = tk.BooleanVar(value=True)
         self._j_resolve_cb = ttk.Checkbutton(
-            mf2, text='JG-Deconv correction (overlap)',
-            variable=self.j_resolve_var,
-            command=self._on_j_resolve_change)
+            mf2, text='Split windows two analytes share',
+            variable=self.deconv_var,
+            command=self._on_deconv_change)
         self._j_resolve_cb.pack(side=tk.LEFT)
         self._j_resolve_status_lbl = ttk.Label(
-            mf2, text='(not applied)', font=('Arial', 7), foreground='gray')
+            mf2, text='(not run yet)', font=('Arial', 7), foreground='gray')
         self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         ttk.Label(s2,
                   text='Multiplicity: integrates the union of the multiplet signals\' '
@@ -381,7 +385,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             foreground='blue' if ready else 'gray')
         self._hide_canvas()
         self._show_right_panel()
-        self._refresh_j_resolve_label()
+        self._refresh_deconv_label()
         self._apply_lipidomics_ui_state()
 
     def on_deactivate(self):
@@ -877,23 +881,31 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             self._dev_tooltip_win = None
 
 
-    def _on_j_resolve_change(self, *_):
-        self._refresh_j_resolve_label()
+    def _on_deconv_change(self, *_):
+        self._refresh_deconv_label()
 
-    def _refresh_j_resolve_label(self):
-        """Update the J-Resolve status label to reflect current state."""
+    def _refresh_deconv_label(self):
+        """What the last run's split actually did, beside the box that asked.
+
+        Not what the setting is -- the box already says that. A correction that
+        is switched on and silently splits nothing looks exactly like one that
+        is not wired in, which cost a whole afternoon of this project.
+        """
         if not hasattr(self, '_j_resolve_status_lbl'):
             return
-        ann = (getattr(self, 'app', None) and
-               getattr(self.app, 'stages', {}).get('annotation'))
-        contributions = getattr(ann, '_j_resolve_contributions', None) if ann else None
-        if contributions:
-            n = len(contributions)
+        if not bool(self.deconv_var.get()):
             self._j_resolve_status_lbl.config(
-                text=f'({n} signals resolved)', foreground='#2e7d32')
-        else:
+                text='(off — winners keep whole windows)', foreground='gray')
+            return
+        sh = (getattr(self, '_quant_diagnostics', None) or {}).get('shared')
+        if not sh or sh.get('off'):
             self._j_resolve_status_lbl.config(
-                text='(not applied — run JG-Deconv step 4)', foreground='#b71c1c')
+                text='(not run yet)', foreground='gray')
+            return
+        n, total = int(sh.get('resolved', 0)), int(sh.get('contested', 0))
+        self._j_resolve_status_lbl.config(
+            text=f'({n} of {total} shared windows split)',
+            foreground='#2e7d32' if n else '#b71c1c')
 
     # ── Standard preset ───────────────────────────────────────────────────────
 

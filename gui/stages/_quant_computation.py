@@ -237,6 +237,8 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
 
         shared = [r for r in rows if r.get('_shared_with')]
         sh = (diagnostics or {}).get('shared')
+        if sh and sh.get('off'):
+            shared = []
         if shared or sh:
             _dbg(f, '')
             _dbg(f, '── SHARED WINDOWS ───────────────────────────────────')
@@ -261,7 +263,13 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
             # What the step did when it did nothing. A stage that silently
             # changes no number is indistinguishable from a stage that is not
             # wired in, and telling those two apart cost a whole run.
-            if sh:
+            if sh and sh.get('off'):
+                _dbg(f, '')
+                _dbg(f, '  Not applied: the split is switched off, so every '
+                        'winner keeps the whole')
+                _dbg(f, '  of its window and the analytes that lost one have '
+                        'no number at all.')
+            elif sh:
                 _dbg(f, '')
                 _dbg(f, f'  {sh.get("candidates", 0)} candidate signals -> '
                         f'{sh.get("components", 0)} windows, of which '
@@ -443,6 +451,11 @@ class _QuantCompMixin:
 
         self._prog_apply(20, 'Electing signals…')
         _diag: dict = {}
+        # The overlap correction is the analyst's choice, and off it must
+        # leave every number exactly where the engine put it before the
+        # balance existed -- otherwise the two settings cannot be compared.
+        _dv = getattr(self, 'deconv_var', None)
+        _deconv = True if _dv is None else bool(_dv.get())
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -467,11 +480,13 @@ class _QuantCompMixin:
             # be given a detection limit.
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
             excluded_regions=_excl or (),
+            deconvolve=_deconv,
             diagnostics=_diag,
         )
 
         self._prog_apply(70, 'Building results…')
         self._quant_results = rows
+        self._quant_diagnostics = _diag
         self._peak_competitor_count = _competitor_counts(metabolites)
         _pqn_vals = [v for r in rows
                      for v in (r.get('_pqn_factors') or {}).values()]

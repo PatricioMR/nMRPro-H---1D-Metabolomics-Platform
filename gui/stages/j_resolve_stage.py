@@ -2768,16 +2768,17 @@ class JResolveStage(BaseStage):
         n = len(stored)
         self._apply_lbl.config(text=f'✓ Applied ({n} signals)')
 
-        # Refresh label in quantification stage if it's built
-        q_stage = getattr(self.app, 'stages', {}).get('quantification')
-        if q_stage and hasattr(q_stage, '_refresh_j_resolve_label'):
-            q_stage._refresh_j_resolve_label()
-
+        # Quantification no longer reads these. It corrects overlap by solving
+        # every window at once against the line positions annotation already
+        # found, and by saying which analytes the data does not separate — so
+        # sending the analyst off to enable something that would consume these
+        # fractions would be sending them to do nothing.
         messagebox.showinfo(
             'JG-Deconv applied',
-            f'{n} overlapping signal(s) registered.\n\n'
-            'Enable "JG-Deconv correction" in Quantification (step 5)\n'
-            'to use these fractional areas.')
+            f'{n} overlapping signal(s) registered here.\n\n'
+            'Quantification does not use these fractions. Overlap is '
+            'corrected there by "Split windows two analytes share", which '
+            'needs nothing from this step.')
 
     def _export(self):
         import csv

@@ -466,7 +466,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              use_pqn=True, local_baseline=True, proton_correction=True,
              align=False, blank_indices=None,
              noise_sigma=None, linewidth_ppm=0.008,
-             drift_ppm=0.0, excluded_regions=(),
+             drift_ppm=0.0, excluded_regions=(), deconvolve=True,
              diagnostics=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
@@ -477,6 +477,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     ``candidates`` are ``processing.quantification.Candidate`` objects whose
     ``payload`` carries whatever the caller needs to build display fields —
     this engine only reads ``met_id``, the evidence, and the line peaks.
+
+    ``deconvolve`` off leaves every winner credited with the whole of its
+    window, shared or not, and reports nothing for the analytes that lost one.
+    That is what the engine did before the balance existed, and it is the
+    setting to compare against when a number moves.
 
     ``diagnostics``, when a dict is passed, is filled with what the run did
     that no row can show — how many windows were shared, and why the ones that
@@ -572,11 +577,16 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     # but one is measured elsewhere, subtracting what those must be
     # contributing leaves the rest, and the rest is arithmetic on measured
     # quantities rather than an estimate.
-    shared, shared_reasons = _resolve_shared(
-        candidates, peaks_by_rank, ppm, intensities, included=included,
-        local_baseline=local_baseline, align=align,
-        blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
-        noise_sigma=noise_sigma, diagnostics=diagnostics)
+    if deconvolve:
+        shared, shared_reasons = _resolve_shared(
+            candidates, peaks_by_rank, ppm, intensities, included=included,
+            local_baseline=local_baseline, align=align,
+            blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
+            noise_sigma=noise_sigma, diagnostics=diagnostics)
+    else:
+        shared, shared_reasons = {}, {}
+        if diagnostics is not None:
+            diagnostics['shared'] = {'off': True}
     recovered = set()
     # A window that resolved nothing leaves its winner credited with the whole
     # of it, including the part that is somebody else's. That has to be on the
@@ -927,11 +937,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_status_reasons': (_shared_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
-        # JG-Deconv is not part of this engine. The fields stay so the window
-        # keeps working, and they say plainly that nothing was applied rather
-        # than leaving the reader to guess from a missing key.
-        '_used_j_resolve': False,
-        '_j_resolve_frac': 1.0,
+        # Whether this number came out of a window held with other analytes,
+        # and how much of its own signal that window held. The overlap
+        # correction the old stage promised, from the engine that now does it.
+        '_used_j_resolve': bool(info.get('shared_with')),
+        '_j_resolve_frac': float(info.get('captured') or 1.0),
         '_used_mcr': False,
         '_mcr': None,
         '_lorentz': None,

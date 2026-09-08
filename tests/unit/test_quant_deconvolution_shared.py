@@ -319,3 +319,48 @@ class TestInTheEngine:
         assert any('not split' in t for t in rows['B']['_status_reasons']), (
             rows['B']['_status_reasons'])
         assert rows['B']['_confidence'] <= 2
+
+
+class TestTheSwitch:
+    """Overlap correction is the analyst's choice, and off must mean off.
+
+    A setting that half applies is worse than either state: the number moves
+    and the reason it moved is not in the run's record.
+    """
+
+    def test_off_leaves_the_winner_the_whole_window(self):
+        rows = TestInTheEngine()._run(deconvolve=False)
+        area = TestInTheEngine._area(rows['B'])
+        assert area == pytest.approx(500.0, rel=0.05)
+
+    def test_off_gives_the_analyte_that_lost_nothing(self):
+        rows = TestInTheEngine()._run(a_prefers_the_shared_peak=True,
+                                      deconvolve=False)
+        assert rows['B']['_not_quantified']
+
+    def test_off_marks_no_row_as_shared(self):
+        rows = TestInTheEngine()._run(deconvolve=False)
+        assert not any(r.get('_shared_with') for r in rows.values())
+
+    def test_on_is_the_default(self):
+        """It corrects a number that is otherwise too large, and refuses what
+        it cannot determine, so it is not a setting an analyst should have to
+        find."""
+        import inspect
+
+        from processing.quant_engine import quantify
+        assert (inspect.signature(quantify).parameters['deconvolve'].default
+                is True)
+
+    def test_the_run_records_that_it_was_off(self):
+        """Otherwise a log with no split in it reads the same as a split that
+        found nothing."""
+        from processing.quant_engine import quantify
+        diag: dict = {}
+        TestInTheEngine()._run(deconvolve=False, diagnostics=diag)
+        assert diag['shared'] == {'off': True}
+
+    def test_a_split_row_says_it_used_the_overlap_correction(self):
+        rows = TestInTheEngine()._run()
+        assert rows['B']['_used_j_resolve'] is True
+        assert rows['B']['_j_resolve_frac'] < 1.0

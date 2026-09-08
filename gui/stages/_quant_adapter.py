@@ -323,7 +323,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      dj_gold_hz=None, annotation_params=None, use_pqn=True,
                      local_baseline=True, proton_correction=True, align=False,
                      subtract_blanks=False, noise_sigma=None,
-                     excluded_regions=(), diagnostics=None):
+                     excluded_regions=(), deconvolve=True,
+                     diagnostics=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -422,5 +423,6 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # Detection was told to ignore these; nothing measured there is the
         # analyte's, so no limit can be read from them either.
         excluded_regions=excluded_regions,
+        deconvolve=deconvolve,
         diagnostics=diagnostics,
     ), n_s), metabolites, peaks_by_rank)

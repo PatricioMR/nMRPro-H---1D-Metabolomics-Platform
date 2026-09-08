@@ -229,7 +229,9 @@ class ProjectManager:
                 'mcr':              _safe_var(qnt, 'mcr_var'),
                 'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
                 'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
-                'j_resolve':        _safe_var(qnt, 'j_resolve_var'),
+                # Saved under its old key: the setting is the same question
+                # and an old project that answered it must keep its answer.
+                'j_resolve':        _safe_var(qnt, 'deconv_var'),
                 'ext_is':           _safe_var(qnt, 'ext_is_var'),
                 'ext_is_indices':   [int(x) for x in getattr(qnt, '_ext_is_indices', [])],
                 'ref_ppm':          _safe_var(qnt, 'ref_ppm_var'),
