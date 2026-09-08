@@ -414,29 +414,7 @@ class _QuantCompMixin:
             excluded_regions=_excl or (),
         )
 
-        # ── Display names and the fields the plot reads ──────────────────────
-        # The engine works in metabolite ids because two analytes can share a
-        # display name and an id cannot. The table shows names.
         self._prog_apply(70, 'Building results…')
-        pk_by_rank = {p.get('rank'): p for p in (self.peak_stage.peaks or [])
-                      if p.get('rank') is not None}
-        name_by_id = {str(m.get('id', '')): m.get('name', m.get('id', ''))
-                      for m in metabolites}
-        for r in rows:
-            if r.get('_is_is'):
-                continue
-            mid = str(r.get('hmdb_id', ''))
-            r['metabolite'] = name_by_id.get(mid, mid)
-            payload = (r.get('_hits') or [None])[0]
-            if isinstance(payload, dict) and 'mp' in payload:
-                r['_hits'] = [payload['mp']]
-            pr = r.get('_peak_rank')
-            if pr is not None and pr in pk_by_rank:
-                p = pk_by_rank[pr]
-                r['_peak'] = p
-                r['start_idx'] = p.get('start_idx')
-                r['end_idx'] = p.get('end_idx')
-
         self._quant_results = rows
         self._peak_competitor_count = _competitor_counts(metabolites)
         _pqn_vals = [v for r in rows

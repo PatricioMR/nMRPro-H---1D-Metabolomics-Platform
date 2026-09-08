@@ -37,6 +37,12 @@ def _get_quantification_matrix(app):
             # mensurável — excluídos da matriz estatística.
             if met.get('_not_quantified'):
                 continue
+            # The internal standard is what every concentration was divided
+            # by. As a feature it is constant by construction and carries no
+            # biology, so it would sit in the model as a variable that cannot
+            # vary — and dominate a normalisation that assumes it can.
+            if met.get('_is_is'):
+                continue
             concs = met.get('_concs_per_sample') or []
             if not concs:
                 continue

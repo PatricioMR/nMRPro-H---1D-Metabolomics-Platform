@@ -104,9 +104,14 @@ class TestWholeProject:
             peaks=list(PEAKS.values()), ppm=ppm, intensities=X,
             samples_info=[{'label': 'G'}] * 3)
         assert len(rows) == 1
-        assert rows[0]['metabolite'] == 'A'
+        # The display name, not the id. The engine works in ids because two
+        # analytes can share a name; the rows that leave here are read by the
+        # table, the statistics matrix and the export, and those show names.
+        assert rows[0]['metabolite'] == 'Ala'
+        assert rows[0]['hmdb_id'] == 'A'
         assert rows[0]['conc_mm'] > 0
         assert rows[0]['_integ_mode'] == 'Multiplet'
+        assert rows[0]['_peak'] is not None, 'the detected peak travels too'
 
     def test_blanks_are_dropped_by_the_same_rule_detection_uses(self):
         """Three engines must not disagree about which samples a study has."""
@@ -115,7 +120,10 @@ class TestWholeProject:
             metabolites=[_met('A', 'Ala', [_mp(1)])],
             peaks=list(PEAKS.values()), ppm=ppm, intensities=X,
             samples_info=[{'type': 'BLK'}, {'label': 'G'}, {'label': 'G'}])
-        assert set(rows[0]['_concs_per_sample']) == {1, 2}
+        concs = rows[0]['_concs_per_sample']
+        assert len(concs) == 3, 'one entry per sample, blanks included'
+        assert np.isnan(concs[0]), 'the blank was not measured'
+        assert all(np.isfinite(v) for v in concs[1:])
 
     def test_a_one_dimensional_matrix_is_one_sample(self):
         ppm, X = self._project(n=1)
@@ -123,4 +131,5 @@ class TestWholeProject:
             metabolites=[_met('A', 'Ala', [_mp(1)])],
             peaks=list(PEAKS.values()), ppm=ppm, intensities=X[:, 0],
             samples_info=[{'label': 'G'}])
-        assert set(rows[0]['_concs_per_sample']) == {0}
+        concs = rows[0]['_concs_per_sample']
+        assert len(concs) == 1 and np.isfinite(concs[0])

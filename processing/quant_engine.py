@@ -168,7 +168,15 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
         med_area = (float(np.median(list(out['areas'].values())))
                     if out['areas'] else float('nan'))
+        # Which samples actually show this signal, at the same ratio the
+        # detection limit is defined by. The CSV reports the others as 'n.d.'
+        # rather than as a concentration: a window over noise integrates to a
+        # perfectly plausible number, and writing it would put a measurement
+        # where the analyte was not seen.
+        detected = {s_i: bool(np.isfinite(v) and v >= K_LOD)
+                    for s_i, v in snr.items()}
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
+                         'detected': detected,
                          'lod_area': lod_a, 'loq_area': loq_a,
                          'area_median': med_area,
                          'strength': strength_band(med_area, loq_a), **out}
@@ -473,6 +481,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_concs_by_group': by_group,
         '_pqn_factors': pqn_factors,
         '_snr_per_sample': info.get('snr', {}),
+        '_detected_per_sample': info.get('detected', {}),
         '_peak_align_shifts': info.get('shifts') or None,
         '_blk_mean_area': info.get('blank_area', float('nan')),
         '_is_singlet': (sig.evidence or {}).get('multiplicity') == 's',
@@ -538,6 +547,7 @@ def _rejected_row(mid, reason) -> dict:
         '_concs_by_group': {},
         '_pqn_factors': {},
         '_snr_per_sample': {},
+        '_detected_per_sample': {},
         '_peak_align_shifts': None,
         '_blk_mean_area': float('nan'),
         '_is_singlet': False,

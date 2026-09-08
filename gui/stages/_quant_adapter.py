@@ -198,6 +198,75 @@ def manual_good_ids(quality_marks):
     return {str(k[0]) for k, v in (quality_marks or {}).items() if v == 'good'}
 
 
+# The per-sample fields the engine returns are {sample_index: value}, because
+# a sample it could not measure is absent rather than present with a zero.
+# Everything downstream — the statistics matrix, the CSV export, the manual
+# region editor, the per-sample peak view, the lipidomics path — indexes them
+# by position instead, and has since before the engine was rewritten.
+#
+# Handing a dict to those readers is not a crash so much as a silent lie:
+# ``list(a_dict)`` yields its KEYS, so the export would have written 0, 1, 2 in
+# the concentration column, and the statistics stage would have raised on a
+# slice. One boundary converts, here, because this module is the only one that
+# knows both shapes.
+_PER_SAMPLE_FIELDS = ('_concs_per_sample', '_areas_per_sample',
+                      '_snr_per_sample', '_detected_per_sample')
+
+
+def _as_sample_list(mapping, n_samples):
+    """``{index: value}`` as a list of ``n_samples``, NaN where unmeasured.
+
+    NaN and not zero: a sample the analyte was not measured in has no number,
+    and a zero there would enter a group mean as a real measurement of nothing.
+    """
+    if isinstance(mapping, list):
+        return mapping
+    out = [float('nan')] * int(n_samples)
+    for k, v in (mapping or {}).items():
+        try:
+            i = int(k)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= i < len(out):
+            out[i] = bool(v) if isinstance(v, bool) else float(v)
+    return out
+
+
+def _rows_indexed_by_sample(rows, n_samples):
+    for r in rows:
+        for key in _PER_SAMPLE_FIELDS:
+            if key in r:
+                r[key] = _as_sample_list(r.get(key), n_samples)
+    return rows
+
+
+def _for_display(rows, metabolites, peaks_by_rank):
+    """Fill in what the table and everything after it read.
+
+    The engine works in metabolite ids, because two analytes can share a
+    display name and an id cannot. Names, the annotation hit and the detected
+    peak are display concerns, and they belong on this boundary rather than in
+    the stage: a caller that gets rows from here should get complete ones.
+    """
+    name_by_id = {str(m.get('id', '')): m.get('name', m.get('id', ''))
+                  for m in (metabolites or ())}
+    for r in rows:
+        if r.get('_is_is'):
+            continue
+        mid = str(r.get('hmdb_id', ''))
+        r['metabolite'] = name_by_id.get(mid, mid)
+        payload = (r.get('_hits') or [None])[0]
+        if isinstance(payload, dict) and 'mp' in payload:
+            r['_hits'] = [payload['mp']]
+        pr = r.get('_peak_rank')
+        if pr is not None and pr in peaks_by_rank:
+            pk = peaks_by_rank[pr]
+            r['_peak'] = pk
+            r['start_idx'] = pk.get('start_idx')
+            r['end_idx'] = pk.get('end_idx')
+    return rows
+
+
 def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      ambiguous_ranks=(), quality_marks=None, anchor_lines=None,
                      ref_peak=None, ref_nh=1.0, ref_conc=0.0,
@@ -253,7 +322,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             ppm, arr, lo, hi, noise_level([ref_peak], ppm, arr),
             included=included))
 
-    return quantify(
+    return _for_display(_rows_indexed_by_sample(quantify(
         candidates=build_candidates(metabolites, peaks_by_rank,
                                     quality_marks=quality_marks,
                                     eligible_ids=eligible),
@@ -302,4 +371,4 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # Detection was told to ignore these; nothing measured there is the
         # analyte's, so no limit can be read from them either.
         excluded_regions=excluded_regions,
-    )
+    ), n_s), metabolites, peaks_by_rank)
