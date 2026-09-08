@@ -144,34 +144,59 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
     analyte credited with the remainder would be credited with that peak too.
     """
     sigs, by_key = [], {}
+    counts = {'candidates': 0, 'no_lines': 0, 'not_competitor': 0,
+              'no_protons': 0, 'components': 0, 'contested': 0,
+              'no_window': 0, 'foreign_peak': 0, 'poor_capture': 0,
+              'largest': 0, 'largest_lines': 0}
     for c in candidates or ():
+        counts['candidates'] += 1
         ranks = sorted(int(r) for r in (c.line_ranks or ()))
         if not ranks and c.peak_rank is not None:
             ranks = [int(c.peak_rank)]
-        if not ranks or not is_competitor(c.evidence):
+        if not ranks:
+            counts['no_lines'] += 1
+            continue
+        if not is_competitor(c.evidence):
+            counts['not_competitor'] += 1
             continue
         nh = signal_nh((c.evidence or {}).get('protons'))
         if not nh or not np.isfinite(nh) or nh <= 0:
+            counts['no_protons'] += 1
             continue
         sigs.append({'met_id': str(c.met_id), 'nh': nh, 'ranks': ranks})
         by_key.setdefault((str(c.met_id), frozenset(ranks)), c)
 
     windows, reasons = [], {}
     for comp in overlap_components(sigs):
+        counts['components'] += 1
+        n_cl = len(comp['claimants'])
+        if n_cl > 1:
+            counts['contested'] += 1
+        # How wide the widest contest got. Overlap is transitive here -- A
+        # shares a line with B and B with C -- so in a crowded spectrum the
+        # components can chain into one region holding half the analytes, and
+        # a window with fifty claimants has forty-nine unknowns and resolves
+        # nothing. If this number is large, that is what happened.
+        if n_cl > counts['largest']:
+            counts['largest'] = n_cl
+            counts['largest_lines'] = len(comp['ranks'])
         ranks = list(comp['ranks'])
         lines = [peaks_by_rank[r] for r in ranks if r in peaks_by_rank]
         if len(lines) != len(ranks):
+            counts['no_window'] += 1
             continue
         out = integrate_signal(lines, ppm, intensities, included=included,
                                local_baseline=local_baseline, align=align,
                                blank_indices=blank_indices)
         if not out or not out['areas']:
+            counts['no_window'] += 1
             continue
         lo, hi = out['window']
         foreign = [r for r, pk in peaks_by_rank.items()
                    if int(r) not in comp['ranks']
                    and lo <= float(pk.get('ppm', -1e9)) <= hi]
         if foreign:
+            counts['foreign_peak'] += 1
             reasons[comp['key']] = {
                 'claimants': comp['claimants'],
                 'reason': ('%d detected peak(s) inside the window belong to '
@@ -182,6 +207,7 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
             [float(pk.get('ppm', 0.0)) for pk in lines],
             [1.0] * len(lines), lo, hi, linewidth_ppm / 2.0)
         if not captured:
+            counts['poor_capture'] += 1
             reasons[comp['key']] = {
                 'claimants': comp['claimants'],
                 'reason': ('the window holds too little of its own lines to '
@@ -193,23 +219,25 @@ def _component_windows(candidates, peaks_by_rank, ppm, intensities, *,
                         'captured': captured, 'lines': lines,
                         'shifts': out.get('shifts'),
                         'blank_area': out.get('blank_area', float('nan'))})
-    return windows, by_key, reasons
+    return windows, by_key, reasons, counts
 
 
 def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
                     included, local_baseline, align, blank_indices,
-                    linewidth_ppm, noise_sigma):
+                    linewidth_ppm, noise_sigma, diagnostics=None):
     """What each analyte's own share of a shared peak is.
 
     Returns ``({met_id: info}, reasons)`` with the same shape the integration
     loop produces, so a share and an uncontested area travel through
     concentration, confidence and the row builder by one path.
     """
-    windows, by_key, reasons = _component_windows(
+    windows, by_key, reasons, counts = _component_windows(
         candidates, peaks_by_rank, ppm, intensities, included=included,
         local_baseline=local_baseline, align=align,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm)
     shares, why = resolve_contested(windows)
+    counts['resolved'] = len(shares)
+    counts['unsolved'] = len(why)
     by_win = {w['key']: w for w in windows}
     for key, text in why.items():
         reasons[key] = {'claimants': by_win[key]['claimants'],
@@ -254,6 +282,12 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
             if mid in out:
                 continue
             per_met.setdefault(mid, entry['reason'])
+    if diagnostics is not None:
+        tally: dict = {}
+        for entry in reasons.values():
+            tally[entry['reason']] = tally.get(entry['reason'], 0) + 1
+        diagnostics['shared'] = {**counts, 'reasons': tally,
+                                 'metabolites': sorted(out)}
     return out, per_met
 
 
@@ -286,7 +320,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              use_pqn=True, local_baseline=True, proton_correction=True,
              align=False, blank_indices=None,
              noise_sigma=None, linewidth_ppm=0.008,
-             drift_ppm=0.0, excluded_regions=()) -> list[dict]:
+             drift_ppm=0.0, excluded_regions=(),
+             diagnostics=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -296,6 +331,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     ``candidates`` are ``processing.quantification.Candidate`` objects whose
     ``payload`` carries whatever the caller needs to build display fields —
     this engine only reads ``met_id``, the evidence, and the line peaks.
+
+    ``diagnostics``, when a dict is passed, is filled with what the run did
+    that no row can show — how many windows were shared, and why the ones that
+    resolved nothing resolved nothing. A step that silently does nothing is
+    indistinguishable from a step that is not there.
     """
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                     ambiguous_ranks=ambiguous_ranks)
@@ -390,7 +430,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         candidates, peaks_by_rank, ppm, intensities, included=included,
         local_baseline=local_baseline, align=align,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
-        noise_sigma=noise_sigma)
+        noise_sigma=noise_sigma, diagnostics=diagnostics)
     recovered = set()
     for mid, info in shared.items():
         if mid in measured:

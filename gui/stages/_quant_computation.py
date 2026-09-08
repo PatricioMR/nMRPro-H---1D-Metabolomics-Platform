@@ -127,7 +127,7 @@ def _competitor_counts(metabolites) -> dict:
 
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                      ref_peak, ref_conc, ref_nh, ext_is, n_samples,
-                     excluded_regions, local_baseline):
+                     excluded_regions, local_baseline, diagnostics=None):
     """The run, written down where it can be read after the window closes.
 
     Two sections earn their place. The summary table is what was measured. The
@@ -236,7 +236,8 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                         'their neighbours.')
 
         shared = [r for r in rows if r.get('_shared_with')]
-        if shared:
+        sh = (diagnostics or {}).get('shared')
+        if shared or sh:
             _dbg(f, '')
             _dbg(f, '── SHARED WINDOWS ───────────────────────────────────')
             _dbg(f, '  Peaks two or more analytes sit on. The area is split '
@@ -257,11 +258,42 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                         f'  {r.get("conc_mm", float("nan")):>9.4f}'
                         f'  {", ".join(r.get("_shared_with") or ())}')
 
+            # What the step did when it did nothing. A stage that silently
+            # changes no number is indistinguishable from a stage that is not
+            # wired in, and telling those two apart cost a whole run.
+            if sh:
+                _dbg(f, '')
+                _dbg(f, f'  {sh.get("candidates", 0)} candidate signals -> '
+                        f'{sh.get("components", 0)} windows, of which '
+                        f'{sh.get("contested", 0)} are claimed by more than '
+                        f'one analyte.')
+                _dbg(f, f'  {sh.get("resolved", 0)} split, '
+                        f'{sh.get("unsolved", 0)} not.')
+                _dbg(f, f'  Widest contest: {sh.get("largest", 0)} analytes '
+                        f'over {sh.get("largest_lines", 0)} lines. Overlap is '
+                        f'transitive, so a crowded region can chain into one '
+                        f'window; a window with N claimants has N-1 unknowns.')
+                _skipped = [
+                    ('matched to no peak', sh.get('no_lines', 0)),
+                    ('multiplicity never verified', sh.get('not_competitor', 0)),
+                    ('no proton count', sh.get('no_protons', 0)),
+                ]
+                _skipped = [t for t in _skipped if t[1]]
+                if _skipped:
+                    _dbg(f, '  Candidates left out: '
+                            + ', '.join(f'{n} {w}' for w, n in _skipped) + '.')
+                for why, n in sorted((sh.get('reasons') or {}).items(),
+                                     key=lambda kv: -kv[1]):
+                    _dbg(f, f'  [{n}] {why}')
+
         _dbg(f, '')
         _dbg(f, '── NOT QUANTIFIED ───────────────────────────────────')
         by_reason: dict = {}
         for r in nq:
-            why = (r.get('_status_reasons') or ['(no reason given)'])[0]
+            # Every reason, joined -- an analyte that lost a peak AND could not
+            # have its share of it resolved has two things wrong with it, and
+            # grouping on the first alone hid the second entirely.
+            why = ' | '.join(r.get('_status_reasons') or ['(no reason given)'])
             by_reason.setdefault(why, []).append(
                 r.get('metabolite', r.get('hmdb_id', '?')))
         for why, who in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
@@ -410,6 +442,7 @@ class _QuantCompMixin:
                           else 'none')
 
         self._prog_apply(20, 'Electing signals…')
+        _diag: dict = {}
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -434,6 +467,7 @@ class _QuantCompMixin:
             # be given a detection limit.
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
             excluded_regions=_excl or (),
+            diagnostics=_diag,
         )
 
         self._prog_apply(70, 'Building results…')
@@ -471,7 +505,8 @@ class _QuantCompMixin:
                          align=align, ref_peak=ref_peak, ref_conc=ref_conc,
                          ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
                          excluded_regions=_excluded_used,
-                         local_baseline=local_baseline)
+                         local_baseline=local_baseline,
+                         diagnostics=_diag)
 
         _norm_f = norm_mode
 

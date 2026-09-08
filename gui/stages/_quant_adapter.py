@@ -323,7 +323,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      dj_gold_hz=None, annotation_params=None, use_pqn=True,
                      local_baseline=True, proton_correction=True, align=False,
                      subtract_blanks=False, noise_sigma=None,
-                     excluded_regions=()):
+                     excluded_regions=(), diagnostics=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -334,6 +334,9 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
 
     Blanks and excluded samples are dropped by the same rule detection uses, so
     a study's three engines cannot disagree about which samples it contains.
+
+    ``diagnostics``, when a dict is passed, comes back holding what the run did
+    that the rows cannot show -- see ``quant_engine.quantify``.
     """
     peaks_by_rank = {p.get('rank'): p for p in (peaks or ())
                      if p.get('rank') is not None}
@@ -419,4 +422,5 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         # Detection was told to ignore these; nothing measured there is the
         # analyte's, so no limit can be read from them either.
         excluded_regions=excluded_regions,
+        diagnostics=diagnostics,
     ), n_s), metabolites, peaks_by_rank)
