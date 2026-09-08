@@ -186,3 +186,54 @@ class TestEligibilityAsksWhetherSomethingWasSeen:
                             evidence={'multiplicity': 's', 'n_found': 1,
                                       'n_expected': 1, 'delta_j_hz': None})
         assert _confidence(singlet)[0] == 1
+
+
+class TestWhatWasSeenComesFirst:
+    """A signal matched to no peak cannot be judged.
+
+    Never having been matched, its Delta-ppm is zero by default — the best
+    value the ranking can see. Absence read as perfection, so it outranked the
+    same metabolite's real signals. On the reference study 11 analytes won on a
+    signal with no peak while each held one with a peak, among them
+    L-histidine, L-carnosine, ATP and hypoxanthine, and the peak they held went
+    unmeasured.
+    """
+
+    def _c(self, mid, rank, lines=(), ppm_diff=0.01):
+        return Candidate(met_id=mid, peak_rank=rank,
+                         line_ranks=frozenset(lines),
+                         evidence={'multiplicity': 's', 'n_found': 1,
+                                   'n_expected': 1, 'delta_j_hz': None,
+                                   'ppm_diff': ppm_diff, 'quality': None})
+
+    def test_a_detected_signal_beats_the_metabolites_own_ghost(self):
+        """Even when the ghost's zero Delta-ppm looks better."""
+        ghost = self._c('M', None, ppm_diff=0.0)
+        real = self._c('M', 7, [7], ppm_diff=0.02)
+        e = elect([ghost, real], dj_gold_hz=0.5)
+        assert e.winners['M'].peak_rank == 7
+
+    def test_losing_a_contested_peak_is_losing(self):
+        """Not an occasion to fall back on a signal nobody saw. Reporting the
+        ghost instead would turn a defeat into a measurement."""
+        rival = self._c('R', 7, [7], ppm_diff=0.001)
+        mine_real = self._c('M', 7, [7], ppm_diff=0.03)
+        mine_ghost = self._c('M', None, ppm_diff=0.0)
+        e = elect([rival, mine_real, mine_ghost], dj_gold_hz=0.5)
+        assert e.winners['R'].peak_rank == 7
+        assert 'M' not in e.winners
+        assert e.rejected['M'] == LOST_COMPETITION
+
+    def test_a_metabolite_with_only_ghosts_still_gets_its_bound(self):
+        """It is an ordering, not a bar. An analyte the spectrum shows nothing
+        of is reported as an upper limit, which is a real measurement; what it
+        must never do is take precedence over a peak that is there."""
+        e = elect([self._c('M', None, ppm_diff=0.0)], dj_gold_hz=0.5)
+        assert 'M' in e.winners
+        assert e.winners['M'].peak_rank is None
+
+    def test_a_ghost_never_blocks_another_metabolite(self):
+        """It claims nothing, so it cannot."""
+        e = elect([self._c('G', None), self._c('R', 7, [7])], dj_gold_hz=0.5)
+        assert e.winners['R'].peak_rank == 7
+        assert 7 in e.claimed_peaks

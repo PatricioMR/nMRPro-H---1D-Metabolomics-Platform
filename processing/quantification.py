@@ -35,6 +35,7 @@ UNVERIFIED_MULTIPLET = 'unverified_multiplet'
 AMBIGUOUS_RANK = 'ambiguous_rank'
 NO_ELIGIBLE_SIGNAL = 'no_eligible_signal'
 NO_MEASURABLE_WINDOW = 'no_measurable_window'
+NOT_DETECTED = 'not_detected'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -53,6 +54,10 @@ REJECTION_TEXT = {
         'Not quantified: no measurable window — the signal won its contest but '
         'no detected line bounds a region to integrate. Nothing is integrated '
         'where the database predicts a peak, only where detection found one.',
+    NOT_DETECTED:
+        'Not quantified: nothing detected — every signal the database predicts '
+        'for this analyte was searched for and none was found. There is no '
+        'peak to measure and none to compete with.',
 }
 
 
@@ -118,13 +123,36 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
             continue
         eligible.append(c)
 
-    eligible.sort(key=lambda c: (_sort_key(c, dj_gold_hz=dj_gold_hz,
+    # Detected first, always. A signal matched to no peak cannot be judged:
+    # never having been matched, its Delta-ppm is zero by default, which is the
+    # best value the ranking can see -- absence read as perfection. On the
+    # reference study 11 analytes won on a signal with no peak while each held
+    # one with a peak, among them L-histidine, L-carnosine, ATP and
+    # hypoxanthine, and the peak they held went unmeasured.
+    #
+    # It is an ordering and not a bar. A metabolite whose every signal is
+    # undetected still wins on one of them and is reported as a bound, which is
+    # a real measurement of an upper limit; what it must never do is take
+    # precedence over a peak the spectrum actually shows.
+    eligible.sort(key=lambda c: (0 if (c.peak_rank is not None or c.line_ranks)
+                                 else 1,
+                                 _sort_key(c, dj_gold_hz=dj_gold_hz,
                                            band_ppm=band_ppm), str(c.met_id)))
+
+    # Which metabolites have a signal the spectrum actually shows. One that
+    # does must never fall back to one that it does not: losing a contested
+    # peak is losing, and reporting it instead on a signal nobody saw turns a
+    # defeat into a measurement.
+    has_detected = {c.met_id for c in eligible
+                    if c.peak_rank is not None or c.line_ranks}
 
     winners: dict = {}
     claimed: set = set()
     for c in eligible:
         if c.met_id in winners:
+            continue
+        if (c.peak_rank is None and not c.line_ranks
+                and c.met_id in has_detected):
             continue
         if c.peak_rank is not None and c.peak_rank in claimed:
             continue
