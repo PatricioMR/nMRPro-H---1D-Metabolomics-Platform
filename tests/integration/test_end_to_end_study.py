@@ -296,12 +296,12 @@ def test_no_two_analytes_share_a_region(run):
 def test_the_concentration_is_the_one_that_went_in(run, name):
     """Absolute, against the internal standard, in mM.
 
-    Both sides are corrected for what their windows leave outside, which took
-    the mean absolute error on this study from 7.3% to 1.7%. What remains is
-    real overlap: alanine sits 0.148 ppm from lactate, whose line is eight
-    times larger, and the tail that reaches into alanine's window is about 5%
-    of alanine itself. Separating that is deconvolution's job, not window
-    arithmetic's.
+    Three corrections stand between the raw area and this number: what each
+    window leaves outside, what each window holds of its neighbours, and the
+    merge tolerance that stops one line becoming two peaks. Together they took
+    the mean absolute error on this study from 7.3% to 0.8%, and alanine — the
+    worst case, 0.148 ppm from a neighbour eight times its size — from 6.4% to
+    2.9%.
     """
     _, _, by = run
     row = by[name]
@@ -309,7 +309,7 @@ def test_the_concentration_is_the_one_that_went_in(run, name):
     for grp, want in TRUTH[name].items():
         idx = [i for i, s in enumerate(SAMPLES) if s.get('label') == grp]
         got = float(np.nanmean([concs[i] for i in idx]))
-        assert got == pytest.approx(want, rel=0.10), (
+        assert got == pytest.approx(want, rel=0.08), (
             f'{name} in {grp}: expected {want} mM, got {got:.4f}')
 
 
@@ -344,15 +344,18 @@ def test_drift_is_what_this_pipeline_is_sensitive_to(run):
     """Measured by re-running the whole study at several drift levels.
 
         per-sample drift   |error| absolute   |error| on the B/A ratio
-              0.0 Hz             1.7%                  1.1%
-              0.5 Hz             1.6%                  1.1%
-              1.7 Hz             2.8%                  1.2%
+              0.0 Hz             0.8%                  1.1%
+              0.5 Hz             0.9%                  1.1%
+              1.7 Hz             4.1%                  1.2%
               3.0 Hz            10.0%                  3.4%
 
-    The tail correction brings the first two rows under 2%; the merge
-    tolerance, taken from the linewidth rather than from half the minimum
-    spacing, brings the third from 14.8% to 2.8% and the fourth from 36.3% to
-    10.0%. Before it, a line that drifted further than 1.2-1.5 Hz landed in two
+    The tail correction brings the first two rows under 2% and the neighbour
+    subtraction under 1%; the merge tolerance, taken from the linewidth rather
+    than from half the minimum spacing, brings the third from 14.8% to 2.8% and
+    the fourth from 36.3% to 10.0%. The neighbour subtraction costs the third
+    row 1.3 points, which is the price of applying a lineshape model where the
+    geometry it assumes is already breaking down; the ratio, which is what a
+    study reports, does not move. Before it, a line that drifted further than 1.2-1.5 Hz landed in two
     clusters and became two master peaks — each present only in the samples on
     its side of the drift, which also made them look group-specific.
 

@@ -27,6 +27,7 @@ import numpy as np
 
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
+from processing.quant_deconvolution import subtract_neighbours
 from processing.quant_detection_limit import (
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
@@ -192,10 +193,37 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                     for s_i, v in snr.items()}
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
                          'captured': captured, 'detected': detected,
+                         'lines': [float(p.get('ppm', 0.0)) for p in lines],
+                         'weights': pascal_weights(len(lines)),
                          'lod_area': lod_a, 'loq_area': loq_a,
                          'area_median': med_area,
                          'strength': strength_band(med_area, loq_a), **out}
         per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
+
+    # ── What each window holds of its neighbours ─────────────────────────────
+    # A window is not a container for one signal. Lorentzian tails never reach
+    # zero, so a strong neighbour a short way off puts a real amount of itself
+    # inside — on a study whose answer was known, alanine read 6.4% high and
+    # that 6.4% was lactate, 0.148 ppm away and eight times larger.
+    #
+    # Only for signals whose own capture correction was accepted. Where it was
+    # refused the window is not describing the signal, so its area is the raw
+    # one while a leak computed over the same width is the full one — taking
+    # the second from the first subtracts a share the area was never credited
+    # with. Measured: applying it there pushed every analyte negative and the
+    # mean error from 2.8% to 4.1%.
+    _trusted = {k: v for k, v in measured.items() if v.get('captured')}
+    if len(_trusted) > 1 and linewidth_ppm:
+        _corrected, _removed = subtract_neighbours(
+            {k: {'window': v['window'], 'lines': v['lines'],
+                 'weights': v['weights'], 'areas': v['areas']}
+             for k, v in _trusted.items()},
+            linewidth_ppm / 2.0)
+        for k, v in _trusted.items():
+            v['areas'] = _corrected.get(k, v['areas'])
+            v['neighbour_share'] = _removed.get(k, 0.0)
+            per_proton_areas[k] = {s_i: a / v['nh']
+                                   for s_i, a in v['areas'].items()}
 
     # ── Dilution correction across samples ───────────────────────────────────
     # PQN before the standard: it corrects how concentrated the sample is, and
@@ -508,6 +536,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_loq_mm': loq_mm,
         '_strength': info.get('strength'),
         '_captured_fraction': info.get('captured'),
+        '_neighbour_share': info.get('neighbour_share', 0.0),
         '_status_reasons': ([] if info.get('strength', 3) >= 3 else
                             [f'Weak signal: the measured area does not reach '
                              f'{STRONG_ABOVE_LOQ:.0f}x the limit of '
