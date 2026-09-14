@@ -327,3 +327,64 @@ def measure_pattern(ppm, y, *, lo, hi, field_mhz, sigma=None, max_lines=16,
     return {'status': 'ok' if len(lines) >= 2 else 'single',
             'centre_ppm': centre, 'lines': lines, 'n_lines': len(lines),
             'snr': float(hts.max() / sigma) if sigma > 0 else float('inf')}
+
+
+# A window's edge must sit on noise. While the spectrum at an edge is still
+# this many sigma above the window's floor, a line is being cut and the window
+# is let out. Looking at the found lines instead cannot see the one that was
+# cut off entirely: it is not found.
+EDGE_SIGMA = 3.0
+WIDEN_STEP_HZ = 2.0
+WIDEN_MAX_HZ = 15.0
+
+
+def _edge_on_signal(ppm, y, edge_ppm, floor, sigma, half_hz, field_mhz):
+    m = np.abs(ppm - edge_ppm) <= half_hz / float(field_mhz)
+    if not m.any():
+        return False
+    return float(y[m].max()) > floor + EDGE_SIGMA * sigma
+
+
+def measure_pattern_extended(ppm, y, *, lo, hi, field_mhz, sigma=None,
+                             bounds=None, max_lines=16) -> dict:
+    """The pattern, with the window let out until its edges sit on noise.
+
+    The database lists a window per signal, and the window was drawn by a
+    curator: D-glucose's doublet of doublets at 3.232 ppm spans +/-9 Hz and
+    its window reaches +/-8.6, so the outer lines fell just outside it and the
+    pattern came out as three lines of a four-line shape, asymmetric, with
+    its centre in the wrong place. A multiplet ends where its lines stop.
+
+    An edge standing on signal -- more than EDGE_SIGMA above the window's
+    floor -- is cutting a line, and the window is let out by WIDEN_STEP_HZ on
+    that side, up to WIDEN_MAX_HZ and never past ``bounds``, the midpoints
+    to the compound's neighbouring signals: past those the lines are
+    somebody else's.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if sigma is None:
+        sigma = noise_sigma(ppm, y)
+    lo, hi = float(min(lo, hi)), float(max(lo, hi))
+    f = float(field_mhz)
+    b_lo, b_hi = (bounds if bounds else (lo - WIDEN_MAX_HZ / f,
+                                         hi + WIDEN_MAX_HZ / f))
+    lo0, hi0 = lo, hi
+    for _ in range(int(2 * WIDEN_MAX_HZ / WIDEN_STEP_HZ) + 2):
+        m = (ppm >= lo) & (ppm <= hi)
+        floor = float(np.percentile(y[m], 10)) if m.sum() >= 10 else 0.0
+        grew = False
+        if (_edge_on_signal(ppm, y, lo, floor, sigma, 1.0, f)
+                and lo > b_lo and (lo0 - lo) * f < WIDEN_MAX_HZ):
+            lo = max(b_lo, lo - WIDEN_STEP_HZ / f)
+            grew = True
+        if (_edge_on_signal(ppm, y, hi, floor, sigma, 1.0, f)
+                and hi < b_hi and (hi - hi0) * f < WIDEN_MAX_HZ):
+            hi = min(b_hi, hi + WIDEN_STEP_HZ / f)
+            grew = True
+        if not grew:
+            break
+    pat = measure_pattern(ppm, y, lo=lo, hi=hi, field_mhz=f, sigma=sigma,
+                          max_lines=max_lines)
+    pat['window'] = (lo, hi)
+    return pat

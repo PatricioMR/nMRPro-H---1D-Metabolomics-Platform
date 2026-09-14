@@ -34,7 +34,8 @@ sys.path.insert(0, ROOT)
 from download_bmrb_fids import BMRB_ENTRIES, sample_conditions  # noqa: E402
 from data.bruker_loader import load_bruker_dataset  # noqa: E402
 from processing.reference_measurement import (  # noqa: E402
-    measure_fingerprint, measure_pattern, noise_sigma, reference_offset)
+    measure_fingerprint, measure_pattern_extended, noise_sigma,
+    reference_offset)
 
 FIDS = os.path.join(REPO, 'databases', 'bmrb_fids')
 V01 = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_v01.db')
@@ -113,19 +114,27 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
     sigma = noise_sigma(ppm - off, y)
     out = measure_fingerprint(ppm - off, y, signals, field_mhz=field_mhz,
                               sigma=sigma)
+    centres = sorted(float(s_.get('ppm', 0.0)) for s_ in signals)
     for m in out:
         m['reference_offset_ppm'] = float(off)
         lst = m['listed']
+        c = float(lst.get('ppm', 0.0))
         lo, hi = lst.get('ppm_min'), lst.get('ppm_max')
         if lo is None or hi is None or float(hi) - float(lo) < 0.002:
             # No window listed: the multiplet's own span at the largest
             # plausible coupling, as the resolved measurement uses.
-            c = float(lst.get('ppm', 0.0))
             n = int(lst.get('n_lines') or 2)
             half = (n - 1) / 2.0 * 20.0 / float(field_mhz) + 0.01
             lo, hi = c - half, c + half
-        pat = measure_pattern(ppm - off, y, lo=float(lo), hi=float(hi),
-                              field_mhz=field_mhz, sigma=sigma)
+        # Never into a neighbouring signal of the same compound: the window
+        # may grow to the midpoint and no further.
+        below = [v for v in centres if v < c - 1e-6]
+        above = [v for v in centres if v > c + 1e-6]
+        bounds = ((c + below[-1]) / 2.0 if below else float(lo) - 0.05,
+                  (c + above[0]) / 2.0 if above else float(hi) + 0.05)
+        pat = measure_pattern_extended(ppm - off, y, lo=float(lo), hi=float(hi),
+                                       field_mhz=field_mhz, sigma=sigma,
+                                       bounds=bounds)
         m['pattern'] = pat
         # An unresolved multiplet has no first-order measurement; the pattern
         # is its measurement, and its centre its position.

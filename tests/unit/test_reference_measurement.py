@@ -555,3 +555,43 @@ class TestResolvablePattern:
         m = measure_pattern_signal(mp, peaks, field_mhz=600.0, dj_gold_hz=0.2,
                                    merge_hz=3.2)
         assert m.n_expected == 2 and m.n_found == 2 and m.complete
+
+
+class TestTheWindowLetsItselfOut:
+    """The database's window for a signal was drawn by a curator, and it cut
+    D-glucose's doublet of doublets at 3.232 ppm to three lines of four with
+    the centre in the wrong place. A window's edge must sit on noise: while
+    it stands on signal it is cutting a line and is let out -- never past the
+    midpoint to the compound's neighbouring signal."""
+
+    def _dd(self, c=3.232, j1=8.0, j2=9.5, h=500.0):
+        return [_line(c + (a * j1 + b * j2) / 2 / FIELD, h)
+                for a in (-1, 1) for b in (-1, 1)]
+
+    def test_a_window_that_cuts_the_outer_lines_grows_until_it_does_not(self):
+        from processing.reference_measurement import measure_pattern_extended
+        y = _spectrum(*self._dd())
+        # +/- 8.6 Hz: the outer lines at +/- 8.75 sit just outside
+        pat = measure_pattern_extended(PPM, y, lo=3.232 - 8.6 / FIELD,
+                                       hi=3.232 + 8.6 / FIELD, field_mhz=FIELD)
+        assert pat['n_lines'] == 4
+        assert [o for o, _ in pat['lines']] == pytest.approx(
+            [-8.75, -0.75, 0.75, 8.75], abs=0.15)
+
+    def test_it_never_crosses_into_the_neighbour(self):
+        from processing.reference_measurement import measure_pattern_extended
+        # a neighbouring multiplet 12 Hz away whose midpoint is 6 Hz out
+        y = _spectrum(*self._dd(), _line(3.232 + 12.0 / FIELD, 800.0))
+        bounds = (3.232 - 0.05, 3.232 + 6.0 / FIELD)
+        pat = measure_pattern_extended(PPM, y, lo=3.232 - 8.6 / FIELD,
+                                       hi=3.232 + 5.0 / FIELD, field_mhz=FIELD,
+                                       bounds=bounds)
+        assert pat['window'][1] <= bounds[1] + 1e-9
+        assert all(o < 10.0 for o, _ in pat['lines'])
+
+    def test_a_window_already_on_noise_stays_put(self):
+        from processing.reference_measurement import measure_pattern_extended
+        y = _spectrum(*self._dd())
+        lo, hi = 3.232 - 0.03, 3.232 + 0.03
+        pat = measure_pattern_extended(PPM, y, lo=lo, hi=hi, field_mhz=FIELD)
+        assert pat['window'] == (lo, hi)
