@@ -786,6 +786,19 @@ class AnnotationResultsWindow:
                 # wired in, and silently never applied.
                 'per_sample_consensus': r.get('per_sample_consensus'),
                 'intensity_agreement': r.get('intensity_agreement'),
+                # What the search measured about the multiplet, and what the
+                # reference DB measured about the signal. resolve_dj reads
+                # these on the matched peak; missing here, a pattern reached
+                # it with nothing to match against and every one came back
+                # unmeasured -- after the search had matched them whole.
+                '_n_found_lines':  r.get('_n_found_lines'),
+                '_n_exp_lines':    r.get('_n_exp_lines'),
+                'delta_j_hz':      r.get('delta_j_hz'),
+                'observed_j_hz':   r.get('observed_j_hz'),
+                'pattern_lines':   r.get('pattern_lines'),
+                'pattern_residual_hz': r.get('pattern_residual_hz'),
+                'j_sigma':         r.get('j_sigma'),
+                'ppm_center':      r.get('ppm_center', dp_ppm),
                 'intensity_n':     r.get('intensity_n'),
                 'n_present':       r.get('n_present'),
                 'n_included':      r.get('n_included'),

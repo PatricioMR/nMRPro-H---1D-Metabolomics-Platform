@@ -419,10 +419,12 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     whole multiplet is delta-ppm's business and not the pattern's.
     """
     offs = [float(o) for o, _r in (pattern or ())]
+    rels = [float(r) for _o, r in (pattern or ())]
     n = len(offs)
     if n < 2 or not peaks or field_mhz <= 0:
         return {'n_found': 0, 'n_expected': n, 'residual_hz': None,
-                'centre_ppm': None, 'found_ppms': [], 'predicted_ppms': []}
+                'centre_ppm': None, 'found_ppms': [], 'found_rel': [],
+                'predicted_ppms': []}
     ppms = np.array(sorted(float(p['ppm']) for p in peaks
                            if p.get('ppm') is not None))
     tol = float(line_tol_hz) / float(field_mhz)
@@ -431,7 +433,7 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
         shift = float(anchor_ppm) - offs[k] / float(field_mhz)
         pred = [shift + o / float(field_mhz) for o in offs]
         found, used = [], set()
-        for pp in pred:
+        for pp, rel in zip(pred, rels):
             i = int(np.argmin(np.abs(ppms - pp)))
             # nearest unused peak within tolerance
             order = np.argsort(np.abs(ppms - pp))
@@ -444,12 +446,12 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
                     break
             if hit is not None:
                 used.add(hit)
-                found.append((pp, float(ppms[hit])))
+                found.append((pp, float(ppms[hit]), rel))
         n_found = len(found)
         resid = None
         if n_found >= 2:
-            pr = np.array([a for a, _ in found])
-            fd = np.array([b for _, b in found])
+            pr = np.array([a for a, _, _ in found])
+            fd = np.array([b for _, b, _ in found])
             resid = float(np.sqrt(np.mean(((fd - fd.mean())
                                             - (pr - pr.mean())) ** 2))
                           * float(field_mhz))
@@ -457,9 +459,10 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
         if best is None or key > best[0]:
             best = (key, {'n_found': n_found, 'n_expected': n,
                           'residual_hz': resid,
-                          'centre_ppm': (float(np.mean([b for _, b in found]))
+                          'centre_ppm': (float(np.mean([b for _, b, _ in found]))
                                          if found else None),
-                          'found_ppms': [b for _, b in found],
+                          'found_ppms': [b for _, b, _ in found],
+                          'found_rel': [r for _, _, r in found],
                           'predicted_ppms': pred})
     return best[1]
 
@@ -503,8 +506,12 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                        field_mhz=float(field_mhz))
     m = LineMeasurement(n_expected=pm['n_expected'], n_found=pm['n_found'],
                         found_ppms=list(pm['found_ppms']), measured=True)
-    m.predicted_lines = [{'ppm': float(v), 'rel_intensity': 1.0,
-                          'measured': True} for v in pm['found_ppms']]
+    # The pattern's own relative heights ride with the lines: quantification
+    # weighs a multiplet's tails by them, and a five-line pattern is not a
+    # 1:4:6:4:1 quintet.
+    m.predicted_lines = [{'ppm': float(v), 'rel_intensity': float(r),
+                          'measured': True}
+                         for v, r in zip(pm['found_ppms'], pm['found_rel'])]
     m.pattern_residual_hz = pm['residual_hz']
     if m.complete and pm['residual_hz'] is not None:
         m.delta_j_hz = (float(pm['residual_hz']) * float(dj_gold_hz)

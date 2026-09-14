@@ -686,9 +686,12 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         # difference. On a study whose answer was known every analyte came back
         # about 7% high against a standard whose own window held 94% of its
         # line while a doublet's held 83%.
+        _lw = (cand.evidence or {}).get('line_weights')
+        _weights = (list(_lw) if _lw and len(_lw) == len(lines)
+                    else pascal_weights(len(lines)))
         captured = lorentzian_captured_fraction(
             [float(p.get('ppm', 0.0)) for p in lines],
-            pascal_weights(len(lines)), lo, hi, linewidth_ppm / 2.0)
+            _weights, lo, hi, linewidth_ppm / 2.0)
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
@@ -707,7 +710,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
                          'captured': captured, 'detected': detected,
                          'lines': [float(p.get('ppm', 0.0)) for p in lines],
-                         'weights': pascal_weights(len(lines)),
+                         'weights': _weights,
                          'lod_area': lod_a, 'loq_area': loq_a,
                          'area_median': med_area,
                          'strength': strength_band(med_area, loq_a), **out}

@@ -81,6 +81,13 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'score': mp.get('composite_score',
                                     mp.get('multiplet_score', 0.0)),
                     'protons': mp.get('protons'),
+                    # A measured pattern's relative line heights, for the
+                    # capture correction; a first-order multiplet carries none
+                    # and the engine falls back to the binomial pattern.
+                    'line_weights': ([float(l.get('rel_intensity') or 1.0)
+                                      for l in (mp.get('predicted_lines') or ())]
+                                     if (mp.get('type') or mp.get('multiplicity'))
+                                     == 'm*' else None),
                     # Where the database says the lines are. Only read when
                     # detection found none of them, to bound what could have
                     # been there — never to place a peak.
