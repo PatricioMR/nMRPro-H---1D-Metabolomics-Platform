@@ -1,5 +1,5 @@
 """
-Derive two filtered DBs from BMRB_Metabolomics_v01.db (offline origin classified):
+Derive two filtered DBs from a BMRB_Metabolomics_vNN.db (offline origin classified):
 
   • BMRB_Metabolomics_General_v01.db   — mammalian/endogenous + unknown
         (keep_mammalian IN '1','?')  → excludes only the clear plant/drug/xenobiotic
@@ -8,14 +8,20 @@ Derive two filtered DBs from BMRB_Metabolomics_v01.db (offline origin classified
 
 Each keeps every spectral table (metabolites, shifts_1h, transitions) for the
 selected bmrb_ids only. bmrb_id stays the real BMRB id (app queries by it).
+
+    python hmdb_api_download/split_dbs.py [--version v02]
+
+The measured columns of a v02 source (ppm_meas, j_use, ...) travel with the
+rows untouched: the split is by metabolite, not by column.
 """
+import argparse
 import os
 import shutil
 import sqlite3
 
 DBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                      'databases')
-SRC = os.path.join(DBDIR, 'BMRB_Metabolomics_v01.db')
+SRC = os.path.join(DBDIR, 'BMRB_Metabolomics_v01.db')   # overridden by --version
 TABLES_WITH_ID = ('metabolites', 'shifts_1h', 'transitions')
 
 
@@ -44,8 +50,13 @@ def make(dst, keep_values):
 
 
 def main():
-    make(os.path.join(DBDIR, 'BMRB_Metabolomics_General_v01.db'), ('1', '?'))
-    make(os.path.join(DBDIR, 'BMRB_Metabolomics_Mammalian_v01.db'), ('1',))
+    global SRC
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--version', default='v01')
+    v = ap.parse_args().version
+    SRC = os.path.join(DBDIR, f'BMRB_Metabolomics_{v}.db')
+    make(os.path.join(DBDIR, f'BMRB_Metabolomics_General_{v}.db'), ('1', '?'))
+    make(os.path.join(DBDIR, f'BMRB_Metabolomics_Mammalian_{v}.db'), ('1',))
 
 
 if __name__ == '__main__':
