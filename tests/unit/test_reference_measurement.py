@@ -181,6 +181,23 @@ class TestTheV02Build:
                     'j_coupling': '7.00'}]
         return measure_entry(PPM, y, signals, field_mhz=FIELD)
 
+    def test_a_listed_window_that_misses_the_signal_is_not_used(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import measure_entry
+        y = _spectrum(_line(0.0, 5000.0),
+                      _multiplet(3.411, 6.7, 3, 2000.0))
+        # BMRB lists taurine's 3.41 triplet with a window 0.07 ppm below it
+        signals = [{'id': 1, 'ppm': 3.41, 'multiplicity': 't',
+                    'j_coupling': '6.25', 'ppm_min': 3.3362,
+                    'ppm_max': 3.3487, 'n_lines': 3}]
+        out = measure_entry(PPM, y, signals, field_mhz=FIELD)
+        assert out[0]['status'] == 'ok'
+        assert out[0]['pattern']['status'] == 'ok'
+        assert len(out[0]['pattern']['lines']) == 3
+        lo, hi = out[0]['pattern']['window']
+        assert lo < 3.411 < hi
+
     def test_the_axis_is_referenced_on_dss_first(self):
         out = self._measured()
         assert out[0]['reference_offset_ppm'] == pytest.approx(0.0021,

@@ -118,11 +118,19 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
     for m in out:
         m['reference_offset_ppm'] = float(off)
         lst = m['listed']
-        c = float(lst.get('ppm', 0.0))
+        # The pattern is measured around where the signal was found, not
+        # where it was listed. Taurine's 3.41 ppm triplet is listed with a
+        # window of 3.336-3.349: the resolved measurement found the triplet
+        # at 3.411 and the pattern, cut in the listed window, found sixteen
+        # lines of noise at a third of the noise's own apex.
+        c = float(m.get('ppm') if m.get('status') == 'ok' and m.get('ppm')
+                  else lst.get('ppm', 0.0))
         lo, hi = lst.get('ppm_min'), lst.get('ppm_max')
-        if lo is None or hi is None or float(hi) - float(lo) < 0.002:
-            # No window listed: the multiplet's own span at the largest
-            # plausible coupling, as the resolved measurement uses.
+        if (lo is None or hi is None or float(hi) - float(lo) < 0.002
+                or not float(lo) <= c <= float(hi)):
+            # No window listed, or one that does not hold the signal: the
+            # multiplet's own span at the largest plausible coupling, as
+            # the resolved measurement uses.
             n = int(lst.get('n_lines') or 2)
             half = (n - 1) / 2.0 * 20.0 / float(field_mhz) + 0.01
             lo, hi = c - half, c + half
