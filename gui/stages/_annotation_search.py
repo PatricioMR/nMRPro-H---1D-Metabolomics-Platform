@@ -114,6 +114,26 @@ def is_unquantifiable_multiplicity(mult):
     return m in ('m', 'multiplet') or m.startswith('br')
 
 
+
+def _measured_columns_sql(shift_cols) -> dict:
+    """The SQL for a signal's position and coupling: measured where the DB
+    carries a measurement, listed otherwise.
+
+    BMRB_Metabolomics_v02 adds, per signal, what its own spectrum says --
+    ``ppm_meas``, ``j_meas`` and ``j_sigma`` -- beside what the curators
+    listed. The listed coupling is text and may hold several values for an
+    unresolved multiplet; the measured one is a number and exists only where
+    a first-order pattern was measured, so it overrides the listing where it
+    is present and defers to it where it is not. A DB without the columns
+    (v01) reads exactly as before.
+    """
+    cols = set(shift_cols or ())
+    ppm = 'COALESCE(s.ppm_meas, s.ppm)' if 'ppm_meas' in cols else 's.ppm'
+    j = ('CASE WHEN s.j_meas IS NOT NULL THEN CAST(s.j_meas AS TEXT) '
+         'ELSE s.j_coupling END' if 'j_meas' in cols else 's.j_coupling')
+    j_sigma = 's.j_sigma' if 'j_sigma' in cols else 'NULL'
+    return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma}
+
 class _AnnotationSearchMixin:
     """Mixin — mixed into AnnotationStage. Uses self.* freely."""
 
@@ -196,9 +216,11 @@ class _AnnotationSearchMixin:
                 return
 
             _rescue_protons_col = ''
+            _rescue_meas = _measured_columns_sql(set())
             if is_bmrb:
                 _rescue_shift_cols = {r[1] for r in cur.execute(
                     "PRAGMA table_info(shifts_1h)").fetchall()}
+                _rescue_meas = _measured_columns_sql(_rescue_shift_cols)
                 _rescue_protons_col = (", s.protons"
                                        if 'protons' in _rescue_shift_cols
                                        else ", 1 as protons")
@@ -224,15 +246,18 @@ class _AnnotationSearchMixin:
                 if is_bmrb:
                     cur.execute(
                         "SELECT s.bmrb_id as hmdb_id, met.name,"
-                        " s.ppm as ppm_center, s.ppm as ppm,"
+                        f" {_rescue_meas['ppm']} as ppm_center,"
+                        f" {_rescue_meas['ppm']} as ppm,"
                         " s.atom_name, s.multiplicity as type,"
-                        f" s.j_coupling, s.multiplicity{_rescue_protons_col},"
+                        f" {_rescue_meas['j']} as j_coupling,"
+                        f" {_rescue_meas['j_sigma']} as j_sigma,"
+                        f" s.multiplicity{_rescue_protons_col},"
                         " ? as peak_ppm, ? as peak_rank,"
-                        " ABS(s.ppm - ?) as ppm_diff"
+                        f" ABS({_rescue_meas['ppm']} - ?) as ppm_diff"
                         " FROM shifts_1h s"
                         " JOIN metabolites met ON s.bmrb_id = met.bmrb_id"
-                        " WHERE s.ppm BETWEEN ? AND ?"
-                        " ORDER BY ABS(s.ppm - ?)",
+                        f" WHERE {_rescue_meas['ppm']} BETWEEN ? AND ?"
+                        f" ORDER BY ABS({_rescue_meas['ppm']} - ?)",
                         (ppm, peak['rank'], _dbf, q_lo, q_hi, _dbf))
                     rows = [dict(r) for r in cur.fetchall()]
                     for r in rows:
@@ -1204,16 +1229,20 @@ class _AnnotationSearchMixin:
                     if has_shifts:
                         _protons_col = (", s.protons" if 'protons' in shift_cols
                                         else ", 1 as protons")
+                        _meas = _measured_columns_sql(shift_cols)
                         cur.execute(
                             f"SELECT s.{id_col} as hmdb_id, met.name,"
-                            " s.ppm as ppm_center, s.ppm as ppm,"
+                            f" {_meas['ppm']} as ppm_center,"
+                            f" {_meas['ppm']} as ppm,"
                             " s.atom_name, s.multiplicity as type,"
-                            f" s.j_coupling, s.multiplicity{_protons_col}"
+                            f" {_meas['j']} as j_coupling,"
+                            f" {_meas['j_sigma']} as j_sigma,"
+                            f" s.multiplicity{_protons_col}"
                             " FROM shifts_1h s"
                             " JOIN metabolites met"
                             f"   ON s.{id_col} = met.{met_id_col}"
-                            " WHERE s.ppm BETWEEN ? AND ?"
-                            " ORDER BY s.ppm",
+                            f" WHERE {_meas['ppm']} BETWEEN ? AND ?"
+                            f" ORDER BY {_meas['ppm']}",
                             (g_lo, g_hi))
                         db_entries = [dict(r) for r in cur.fetchall()]
                         db_label = 'BMRB' if id_col == 'bmrb_id' else 'HMDB'

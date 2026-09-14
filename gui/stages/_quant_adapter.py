@@ -61,6 +61,10 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                 evidence={
                     'multiplicity': mp.get('type') or mp.get('multiplicity'),
                     'delta_j_hz': mp.get('delta_j_hz'),
+                    # How well the reference coupling itself is known, where
+                    # the DB measured it. The ranking judges delta-J no finer
+                    # than this.
+                    'j_sigma_hz': mp.get('j_sigma'),
                     'ppm_diff': mp.get('ppm_diff'),
                     'n_found': mp.get('_n_found_lines'),
                     'n_expected': mp.get('_n_exp_lines'),

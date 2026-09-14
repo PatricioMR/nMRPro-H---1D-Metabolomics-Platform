@@ -517,17 +517,37 @@ def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None) -> int:
     return TIER_CONFIRMED_MULTIPLET
 
 
-def dj_band(delta_j_hz, gold_hz: float) -> int:
+# How many standard deviations of the reference coupling's own uncertainty
+# a band spans, when the reference carries one. Three: a delta-J inside three
+# sigma of the reference is not a disagreement with the reference, it is the
+# reference's own error bar.
+REFERENCE_SIGMAS = 3.0
+
+
+def dj_band(delta_j_hz, gold_hz: float, *, ref_sigma_hz=None) -> int:
     """ΔJ bucketed by ``gold_hz``; unmeasured ΔJ sorts last.
 
     Banding is what makes a technical tie a tie: ΔJ of 0.046 and 0.096 Hz differ
     by far less than J can be measured (0.28-0.78 Hz between-sample SD in the
     reference study), so both land in band 0 and the decision falls through to
     the next key instead of being settled by noise.
+
+    ``ref_sigma_hz`` is the uncertainty of the reference coupling itself, when
+    the database measured it (BMRB_Metabolomics_v02). The band is then never
+    narrower than three of those sigma: a reference known to plus or minus
+    half a hertz cannot judge a match to a fifth of one, and doing so decided
+    contests with the noise of the table -- L-lactic acid, listed at 7.50 Hz
+    against a measured 6.94, lost its own doublet to a rival listed at 7.20.
     """
     if delta_j_hz is None or gold_hz <= 0:
         return _BIG_BAND
-    return int(abs(float(delta_j_hz)) / float(gold_hz))
+    width = float(gold_hz)
+    if ref_sigma_hz is not None:
+        try:
+            width = max(width, REFERENCE_SIGMAS * float(ref_sigma_hz))
+        except (TypeError, ValueError):
+            pass
+    return int(abs(float(delta_j_hz)) / width)
 
 
 def ppm_band(ppm_diff, band_ppm: float = PPM_BAND_PPM) -> int:
@@ -756,7 +776,8 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
         manual=0 if manual == 'good' else 1,
         tier=candidate_tier(mult, cand.get('delta_j_hz'),
                             cand.get('n_found'), cand.get('n_expected')),
-        dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz),
+        dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz,
+                   ref_sigma_hz=cand.get('j_sigma_hz')),
         ppm=ppm_band(cand.get('ppm_diff'), band_ppm),
         quality=0 if quality == 'good' else 1,
         intensity=pascal_band(cand.get('intensity_agreement')),

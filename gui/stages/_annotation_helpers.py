@@ -105,6 +105,7 @@ def ambiguous_peak_ranks(metabolites, manual_quality=None,
             by_rank.setdefault(rank, {})[mid] = {
                 'multiplicity':   mp.get('type') or mp.get('multiplicity'),
                 'delta_j_hz':     mp.get('delta_j_hz'),
+                'j_sigma_hz':     mp.get('j_sigma'),
                 'ppm_diff':       mp.get('ppm_diff'),
                 'n_found':        mp.get('_n_found_lines'),
                 'n_expected':     mp.get('_n_exp_lines'),

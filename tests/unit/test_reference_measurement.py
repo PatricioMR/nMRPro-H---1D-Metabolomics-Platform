@@ -301,3 +301,55 @@ save_
         sys.path.insert(0, 'hmdb_api_download')
         from measure_reference_db import field_dependence
         assert field_dependence({500.0: (6.93, 0.02)}) == (None, None)
+
+
+class TestTheAppReadsTheMeasurement:
+    """A reference known to plus or minus half a hertz cannot judge a match
+    to a fifth of one. Where the DB carries the measured coupling and its
+    uncertainty, the search reads them and the ranking's band is never
+    narrower than three sigma of the reference."""
+
+    def test_the_band_is_the_gate_when_the_reference_is_precise(self):
+        from processing.annotation_scoring import dj_band
+        assert dj_band(0.15, 0.2, ref_sigma_hz=0.001) == 0
+        assert dj_band(0.25, 0.2, ref_sigma_hz=0.001) == 1
+
+    def test_the_band_widens_to_the_references_own_error(self):
+        """Listed to the half hertz: sigma ~0.29 (a uniform rounding error),
+        three of which is 0.87. A delta-J of 0.6 is then inside band 0."""
+        from processing.annotation_scoring import dj_band
+        assert dj_band(0.6, 0.2, ref_sigma_hz=0.29) == 0
+        assert dj_band(0.6, 0.2) >= 2
+
+    def test_without_a_sigma_nothing_changes(self):
+        from processing.annotation_scoring import dj_band
+        assert dj_band(0.6, 0.2, ref_sigma_hz=None) == dj_band(0.6, 0.2)
+
+    def test_the_sql_prefers_the_measurement_where_the_columns_exist(self):
+        import sys
+        sys.path.insert(0, 'gui/stages')
+        from gui.stages._annotation_search import _measured_columns_sql
+        v01 = _measured_columns_sql({'ppm', 'j_coupling'})
+        assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL'}
+        v02 = _measured_columns_sql({'ppm', 'j_coupling', 'ppm_meas', 'j_meas',
+                                     'j_sigma'})
+        assert 'COALESCE(s.ppm_meas, s.ppm)' == v02['ppm']
+        assert 'j_meas' in v02['j'] and 'ELSE s.j_coupling' in v02['j']
+        assert v02['j_sigma'] == 's.j_sigma'
+
+    def test_the_sql_runs_against_a_v02_shaped_table(self, tmp_path):
+        import sqlite3
+        from gui.stages._annotation_search import _measured_columns_sql
+        con = sqlite3.connect(':memory:')
+        con.execute('create table shifts_1h (bmrb_id, ppm real, j_coupling '
+                    'text, ppm_meas real, j_meas real, j_sigma real)')
+        con.execute("insert into shifts_1h values ('a', 1.318, '7.50', "
+                    "1.3177, 6.936, 0.001)")
+        con.execute("insert into shifts_1h values ('b', 1.317, '7.20', "
+                    "NULL, NULL, NULL)")
+        cols = {r[1] for r in con.execute('pragma table_info(shifts_1h)')}
+        m = _measured_columns_sql(cols)
+        rows = con.execute(f"select s.bmrb_id, {m['ppm']}, {m['j']}, "
+                           f"{m['j_sigma']} from shifts_1h s order by 1").fetchall()
+        assert rows[0] == ('a', 1.3177, '6.936', 0.001)
+        assert rows[1] == ('b', 1.317, '7.20', None)

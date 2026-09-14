@@ -177,6 +177,9 @@ def main():
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--entries', default='')
     ap.add_argument('--refresh-map', action='store_true')
+    ap.add_argument('--workers', type=int, default=6,
+                    help='entries fetched at once; the mirror is slow to '
+                         'list, not to send, so latency is what overlaps')
     args = ap.parse_args()
     m = entry_map(refresh=args.refresh_map)
     print(f'{len(m)} entries in the mirror map')
@@ -186,7 +189,8 @@ def main():
         ids = ids[:args.limit]
     done = skipped = failed = unmapped = 0
     t0 = time.time()
-    for i, bmse in enumerate(ids, 1):
+    todo = []
+    for bmse in ids:
         if already_have(os.path.join(FIDS, bmse)):
             skipped += 1
             continue
@@ -196,18 +200,30 @@ def main():
             with open(ERRLOG, 'a', encoding='utf-8') as f:
                 f.write(f'{bmse}\tnot in mirror map\n')
             continue
+        todo.append((bmse, comp))
+
+    def _one(item):
+        bmse, comp = item
         try:
-            n = fetch_entry(bmse, comp)
-            done += 1
-            print(f'[{i}/{len(ids)}] {bmse} {comp}: {n} experiment(s)')
+            return bmse, comp, fetch_entry(bmse, comp), None
         except (urllib.error.URLError, OSError, TimeoutError,
                 tarfile.TarError) as e:
-            failed += 1
-            with open(ERRLOG, 'a', encoding='utf-8') as f:
-                f.write(f'{bmse}\t{comp}\t{e}\n')
-            print(f'[{i}/{len(ids)}] {bmse} FAILED: {e}')
+            return bmse, comp, 0, e
+
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
+        for i, (bmse, comp, n, err) in enumerate(pool.map(_one, todo), 1):
+            if err is None:
+                done += 1
+                print(f'[{i}/{len(todo)}] {bmse} {comp}: {n} experiment(s)',
+                      flush=True)
+            else:
+                failed += 1
+                with open(ERRLOG, 'a', encoding='utf-8') as f:
+                    f.write(f'{bmse}\t{comp}\t{err}\n')
+                print(f'[{i}/{len(todo)}] {bmse} FAILED: {err}', flush=True)
     print(f'done {done}, skipped {skipped}, failed {failed}, '
-          f'unmapped {unmapped}, {time.time() - t0:.0f}s')
+          f'unmapped {unmapped}, {time.time() - t0:.0f}s', flush=True)
 
 
 if __name__ == '__main__':
