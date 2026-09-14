@@ -100,7 +100,9 @@ def _write_annotation_log(metabolites, stats):
                     continue
                 f.write(f'  {met.get("name", met.get("id"))}\n')
                 for mp in sorted(mps, key=lambda m: float(m.get('db_ppm') or 0)):
-                    dj = mp.get('delta_j_hz')
+                    dj = (mp.get('pattern_residual_hz')
+                          if mp.get('pattern_residual_hz') is not None
+                          else mp.get('delta_j_hz'))
                     dppm = mp.get('ppm_diff')
                     reasons = '; '.join(str(r)[:70] for r in
                                         (mp.get('_status_reasons') or [])[-2:])

@@ -380,6 +380,85 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     return m
 
 
+# A pattern line is looked for this far, in hertz, from where the aligned
+# pattern puts it. Two hertz: a linewidth, plus what a system that is not
+# quite first order moves between 500 and 600 MHz. The annotation's own
+# tolerance -- 0.05 ppm, thirty hertz -- is for where a multiplet sits, not
+# for where its lines sit once it has been found; used per line it matched
+# any peak in the neighbourhood and the residual measured the neighbourhood.
+PATTERN_LINE_TOL_HZ = 2.0
+
+# The residual's gates. Wider than delta-J's, because a residual is over the
+# whole shape and the shape was measured at another field: the ring protons
+# of a sugar are nearly first order, and "nearly" is a few tenths of a hertz
+# per line. A pattern within half a hertz is the reference's; beyond a hertz
+# and a half it is another shape.
+PATTERN_GOLD_HZ = 0.5
+PATTERN_BAD_HZ = 1.5
+
+
+def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
+                  line_tol_hz=PATTERN_LINE_TOL_HZ) -> dict:
+    """Lay a measured pattern on detected peaks and count what it finds.
+
+    ``pattern`` is ``[(offset_hz, rel_height)]`` from the reference DB;
+    ``peaks`` are detected peaks with ``ppm``; ``anchor_ppm`` is the peak the
+    search matched the signal on. Each pattern line in turn is placed on the
+    anchor, the rest follow at their offsets, and every line is looked for
+    within ``line_tol_hz`` of where that puts it. The alignment finding the
+    most lines wins, ties going to the smaller residual.
+
+    Returns ``{'n_found', 'n_expected', 'residual_hz', 'centre_ppm',
+    'found_ppms', 'predicted_ppms'}``. The residual is over the found lines,
+    after centring found and predicted on each other, so a drift of the
+    whole multiplet is delta-ppm's business and not the pattern's.
+    """
+    offs = [float(o) for o, _r in (pattern or ())]
+    n = len(offs)
+    if n < 2 or not peaks or field_mhz <= 0:
+        return {'n_found': 0, 'n_expected': n, 'residual_hz': None,
+                'centre_ppm': None, 'found_ppms': [], 'predicted_ppms': []}
+    ppms = np.array(sorted(float(p['ppm']) for p in peaks
+                           if p.get('ppm') is not None))
+    tol = float(line_tol_hz) / float(field_mhz)
+    best = None
+    for k in range(n):
+        shift = float(anchor_ppm) - offs[k] / float(field_mhz)
+        pred = [shift + o / float(field_mhz) for o in offs]
+        found, used = [], set()
+        for pp in pred:
+            i = int(np.argmin(np.abs(ppms - pp)))
+            # nearest unused peak within tolerance
+            order = np.argsort(np.abs(ppms - pp))
+            hit = None
+            for j in order:
+                if abs(ppms[j] - pp) > tol:
+                    break
+                if j not in used:
+                    hit = j
+                    break
+            if hit is not None:
+                used.add(hit)
+                found.append((pp, float(ppms[hit])))
+        n_found = len(found)
+        resid = None
+        if n_found >= 2:
+            pr = np.array([a for a, _ in found])
+            fd = np.array([b for _, b in found])
+            resid = float(np.sqrt(np.mean(((fd - fd.mean())
+                                            - (pr - pr.mean())) ** 2))
+                          * float(field_mhz))
+        key = (n_found, -(resid if resid is not None else 1e9))
+        if best is None or key > best[0]:
+            best = (key, {'n_found': n_found, 'n_expected': n,
+                          'residual_hz': resid,
+                          'centre_ppm': (float(np.mean([b for _, b in found]))
+                                         if found else None),
+                          'found_ppms': [b for _, b in found],
+                          'predicted_ppms': pred})
+    return best[1]
+
+
 def pattern_residual_hz(predicted_ppms, found_ppms, field_mhz) -> float | None:
     """How far the found lines sit from the reference pattern, in hertz.
 

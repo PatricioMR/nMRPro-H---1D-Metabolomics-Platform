@@ -33,7 +33,8 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    PATTERN_MULT, candidate_key, pascal_agreement, synthetic_lines,
+    PATTERN_MULT, PATTERN_GOLD_HZ, LineMeasurement, match_pattern,
+    candidate_key, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
@@ -1661,6 +1662,35 @@ class _AnnotationSearchMixin:
                         else:
                             _scorer_centre = multiplet_centre
 
+                    # ── Pattern measurement ──────────────────────────
+                    # A measured pattern is matched as a shape, not as a
+                    # letter with one J. Its lines are looked for within two
+                    # hertz of where the aligned pattern puts them, and the
+                    # residual over the found lines stands in for delta-J --
+                    # scaled to delta-J's gates so every rule downstream reads
+                    # it unchanged, with the raw residual kept beside it.
+                    if _pattern:
+                        _pm = match_pattern(
+                            [(float((pp - db_ppm) * mhz), ri)
+                             for pp, ri in _pattern],
+                            local_peaks, anchor_ppm=peak_ppm, field_mhz=mhz)
+                        _meas_sr = LineMeasurement(
+                            n_expected=_pm['n_expected'],
+                            n_found=_pm['n_found'],
+                            found_ppms=list(_pm['found_ppms']), measured=True)
+                        _meas_sr.predicted_lines = [
+                            {'ppm': float(v), 'rel_intensity': 1.0,
+                             'measured': True} for v in _pm['found_ppms']]
+                        if _meas_sr.complete and _pm['residual_hz'] is not None:
+                            _meas_sr.delta_j_hz = (
+                                float(_pm['residual_hz'])
+                                * float(_sc_params['dj_gold_hz'])
+                                / PATTERN_GOLD_HZ)
+                            _meas_sr.centre_ppm = _pm['centre_ppm']
+                        _pattern_residual = _pm['residual_hz']
+                    else:
+                        _pattern_residual = None
+
                     # ── Line measurement ─────────────────────────────
                     # Snap the DB multiplet's predicted lines onto detected
                     # peaks, count how many were actually found, and measure J
@@ -1679,13 +1709,15 @@ class _AnnotationSearchMixin:
                         expected_line_count(mult_raw,
                                             fallback=len(predicted_lines) or 2),
                         n_lns)
-                    _meas_sr = measure_multiplet(
-                        predicted_lines, peaks_to_search,
-                        mult=mult_raw, j_coupling=j_raw,
-                        db_ppm=db_ppm, centre_hint=multiplet_centre,
-                        n_expected=_n_exp_sr, tolerance=tolerance,
-                        field_mhz=mhz)
-                    if _meas_sr.measured and not _meas_sr.complete and j_hz > 0:
+                    if not _pattern:
+                        _meas_sr = measure_multiplet(
+                            predicted_lines, peaks_to_search,
+                            mult=mult_raw, j_coupling=j_raw,
+                            db_ppm=db_ppm, centre_hint=multiplet_centre,
+                            n_expected=_n_exp_sr, tolerance=tolerance,
+                            field_mhz=mhz)
+                    if (not _pattern and _meas_sr.measured
+                            and not _meas_sr.complete and j_hz > 0):
                         # Lines missing: before giving up, look in the window for
                         # the multiplet's comb — n_exp peaks spaced by J, every
                         # spacing agreeing with the DB J AND with each other.
@@ -1793,6 +1825,7 @@ class _AnnotationSearchMixin:
                                            if delta_j_hz is not None else None)
                     r['_n_found_lines'] = n_found_sr
                     r['_n_exp_lines']   = n_exp_sr
+                    r['pattern_residual_hz'] = _pattern_residual
                     r['j_coupling']     = j_raw
                     r['baseline_corrected'] = has_spec
                     r['multiplet_detail']   = (

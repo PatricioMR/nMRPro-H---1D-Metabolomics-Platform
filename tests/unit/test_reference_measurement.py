@@ -435,3 +435,60 @@ class TestPatterns:
         assert lines[0][0] == pytest.approx(3.232 - 8.75 / 600.0)
         assert lines[1][0] == pytest.approx(3.232 + 8.75 / 600.0)
         assert pattern_of({'ppm_center': 3.2, 'pattern_lines': None}, 600.0) == []
+
+
+class TestMatchPattern:
+    """A pattern is matched as a shape: each line within two hertz of where
+    the aligned pattern puts it, the alignment finding the most lines wins,
+    the residual is over the found lines. The annotation's 0.05 ppm tolerance
+    is for where a multiplet sits, not where its lines sit; used per line it
+    matched any peak in the neighbourhood and the residual measured the
+    neighbourhood -- 3.4 Hz at the median on the reference study."""
+
+    PAT = [(-9.2, 0.4), (-5.2, 0.8), (0.1, 1.0), (4.1, 0.8), (9.6, 0.4)]
+
+    def _peaks(self, centre, jitter_hz=0.0, extra=()):
+        from processing.annotation_scoring import match_pattern
+        pk = [{'ppm': centre + (o + jitter_hz * (i % 2 * 2 - 1)) / 600.0}
+              for i, (o, _r) in enumerate(self.PAT)]
+        pk += [{'ppm': e} for e in extra]
+        return pk, match_pattern
+
+    def test_a_pattern_present_is_found_whole_with_a_small_residual(self):
+        pk, match_pattern = self._peaks(3.401, jitter_hz=0.2)
+        m = match_pattern(self.PAT, pk, anchor_ppm=pk[2]['ppm'], field_mhz=600.0)
+        assert m['n_found'] == 5 and m['n_expected'] == 5
+        assert m['residual_hz'] < 0.5
+
+    def test_the_anchor_may_be_any_line_of_the_pattern(self):
+        """The search matched the signal on whichever line sat nearest the
+        database position; the pattern must align on that line, not assume it
+        is the centre."""
+        pk, match_pattern = self._peaks(3.401)
+        m = match_pattern(self.PAT, pk, anchor_ppm=pk[0]['ppm'], field_mhz=600.0)
+        assert m['n_found'] == 5
+
+    def test_a_drifted_pattern_still_matches(self):
+        """The whole multiplet 0.03 ppm from the database is delta-ppm's
+        business; the shape is unchanged and the residual says so."""
+        pk, match_pattern = self._peaks(3.431, jitter_hz=0.1)
+        m = match_pattern(self.PAT, pk, anchor_ppm=pk[2]['ppm'], field_mhz=600.0)
+        assert m['n_found'] == 5 and m['residual_hz'] < 0.5
+
+    def test_neighbouring_peaks_thirty_hertz_away_are_not_lines(self):
+        pk, match_pattern = self._peaks(3.401)
+        pk = [pk[2]] + [{'ppm': 3.401 + d} for d in (0.02, 0.035, -0.025, -0.04)]
+        m = match_pattern(self.PAT, pk, anchor_ppm=3.401, field_mhz=600.0)
+        # Two of those neighbours happen to sit 13 Hz apart, as two lines of
+        # the pattern do; that is two lines found, never five.
+        assert m['n_found'] < m['n_expected']
+
+    def test_a_different_shape_has_a_large_residual(self):
+        """Lines at roughly the right places but not the pattern's: found,
+        and the residual says they are not it."""
+        pk, match_pattern = self._peaks(3.401)
+        pk = [{'ppm': 3.401 + o / 600.0} for o in (-9.2, -3.5, 0.1, 5.8, 9.6)]
+        m = match_pattern(self.PAT, pk, anchor_ppm=pk[2]['ppm'], field_mhz=600.0)
+        assert m['n_found'] == 5
+        from processing.annotation_scoring import PATTERN_GOLD_HZ
+        assert m['residual_hz'] > PATTERN_GOLD_HZ
