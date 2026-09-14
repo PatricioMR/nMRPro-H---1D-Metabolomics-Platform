@@ -16,6 +16,8 @@ Panel B : signal region mini-plot
           • Click+drag to redefine start/end boundaries
 """
 import tkinter as tk
+
+from app_paths import DECONVOLUTION_ENABLED
 from tkinter import ttk
 import numpy as np
 import matplotlib.pyplot as plt
@@ -654,8 +656,9 @@ class PeakListWindow:
         peak = next((p for p in self.peaks if p['rank'] == rank), None)
         if peak is None: return
         menu = tk.Menu(self.win, tearoff=0)
-        menu.add_command(label='🔧 View in Deconvolution Tool',
-                         command=lambda: self._send_to_deconv(peak))
+        if DECONVOLUTION_ENABLED:
+            menu.add_command(label='🔧 View in Deconvolution Tool',
+                             command=lambda: self._send_to_deconv(peak))
         menu.add_command(label='📊 View per Sample',
                          command=lambda: self._open_per_sample(peak))
         menu.add_command(label='📐 Align region…',

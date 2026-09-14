@@ -35,7 +35,7 @@ from gui.stages.cosy_quantification_stage import CosyQuantificationStage
 from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
-from app_paths import APP_VERSION
+from app_paths import APP_VERSION, DECONVOLUTION_ENABLED
 from gui.utils.quality_palette import (
     SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
 from gui.widgets.annotation_results_window import _TIER_NOTE
@@ -400,7 +400,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             command=lambda: self.switch_stage('j_resolve'),
             style='Stage.TButton'
         )
-        self.btn_mcr_analysis.pack(side=tk.LEFT, padx=2)
+        if DECONVOLUTION_ENABLED:
+            self.btn_mcr_analysis.pack(side=tk.LEFT, padx=2)
 
         self.btn_quantification = ttk.Button(
             stage_frame, text="5. ⚗ Quantification",
@@ -443,6 +444,17 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         Em modo Lipidomics: JG-Deconv e Full-Spectrum MCR ficam bloqueados
         (integração por região não usa deteção de picos nem deconvolução).
         """
+        # Deconvolution is a future stage -- see app_paths.DECONVOLUTION_ENABLED
+        if (not DECONVOLUTION_ENABLED
+                and stage_name in ('j_resolve', 'fullspectrum_mcr')):
+            from tkinter import messagebox
+            messagebox.showinfo(
+                'Not available',
+                'Deconvolution is not part of this release. Overlap between '
+                'analytes is settled by the election in Quantification, and '
+                'the winner is reported with the confidence the number is '
+                'worth.')
+            return
         # Bloqueios em modo COSY
         if self.is_cosy and stage_name in ('peak_detection', 'j_resolve'):
             return

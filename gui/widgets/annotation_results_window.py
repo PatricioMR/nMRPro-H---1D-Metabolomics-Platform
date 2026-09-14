@@ -28,6 +28,7 @@ from gui.utils.quality_palette import (
     tier_from_annotation_quality, update_tier_counts)
 from processing.annotation_detectability import (
     build_overlap_map, mark_detectability)
+from app_paths import DECONVOLUTION_ENABLED
 from processing.annotation_detectability import fingerprint_contradictions
 
 
@@ -2685,9 +2686,10 @@ class AnnotationResultsWindow:
             menu.add_command(
                 label=f'📋 Open Signal #{rank} in Signal List',
                 command=_open_peak_list)
-            menu.add_command(
-                label=f'🧅 Send Signal #{rank} to Deconvolution Tool',
-                command=_open_deconv)
+            if DECONVOLUTION_ENABLED:
+                menu.add_command(
+                    label=f'🧅 Send Signal #{rank} to Deconvolution Tool',
+                    command=_open_deconv)
             menu.add_separator()
             menu.add_command(
                 label=f'🔀 View Candidates  ({len(candidates)} metabolites)',
@@ -2792,10 +2794,11 @@ class AnnotationResultsWindow:
             menu.add_command(
                 label='\U0001f4ca View multiplet across all samples',
                 command=_open_multiplet_samples)
-            menu.add_separator()
-            menu.add_command(
-                label='\U0001f52c MCR Deconvolution',
-                command=_open_mcr_child)
+            if DECONVOLUTION_ENABLED:
+                menu.add_separator()
+                menu.add_command(
+                    label='\U0001f52c MCR Deconvolution',
+                    command=_open_mcr_child)
             try:
                 menu.tk_popup(event.x_root, event.y_root)
             finally:

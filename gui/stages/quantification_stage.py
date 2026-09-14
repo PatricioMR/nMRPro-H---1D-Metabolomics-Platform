@@ -19,6 +19,8 @@ Split into focused modules:
   _quant_computation.py  — _QuantCompMixin  (_run, VIP, update, export)
 """
 import tkinter as tk
+
+from app_paths import DECONVOLUTION_ENABLED
 from tkinter import ttk, filedialog, messagebox
 import numpy as np
 
@@ -274,15 +276,16 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # box is the same question -- should windows two analytes sit in be
         # split between them -- answered by the engine that now does it, so it
         # keeps the variable and the saved projects keep working.
-        self.deconv_var = tk.BooleanVar(value=True)
+        self.deconv_var = tk.BooleanVar(value=DECONVOLUTION_ENABLED)
         self._j_resolve_cb = ttk.Checkbutton(
             mf2, text='Split windows two analytes share',
             variable=self.deconv_var,
             command=self._on_deconv_change)
-        self._j_resolve_cb.pack(side=tk.LEFT)
         self._j_resolve_status_lbl = ttk.Label(
             mf2, text='(not run yet)', font=('Arial', 7), foreground='gray')
-        self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
+        if DECONVOLUTION_ENABLED:
+            self._j_resolve_cb.pack(side=tk.LEFT)
+            self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         ttk.Label(s2,
                   text='Multiplicity: integrates the union of the multiplet signals\' '
                        'Signal-List boundaries; uses total nH.\n'

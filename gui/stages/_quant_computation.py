@@ -22,6 +22,7 @@ import os
 from ._quant_adapter import (
     blank_indices, dilution_and_correction, quantify_project, sample_groups,
     standard_vector)
+from app_paths import DECONVOLUTION_ENABLED
 from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import format_regions, parse_regions
 
@@ -506,7 +507,8 @@ class _QuantCompMixin:
         # leave every number exactly where the engine put it before the
         # balance existed -- otherwise the two settings cannot be compared.
         _dv = getattr(self, 'deconv_var', None)
-        _deconv = True if _dv is None else bool(_dv.get())
+        _deconv = (DECONVOLUTION_ENABLED if _dv is None
+                   else bool(_dv.get()) and DECONVOLUTION_ENABLED)
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
