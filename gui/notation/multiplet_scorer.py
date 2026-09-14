@@ -550,6 +550,9 @@ def score_multiplet_match(result, peaks, tolerance=0.005,
 
     # ── Use DB transitions when available (no j_coupling needed) ────────────
     db_trans = result.get('db_transitions', [])
+    # 'm*' is an unresolved multiplet whose pattern was measured; it arrives
+    # here only with that pattern as its transitions, and nothing else about
+    # it can be scored.
     if db_trans and len(db_trans) >= 2 and norm not in ('s', 'm', ''):
         return _score_from_transitions(db_trans, result, peaks, ppm_c, ppm_exp,
                                         norm, tolerance, mhz)

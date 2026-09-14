@@ -1635,6 +1635,15 @@ class _AnnotationSearchMixin:
                         # coupling constant. measure_multiplet owns both.
                         _score_r = dict(entry)
                         _score_r['peak_ppm'] = multiplet_centre
+                        if _pattern:
+                            # The scorer scores a known letter from its J and
+                            # anything else from the first J alone -- which
+                            # turned a seven-line pattern into a doublet. It
+                            # has a path for a line list; the measured pattern
+                            # takes it, at this spectrometer's field.
+                            _score_r['db_transitions'] = [
+                                {'ppm': pp, 'intensity': ri}
+                                for pp, ri in _pattern]
                         _ms_main, _md_main, _pl_main = _multiplet_score(
                             _score_r, local_peaks, tolerance, mhz,
                             ppm_array=(_ppm_arr if has_spec else None),
