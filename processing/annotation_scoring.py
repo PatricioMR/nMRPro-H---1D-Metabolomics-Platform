@@ -31,6 +31,7 @@ from typing import Iterable, NamedTuple, Sequence
 
 import numpy as np
 
+from processing.quant_integration import pascal_weights
 from processing.signal_quality import SIGNAL_AVERAGE, SIGNAL_GOOD
 
 # ── Multiplicity vocabulary ───────────────────────────────────────────────────
@@ -327,6 +328,9 @@ class LineMeasurement:
     # scaled value; this is the number a reader should see.
     pattern_residual_hz: float | None = None
     pattern_intensity_agreement: float | None = None
+    # The spacing the observed one was judged against: the reference J as it
+    # appears at this study's linewidth, not the reference J itself.
+    expected_j_hz: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -335,15 +339,86 @@ class LineMeasurement:
                 and self.n_found >= self.n_expected)
 
 
+def apparent_lines(lines, fwhm_hz, *, step_hz=0.02) -> list:
+    """Where the apices sit when these lines are Lorentzians of this width.
+
+    Two lines closer than about a linewidth and a half pull each other's apex
+    inward, and closer still they are one apex: the maxima of a sum of
+    Lorentzians are not at the lines' positions. Glucose's anomeric doublet
+    (J = 3.8 Hz) read 2.7 Hz apart in plasma at a 2.7 Hz linewidth and was
+    refused as another coupling, when the pulling-in was the linewidth's and
+    the coupling was right. A reference position is therefore compared with
+    what would be seen of it here, not with itself.
+
+    ``lines`` is ``[(offset_hz, rel_height)]``; the sum of Lorentzians of
+    FWHM ``fwhm_hz`` is sampled at ``step_hz`` and its local maxima returned
+    in the same form, heights scaled to the tallest. No width, or none of
+    the lines, returns the lines unchanged.
+
+    Lorentzian lineshape: Abragam, The Principles of Nuclear Magnetism,
+    Oxford 1961, ch. III. The apex pull-in of two overlapping Lorentzians is
+    what Posener (Aust. J. Phys. 1959, 12, 184) described for the resolution
+    of a doublet.
+    """
+    pts = [(float(o), float(r)) for o, r in (lines or ())]
+    if len(pts) < 2 or not fwhm_hz or float(fwhm_hz) <= 0:
+        return pts
+    hw = float(fwhm_hz) / 2.0
+    lo = min(o for o, _ in pts) - 3 * float(fwhm_hz)
+    hi = max(o for o, _ in pts) + 3 * float(fwhm_hz)
+    x = np.arange(lo, hi + step_hz, step_hz)
+    y = np.zeros_like(x)
+    for o, r in pts:
+        y += r * hw ** 2 / ((x - o) ** 2 + hw ** 2)
+    inner = (y[1:-1] > y[:-2]) & (y[1:-1] >= y[2:])
+    idx = np.nonzero(inner)[0] + 1
+    if len(idx) == 0:
+        return pts
+    top = float(y[idx].max()) or 1.0
+    out = []
+    for i in idx:
+        # parabola through the three samples around the maximum
+        y0, y1, y2 = y[i - 1], y[i], y[i + 1]
+        den = y0 - 2 * y1 + y2
+        dx = 0.5 * (y0 - y2) / den if den else 0.0
+        out.append((float(x[i] + dx * step_hz), float(y1 / top)))
+    return out
+
+
+def apparent_spacing_hz(j_hz, fwhm_hz, n_lines) -> float | None:
+    """The spacing a first-order multiplet of coupling ``j_hz`` shows between
+    adjacent apices at linewidth ``fwhm_hz`` -- ``j_hz`` itself when the lines
+    stand apart, less as they lean on each other, ``None`` once any pair has
+    merged and the multiplet no longer shows ``n_lines`` apices."""
+    if not j_hz or float(j_hz) <= 0 or not n_lines or int(n_lines) < 2:
+        return None
+    if not fwhm_hz or float(fwhm_hz) <= 0:
+        return float(j_hz)
+    n = int(n_lines)
+    heights = pascal_weights(n)
+    lines = [((k - (n - 1) / 2.0) * float(j_hz), float(h))
+             for k, h in enumerate(heights)]
+    seen = apparent_lines(lines, fwhm_hz)
+    if len(seen) != n:
+        return None
+    offs = sorted(o for o, _ in seen)
+    return float(np.median(np.diff(offs)))
+
+
 def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
                       *, mult, j_coupling, db_ppm: float, centre_hint: float,
                       n_expected: int, tolerance: float,
-                      field_mhz: float) -> LineMeasurement:
+                      field_mhz: float,
+                      linewidth_hz: float | None = None) -> LineMeasurement:
     """Snap a DB multiplet onto detected peaks and measure J from the result.
 
     ``centre_hint`` is the previously observed centre (falls back to db_ppm)
     and is only used to build synthetic line targets when the stored
     ``predicted_lines`` are missing or truncated.
+
+    ``linewidth_hz`` is the study's; the observed spacing is judged against
+    the reference coupling as it would appear at that width (see
+    ``apparent_lines``), and ``expected_j_hz`` records what that was.
     """
     is_pattern = normalize_mult(mult) == PATTERN_MULT
     # A pattern has no single J. Its coupling list is the curators' and the
@@ -357,9 +432,13 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     if not pred or n_expected < 2:
         return LineMeasurement(measured=False)
 
+    j_ref = j_db
+    if j_db is not None and linewidth_hz:
+        j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
+
     found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
-    if j_db is not None and len(found) == n_expected:
-        found = drop_worst_j_outlier(found, j_db, field_mhz)
+    if j_ref is not None and len(found) == n_expected:
+        found = drop_worst_j_outlier(found, j_ref, field_mhz)
 
     m = LineMeasurement(n_expected=n_expected, n_found=len(found),
                         found_ppms=found, measured=True)
@@ -380,8 +459,9 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     seps = spacings_hz(found, field_mhz) if field_mhz > 0 else []
     if seps:
         m.observed_j_hz = float(np.median(seps))
-        if j_db is not None:
-            m.delta_j_hz = float(abs(m.observed_j_hz - j_db))
+        if j_ref is not None:
+            m.expected_j_hz = float(j_ref)
+            m.delta_j_hz = float(abs(m.observed_j_hz - j_ref))
         m.centre_ppm = float(np.mean(found))
     return m
 
@@ -482,7 +562,7 @@ def pattern_offsets_hz(mp) -> list:
     return out if len(out) >= 2 else []
 
 
-def resolvable_pattern(pattern, merge_hz) -> list:
+def resolvable_pattern(pattern, merge_hz, fwhm_hz=None) -> list:
     """The pattern as THIS study can resolve it.
 
     A reference pattern is measured on a pure compound at a linewidth of a
@@ -492,7 +572,12 @@ def resolvable_pattern(pattern, merge_hz) -> list:
     one line, and finding two of three was the right count of the wrong
     expectation. Lines closer than ``merge_hz`` collapse into one at their
     height-weighted position, heights added.
+
+    Given ``fwhm_hz`` the lines are first laid down as Lorentzians of that
+    width and their apices taken (``apparent_lines``): a line leaning on its
+    neighbour is expected where its apex is seen, not where it is.
     """
+    pattern = apparent_lines(pattern, fwhm_hz) if fwhm_hz else pattern
     if not pattern or not merge_hz or float(merge_hz) <= 0:
         return list(pattern or ())
     lines = sorted((float(o), float(r)) for o, r in pattern)
@@ -509,7 +594,8 @@ def resolvable_pattern(pattern, merge_hz) -> list:
 
 
 def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
-                           anchor_ppm=None, merge_hz=None) -> LineMeasurement:
+                           anchor_ppm=None, merge_hz=None,
+                           fwhm_hz=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -528,7 +614,9 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     """
     pat = resolvable_pattern(pattern_offsets_hz(mp),
                              merge_hz if merge_hz is not None
-                             else mp.get('pattern_merge_hz'))
+                             else mp.get('pattern_merge_hz'),
+                             fwhm_hz if fwhm_hz is not None
+                             else mp.get('study_linewidth_hz'))
     if len(pat) < 2 or not field_mhz:
         return LineMeasurement(measured=False)
     anchor = anchor_ppm
@@ -1420,6 +1508,7 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     n_expected = expected_lines_for(mp, met, mult=mult)
     stored_lines = mp.get('predicted_lines') or []
 
+    _lw_hz = mp.get('study_linewidth_hz')
     if normalize_mult(mult) == PATTERN_MULT:
         meas = measure_pattern_signal(mp, peaks, field_mhz=field_mhz,
                                       dj_gold_hz=params['dj_gold_hz'])
@@ -1439,7 +1528,8 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
             j_coupling=mp.get('j_coupling'),
             db_ppm=float(mp.get('db_ppm') or 0),
             centre_hint=float(mp.get('peak_ppm') or 0),
-            n_expected=n_expected, tolerance=tolerance, field_mhz=field_mhz)
+            n_expected=n_expected, tolerance=tolerance, field_mhz=field_mhz,
+            linewidth_hz=_lw_hz)
 
     def _score(dj):
         return dj_score(dj, params['dj_gold_hz'], params['dj_bad_hz'],

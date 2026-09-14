@@ -1395,7 +1395,11 @@ class _AnnotationSearchMixin:
                         getattr(_pk_stage_for_lw, 'min_width_var').get())
                 except Exception:
                     _min_dist_ppm = 0.0
-                _merge_hz = max(_lw_ppm, _min_dist_ppm) * mhz if mhz else 0.0
+                # The detector's floor merges what the linewidth did not:
+                # two apices closer than min_distance are one peak in the
+                # list whatever the trace shows.
+                _lw_hz = _lw_ppm * mhz if mhz else 0.0
+                _merge_hz = _min_dist_ppm * mhz if mhz else 0.0
 
                 for i, entry in enumerate(db_entries):
                     db_ppm   = float(
@@ -1696,7 +1700,8 @@ class _AnnotationSearchMixin:
                         _meas_sr = measure_pattern_signal(
                             entry, local_peaks, field_mhz=mhz,
                             dj_gold_hz=_sc_params['dj_gold_hz'],
-                            anchor_ppm=peak_ppm, merge_hz=_merge_hz)
+                            anchor_ppm=peak_ppm, merge_hz=_merge_hz,
+                            fwhm_hz=_lw_hz)
                         _pattern_residual = _meas_sr.pattern_residual_hz
                         _pattern_agreement = _meas_sr.pattern_intensity_agreement
                     else:
@@ -1727,7 +1732,7 @@ class _AnnotationSearchMixin:
                             mult=mult_raw, j_coupling=j_raw,
                             db_ppm=db_ppm, centre_hint=multiplet_centre,
                             n_expected=_n_exp_sr, tolerance=tolerance,
-                            field_mhz=mhz)
+                            field_mhz=mhz, linewidth_hz=_lw_hz)
                     if (not _pattern and _meas_sr.measured
                             and not _meas_sr.complete and j_hz > 0):
                         # Lines missing: before giving up, look in the window for
@@ -1750,7 +1755,7 @@ class _AnnotationSearchMixin:
                                 db_ppm=db_ppm,
                                 centre_hint=sum(_comb_sr) / len(_comb_sr),
                                 n_expected=_n_exp_sr, tolerance=tolerance,
-                                field_mhz=mhz)
+                                field_mhz=mhz, linewidth_hz=_lw_hz)
                             if _retry_sr.complete:
                                 _meas_sr = _retry_sr
 
@@ -1839,6 +1844,10 @@ class _AnnotationSearchMixin:
                     r['_n_exp_lines']   = n_exp_sr
                     r['pattern_residual_hz'] = _pattern_residual
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
+                    # What the lines were judged at, so a re-measurement after
+                    # recalibration asks the same question of the same width.
+                    r['study_linewidth_hz'] = _lw_hz or None
+                    r['expected_j_hz'] = _meas_sr.expected_j_hz
                     if _pattern:
                         r['intensity_agreement'] = _pattern_agreement
                     r['j_coupling']     = j_raw
