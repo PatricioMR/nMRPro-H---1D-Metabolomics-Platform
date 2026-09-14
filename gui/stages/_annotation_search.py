@@ -14,6 +14,7 @@ Extracted from annotation_stage.py to isolate:
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
 import numpy as np
+import json
 import os
 import time
 import threading
@@ -32,7 +33,7 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    candidate_key, pascal_agreement, synthetic_lines,
+    PATTERN_MULT, candidate_key, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
@@ -138,7 +139,25 @@ def _measured_columns_sql(shift_cols) -> dict:
          'ELSE s.j_coupling END' if 'j_use' in cols else 's.j_coupling')
     j_sigma = ("CASE WHEN s.j_use_source LIKE 'measured%' THEN s.j_sigma "
                "ELSE NULL END" if 'j_use_source' in cols else 'NULL')
-    return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma}
+    pattern = 's.pattern_lines' if 'pattern_lines' in cols else 'NULL'
+    return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma, 'pattern': pattern}
+
+
+def pattern_of(entry, mhz) -> list:
+    """``[(ppm, rel_intensity)]`` of a measured line pattern laid on the
+    axis at this field, or ``[]``. Offsets are stored in hertz because they
+    are couplings, and couplings do not move with the field."""
+    raw = entry.get('pattern_lines')
+    if not raw:
+        return []
+    try:
+        lines = json.loads(raw) if isinstance(raw, str) else list(raw)
+        centre = float(entry.get('ppm_center') or entry.get('ppm') or 0.0)
+        out = [(centre + float(off) / float(mhz), float(rel))
+               for off, rel in lines]
+    except (TypeError, ValueError):
+        return []
+    return sorted(out) if len(out) >= 2 else []
 
 class _AnnotationSearchMixin:
     """Mixin — mixed into AnnotationStage. Uses self.* freely."""
@@ -257,6 +276,7 @@ class _AnnotationSearchMixin:
                         " s.atom_name, s.multiplicity as type,"
                         f" {_rescue_meas['j']} as j_coupling,"
                         f" {_rescue_meas['j_sigma']} as j_sigma,"
+                        f" {_rescue_meas['pattern']} as pattern_lines,"
                         f" s.multiplicity{_rescue_protons_col},"
                         " ? as peak_ppm, ? as peak_rank,"
                         f" ABS({_rescue_meas['ppm']} - ?) as ppm_diff"
@@ -1243,6 +1263,7 @@ class _AnnotationSearchMixin:
                             " s.atom_name, s.multiplicity as type,"
                             f" {_meas['j']} as j_coupling,"
                             f" {_meas['j_sigma']} as j_sigma,"
+                            f" {_meas['pattern']} as pattern_lines,"
                             f" s.multiplicity{_protons_col}"
                             " FROM shifts_1h s"
                             " JOIN metabolites met"
@@ -1367,6 +1388,18 @@ class _AnnotationSearchMixin:
 
                     is_singlet  = mult_raw in ('s', 'singlet', '')
 
+                    # An unresolved multiplet whose pattern the reference DB
+                    # measured is a multiplet with lines to find, not a
+                    # generic 'm'. Relabelled so every rule downstream -- tier,
+                    # competition, the line count -- treats it as one.
+                    _pattern = pattern_of(entry, mhz) if mult_raw in (
+                        'm', 'multiplet') else []
+                    if _pattern:
+                        mult_raw = PATTERN_MULT
+                        entry = dict(entry)
+                        entry['type'] = PATTERN_MULT
+                        entry['multiplicity'] = PATTERN_MULT
+
                     # Skip unquantifiable multiplicities: generic 'm' (no J, no
                     # predictable pattern) and BROAD/exchangeable signals (br s,
                     # br. s., br d…). Broad lines are exchangeable protons whose
@@ -1376,8 +1409,9 @@ class _AnnotationSearchMixin:
                     if is_unquantifiable_multiplicity(mult_raw):
                         continue
 
-                    n_lns       = _n_lines_map.get(
-                        mult_raw, expected_line_count(mult_raw, 2))
+                    n_lns       = (len(_pattern) if _pattern else
+                                   _n_lines_map.get(
+                                       mult_raw, expected_line_count(mult_raw, 2)))
                     j_ppm       = (j_hz / mhz
                                    if j_hz > 0 and mhz > 0 else 0.0)
                     half_width  = max(
@@ -1392,7 +1426,10 @@ class _AnnotationSearchMixin:
                     # (independent of J, which is missing for ~half the lines);
                     # fall back to the J-modelled stick pattern when unavailable.
                     _met_id_tr = entry.get('hmdb_id') or entry.get('bmrb_id')
-                    _tr_lines = lines_from_transitions(
+                    # The pattern the DB measured beats the curated transition
+                    # list: it is the same spectrum, read to hundredths of a
+                    # hertz instead of the half hertz the list is rounded to.
+                    _tr_lines = _pattern or lines_from_transitions(
                         conn, _met_id_tr,
                         db_ppm - half_width, db_ppm + half_width, mhz)
                     if len(_tr_lines) >= 2:

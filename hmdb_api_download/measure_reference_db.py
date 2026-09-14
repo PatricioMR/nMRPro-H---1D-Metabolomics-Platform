@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import re
 import shutil
@@ -33,7 +34,7 @@ sys.path.insert(0, ROOT)
 from download_bmrb_fids import BMRB_ENTRIES, sample_conditions  # noqa: E402
 from data.bruker_loader import load_bruker_dataset  # noqa: E402
 from processing.reference_measurement import (  # noqa: E402
-    measure_fingerprint, noise_sigma, reference_offset)
+    measure_fingerprint, measure_pattern, noise_sigma, reference_offset)
 
 FIDS = os.path.join(REPO, 'databases', 'bmrb_fids')
 V01 = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_v01.db')
@@ -58,6 +59,11 @@ MEASURED_COLUMNS = (
     # measurement stands, 'listed' where it does not, and 'review' where the
     # two disagree beyond what a rounding could explain.
     ('j_use', 'REAL'), ('j_use_source', 'TEXT'),
+    # The measured line pattern -- offsets in hertz from the centre, relative
+    # heights -- as JSON. For an unresolved multiplet this is the whole of what
+    # can be verified about it; for a resolved one it is the same information
+    # the multiplicity and J already give, kept for the same reason.
+    ('pattern_lines', 'TEXT'), ('pattern_n', 'INTEGER'),
 )
 
 # A coupling that moves between fields by more than this, beyond the two
@@ -109,6 +115,24 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
                               sigma=sigma)
     for m in out:
         m['reference_offset_ppm'] = float(off)
+        lst = m['listed']
+        lo, hi = lst.get('ppm_min'), lst.get('ppm_max')
+        if lo is None or hi is None or float(hi) - float(lo) < 0.002:
+            # No window listed: the multiplet's own span at the largest
+            # plausible coupling, as the resolved measurement uses.
+            c = float(lst.get('ppm', 0.0))
+            n = int(lst.get('n_lines') or 2)
+            half = (n - 1) / 2.0 * 20.0 / float(field_mhz) + 0.01
+            lo, hi = c - half, c + half
+        pat = measure_pattern(ppm - off, y, lo=float(lo), hi=float(hi),
+                              field_mhz=field_mhz, sigma=sigma)
+        m['pattern'] = pat
+        # An unresolved multiplet has no first-order measurement; the pattern
+        # is its measurement, and its centre its position.
+        if m.get('status') == 'unresolved' and pat['status'] == 'ok':
+            m['status'] = 'pattern'
+            m['ppm'] = pat['centre_ppm']
+            m['snr'] = pat['snr']
     return out
 
 
@@ -248,9 +272,11 @@ def main():
         sets = _spectrum_sets(bmse)
         if not sets:
             continue
-        signals = [dict(zip(('id', 'ppm', 'multiplicity', 'j_coupling'), r))
+        signals = [dict(zip(('id', 'ppm', 'multiplicity', 'j_coupling',
+                             'ppm_min', 'ppm_max', 'n_lines'), r))
                    for r in con.execute(
-                       'select id, ppm, multiplicity, j_coupling from shifts_1h '
+                       'select id, ppm, multiplicity, j_coupling, ppm_min, '
+                       'ppm_max, n_lines from shifts_1h '
                        'where bmrb_id=? order by ppm', (key,))]
         cond = _conditions(bmse)
         best: dict = {}
@@ -272,9 +298,10 @@ def main():
                                                  m['snr'])
                 # Several sets are several concentrations; the measurement
                 # from the strongest clean signal stands for the signal.
-                if m.get('status') == 'ok' and (
-                        sid not in best or best[sid].get('status') != 'ok'
-                        or m['snr'] > best[sid]['snr']):
+                if m.get('status') in ('ok', 'pattern') and (
+                        sid not in best
+                        or best[sid].get('status') not in ('ok', 'pattern')
+                        or m.get('snr', 0) > best[sid].get('snr', 0)):
                     best[sid] = {**m, 'set': set_name, 'field': f_mhz}
                 elif sid not in best:
                     best[sid] = {**m, 'set': set_name, 'field': f_mhz}
@@ -288,17 +315,23 @@ def main():
             m['j_flag'] = flag
             j_use, j_src = coupling_to_use(
                 _j_listed(m['listed'].get('j_coupling')), m.get('j_hz'), flag)
+            pat = m.get('pattern') or {}
+            pat_json = (json.dumps([[round(o, 3), round(r, 3)]
+                                    for o, r in pat.get('lines', [])])
+                        if pat.get('status') == 'ok' else None)
             con.execute(
                 'update shifts_1h set ppm_meas=?, j_meas=?, j_sigma=?, '
                 'linewidth_hz=?, snr_meas=?, pattern_meas=?, meas_status=?, '
                 'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
                 'meas_buffer=?, j_field_dependence_hz=?, j_flag=?, '
-                'j_use=?, j_use_source=? where id=?',
+                'j_use=?, j_use_source=?, pattern_lines=?, pattern_n=? '
+                'where id=?',
                 (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
                  m.get('pattern_agreement'), m.get('status'), m.get('set'),
                  m.get('field'), cond.get('ph'), cond.get('temperature'),
-                 cond.get('buffer'), dep, flag, j_use, j_src, sid))
+                 cond.get('buffer'), dep, flag, j_use, j_src,
+                 pat_json, pat.get('n_lines') if pat_json else None, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})

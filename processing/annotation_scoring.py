@@ -42,6 +42,16 @@ SINGLET_TYPES_BROAD = frozenset(
 # treated as a multiplet (candidate exclusion rules).
 SINGLET_TYPES_STRICT = frozenset({'s', 'singlet', ''})
 
+# An unresolved multiplet whose line pattern the reference database MEASURED
+# on its own spectrum (BMRB_Metabolomics_v02, ``pattern_lines``). It is not
+# singlet-like: it has lines to find and positions to agree with. It carries
+# no single J, so what stands in for delta-J is the residual of the found
+# lines against the pattern, in hertz, after the two are centred on each
+# other -- the same quantity, asked of the whole pattern instead of one
+# spacing. Seven of D-glucose's nine signals are 'm'; without this it could
+# never verify a multiplet, never compete, and its peaks went to singlets.
+PATTERN_MULT = 'm*'
+
 # Expected line count per multiplicity label.
 # Two multiplicity vocabularies reach this table: BMRB writes quint/sext/sept,
 # HMDB writes p/h/hept. Both must resolve, or the expected line count silently
@@ -329,7 +339,10 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     and is only used to build synthetic line targets when the stored
     ``predicted_lines`` are missing or truncated.
     """
-    j_db = parse_first_j(j_coupling)
+    is_pattern = normalize_mult(mult) == PATTERN_MULT
+    # A pattern has no single J. Its coupling list is the curators' and the
+    # first value in it is not the spacing of anything in particular.
+    j_db = None if is_pattern else parse_first_j(j_coupling)
     pred = list(predicted_lines or [])
     if len(pred) < n_expected and field_mhz > 0 and j_db:
         pred = synthetic_lines(float(centre_hint or db_ppm or 0), j_db,
@@ -351,6 +364,13 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
         # must not be reused. Report it as unmeasured rather than stale.
         return m
 
+    if is_pattern:
+        m.delta_j_hz = pattern_residual_hz(
+            [float(l.get('ppm')) for l in pred if l.get('ppm') is not None],
+            found, field_mhz)
+        m.centre_ppm = float(np.mean(found))
+        return m
+
     seps = spacings_hz(found, field_mhz) if field_mhz > 0 else []
     if seps:
         m.observed_j_hz = float(np.median(seps))
@@ -358,6 +378,26 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
             m.delta_j_hz = float(abs(m.observed_j_hz - j_db))
         m.centre_ppm = float(np.mean(found))
     return m
+
+
+def pattern_residual_hz(predicted_ppms, found_ppms, field_mhz) -> float | None:
+    """How far the found lines sit from the reference pattern, in hertz.
+
+    Both sets are centred on their own means first, so a shift of the whole
+    multiplet -- which is chemistry, and the delta-ppm criterion's business --
+    does not count against the pattern. What remains is the root mean square
+    of the line-by-line differences: the pattern's version of delta-J, and it
+    is compared with the same gates.
+    """
+    if not predicted_ppms or not found_ppms or field_mhz <= 0:
+        return None
+    p = np.sort(np.asarray(predicted_ppms, dtype=float))
+    f = np.sort(np.asarray(found_ppms, dtype=float))
+    if p.size != f.size:
+        return None
+    p = p - p.mean()
+    f = f - f.mean()
+    return float(np.sqrt(np.mean((f - p) ** 2)) * float(field_mhz))
 
 
 # ── Candidate ranking (shared by annotation and quantification) ───────────────

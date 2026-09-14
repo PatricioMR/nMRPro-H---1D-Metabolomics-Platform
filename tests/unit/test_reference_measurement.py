@@ -330,7 +330,8 @@ class TestTheAppReadsTheMeasurement:
         sys.path.insert(0, 'gui/stages')
         from gui.stages._annotation_search import _measured_columns_sql
         v01 = _measured_columns_sql({'ppm', 'j_coupling'})
-        assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL'}
+        assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL',
+                       'pattern': 'NULL'}
         v02 = _measured_columns_sql({'ppm', 'j_coupling', 'ppm_meas', 'j_use',
                                      'j_use_source', 'j_sigma'})
         assert 'COALESCE(s.ppm_meas, s.ppm)' == v02['ppm']
@@ -379,3 +380,58 @@ class TestWhichCouplingToUse:
 
     def test_no_measurement_means_the_listing(self):
         assert self._f()(7.20, None) == (7.20, 'listed')
+
+
+class TestPatterns:
+    """An unresolved multiplet has no letter and no single J, but its lines
+    stand where its couplings put them, and that can be measured, stored in
+    hertz, and matched -- which is what lets D-glucose verify anything."""
+
+    def test_a_dd_is_measured_as_four_offsets_in_hertz(self):
+        from processing.reference_measurement import measure_pattern
+        c, j1, j2 = 3.232, 8.0, 9.5
+        y = _spectrum(*[_line(c + (a * j1 + b * j2) / 2 / FIELD, 500.0)
+                        for a in (-1, 1) for b in (-1, 1)])
+        pat = measure_pattern(PPM, y, lo=c - 0.03, hi=c + 0.03, field_mhz=FIELD)
+        assert pat['status'] == 'ok' and pat['n_lines'] == 4
+        offs = [o for o, _ in pat['lines']]
+        assert offs == pytest.approx([-8.75, -0.75, 0.75, 8.75], abs=0.05)
+        assert pat['centre_ppm'] == pytest.approx(c, abs=0.0002)
+
+    def test_the_residual_ignores_a_shift_and_measures_the_shape(self):
+        from processing.annotation_scoring import pattern_residual_hz
+        pred = [3.2300, 3.2316, 3.2319, 3.2335]
+        shifted = [p + 0.021 for p in pred]                # same shape, drifted
+        assert pattern_residual_hz(pred, shifted, FIELD) == pytest.approx(0.0, abs=1e-6)
+        wrong = [3.2300, 3.2316, 3.2319, 3.2380]           # one line off by 2.2 Hz
+        assert pattern_residual_hz(pred, wrong, FIELD) > 0.5
+
+    def test_a_pattern_multiplet_is_verified_by_its_residual(self):
+        """measure_multiplet on 'm*': no J to compare, the residual stands in
+        for delta-J and a complete, well-placed pattern is confirmed."""
+        from processing.annotation_scoring import (
+            PATTERN_MULT, candidate_tier, measure_multiplet,
+            TIER_CONFIRMED_MULTIPLET)
+        # A dd with J 3 and 10 Hz at 500 MHz: offsets +/-3.5 and +/-6.5 Hz.
+        pred = [{'ppm': 3.232 + o / FIELD} for o in (-6.5, -3.5, 3.5, 6.5)]
+        peaks = [{'rank': i, 'ppm': p['ppm'] + 0.004} for i, p in enumerate(pred)]
+        m = measure_multiplet(pred, peaks, mult=PATTERN_MULT,
+                              j_coupling='1.15 8.05', db_ppm=3.232,
+                              centre_hint=3.236, n_expected=4,
+                              tolerance=0.01, field_mhz=FIELD)
+        assert m.complete and m.delta_j_hz == pytest.approx(0.0, abs=0.01)
+        assert candidate_tier(PATTERN_MULT, m.delta_j_hz, m.n_found,
+                              m.n_expected) == TIER_CONFIRMED_MULTIPLET
+
+    def test_a_pattern_is_not_singlet_like(self):
+        from processing.annotation_scoring import PATTERN_MULT, is_singlet_like
+        assert not is_singlet_like(PATTERN_MULT)
+        assert is_singlet_like('m')
+
+    def test_the_search_lays_the_pattern_on_the_axis_at_its_field(self):
+        from gui.stages._annotation_search import pattern_of
+        entry = {'ppm_center': 3.232, 'pattern_lines': '[[-8.75, 0.9], [8.75, 1.0]]'}
+        lines = pattern_of(entry, 600.0)
+        assert lines[0][0] == pytest.approx(3.232 - 8.75 / 600.0)
+        assert lines[1][0] == pytest.approx(3.232 + 8.75 / 600.0)
+        assert pattern_of({'ppm_center': 3.2, 'pattern_lines': None}, 600.0) == []

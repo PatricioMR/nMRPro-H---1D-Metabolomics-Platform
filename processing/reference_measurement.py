@@ -254,3 +254,76 @@ def measure_fingerprint(ppm, y, signals, *, field_mhz, sigma=None) -> list:
         m['listed'] = dict(s)
         out.append(m)
     return out
+
+
+# ── Patterns: what an unresolved multiplet actually looks like ──────────────
+# A third of the reference database's signals are 'm': a coupling list the
+# curators could not reduce to one letter -- D-glucose's ring protons carry
+# two, three, four couplings each -- and the build wrote them off as having no
+# pattern to verify. Seven of glucose's nine signals are 'm'; the annotation
+# never matched it, and its peaks went to singlets of other compounds.
+#
+# The pattern is in the spectrum. Within the signal's own window the lines
+# stand where the couplings put them, and their spacings are in hertz, so
+# the pattern measured at 500 MHz predicts the pattern at 600 to the extent
+# the system is first order -- which the ring protons of a sugar are, nearly:
+# their shift differences are tens of hertz against couplings of ten. What
+# is measured here is offsets from the pattern's centre, in hertz, and
+# relative heights, and the annotation snaps them to detected peaks the way
+# it snaps a doublet's two lines.
+
+# Lines closer than this, in hertz, are one line the grid split, or a shoulder
+# the detector took twice; a reference pattern is coarser than that.
+MIN_PATTERN_SPACING_HZ = 0.5
+
+
+def measure_pattern(ppm, y, *, lo, hi, field_mhz, sigma=None, max_lines=16,
+                    min_rel=0.05) -> dict:
+    """Every line inside ``[lo, hi]``, as offsets from the pattern's centre.
+
+    Returns ``{'status', 'centre_ppm', 'lines': [(offset_hz, rel_height)],
+    'n_lines', 'snr'}`` -- 'ok' with two lines or more, 'single' with one,
+    'none' with nothing above the floor. Lines below ``min_rel`` of the
+    tallest are noise on a pattern this strong and are left out; a pattern
+    is capped at ``max_lines`` because more is a region, not a multiplet.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    if sigma is None:
+        sigma = noise_sigma(ppm, y)
+    lo, hi = (min(lo, hi), max(lo, hi))
+    m = (ppm >= lo) & (ppm <= hi)
+    idx = np.flatnonzero(m)
+    if idx.size < 5:
+        return {'status': 'none', 'lines': [], 'n_lines': 0}
+    seg = y[idx]
+    base = float(np.percentile(seg, 10))
+    apices, props = find_peaks(seg, height=base + MIN_LINE_SNR * sigma,
+                               prominence=MIN_LINE_SNR * sigma)
+    if apices.size == 0:
+        return {'status': 'none', 'lines': [], 'n_lines': 0}
+    heights = props['peak_heights'] - base
+    keep = heights >= float(min_rel) * float(heights.max())
+    apices, heights = apices[keep], heights[keep]
+    order = np.argsort(heights)[::-1][:int(max_lines)]
+    pos = np.array([refine_apex_ppm(ppm, y, float(ppm[idx[a]]))
+                    for a in apices[order]])
+    hts = heights[order]
+    srt = np.argsort(pos)
+    pos, hts = pos[srt], hts[srt]
+    # Merge what the grid split.
+    merged_p, merged_h = [], []
+    for pp, hh in zip(pos, hts):
+        if merged_p and abs(pp - merged_p[-1]) * field_mhz < MIN_PATTERN_SPACING_HZ:
+            if hh > merged_h[-1]:
+                merged_p[-1], merged_h[-1] = pp, hh
+            continue
+        merged_p.append(float(pp))
+        merged_h.append(float(hh))
+    pos, hts = np.array(merged_p), np.array(merged_h)
+    centre = float((pos * hts).sum() / hts.sum())
+    lines = [(float((pp - centre) * field_mhz), float(hh / hts.max()))
+             for pp, hh in zip(pos, hts)]
+    return {'status': 'ok' if len(lines) >= 2 else 'single',
+            'centre_ppm': centre, 'lines': lines, 'n_lines': len(lines),
+            'snr': float(hts.max() / sigma) if sigma > 0 else float('inf')}

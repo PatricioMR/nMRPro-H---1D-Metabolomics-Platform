@@ -25,7 +25,7 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.37"
+__version__   = "0.38"
 RELEASE_STAGE = "Alpha"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 
@@ -36,7 +36,7 @@ APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 # hidden behind this one switch. Off, the software is the pipeline that has
 # been validated end to end: detect, annotate, elect, integrate, concentrate.
 # Turning it back on is this line; nothing else was removed.
-DECONVOLUTION_ENABLED = False   # "NMRPro-H v0.37 Alpha"
+DECONVOLUTION_ENABLED = False   # "NMRPro-H v0.38 Alpha"
 
 
 def _is_frozen():
