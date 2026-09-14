@@ -481,8 +481,34 @@ def pattern_offsets_hz(mp) -> list:
     return out if len(out) >= 2 else []
 
 
+def resolvable_pattern(pattern, merge_hz) -> list:
+    """The pattern as THIS study can resolve it.
+
+    A reference pattern is measured on a pure compound at a linewidth of a
+    hertz or two; the study's lines are wider, and two pattern lines closer
+    together than the study's linewidth are one peak in the study. D-glucose
+    at 3.239 ppm lists two lines 1.1 Hz apart: in plasma at 3.2 Hz they are
+    one line, and finding two of three was the right count of the wrong
+    expectation. Lines closer than ``merge_hz`` collapse into one at their
+    height-weighted position, heights added.
+    """
+    if not pattern or not merge_hz or float(merge_hz) <= 0:
+        return list(pattern or ())
+    lines = sorted((float(o), float(r)) for o, r in pattern)
+    out: list = []
+    for o, r in lines:
+        if out and o - out[-1][2] < float(merge_hz):
+            po, pr, _last = out[-1]
+            tot = pr + r
+            out[-1] = ((po * pr + o * r) / tot if tot else o, tot, o)
+        else:
+            out.append((o, r, o))
+    top = max((r for _o, r, _l in out), default=1.0) or 1.0
+    return [(o, r / top) for o, r, _l in out]
+
+
 def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
-                           anchor_ppm=None) -> LineMeasurement:
+                           anchor_ppm=None, merge_hz=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -493,8 +519,15 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
 
     The residual stands in for delta-J, scaled onto delta-J's gates so every
     rule downstream reads it unchanged; the raw residual travels beside it.
+
+    ``merge_hz`` is what this study can resolve -- its linewidth, or the
+    detector's minimum spacing, whichever is larger -- and lines of the
+    pattern closer than that are expected as one. Remembered on the matched
+    peak as ``pattern_merge_hz`` so a later re-measurement asks the same.
     """
-    pat = pattern_offsets_hz(mp)
+    pat = resolvable_pattern(pattern_offsets_hz(mp),
+                             merge_hz if merge_hz is not None
+                             else mp.get('pattern_merge_hz'))
     if len(pat) < 2 or not field_mhz:
         return LineMeasurement(measured=False)
     anchor = anchor_ppm

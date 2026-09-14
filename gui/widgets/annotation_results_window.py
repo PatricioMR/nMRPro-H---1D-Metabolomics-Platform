@@ -797,6 +797,7 @@ class AnnotationResultsWindow:
                 'observed_j_hz':   r.get('observed_j_hz'),
                 'pattern_lines':   r.get('pattern_lines'),
                 'pattern_residual_hz': r.get('pattern_residual_hz'),
+                'pattern_merge_hz': r.get('pattern_merge_hz'),
                 'j_sigma':         r.get('j_sigma'),
                 'ppm_center':      r.get('ppm_center', dp_ppm),
                 'intensity_n':     r.get('intensity_n'),

@@ -519,3 +519,39 @@ class TestOnePathForPatterns:
         assert mp['pattern_residual_hz'] < 0.2
         assert mp['delta_j_hz'] < 0.1
         assert s_dj > 0.9
+
+
+class TestResolvablePattern:
+    """A reference pattern is measured on a pure compound at a linewidth of a
+    hertz or two; the study's lines are wider. Two pattern lines closer than
+    the study can resolve are one peak in the study, and are expected as one
+    -- finding two of three was the right count of the wrong expectation."""
+
+    def test_lines_closer_than_the_linewidth_collapse(self):
+        from processing.annotation_scoring import resolvable_pattern
+        pat = [(-3.2, 0.94), (-2.1, 1.0), (5.9, 0.86)]     # glucose 3.239
+        out = resolvable_pattern(pat, merge_hz=3.2)
+        assert len(out) == 2
+        assert out[0][0] == pytest.approx((-3.2 * 0.94 + -2.1 * 1.0) / 1.94)
+        assert out[1][1] < out[0][1]                       # merged pair is tallest
+
+    def test_lines_the_study_resolves_are_kept(self):
+        from processing.annotation_scoring import resolvable_pattern
+        pat = [(-9.2, 0.4), (-5.2, 0.8), (0.1, 1.0), (4.1, 0.8), (9.6, 0.4)]
+        assert len(resolvable_pattern(pat, merge_hz=3.2)) == 5
+
+    def test_no_linewidth_means_no_merging(self):
+        from processing.annotation_scoring import resolvable_pattern
+        pat = [(-3.2, 0.9), (-2.1, 1.0)]
+        assert resolvable_pattern(pat, None) == pat
+
+    def test_the_measurement_expects_what_the_study_can_resolve(self):
+        import json
+        from processing.annotation_scoring import measure_pattern_signal
+        pat = [[-3.2, 0.94], [-2.1, 1.0], [5.9, 0.86]]
+        # In the study the close pair is one peak, at its weighted position.
+        peaks = [{'ppm': 3.239 + o / 600.0} for o in (-2.63, 5.9)]
+        mp = {'pattern_lines': json.dumps(pat), 'peak_ppm': peaks[1]['ppm']}
+        m = measure_pattern_signal(mp, peaks, field_mhz=600.0, dj_gold_hz=0.2,
+                                   merge_hz=3.2)
+        assert m.n_expected == 2 and m.n_found == 2 and m.complete

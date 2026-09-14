@@ -30,6 +30,7 @@ from ._annotation_helpers import (
     _stocsy_coherence,
     _stocsy_partner_count,
 )
+from processing.spectral_regions import measure_linewidth_ppm
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
@@ -1368,6 +1369,21 @@ class _AnnotationSearchMixin:
                 _pk_corr   = getattr(_pk_stage, '_peak_corr',    {})
                 _n_samp_st = getattr(_pk_stage, '_n_samples_pk', 0)
 
+                # What this study can resolve, for the patterns: the wider
+                # of its linewidth and the detector's minimum spacing, in Hz.
+                # A reference pattern's lines closer than that are one line
+                # here, and are expected as one.
+                _lw_ppm = (measure_linewidth_ppm(_ppm_arr, _mean_int,
+                                                 peaks_to_search)
+                           if has_spec else None) or 0.0
+                _pk_stage_for_lw = getattr(self, 'peak_stage', None)
+                try:
+                    _min_dist_ppm = float(
+                        getattr(_pk_stage_for_lw, 'min_width_var').get())
+                except Exception:
+                    _min_dist_ppm = 0.0
+                _merge_hz = max(_lw_ppm, _min_dist_ppm) * mhz if mhz else 0.0
+
                 for i, entry in enumerate(db_entries):
                     db_ppm   = float(
                         entry.get('ppm_center') or entry.get('ppm') or 0)
@@ -1667,7 +1683,7 @@ class _AnnotationSearchMixin:
                         _meas_sr = measure_pattern_signal(
                             entry, local_peaks, field_mhz=mhz,
                             dj_gold_hz=_sc_params['dj_gold_hz'],
-                            anchor_ppm=peak_ppm)
+                            anchor_ppm=peak_ppm, merge_hz=_merge_hz)
                         _pattern_residual = _meas_sr.pattern_residual_hz
                     else:
                         _pattern_residual = None
@@ -1807,6 +1823,7 @@ class _AnnotationSearchMixin:
                     r['_n_found_lines'] = n_found_sr
                     r['_n_exp_lines']   = n_exp_sr
                     r['pattern_residual_hz'] = _pattern_residual
+                    r['pattern_merge_hz'] = _merge_hz if _pattern else None
                     r['j_coupling']     = j_raw
                     r['baseline_corrected'] = has_spec
                     r['multiplet_detail']   = (
