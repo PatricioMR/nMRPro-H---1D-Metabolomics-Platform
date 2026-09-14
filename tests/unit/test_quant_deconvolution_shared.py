@@ -392,3 +392,132 @@ class TestWhatARefusalCosts:
         rows = TestInTheEngine()._run(foot=0.0012)
         assert any('not split' in t for t in rows['B']['_status_reasons'])
         assert rows['B']['_confidence'] <= 2
+
+
+class TestWhatIsNotThere:
+    """An undetected signal is a measurement, and the one that was missing.
+
+    On the reference study half the columns were exact multiples of another:
+    an analyte with one signal in one window, shared with an analyte in the
+    same position. Nothing in those windows tells them apart. But if one of
+    them should also show a line at 7 ppm and there is nothing there, its
+    concentration is bounded by the noise in that region and the other's is
+    not — and that is a row in which their columns differ.
+    """
+
+    @staticmethod
+    def _spectrum(area_at_seven):
+        ppm = np.linspace(0.0, 10.0, 20001)
+        y = np.zeros_like(ppm)
+
+        def line(centre, area, hwhm=0.002):
+            return area / np.pi * hwhm / ((ppm - centre) ** 2 + hwhm ** 2)
+
+        # One shared peak at 3.00 holding 500. A has a second signal predicted
+        # at 7.00; what is there is the caller's choice.
+        y += line(3.000, 500.0)
+        if area_at_seven:
+            y += line(7.000, area_at_seven)
+        return ppm, y.reshape(-1, 1)
+
+    def _run(self, area_at_seven, *, predict=True):
+        from processing.quantification import Candidate
+        from processing.quant_engine import quantify
+        ppm, y = self._spectrum(area_at_seven)
+        peaks = {1: {'ppm': 3.000, 'rank': 1,
+                     'start_ppm': 2.950, 'end_ppm': 3.050}}
+        ev = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+              'delta_j_hz': 0.0}
+        cands = [
+            Candidate('A', 1, frozenset({1}), {**ev, 'protons': 2.0}),
+            Candidate('B', 1, frozenset({1}), {**ev, 'protons': 2.0}),
+        ]
+        if predict:
+            cands.append(Candidate('A', None, frozenset(),
+                                   {**ev, 'n_found': 0, 'protons': 2.0,
+                                    'predicted_ppms': [7.000]}))
+        diag: dict = {}
+        rows = quantify(candidates=cands, peaks_by_rank=peaks, ppm=ppm,
+                        intensities=y,
+                        samples_info=[{'label': 'A', 'type': 'Sample'}],
+                        included=[0], groups={'A': [0]}, dj_gold_hz=0.2,
+                        use_pqn=False, linewidth_ppm=0.004,
+                        noise_sigma=1e-3, diagnostics=diag)
+        return {r['metabolite']: r for r in rows}, diag['shared']
+
+    def test_without_it_the_two_cannot_be_told_apart(self):
+        rows, diag = self._run(0.0, predict=False)
+        assert diag['resolved'] == 0
+        assert diag['refused_indeterminate'] == 2
+
+    def test_nothing_where_a_signal_should_be_gives_the_peak_to_the_other(self):
+        """A should show 2 protons at 7 ppm and there is noise. So A is at most
+        noise-sized, and the 500 at 3 ppm are B's."""
+        rows, diag = self._run(0.0)
+        assert diag['bounds'] == 1
+        b = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
+        assert b == pytest.approx(500.0, rel=0.05), rows['B']['_status_reasons']
+
+    def test_a_real_signal_where_it_was_predicted_is_not_a_bound(self):
+        """If A's second signal is there, A is there, and the window at 7 ppm
+        measures it rather than bounding it away. Same protons at both
+        positions, so 300 at 7 ppm means 300 of the shared 500 are A's."""
+        rows, diag = self._run(300.0)
+        a = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
+        b = float(np.mean(list(rows['B']['_areas_per_sample'].values())))
+        assert a == pytest.approx(300.0, rel=0.05)
+        assert b == pytest.approx(200.0, rel=0.05)
+
+    def test_an_analyte_detected_nowhere_gets_no_bound_window(self):
+        """A database shift is not where a real sample puts the line. Without
+        one detected signal to say the analyte is present at all, a window at
+        the predicted position would be measuring the database, not the
+        sample."""
+        from processing.quantification import Candidate
+        from processing.quant_engine import quantify
+        ppm, y = self._spectrum(0.0)
+        peaks = {1: {'ppm': 3.000, 'rank': 1,
+                     'start_ppm': 2.950, 'end_ppm': 3.050}}
+        ev = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+              'delta_j_hz': 0.0}
+        cands = [Candidate('B', 1, frozenset({1}), {**ev, 'protons': 2.0}),
+                 Candidate('C', None, frozenset(),
+                           {**ev, 'n_found': 0, 'protons': 2.0,
+                            'predicted_ppms': [7.000]})]
+        diag: dict = {}
+        quantify(candidates=cands, peaks_by_rank=peaks, ppm=ppm,
+                 intensities=y, samples_info=[{'label': 'A', 'type': 'Sample'}],
+                 included=[0], groups={'A': [0]}, dj_gold_hz=0.2,
+                 use_pqn=False, linewidth_ppm=0.004, noise_sigma=1e-3,
+                 diagnostics=diag)
+        assert diag['shared']['bounds'] == 0
+        assert diag['shared']['bounds_no_anchor'] == 1
+
+    def test_the_bound_follows_the_drift(self):
+        """The window slides over the drift the study measured and keeps the
+        position with the MOST area, so a line that moved is found and the
+        bound can only ever be too loose."""
+        from processing.quantification import Candidate
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0.0, 10.0, 20001)
+        y = np.zeros_like(ppm)
+        g = 0.002
+        y += 500.0 / np.pi * g / ((ppm - 3.000) ** 2 + g ** 2)
+        y += 300.0 / np.pi * g / ((ppm - 7.006) ** 2 + g ** 2)   # drifted
+        y = y.reshape(-1, 1)
+        peaks = {1: {'ppm': 3.000, 'rank': 1,
+                     'start_ppm': 2.950, 'end_ppm': 3.050}}
+        ev = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+              'delta_j_hz': 0.0}
+        cands = [Candidate('A', 1, frozenset({1}), {**ev, 'protons': 2.0}),
+                 Candidate('B', 1, frozenset({1}), {**ev, 'protons': 2.0}),
+                 Candidate('A', None, frozenset(),
+                           {**ev, 'n_found': 0, 'protons': 2.0,
+                            'predicted_ppms': [7.000]})]
+        rows = {r['metabolite']: r for r in quantify(
+            candidates=cands, peaks_by_rank=peaks, ppm=ppm, intensities=y,
+            samples_info=[{'label': 'A', 'type': 'Sample'}], included=[0],
+            groups={'A': [0]}, dj_gold_hz=0.2, use_pqn=False,
+            linewidth_ppm=0.004, noise_sigma=1e-3, drift_ppm=0.008)}
+        a = float(np.mean(list(rows['A']['_areas_per_sample'].values())))
+        assert a == pytest.approx(300.0, rel=0.10)

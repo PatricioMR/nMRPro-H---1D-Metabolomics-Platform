@@ -277,6 +277,17 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                         f'one analyte.')
                 _dbg(f, f'  {sh.get("resolved", 0)} split, '
                         f'{sh.get("unsolved", 0)} not.')
+                _dbg(f, f'  Predicted signals with no detected peak: '
+                        f'{sh.get("no_lines", 0)}. Used as bounds: '
+                        f'{sh.get("bounds", 0)} (a window at the predicted '
+                        f'position, slid over the drift, holding whatever is '
+                        f'there). Not used: '
+                        f'{sh.get("bounds_no_anchor", 0)} because the analyte '
+                        f'has no detected signal anywhere, '
+                        f'{sh.get("bounds_foreign", 0)} because an unmatched '
+                        f'peak sits in the window, '
+                        f'{sh.get("bounds_excluded", 0)} inside an excluded '
+                        f'region.')
                 _dbg(f, f'  System: {sh.get("rows", 0)} equations, '
                         f'{sh.get("columns", 0)} unknowns. Refused '
                         f'{sh.get("refused_indeterminate", 0)} as '
@@ -297,7 +308,6 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                         f'transitive, so a crowded region can chain into one '
                         f'window; a window with N claimants has N-1 unknowns.')
                 _skipped = [
-                    ('matched to no peak', sh.get('no_lines', 0)),
                     ('multiplicity never verified', sh.get('not_competitor', 0)),
                     ('no proton count', sh.get('no_protons', 0)),
                 ]

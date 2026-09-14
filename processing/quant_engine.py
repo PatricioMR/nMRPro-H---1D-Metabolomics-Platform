@@ -36,8 +36,9 @@ from processing.quant_detection_limit import (
     integration_noise, local_noise_sigma, predicted_window, strength_band,
     window_is_excluded)
 from processing.quant_integration import (
-    integrate_sample, integrate_signal, lorentzian_captured_fraction,
-    multiplet_window, pascal_weights, refine_apex_ppm)
+    integrate_across_samples, integrate_sample, integrate_signal,
+    lorentzian_captured_fraction, multiplet_window, pascal_weights,
+    refine_apex_ppm)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect,
@@ -142,7 +143,8 @@ MIN_OWN_SHARE = 0.5
 
 def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
                     included, local_baseline, align, blank_indices,
-                    linewidth_ppm, noise_sigma=None):
+                    linewidth_ppm, noise_sigma=None, drift_ppm=0.0,
+                    excluded_regions=()):
     """One window per candidate signal, and everybody whose lines reach it.
 
     Built over the candidates and not over the election's winners, because a
@@ -175,12 +177,38 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
     A window containing a detected peak that no candidate claims is refused.
     That peak is a term the balance does not have, and the analyte credited
     with the remainder would be credited with it.
+
+    Where a metabolite's signal was predicted and NOT detected, that is a
+    measurement too, and the one the balance was missing. On the reference
+    study half the columns were exact multiples of another: an analyte with
+    one signal, in one window, shared with an analyte in the same position.
+    Nothing in those windows tells them apart. But if the first should also
+    show a doublet at 7.5 ppm and there is nothing there, its concentration
+    is bounded by the noise in that region and the second's is not -- and
+    that is a row in which their columns differ.
+
+    So an undetected signal becomes a window at its predicted position, its
+    area whatever is there, and it enters the system as any other equation.
+    Two conditions, because a database shift is not where a real sample puts
+    the line. The metabolite must have at least one DETECTED signal in the
+    study, so the analyte is known to be present and this is a question of
+    how much rather than whether. And the window slides over the drift the
+    study measured, keeping the position with the MOST area -- so if the
+    line moved, the bound follows it, and it can only ever be too loose. A
+    bound that is too loose costs nothing; one that is too tight puts an
+    analyte at zero that is there.
+
+    A detected peak nobody claims inside the slid window refuses it, as it
+    does any window: that peak may be this very signal, drifted further than
+    allowed for.
     """
-    sigs, by_key = [], {}
+    sigs, by_key, undetected = [], {}, []
     counts = {'candidates': 0, 'no_lines': 0, 'not_competitor': 0,
               'no_protons': 0, 'components': 0, 'contested': 0,
               'no_window': 0, 'foreign_peak': 0, 'thin_share': 0,
-              'largest': 0, 'largest_lines': 0}
+              'largest': 0, 'largest_lines': 0,
+              'bounds': 0, 'bounds_excluded': 0, 'bounds_foreign': 0,
+              'bounds_no_anchor': 0}
     for c in candidates or ():
         counts['candidates'] += 1
         ranks = sorted(int(r) for r in (c.line_ranks or ()))
@@ -188,6 +216,14 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
             ranks = [int(c.peak_rank)]
         if not ranks:
             counts['no_lines'] += 1
+            pred = [float(v) for v in
+                    ((c.evidence or {}).get('predicted_ppms') or ())
+                    if v is not None]
+            nh = signal_nh((c.evidence or {}).get('protons'))
+            if pred and nh and np.isfinite(nh) and nh > 0:
+                undetected.append({'met_id': str(c.met_id), 'nh': float(nh),
+                                   'ppms': pred,
+                                   'weights': pascal_weights(len(pred))})
             continue
         if not is_competitor(c.evidence):
             counts['not_competitor'] += 1
@@ -336,6 +372,77 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
             'peaks': sig['peaks'],
             'shifts': out.get('shifts'),
             'blank_area': out.get('blank_area', float('nan'))})
+    # ── The signals that should be there and are not ─────────────────────────
+    present = {sig['met_id'] for sig in sigs}
+    _in_all = np.asarray(ppm, dtype=float)
+    for u in undetected:
+        if u['met_id'] not in present:
+            counts['bounds_no_anchor'] += 1
+            continue
+        win = predicted_window(u['ppms'], linewidth_ppm=linewidth_ppm)
+        if win is None:
+            continue
+        lo0, hi0 = win
+        # Slide over the drift and keep the position holding the most: a bound
+        # may be loose, never tight.
+        best, best_off, best_med = None, 0.0, float('-inf')
+        for off in drift_offsets(drift_ppm, linewidth_ppm):
+            lo, hi = lo0 + off, hi0 + off
+            if window_is_excluded(lo, hi, excluded_regions):
+                continue
+            areas = integrate_across_samples(
+                ppm, intensities, lo, hi, included=included,
+                local_baseline=local_baseline)
+            if not areas:
+                continue
+            med = float(np.median(list(areas.values())))
+            if med > best_med:
+                best, best_off, best_med = areas, off, med
+        if best is None:
+            counts['bounds_excluded'] += 1
+            continue
+        lo, hi = lo0 + best_off, hi0 + best_off
+        _in = _in_all[(_in_all >= lo) & (_in_all <= hi)]
+        if _in.size >= 2:
+            lo, hi = float(_in.min()), float(_in.max())
+        unclaimed = [r for r, pk in peaks_by_rank.items()
+                     if int(r) not in claimed_ranks
+                     and lo <= float(pk.get('ppm', -1e9)) <= hi]
+        if unclaimed:
+            counts['bounds_foreign'] += 1
+            continue
+        ppms = [float(v) + best_off for v in u['ppms']]
+        contributions = [(u['met_id'], u['nh'],
+                          fraction_in_window(ppms, u['weights'], lo, hi, hwhm,
+                                             local_baseline=local_baseline))]
+        for other in sigs:
+            if min(other['ppms']) > hi + 40.0 * hwhm:
+                continue
+            if max(other['ppms']) < lo - 40.0 * hwhm:
+                continue
+            f = fraction_in_window(other['ppms'], other['weights'], lo, hi,
+                                   hwhm, local_baseline=local_baseline)
+            if f and f > 0:
+                contributions.append((other['met_id'], other['nh'], f))
+        claimants = claimants_in_window(contributions)
+        if not any(m == u['met_id'] for m, _ in claimants):
+            continue
+        n_pts = int(_in.size)
+        dppm = (float(abs(_in_all[1] - _in_all[0])) if _in_all.size > 1
+                else 0.0)
+        noise_area = (integration_noise(noise_sigma, dppm, n_pts)
+                      if noise_sigma else None)
+        counts['bounds'] += 1
+        windows.append({
+            'key': '%s@predicted_%.3f' % (u['met_id'], float(np.mean(ppms))),
+            'ranks': (), 'owner': None, 'bound': True,
+            'weight': (1.0 / float(noise_area)
+                       if noise_area and np.isfinite(noise_area)
+                       and noise_area > 0 else 1.0),
+            'claimants': claimants, 'areas': dict(best),
+            'window': (lo, hi), 'fractions': {}, 'geometry': {},
+            'lines': {}, 'protons': {}, 'peaks': [], 'shifts': None,
+            'blank_area': float('nan')})
     return windows, by_key, reasons, counts
 
 
@@ -361,7 +468,8 @@ def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
 
 def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
                     included, local_baseline, align, blank_indices,
-                    linewidth_ppm, noise_sigma, diagnostics=None):
+                    linewidth_ppm, noise_sigma, drift_ppm=0.0,
+                    excluded_regions=(), diagnostics=None):
     """What each analyte's own share of the shared peaks is.
 
     Every window is one equation and they are solved together, because they are
@@ -380,7 +488,8 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         candidates, peaks_by_rank, ppm, intensities, included=included,
         local_baseline=local_baseline, align=align,
         blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
-        noise_sigma=noise_sigma)
+        noise_sigma=noise_sigma, drift_ppm=drift_ppm,
+        excluded_regions=excluded_regions)
     per_proton, why, solver_stats = solve_windows(windows)
 
     # Which window speaks for each metabolite. The one built on its own signal
@@ -389,6 +498,8 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
     # concentration itself came from all of them at once.
     home: dict = {}
     for w in windows:
+        if w.get('bound'):
+            continue
         for mid, _nh_eff in w['claimants']:
             better = (mid == w.get('owner'),
                       float((w.get('geometry') or {}).get(mid, 0.0)))
@@ -607,7 +718,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             candidates, peaks_by_rank, ppm, intensities, included=included,
             local_baseline=local_baseline, align=align,
             blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
-            noise_sigma=noise_sigma, diagnostics=diagnostics)
+            noise_sigma=noise_sigma, drift_ppm=drift_ppm,
+            excluded_regions=excluded_regions, diagnostics=diagnostics)
     else:
         shared, shared_reasons = {}, {}
         if diagnostics is not None:
