@@ -521,10 +521,16 @@ class _AnnotationSearchMixin:
                 dj_bad_hz=_params['dj_bad_hz'], dj_gold_hz=_params['dj_gold_hz'],
                 max_drift_ppm=_params['dppm_gold'], noise_floor=_floor)
             _ref = r.get('peak_ppm') or r.get('db_ppm')
+            # A pattern's per-sample reading is its position only: the comb
+            # fit assumes one spacing, and the list's first coupling is not
+            # the spacing of anything in particular.
+            _is_pat = (str(r.get('type') or r.get('multiplicity') or '')
+                       .lower().strip() == PATTERN_MULT)
             out = signal_across_samples(
                 line_pks, fits=_fits, included=incl,
                 db_ppm=r.get('db_ppm'),
-                db_j_hz=parse_first_j(r.get('j_coupling') or ''),
+                db_j_hz=(None if _is_pat
+                         else parse_first_j(r.get('j_coupling') or '')),
                 field_mhz=mhz, n_lines=len(_exp), j_from_db=_from_db)
             # The display shift travels with the reading. The across-samples
             # view is a view: it renders these rows, it does not re-derive them.

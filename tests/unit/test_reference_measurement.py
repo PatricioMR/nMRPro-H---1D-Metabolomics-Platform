@@ -595,3 +595,18 @@ class TestTheWindowLetsItselfOut:
         lo, hi = 3.232 - 0.03, 3.232 + 0.03
         pat = measure_pattern_extended(PPM, y, lo=lo, hi=hi, field_mhz=FIELD)
         assert pat['window'] == (lo, hi)
+
+
+def test_the_per_sample_consensus_leaves_a_patterns_residual_alone():
+    """The comb fit assumes one spacing and compares it with the first
+    coupling in the database's list -- 1.15 Hz for glucose's dd of 8 and 9.5.
+    Its consensus overwrote a residual of 0.46 Hz with a disagreement of
+    several, and a complete, well-placed pattern went Bad."""
+    from processing.annotation_scoring import (
+        PATTERN_MULT, SCORING_DEFAULTS, apply_per_sample_consensus)
+    mp = {'type': PATTERN_MULT, 'delta_j_hz': 0.18, 'observed_j_hz': None,
+          'per_sample_consensus': {'delta_j_hz': 6.5, 'observed_j_hz': 7.6,
+                                   'ppm_diff': 0.003, 'ppm_centre': 3.234}}
+    assert apply_per_sample_consensus(mp, params=SCORING_DEFAULTS) is None
+    assert mp['delta_j_hz'] == 0.18
+    assert mp['ppm_diff'] == 0.003          # the position still applies

@@ -1458,6 +1458,13 @@ def apply_per_sample_consensus(mp, *, params):
         mp['ppm_diff'] = float(con['ppm_diff'])
         mp['peak_ppm'] = float(con['ppm_centre'])
         mp['_ppm_source'] = 'per_sample'
+    # A measured pattern has no single J. The per-sample fit lays a comb of
+    # one spacing across the samples and compares it with the first coupling
+    # in the database's list -- 1.15 Hz for D-glucose's doublet of doublets
+    # of 8 and 9.5 -- and its consensus overwrote a residual of 0.46 Hz with
+    # a disagreement of several. The pattern's own residual stands.
+    if normalize_mult(mp.get('type') or mp.get('multiplicity')) == PATTERN_MULT:
+        return None
     dj = con.get('delta_j_hz')
     if dj is None or con.get('observed_j_hz') is None:
         return None
