@@ -553,7 +553,14 @@ class _AnnotationSearchMixin:
                                       r.get('type') or r.get('multiplicity'))
                 if _a is not None:
                     _ags.append(_a)
-            r['intensity_agreement'] = (float(np.median(_ags)) if _ags else None)
+            # A pattern's agreement was measured at the match, against the
+            # pattern's own heights; the comb fit has nothing to say about it
+            # and must not overwrite it with None -- None sorts last in the
+            # ranking, and a confirmed pattern lost D-glucose's peak to a
+            # triplet on exactly that.
+            if not _is_pat:
+                r['intensity_agreement'] = (float(np.median(_ags))
+                                            if _ags else None)
             r['intensity_n'] = len(_ags)
 
             r['per_sample_consensus'] = {
@@ -1691,8 +1698,10 @@ class _AnnotationSearchMixin:
                             dj_gold_hz=_sc_params['dj_gold_hz'],
                             anchor_ppm=peak_ppm, merge_hz=_merge_hz)
                         _pattern_residual = _meas_sr.pattern_residual_hz
+                        _pattern_agreement = _meas_sr.pattern_intensity_agreement
                     else:
                         _pattern_residual = None
+                        _pattern_agreement = None
 
                     # ── Line measurement ─────────────────────────────
                     # Snap the DB multiplet's predicted lines onto detected
@@ -1830,6 +1839,8 @@ class _AnnotationSearchMixin:
                     r['_n_exp_lines']   = n_exp_sr
                     r['pattern_residual_hz'] = _pattern_residual
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
+                    if _pattern:
+                        r['intensity_agreement'] = _pattern_agreement
                     r['j_coupling']     = j_raw
                     r['baseline_corrected'] = has_spec
                     r['multiplet_detail']   = (

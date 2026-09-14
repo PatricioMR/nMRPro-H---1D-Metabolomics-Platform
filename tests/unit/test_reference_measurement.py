@@ -610,3 +610,18 @@ def test_the_per_sample_consensus_leaves_a_patterns_residual_alone():
     assert apply_per_sample_consensus(mp, params=SCORING_DEFAULTS) is None
     assert mp['delta_j_hz'] == 0.18
     assert mp['ppm_diff'] == 0.003          # the position still applies
+
+
+def test_a_pattern_carries_its_own_intensity_agreement():
+    """None sorts last in the ranking. A confirmed pattern with no agreement
+    lost D-glucose's peak to a triplet on 'line intensities' -- the triplet
+    had a number and the pattern had None, which is not disagreement."""
+    import json
+    from processing.annotation_scoring import measure_pattern_signal
+    pat = [[-9.0, 0.5], [-0.9, 1.0], [0.2, 1.0], [8.2, 0.5]]
+    peaks = [{'ppm': 3.234 + o / 600.0, 'height': h}
+             for (o, _r), h in zip(pat, (52.0, 100.0, 97.0, 49.0))]
+    mp = {'pattern_lines': json.dumps(pat), 'peak_ppm': peaks[1]['ppm']}
+    m = measure_pattern_signal(mp, peaks, field_mhz=600.0, dj_gold_hz=0.2)
+    assert m.complete
+    assert m.pattern_intensity_agreement > 0.95

@@ -326,6 +326,7 @@ class LineMeasurement:
     # in hertz, before scaling onto delta-J's gates. delta_j_hz carries the
     # scaled value; this is the number a reader should see.
     pattern_residual_hz: float | None = None
+    pattern_intensity_agreement: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -546,11 +547,47 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                           'measured': True}
                          for v, r in zip(pm['found_ppms'], pm['found_rel'])]
     m.pattern_residual_hz = pm['residual_hz']
+    m.pattern_intensity_agreement = pattern_intensity_agreement(
+        pm['found_ppms'], pm['found_rel'], peaks)
     if m.complete and pm['residual_hz'] is not None:
         m.delta_j_hz = (float(pm['residual_hz']) * float(dj_gold_hz)
                         / PATTERN_GOLD_HZ)
         m.centre_ppm = pm['centre_ppm']
     return m
+
+
+def pattern_intensity_agreement(found_ppms, found_rel, peaks,
+                                *, tol_ppm=0.002) -> float | None:
+    """How well the found lines' heights follow the pattern's own.
+
+    The pattern's relative heights were measured on the reference spectrum;
+    a first-order multiplet's come from the binomial theorem. Either way the
+    question is the same -- do the apices stand in the proportions the claim
+    says -- and the answer is compared the same way, each set scaled to its
+    own maximum. None when there is nothing to judge, never as disagreement.
+    """
+    if not found_ppms or not found_rel or len(found_ppms) != len(found_rel):
+        return None
+    hs = []
+    for pp in found_ppms:
+        best, bd = None, float(tol_ppm)
+        for pk in peaks or ():
+            if pk.get('ppm') is None:
+                continue
+            d = abs(float(pk['ppm']) - float(pp))
+            if d <= bd:
+                best, bd = pk, d
+        h = (best or {}).get('height')
+        if h is None or not np.isfinite(float(h)) or float(h) < 0:
+            return None
+        hs.append(float(h))
+    if len(hs) < 2 or max(hs) <= 0:
+        return None
+    exp = [float(r) for r in found_rel]
+    if max(exp) <= 0:
+        return None
+    err = [abs(o / max(hs) - e / max(exp)) for o, e in zip(hs, exp)]
+    return float(max(0.0, 1.0 - sum(err) / len(err)))
 
 
 def pattern_residual_hz(predicted_ppms, found_ppms, field_mhz) -> float | None:
