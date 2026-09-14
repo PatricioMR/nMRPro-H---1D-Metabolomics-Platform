@@ -189,3 +189,45 @@ def test_the_thresholds_are_conservative():
     holding the noise itself."""
     assert CONTRADICTION_MIN_EXPECTED_SNR >= 18.0
     assert CONTRADICTION_RATIO >= 4.0
+
+
+class TestWhereAMissingSignalIsLookedFor:
+    """The annotation tolerance answers "could this be the same signal" and is
+    generous by design. Used as the width of the window, it held a detected
+    peak of somebody nearly every time — the reference study's peaks sit
+    0.026 ppm apart on average — and the gate fired on nothing that mattered.
+    """
+
+    def test_the_window_is_the_drift_with_margin(self):
+        from processing.annotation_detectability import (
+            DRIFT_MULTIPLE, search_half_width)
+        assert search_half_width(tolerance_ppm=0.05, drift_ppm=0.004,
+                                 linewidth_ppm=0.003) == pytest.approx(
+            DRIFT_MULTIPLE * 0.004)
+
+    def test_never_narrower_than_the_line(self):
+        from processing.annotation_detectability import search_half_width
+        assert search_half_width(tolerance_ppm=0.05, drift_ppm=0.0,
+                                 linewidth_ppm=0.004) == pytest.approx(0.008)
+
+    def test_never_wider_than_the_tolerance(self):
+        """The search would not have matched anything further out either."""
+        from processing.annotation_detectability import search_half_width
+        assert search_half_width(tolerance_ppm=0.05, drift_ppm=0.03,
+                                 linewidth_ppm=0.004) == pytest.approx(0.05)
+
+    def test_a_peak_beyond_the_drift_is_not_this_signal(self):
+        """A neighbour 0.04 ppm away no longer excuses an absence when the
+        study's own drift is 0.003 ppm."""
+        y, peaks, met = _aldehyde(y_extra=[(9.76, 30.0)])
+        peaks.append(_peak(9, 9.76))
+        assert _run(y, peaks, [met], search_ppm=0.01) == 1
+
+    def test_the_stats_say_where_each_signal_stopped(self):
+        y, peaks, met = _aldehyde()
+        stats: dict = {}
+        _run(y, peaks, [met], stats=stats)
+        assert stats['predicted'] == 2
+        assert stats['matched'] == 1
+        assert stats['contradicted'] == 1
+        assert stats['analytes_marked'] == 1

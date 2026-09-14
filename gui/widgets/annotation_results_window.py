@@ -29,6 +29,60 @@ from gui.utils.quality_palette import (
 from processing.annotation_detectability import (
     build_overlap_map, mark_detectability)
 from processing.annotation_detectability import fingerprint_contradictions
+
+
+def _write_annotation_log(metabolites, stats):
+    """What the fingerprint gate did, written where it can be read after the
+    window closes. A gate that fires on nothing is indistinguishable from one
+    that is not wired in, and the console scrolls away."""
+    import os
+    try:
+        from app_paths import user_data_dir
+        path = os.path.join(user_data_dir(), 'logs', 'annotation_debug.log')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write('ANNOTATION DEBUG LOG\n')
+            f.write('=' * 70 + '\n')
+            f.write('FINGERPRINT GATE -- "if it were here, would I see the '
+                    'big one?"\n')
+            f.write(f'  drift (median |dppm| of matched signals): '
+                    f'{stats.get("drift_ppm", 0):.4f} ppm; linewidth '
+                    f'{stats.get("linewidth_ppm", 0):.4f} ppm; a missing '
+                    f'signal is looked for within +/-'
+                    f'{stats.get("search_half_width_ppm", 0):.4f} ppm.\n')
+            f.write(f'  noise {stats.get("noise", 0):.4g}\n')
+            f.write(f'  {stats.get("metabolites", 0)} metabolites with a '
+                    f'detected signal, {stats.get("predicted", 0)} database '
+                    f'signals between them:\n')
+            for k, label in (('matched', 'matched to a peak'),
+                             ('unresolved', 'unresolved multiplet (m), '
+                                           'absence not measurable'),
+                             ('faint', 'would be faint (expected SNR under '
+                                       'the floor)'),
+                             ('excluded', 'inside an excluded region'),
+                             ('peak_in_window', 'a detected peak sits in the '
+                                                'window: overlap or drift, '
+                                                'not absence'),
+                             ('signal_present', 'something is there, if '
+                                                'less than expected'),
+                             ('contradicted', 'CONTRADICTED: nothing where '
+                                              'an unmistakable signal should '
+                                              'be')):
+                f.write(f'    {stats.get(k, 0):5d}  {label}\n')
+            f.write(f'  -> {stats.get("analytes_marked", 0)} analytes marked '
+                    f'Bad.\n\n')
+            for met in metabolites or ():
+                c = met.get('_fingerprint_contradictions')
+                if not c:
+                    continue
+                f.write(f'  {met.get("name", met.get("id"))}\n')
+                for x in c:
+                    f.write(f'      {x["ppm"]:.3f} ppm {x["multiplicity"]} '
+                            f'{x["protons"]:g}H  expected SNR '
+                            f'{x["expected_snr"]:.0f}, region holds '
+                            f'{x["measured_snr"]:.0f}\n')
+    except Exception:
+        pass
 from processing.annotation_quality import promote_singlets, quality_verdict
 from processing.annotation_quality import (
     metabolite_has_anchor, metabolite_tier)
@@ -1801,15 +1855,30 @@ class AnnotationResultsWindow:
         processing.annotation_detectability.fingerprint_contradictions."""
         if self.ppm is None or self.mean_intensity is None:
             return
+        from processing.annotation_detectability import search_half_width
+        from processing.quant_detection_limit import project_drift
+        from processing.spectral_regions import measure_linewidth_ppm
+
         stages = getattr(self.app, 'stages', {}) or {}
         ann_stage = stages.get('annotation')
         pd_stage = stages.get('peak_detection')
+        tol = float(self._params.get('dppm_gold', 0.05))
+        drift = project_drift(self.metabolites)
+        lw = measure_linewidth_ppm(self.ppm, self.mean_intensity,
+                                   self.peaks) or 0.008
+        half = search_half_width(tolerance_ppm=tol, drift_ppm=drift,
+                                 linewidth_ppm=lw)
+        stats: dict = {}
         n = fingerprint_contradictions(
             self.metabolites, self.ppm, self.mean_intensity, self.peaks,
-            tolerance_ppm=float(self._params.get('dppm_gold', 0.05)),
+            tolerance_ppm=tol, search_ppm=half,
             excluded_regions=getattr(pd_stage, '_excluded_regions', None) or (),
             manual_marks=(getattr(ann_stage, '_quality_marks', {})
-                          if ann_stage else {}))
+                          if ann_stage else {}),
+            stats=stats)
+        self._fingerprint_stats = {**stats, 'drift_ppm': drift,
+                                   'linewidth_ppm': lw}
+        _write_annotation_log(self.metabolites, self._fingerprint_stats)
         if n:
             print(f'[annotation] fingerprint contradicted for {n} '
                   f'metabolite(s): a signal that would have been visible is '
