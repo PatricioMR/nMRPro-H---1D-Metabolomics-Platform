@@ -29,6 +29,7 @@ from gui.utils.quality_palette import (
 from processing.annotation_detectability import (
     build_overlap_map, mark_detectability)
 from app_paths import DECONVOLUTION_ENABLED
+from gui.stages._annotation_search import _measured_columns_sql
 from processing.annotation_detectability import fingerprint_contradictions
 
 
@@ -150,7 +151,9 @@ from processing.annotation_scoring import (
     expected_line_count,
     is_singlet_like,
     measure_multiplet,
+    pattern_offsets_hz,
     ppm_score,
+    PATTERN_MULT,
 )
 
 
@@ -873,13 +876,35 @@ class AnnotationResultsWindow:
             for met in self.metabolites:
                 mid = met['id']
                 if is_bmrb:
+                    # The same position the search keyed the signal on. With a
+                    # measured DB (v02) the search reads COALESCE(ppm_meas,
+                    # ppm); every join between a matched signal and its
+                    # fingerprint row is round(ppm, 3) == round(ppm_center, 3),
+                    # and a fingerprint still listing the curated position
+                    # matched none of the 1401 measured signals.
+                    _fp_cols = {r[1] for r in cur.execute(
+                        'PRAGMA table_info(shifts_1h)')}
+                    _fp_meas = _measured_columns_sql(_fp_cols)
+                    _fp_pat = ("pattern_lines, pattern_n,"
+                               if 'pattern_lines' in _fp_cols else '')
                     cur.execute(
-                        "SELECT ppm AS ppm_center, ppm AS ppm_start,"
-                        " ppm AS ppm_end, '' AS protons,"
-                        " multiplicity AS type, j_coupling, atom_name"
-                        " FROM shifts_1h WHERE bmrb_id = ?"
-                        " ORDER BY ppm DESC", (mid,))
+                        f"SELECT {_fp_meas['ppm']} AS ppm_center,"
+                        f" {_fp_meas['ppm']} AS ppm_start,"
+                        f" {_fp_meas['ppm']} AS ppm_end, '' AS protons,"
+                        f" multiplicity AS type, {_fp_meas['j']} AS j_coupling,"
+                        f" atom_name, {_fp_pat}"
+                        " s.ppm AS ppm_listed"
+                        " FROM shifts_1h s WHERE bmrb_id = ?"
+                        f" ORDER BY {_fp_meas['ppm']} DESC", (mid,))
                     rows = [dict(r) for r in cur.fetchall()]
+                    # The search relabels an 'm' whose pattern the DB measured
+                    # as a pattern multiplet; the fingerprint must agree, or
+                    # the unresolved-multiplet sweep below drops the row and
+                    # the found signal has no line to sit on.
+                    for dp in rows:
+                        if (pattern_offsets_hz(dp) and (dp.get('type') or '')
+                                .lower().strip() in ('m', 'multiplet')):
+                            dp['type'] = PATTERN_MULT
                     if 'transitions' in tables:
                         for dp in rows:
                             cur.execute(
