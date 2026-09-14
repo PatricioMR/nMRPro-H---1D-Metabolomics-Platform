@@ -244,7 +244,7 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                                search_ppm=None,
                                min_expected_snr=CONTRADICTION_MIN_EXPECTED_SNR,
                                ratio=CONTRADICTION_RATIO, manual_marks=None,
-                               stats=None):
+                               stats=None, noise=None):
     """Mark Bad every analyte whose fingerprint the spectrum contradicts.
 
     Returns the number of analytes marked. Each one carries
@@ -256,6 +256,11 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
     ``stats``, when a dict is passed, is filled with how many predicted
     signals were considered and on which condition each one stopped, because
     a gate that fires on nothing looks exactly like one that is not there.
+
+    ``noise`` is detection's own estimate when the caller has it. The floor
+    below is defined as a multiple of detection's SNR threshold, so it has to
+    be measured against the same noise or it is not the floor it says it is;
+    the tail estimate is the fallback for a spectrum with no detection run.
     """
     from processing.spectral_regions import in_excluded_region
 
@@ -264,7 +269,8 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
     y = np.asarray(intensity_arr, dtype=float)
     if ppm.size < 10 or y.size != ppm.size:
         return 0
-    noise = estimate_noise(ppm, y)
+    noise = (float(noise) if noise and np.isfinite(float(noise))
+             and float(noise) > 0 else estimate_noise(ppm, y))
     tol = abs(float(search_ppm if search_ppm is not None else tolerance_ppm))
     peak_ppms = np.array([float(p.get('ppm', 0.0)) for p in (peaks or ())])
     counts = {'metabolites': 0, 'predicted': 0, 'matched': 0,

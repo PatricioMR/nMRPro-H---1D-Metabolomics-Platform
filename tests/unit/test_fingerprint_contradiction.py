@@ -68,6 +68,9 @@ def _aldehyde(y_extra=(), *, aldehyde_height=0.0):
     met = _met('4-Hydroxybenzaldehyde',
                matched=[(1, 6.92, 'd', 2.0)],
                db=[(6.92, 'd', 2.0), (9.72, 's', 1.0)])
+    # As annotation leaves it: peak_ppm is the anchored line's apex, db_ppm
+    # the multiplet's centre. The centre of a doublet is a valley.
+    met['matched_peaks'][0]['peak_ppm'] = 6.915
     return y, peaks, met
 
 
@@ -248,3 +251,16 @@ def test_a_missing_signal_is_looked_for_where_its_siblings_say_it_is():
     # Narrow search: at the database position 6.852 +/- 0.01 there is nothing.
     assert _run(y, peaks, [met], search_ppm=0.01) == 0
     assert met['_fingerprint_verdicts']['own_shift_ppm'] == pytest.approx(0.04)
+
+
+def test_detections_noise_is_used_when_given():
+    """The floor is a multiple of detection's SNR threshold, so it must be
+    measured against detection's noise or it is not the floor it says it is.
+    With a noise five times the tail's, an expected SNR of 200 becomes 40 and
+    the region's 4 becomes 0.8 -- still contradicted, but on the right scale."""
+    y, peaks, met = _aldehyde()
+    stats: dict = {}
+    _run(y, peaks, [met], noise=5.0 * NOISE, stats=stats)
+    assert stats['noise'] == pytest.approx(5.0 * NOISE)
+    c = met['_fingerprint_contradictions'][0]
+    assert c['expected_snr'] == pytest.approx(40.0, rel=0.15)

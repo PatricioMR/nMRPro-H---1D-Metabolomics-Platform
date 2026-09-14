@@ -50,7 +50,9 @@ def _write_annotation_log(metabolites, stats):
                     f'{stats.get("linewidth_ppm", 0):.4f} ppm; a missing '
                     f'signal is looked for within +/-'
                     f'{stats.get("search_half_width_ppm", 0):.4f} ppm.\n')
-            f.write(f'  noise {stats.get("noise", 0):.4g}\n')
+            f.write(f'  noise {stats.get("noise", 0):.4g} '
+                    f'({stats.get("noise_source", "?")}); excluded regions '
+                    f'{stats.get("excluded_regions", [])}\n')
             f.write(f'  {stats.get("metabolites", 0)} metabolites with a '
                     f'detected signal, {stats.get("predicted", 0)} database '
                     f'signals between them:\n')
@@ -1884,9 +1886,22 @@ class AnnotationResultsWindow:
         from processing.quant_detection_limit import project_drift
         from processing.spectral_regions import measure_linewidth_ppm
 
+        from processing.spectral_regions import parse_regions
+
         stages = getattr(self.app, 'stages', {}) or {}
         ann_stage = stages.get('annotation')
         pd_stage = stages.get('peak_detection')
+        # The regions detection was told to ignore. Recorded on the stage by a
+        # detection run in this session; otherwise the field, which is what a
+        # loaded project's detection was given. Silently using none put the
+        # water at 4.65 ppm in as "signal present" for saligenin.
+        excluded = getattr(pd_stage, '_excluded_regions', None)
+        if excluded is None:
+            try:
+                excluded = parse_regions(pd_stage.excluded_regions_var.get())
+            except (ValueError, AttributeError):
+                excluded = []
+        noise_std = getattr(pd_stage, 'noise_std', None)
         tol = float(self._params.get('dppm_gold', 0.05))
         drift = project_drift(self.metabolites)
         lw = measure_linewidth_ppm(self.ppm, self.mean_intensity,
@@ -1897,10 +1912,13 @@ class AnnotationResultsWindow:
         n = fingerprint_contradictions(
             self.metabolites, self.ppm, self.mean_intensity, self.peaks,
             tolerance_ppm=tol, search_ppm=half,
-            excluded_regions=getattr(pd_stage, '_excluded_regions', None) or (),
+            excluded_regions=excluded or (),
             manual_marks=(getattr(ann_stage, '_quality_marks', {})
                           if ann_stage else {}),
-            stats=stats)
+            stats=stats, noise=noise_std)
+        stats['excluded_regions'] = list(excluded or ())
+        stats['noise_source'] = ('detection' if noise_std else
+                                 'tail estimate (no detection noise)')
         self._fingerprint_stats = {**stats, 'drift_ppm': drift,
                                    'linewidth_ppm': lw}
         _write_annotation_log(self.metabolites, self._fingerprint_stats)
