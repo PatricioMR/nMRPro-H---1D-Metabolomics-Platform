@@ -24,6 +24,7 @@ analysis", Metabolomics 3(3):211-221, 2007.
 """
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
 from typing import Iterable, NamedTuple, Sequence
@@ -321,6 +322,10 @@ class LineMeasurement:
     centre_ppm: float | None = None
     predicted_lines: list[dict] = field(default_factory=list)
     measured: bool = False          # False → no lines to snap; caller keeps old data
+    # For a measured pattern: the RMS of the found lines against the shape,
+    # in hertz, before scaling onto delta-J's gates. delta_j_hz carries the
+    # scaled value; this is the number a reader should see.
+    pattern_residual_hz: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -457,6 +462,55 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
                           'found_ppms': [b for _, b in found],
                           'predicted_ppms': pred})
     return best[1]
+
+
+def pattern_offsets_hz(mp) -> list:
+    """``[(offset_hz, rel_height)]`` from a signal's ``pattern_lines`` (the
+    JSON the reference DB stores), or ``[]``."""
+    raw = mp.get('pattern_lines') if isinstance(mp, dict) else None
+    if not raw:
+        return []
+    try:
+        lines = json.loads(raw) if isinstance(raw, str) else list(raw)
+        out = [(float(o), float(r)) for o, r in lines]
+    except (TypeError, ValueError):
+        return []
+    return out if len(out) >= 2 else []
+
+
+def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
+                           anchor_ppm=None) -> LineMeasurement:
+    """The one way a measured pattern is matched, wherever it is asked.
+
+    The search asks it when a candidate is built; ``resolve_dj`` asks it
+    again when the axis has been recalibrated. Two ways of doing it -- one
+    matching the shape, one snapping stored lines with the annotation's
+    thirty-hertz tolerance -- had the second overwrite the first: a
+    three-line pattern found whole came back as two lines seven hertz off.
+
+    The residual stands in for delta-J, scaled onto delta-J's gates so every
+    rule downstream reads it unchanged; the raw residual travels beside it.
+    """
+    pat = pattern_offsets_hz(mp)
+    if len(pat) < 2 or not field_mhz:
+        return LineMeasurement(measured=False)
+    anchor = anchor_ppm
+    if anchor is None:
+        anchor = mp.get('peak_ppm') or mp.get('ppm_center') or mp.get('db_ppm')
+    if anchor is None:
+        return LineMeasurement(measured=False)
+    pm = match_pattern(pat, peaks, anchor_ppm=float(anchor),
+                       field_mhz=float(field_mhz))
+    m = LineMeasurement(n_expected=pm['n_expected'], n_found=pm['n_found'],
+                        found_ppms=list(pm['found_ppms']), measured=True)
+    m.predicted_lines = [{'ppm': float(v), 'rel_intensity': 1.0,
+                          'measured': True} for v in pm['found_ppms']]
+    m.pattern_residual_hz = pm['residual_hz']
+    if m.complete and pm['residual_hz'] is not None:
+        m.delta_j_hz = (float(pm['residual_hz']) * float(dj_gold_hz)
+                        / PATTERN_GOLD_HZ)
+        m.centre_ppm = pm['centre_ppm']
+    return m
 
 
 def pattern_residual_hz(predicted_ppms, found_ppms, field_mhz) -> float | None:
@@ -1289,7 +1343,11 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     n_expected = expected_lines_for(mp, met, mult=mult)
     stored_lines = mp.get('predicted_lines') or []
 
-    if (not remeasure and mp.get('_n_found_lines') is not None
+    if normalize_mult(mult) == PATTERN_MULT:
+        meas = measure_pattern_signal(mp, peaks, field_mhz=field_mhz,
+                                      dj_gold_hz=params['dj_gold_hz'])
+        mp['pattern_residual_hz'] = meas.pattern_residual_hz
+    elif (not remeasure and mp.get('_n_found_lines') is not None
             and mp.get('_n_exp_lines') is not None):
         meas = LineMeasurement(
             n_expected=int(mp['_n_exp_lines']),

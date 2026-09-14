@@ -33,7 +33,7 @@ from ._annotation_helpers import (
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    PATTERN_MULT, PATTERN_GOLD_HZ, LineMeasurement, match_pattern,
+    PATTERN_MULT, measure_pattern_signal, pattern_offsets_hz,
     candidate_key, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
@@ -148,17 +148,11 @@ def pattern_of(entry, mhz) -> list:
     """``[(ppm, rel_intensity)]`` of a measured line pattern laid on the
     axis at this field, or ``[]``. Offsets are stored in hertz because they
     are couplings, and couplings do not move with the field."""
-    raw = entry.get('pattern_lines')
-    if not raw:
+    lines = pattern_offsets_hz(entry)
+    if not lines or not mhz:
         return []
-    try:
-        lines = json.loads(raw) if isinstance(raw, str) else list(raw)
-        centre = float(entry.get('ppm_center') or entry.get('ppm') or 0.0)
-        out = [(centre + float(off) / float(mhz), float(rel))
-               for off, rel in lines]
-    except (TypeError, ValueError):
-        return []
-    return sorted(out) if len(out) >= 2 else []
+    centre = float(entry.get('ppm_center') or entry.get('ppm') or 0.0)
+    return sorted((centre + off / float(mhz), rel) for off, rel in lines)
 
 class _AnnotationSearchMixin:
     """Mixin — mixed into AnnotationStage. Uses self.* freely."""
@@ -1670,24 +1664,11 @@ class _AnnotationSearchMixin:
                     # scaled to delta-J's gates so every rule downstream reads
                     # it unchanged, with the raw residual kept beside it.
                     if _pattern:
-                        _pm = match_pattern(
-                            [(float((pp - db_ppm) * mhz), ri)
-                             for pp, ri in _pattern],
-                            local_peaks, anchor_ppm=peak_ppm, field_mhz=mhz)
-                        _meas_sr = LineMeasurement(
-                            n_expected=_pm['n_expected'],
-                            n_found=_pm['n_found'],
-                            found_ppms=list(_pm['found_ppms']), measured=True)
-                        _meas_sr.predicted_lines = [
-                            {'ppm': float(v), 'rel_intensity': 1.0,
-                             'measured': True} for v in _pm['found_ppms']]
-                        if _meas_sr.complete and _pm['residual_hz'] is not None:
-                            _meas_sr.delta_j_hz = (
-                                float(_pm['residual_hz'])
-                                * float(_sc_params['dj_gold_hz'])
-                                / PATTERN_GOLD_HZ)
-                            _meas_sr.centre_ppm = _pm['centre_ppm']
-                        _pattern_residual = _pm['residual_hz']
+                        _meas_sr = measure_pattern_signal(
+                            entry, local_peaks, field_mhz=mhz,
+                            dj_gold_hz=_sc_params['dj_gold_hz'],
+                            anchor_ppm=peak_ppm)
+                        _pattern_residual = _meas_sr.pattern_residual_hz
                     else:
                         _pattern_residual = None
 

@@ -492,3 +492,30 @@ class TestMatchPattern:
         assert m['n_found'] == 5
         from processing.annotation_scoring import PATTERN_GOLD_HZ
         assert m['residual_hz'] > PATTERN_GOLD_HZ
+
+
+class TestOnePathForPatterns:
+    """resolve_dj re-measures every signal after the axis is recalibrated. For
+    a pattern it snapped the stored lines with the thirty-hertz tolerance and
+    wrote the result over the search's: a three-line pattern found whole came
+    back as two lines seven hertz off. One function now, asked from both."""
+
+    def test_resolve_dj_matches_the_pattern_not_the_stored_lines(self):
+        from processing.annotation_scoring import (
+            PATTERN_MULT, SCORING_DEFAULTS, resolve_dj)
+        pat = [[-9.2, 0.4], [-5.2, 0.8], [0.1, 1.0], [4.1, 0.8], [9.6, 0.4]]
+        peaks = [{'rank': i, 'ppm': 3.431 + o / 600.0}
+                 for i, (o, _r) in enumerate(pat)]
+        import json
+        mp = {'db_ppm': 3.401, 'peak_ppm': 3.431, 'ppm_center': 3.401,
+              'type': PATTERN_MULT, 'pattern_lines': json.dumps(pat),
+              'predicted_lines': [{'ppm': 3.431}, {'ppm': 3.44}],  # stale
+              '_n_found_lines': 2, '_n_exp_lines': 2, 'delta_j_hz': 3.0}
+        met = {'db_peaks': []}
+        s_dj, conf = resolve_dj(mp, met, peaks, mult=PATTERN_MULT,
+                                params=SCORING_DEFAULTS, field_mhz=600.0,
+                                tolerance=0.05, remeasure=True)
+        assert mp['_n_found_lines'] == 5 and mp['_n_exp_lines'] == 5
+        assert mp['pattern_residual_hz'] < 0.2
+        assert mp['delta_j_hz'] < 0.1
+        assert s_dj > 0.9
