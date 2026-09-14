@@ -261,13 +261,24 @@ save_
         assert c['ph'] == 7.4 and c['temperature'] == 298.0
         assert c['buffer'] == 'sodium phosphate' and c['reference'] == 'DSS'
 
-    def test_each_proton_spectrum_knows_its_field(self):
+    def test_the_mirror_map_is_read_off_the_list_files(self):
+        """The PDBj mirror lays entries out by compound, and the only map from
+        entry to compound directory is the tarball list files."""
         import sys
         sys.path.insert(0, 'hmdb_api_download')
-        from download_bmrb_fids import one_d_proton_dirs
-        d = one_d_proton_dirs(self.STAR)
-        assert [(x['path'], x['field_mhz']) for x in d] == [
-            ('nmr/set01', 500.0), ('nmr/set02', 400.0)]
+        from download_bmrb_fids import parse_list_files
+        m = parse_list_files(['bmse000897 D_ornithine\nbmse000898 D_xylose\n',
+                              'bmse000789\tcreatinine\n', 'junk line\n'])
+        assert m == {'bmse000897': 'D_ornithine', 'bmse000898': 'D_xylose',
+                     'bmse000789': 'creatinine'}
+
+    def test_the_field_comes_from_the_acquisition_parameters(self, tmp_path):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import field_from_acqus
+        (tmp_path / 'acqus').write_text('##$BF1= 600.13\n##$SFO1= 600.1328\n')
+        assert field_from_acqus(str(tmp_path)) == pytest.approx(600.13)
+        assert field_from_acqus(str(tmp_path / 'nothing')) is None
 
     def test_a_coupling_that_holds_across_fields_is_not_flagged(self):
         import sys

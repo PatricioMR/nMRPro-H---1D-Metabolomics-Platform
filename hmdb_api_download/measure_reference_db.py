@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -29,8 +30,7 @@ REPO = os.path.dirname(ROOT)
 sys.path.insert(0, REPO)
 
 sys.path.insert(0, ROOT)
-from download_bmrb_fids import (  # noqa: E402
-    BMRB_ENTRIES, one_d_proton_dirs, sample_conditions)
+from download_bmrb_fids import BMRB_ENTRIES, sample_conditions  # noqa: E402
 from data.bruker_loader import load_bruker_dataset  # noqa: E402
 from processing.reference_measurement import (  # noqa: E402
     measure_fingerprint, noise_sigma, reference_offset)
@@ -131,25 +131,30 @@ def _ensure_v02():
     return con
 
 
+def field_from_acqus(exp_dir) -> float | None:
+    """The spectrometer frequency, from the acquisition parameters written
+    with the data -- not from the entry's prose, which names a spectrometer
+    and not the field the spectrum was actually taken at."""
+    path = os.path.join(exp_dir, 'acqus')
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding='latin-1') as f:
+        m = re.search(r'##\$BF1=\s*([\d.]+)', f.read())
+    return float(m.group(1)) if m else None
+
+
 def _spectrum_sets(bmse):
     """``(set_name, proc_dir, field_mhz)`` for every mirrored 1D 1H
-    spectrum, the field read from the entry's own declaration of which
-    spectrometer took it."""
+    spectrum: the extracted experiment directories under FIDS/<bmse>/."""
     base = os.path.join(FIDS, bmse)
     if not os.path.isdir(base):
         return []
-    fields_by_set = {}
-    star = os.path.join(BMRB_ENTRIES, bmse, bmse + '.str')
-    if os.path.exists(star):
-        text = open(star, encoding='utf-8', errors='replace').read()
-        for d in one_d_proton_dirs(text):
-            fields_by_set[d['path'].split('/')[-1]] = d['field_mhz']
     out = []
-    for root, dirs, files in os.walk(base):
+    for root, _dirs, files in os.walk(base):
         if '1r' in files and 'procs' in files:
-            rel = os.path.relpath(root, base)
-            set_name = rel.split(os.sep)[1] if os.sep in rel else rel
-            out.append((set_name, root, fields_by_set.get(set_name)))
+            exp_dir = os.path.dirname(os.path.dirname(root))   # <exp>/pdata/1
+            set_name = os.path.relpath(exp_dir, base).replace(os.sep, '/')
+            out.append((set_name, root, field_from_acqus(exp_dir)))
     return sorted(out)
 
 
