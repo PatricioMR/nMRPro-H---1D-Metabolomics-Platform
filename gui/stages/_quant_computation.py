@@ -318,6 +318,32 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                 for why, n in sorted((sh.get('reasons') or {}).items(),
                                      key=lambda kv: -kv[1]):
                     _dbg(f, f'  [{n}] {why}')
+                if sh.get('contests'):
+                    _dbg(f, '')
+                    _dbg(f, '  THE WIDEST CONTESTS, claimant by claimant. '
+                            'What annotation said about each one.')
+                    _dbg(f, '  A window with twelve claimants is not a '
+                            'quantification problem; which gate let')
+                    _dbg(f, '  them through can be read here.')
+                    for c in sh['contests']:
+                        lo, hi = c['window']
+                        _dbg(f, '')
+                        _dbg(f, f'  window {lo:.4f}-{hi:.4f} ppm, '
+                                f'{len(c["claimants"])} claimants')
+                        _dbg(f, f'    {"metabolite":<30s} {"mult":>4} '
+                                f'{"dppm":>7} {"dJ Hz":>6} {"lines":>5} '
+                                f'{"quality":>8} {"in win":>6} {"sigs":>4}')
+                        for r in c['claimants']:
+                            dppm = r['dppm']; dj = r['dj']
+                            lines = (f'{r["found"]}/{r["expected"]}'
+                                     if r['found'] is not None else '-')
+                            _dbg(f, f'    {str(r["name"])[:30]:<30s} '
+                                    f'{str(r["mult"] or "-"):>4} '
+                                    f'{(f"{dppm:+.3f}" if dppm is not None else "-"):>7} '
+                                    f'{(f"{dj:.2f}" if dj is not None else "-"):>6} '
+                                    f'{lines:>5} {str(r["quality"] or "-"):>8} '
+                                    f'{100*r["fraction"]:>5.0f}% '
+                                    f'{r["signals"]:>4}')
 
         _dbg(f, '')
         _dbg(f, '── NOT QUANTIFIED ───────────────────────────────────')

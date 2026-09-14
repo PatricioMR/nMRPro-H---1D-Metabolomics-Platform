@@ -579,6 +579,38 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
     penalised = {mid: t for mid, t in why.items() if mid in sharing}
 
     if diagnostics is not None:
+        # The widest contests, claimant by claimant, with what annotation said
+        # about each. Twelve analytes on three lines is not a quantification
+        # problem, and which gate let the twelve through can be read here.
+        n_signals: dict = {}
+        for (mid, _r) in by_key:
+            n_signals[mid] = n_signals.get(mid, 0) + 1
+        contests = []
+        for w in sorted(windows, key=lambda w: -len(w['claimants'])):
+            if w.get('bound') or len(w['claimants']) < 3:
+                continue
+            rows = []
+            for mid, _nh_eff in w['claimants']:
+                cand = by_key.get((mid, frozenset(w['lines'].get(mid) or ())))
+                if cand is None:
+                    cand = next((c for (m, r), c in by_key.items()
+                                 if m == mid), None)
+                ev = (cand.evidence or {}) if cand is not None else {}
+                name = ((cand.payload or {}).get('name') if cand is not None
+                        and isinstance(cand.payload, dict) else None)
+                rows.append({
+                    'met': mid, 'name': name or mid,
+                    'mult': ev.get('multiplicity'),
+                    'dppm': ev.get('ppm_diff'), 'dj': ev.get('delta_j_hz'),
+                    'found': ev.get('n_found'), 'expected': ev.get('n_expected'),
+                    'quality': ev.get('quality'),
+                    'fraction': float((w.get('geometry') or {}).get(mid, 0.0)),
+                    'signals': n_signals.get(mid, 0),
+                })
+            contests.append({'window': w['window'], 'owner': w.get('owner'),
+                             'claimants': rows})
+            if len(contests) >= 6:
+                break
         tally: dict = {}
         for text in why.values():
             key = text.split(' -- ')[0].split(';')[0]
@@ -588,7 +620,8 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         diagnostics['shared'] = {**counts, **(solver_stats or {}),
                                  'reasons': tally,
                                  'metabolites': sorted(out),
-                                 'penalised': len(penalised)}
+                                 'penalised': len(penalised),
+                                 'contests': contests}
     return out, penalised
 
 
