@@ -28,6 +28,7 @@ from gui.utils.quality_palette import (
     tier_from_annotation_quality, update_tier_counts)
 from processing.annotation_detectability import (
     build_overlap_map, mark_detectability)
+from processing.annotation_detectability import fingerprint_contradictions
 from processing.annotation_quality import promote_singlets, quality_verdict
 from processing.annotation_quality import (
     metabolite_has_anchor, metabolite_tier)
@@ -463,6 +464,7 @@ class AnnotationResultsWindow:
                     self._enrich_scores()
                     self._auto_mark_good()
                     self._promote_singlets()
+                    self._apply_fingerprint_gate()
                     self._nnls_spectral_validation()
                 else:
                     _step(8, 'Restoring saved state…')
@@ -1060,6 +1062,7 @@ class AnnotationResultsWindow:
         self._enrich_scores()
         self._auto_mark_good()
         self._promote_singlets()
+        self._apply_fingerprint_gate()
         self._nnls_spectral_validation()
         self._build_peak_assignments()
 
@@ -1792,6 +1795,26 @@ class AnnotationResultsWindow:
             self.metabolites, self.peaks, params=self._params,
             manual_marks=(getattr(ann_stage, '_quality_marks', {})
                           if ann_stage else {}))
+
+    def _apply_fingerprint_gate(self):
+        """If it were here, would I see the big one? — see
+        processing.annotation_detectability.fingerprint_contradictions."""
+        if self.ppm is None or self.mean_intensity is None:
+            return
+        stages = getattr(self.app, 'stages', {}) or {}
+        ann_stage = stages.get('annotation')
+        pd_stage = stages.get('peak_detection')
+        n = fingerprint_contradictions(
+            self.metabolites, self.ppm, self.mean_intensity, self.peaks,
+            tolerance_ppm=float(self._params.get('dppm_gold', 0.05)),
+            excluded_regions=getattr(pd_stage, '_excluded_regions', None) or (),
+            manual_marks=(getattr(ann_stage, '_quality_marks', {})
+                          if ann_stage else {}))
+        if n:
+            print(f'[annotation] fingerprint contradicted for {n} '
+                  f'metabolite(s): a signal that would have been visible is '
+                  f'not there; every signal of each marked Bad, reason on '
+                  f'the card.')
 
     def _nnls_spectral_validation(self):
         """
