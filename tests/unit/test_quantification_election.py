@@ -281,3 +281,51 @@ class TestAWinnerKeepsItsOtherSignals:
         e = elect(cands, dj_gold_hz=0.2)
         assert e.winners['A'].peak_rank == 1
         assert e.winners['B'].peak_rank == 2
+
+
+class TestALossSaysWhoAndWhy:
+    """'Lost the competition' says nothing an analyst can act on. 'Lost peak
+    #5 to N-acetyl-L-alanine on a manual Good mark' does: it names the rival
+    and the one criterion that decided it, so the analyst knows whether to
+    look at the spectrum, at the mark, or at the database."""
+
+    def _pair(self, **naa):
+        from processing.quantification import Candidate
+        ev = {'multiplicity': 'd', 'n_found': 2, 'n_expected': 2,
+              'delta_j_hz': 0.0, 'ppm_diff': 0.0, 'quality': 'good'}
+        return [Candidate('LAC', 5, frozenset({5, 6}), dict(ev)),
+                Candidate('NAA', 5, frozenset({5, 6}), {**ev, **naa})]
+
+    def test_a_manual_mark_is_named_as_the_reason(self):
+        from processing.quantification import elect
+        e = elect(self._pair(delta_j_hz=0.35, ppm_diff=0.05,
+                             manual_quality='good'), dj_gold_hz=0.2)
+        assert e.beaten['LAC'] == [(5, 'NAA', 'a manual Good mark')]
+
+    def test_delta_j_is_named_when_it_decided(self):
+        from processing.quantification import elect
+        e = elect(self._pair(delta_j_hz=-0.0), dj_gold_hz=0.2)
+        # identical keys: decided by id -- and said so
+        assert e.beaten.get('NAA', e.beaten.get('LAC'))[0][2].startswith(
+            'a tie')
+        e = elect(self._pair(delta_j_hz=0.6), dj_gold_hz=0.2)
+        assert e.beaten['NAA'][0][2] == 'delta-J'
+
+    def test_the_rejected_row_carries_it(self):
+        import numpy as np
+        from processing.quant_engine import quantify
+        ppm = np.linspace(0, 10, 2001)
+        y = np.zeros((2001, 1)); y[1000, 0] = 100.0
+        peaks = {5: {'ppm': 5.0, 'rank': 5, 'start_ppm': 4.98,
+                     'end_ppm': 5.02},
+                 6: {'ppm': 5.01, 'rank': 6, 'start_ppm': 4.99,
+                     'end_ppm': 5.03}}
+        cands = self._pair(delta_j_hz=0.35, ppm_diff=0.05,
+                           manual_quality='good')
+        rows = {r['metabolite']: r for r in quantify(
+            candidates=cands, peaks_by_rank=peaks, ppm=ppm, intensities=y,
+            samples_info=[{'label': 'A', 'type': 'Sample'}], included=[0],
+            groups={'A': [0]}, dj_gold_hz=0.2, use_pqn=False,
+            deconvolve=False)}
+        assert any('Lost peak #5 to NAA on a manual Good mark' in t
+                   for t in rows['LAC']['_status_reasons'])

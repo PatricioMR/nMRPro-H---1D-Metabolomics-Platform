@@ -77,11 +77,39 @@ class Candidate:
     payload: object = None
 
 
+# The criteria of ``candidate_key``, in the words the analyst reads.
+_CRITERION_TEXT = {
+    'manual': 'a manual Good mark',
+    'tier': 'evidence tier (confirmed multiplet > unconfirmed > singlet)',
+    'dj': 'delta-J',
+    'ppm': 'delta-ppm',
+    'quality': 'annotation quality',
+    'intensity': 'line intensities',
+    'corroboration': 'STOCSY corroboration',
+    'cosine': 'fingerprint cosine',
+    'score': 'the annotation score',
+}
+
+
+def _decided_on(loser_key, winner_key) -> str:
+    """The first criterion on which the winner's key beats the loser's."""
+    for name in loser_key._fields:
+        a, b = getattr(loser_key, name), getattr(winner_key, name)
+        if a != b:
+            return _CRITERION_TEXT.get(name, name)
+    return 'a tie broken by metabolite id'
+
+
 @dataclass(frozen=True)
 class Election:
     winners: dict          # met_id -> Candidate
     rejected: dict         # met_id -> reason constant
     claimed_peaks: frozenset
+    # met_id -> [(peak_rank, winner_met_id, criterion)] for every signal the
+    # metabolite stood on and lost. "Lost the competition" says nothing an
+    # analyst can act on; "lost 1.33 ppm to N-acetyl-L-alanine on a manual
+    # Good mark" does.
+    beaten: dict = field(default_factory=dict)
 
 
 def _sort_key(cand, *, dj_gold_hz, band_ppm=None):
@@ -152,13 +180,29 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
 
     winners: dict = {}
     claimed: set = set()
+    holder: dict = {}          # rank -> the Candidate that holds it
+    beaten: dict = {}
+
+    def _record_loss(c, rank):
+        w = holder.get(rank)
+        if w is None or w.met_id == c.met_id:
+            return
+        beaten.setdefault(c.met_id, []).append((
+            rank, w.met_id,
+            _decided_on(_sort_key(c, dj_gold_hz=dj_gold_hz, band_ppm=band_ppm),
+                        _sort_key(w, dj_gold_hz=dj_gold_hz, band_ppm=band_ppm))))
+
     for c in eligible:
         if (c.peak_rank is None and not c.line_ranks
                 and c.met_id in has_detected):
             continue
         if c.peak_rank is not None and c.peak_rank in claimed:
+            if c.met_id not in winners:
+                _record_loss(c, c.peak_rank)
             continue
         if c.line_ranks & claimed:
+            if c.met_id not in winners:
+                _record_loss(c, sorted(c.line_ranks & claimed)[0])
             continue
         if c.met_id in winners:
             # A winner's OTHER verified signals are its own too. It stops
@@ -175,14 +219,16 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
             # for the peaks nobody better wanted, not a veto.
             if c.peak_rank is None and not c.line_ranks:
                 continue
-            if c.peak_rank is not None:
-                claimed.add(c.peak_rank)
-            claimed |= set(c.line_ranks)
+            for r in ({c.peak_rank} if c.peak_rank is not None else set()) \
+                    | set(c.line_ranks):
+                claimed.add(r)
+                holder[r] = c
             continue
         winners[c.met_id] = c
-        if c.peak_rank is not None:
-            claimed.add(c.peak_rank)
-        claimed |= set(c.line_ranks)
+        for r in ({c.peak_rank} if c.peak_rank is not None else set()) \
+                | set(c.line_ranks):
+            claimed.add(r)
+            holder[r] = c
 
     for mid in seen_mids:
         if mid in winners:
@@ -196,7 +242,7 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
             rejected.setdefault(mid, NO_ELIGIBLE_SIGNAL)
 
     return Election(winners=winners, rejected=rejected,
-                    claimed_peaks=frozenset(claimed))
+                    claimed_peaks=frozenset(claimed), beaten=beaten)
 
 
 def eligible_metabolite_ids(metabolites, *, anchor_met_ids=(),

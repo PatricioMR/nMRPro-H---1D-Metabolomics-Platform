@@ -350,16 +350,20 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, '── NOT QUANTIFIED ───────────────────────────────────')
         by_reason: dict = {}
         for r in nq:
-            # Every reason, joined -- an analyte that lost a peak AND could not
-            # have its share of it resolved has two things wrong with it, and
-            # grouping on the first alone hid the second entirely.
-            why = ' | '.join(r.get('_status_reasons') or ['(no reason given)'])
-            by_reason.setdefault(why, []).append(
-                r.get('metabolite', r.get('hmdb_id', '?')))
+            # Grouped on the first reason; every further reason -- the share
+            # that could not be resolved, which peak was lost to whom and on
+            # what -- is printed under the name. Grouping on the first alone
+            # once hid the second entirely; joining them all made every
+            # analyte its own group.
+            reasons = r.get('_status_reasons') or ['(no reason given)']
+            by_reason.setdefault(reasons[0], []).append(
+                (r.get('metabolite', r.get('hmdb_id', '?')), reasons[1:]))
         for why, who in sorted(by_reason.items(), key=lambda kv: -len(kv[1])):
             _dbg(f, f'  [{len(who)}] {why}')
-            for nm in sorted(who):
+            for nm, more in sorted(who, key=lambda t: str(t[0])):
                 _dbg(f, f'        {nm}')
+                for line in more:
+                    _dbg(f, f'            - {line}')
         _dbg(f, '')
         _dbg(f, 'END')
     finally:

@@ -822,10 +822,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                          bool(external_standard_samples), dilution,
                          correction))
 
+    names = {c.met_id: ((c.payload or {}).get('name') if isinstance(
+        c.payload, dict) else None) or c.met_id for c in (candidates or ())}
     for mid, reason in election.rejected.items():
         if mid in recovered:
             continue
-        rows.append(_rejected_row(mid, reason, shared_reasons.get(mid)))
+        rows.append(_rejected_row(mid, reason, shared_reasons.get(mid),
+                                  beaten=election.beaten.get(mid),
+                                  names=names))
     # A winner with no detected line is not a failure to measure — it is a
     # measurement of an upper bound, and reporting it as one is the whole of
     # processing.quant_detection_limit.
@@ -1148,7 +1152,8 @@ def _shared_reason(info) -> list:
             f'right and on there being no other analyte in the window.']
 
 
-def _rejected_row(mid, reason, shared_reason=None) -> dict:
+def _rejected_row(mid, reason, shared_reason=None, *, beaten=None,
+                  names=None) -> dict:
     """A metabolite with no number still gets a row, and says why.
 
     An analyte that disappears from the table cannot be questioned, and the
@@ -1174,7 +1179,10 @@ def _rejected_row(mid, reason, shared_reason=None) -> dict:
         '_status_reasons': ([REJECTION_TEXT.get(reason, str(reason))]
                             + ([f'Its share of the shared window could not be '
                                 f'resolved: {shared_reason}']
-                               if shared_reason else [])),
+                               if shared_reason else [])
+                            + [f'Lost peak #{r} to '
+                               f'{(names or {}).get(w, w)} on {how}.'
+                               for r, w, how in (beaten or ())]),
         '_rejection': reason,
         '_peak': None,
         '_peak_rank': None,
