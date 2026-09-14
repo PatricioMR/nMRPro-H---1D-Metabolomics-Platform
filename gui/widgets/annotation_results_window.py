@@ -71,16 +71,41 @@ def _write_annotation_log(metabolites, stats):
                 f.write(f'    {stats.get(k, 0):5d}  {label}\n')
             f.write(f'  -> {stats.get("analytes_marked", 0)} analytes marked '
                     f'Bad.\n\n')
+            f.write('MARKED BAD\n')
             for met in metabolites or ():
                 c = met.get('_fingerprint_contradictions')
                 if not c:
                     continue
-                f.write(f'  {met.get("name", met.get("id"))}\n')
+                v = met.get('_fingerprint_verdicts') or {}
+                f.write(f'  {met.get("name", met.get("id"))}  (its matched '
+                        f'signals sit {v.get("own_shift_ppm", 0):+.3f} ppm '
+                        f'from the database)\n')
                 for x in c:
                     f.write(f'      {x["ppm"]:.3f} ppm {x["multiplicity"]} '
-                            f'{x["protons"]:g}H  expected SNR '
-                            f'{x["expected_snr"]:.0f}, region holds '
+                            f'{x["protons"]:g}H  looked at '
+                            f'{x.get("looked_at", x["ppm"]):.3f}: expected '
+                            f'SNR {x["expected_snr"]:.0f}, region holds '
                             f'{x["measured_snr"]:.0f}\n')
+            f.write('\nNOT MARKED, and what stopped each missing signal\n')
+            f.write('  (only metabolites with at least one missing signal '
+                    'that would have been visible)\n')
+            for met in metabolites or ():
+                if met.get('_fingerprint_contradictions'):
+                    continue
+                v = met.get('_fingerprint_verdicts') or {}
+                sig = [x for x in (v.get('signals') or ())
+                       if x['verdict'] != 'faint']
+                if not sig:
+                    continue
+                f.write(f'  {met.get("name", met.get("id"))}  anchor SNR '
+                        f'{v.get("anchor_snr", 0):.0f}, shift '
+                        f'{v.get("own_shift_ppm", 0):+.3f}\n')
+                for x in sig:
+                    held = (f', holds {x["measured_snr"]:.0f}'
+                            if x.get('measured_snr') is not None else '')
+                    f.write(f'      {x["ppm"]:.3f} ppm {x["multiplicity"]} '
+                            f'expected {x["expected_snr"]:.0f}: '
+                            f'{x["verdict"]}{held}\n')
     except Exception:
         pass
 from processing.annotation_quality import promote_singlets, quality_verdict

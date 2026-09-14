@@ -295,7 +295,20 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
 
         counts['metabolites'] += 1
         matched_at = {round(float(mp.get('db_ppm', 0.0)), 3) for mp in matched}
-        found = []
+        # Where this metabolite's signals actually sat, relative to the
+        # database. A molecule's resonances drift together -- pH moves the
+        # whole aromatic system, not one line of it -- so a missing signal is
+        # looked for where its found siblings say it would be, not where the
+        # database says. On the reference study 4-hydroxyphenylacetic acid's
+        # matched doublet sat +0.043 ppm from the database; its unmatched
+        # sibling, looked for at the database position, found noise and the
+        # analyte was contradicted by its own drift.
+        shifts = [float(mp.get('peak_ppm')) - float(mp.get('db_ppm'))
+                  for mp in matched
+                  if mp.get('peak_ppm') is not None
+                  and mp.get('db_ppm') is not None]
+        own_shift = float(np.median(shifts)) if shifts else 0.0
+        found, verdicts = [], []
         for dp in met.get('db_peaks') or ():
             counts['predicted'] += 1
             mult = dp.get('type') or ''
@@ -309,29 +322,45 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
             expected = a_snr * (proton_count(dp) * _line_share(mult)) / a_per
             if expected < float(min_expected_snr):
                 counts['faint'] += 1
+                verdicts.append((centre, mult, expected, 'faint', None))
                 continue
-            lo, hi = centre - tol, centre + tol
+            here = centre + own_shift
+            lo, hi = here - tol, here + tol
             if (in_excluded_region(lo, excluded_regions)
                     or in_excluded_region(hi, excluded_regions)
-                    or in_excluded_region(centre, excluded_regions)):
+                    or in_excluded_region(here, excluded_regions)):
                 counts['excluded'] += 1
+                verdicts.append((centre, mult, expected, 'excluded', None))
                 continue
             if peak_ppms.size and np.any((peak_ppms >= lo) & (peak_ppms <= hi)):
                 counts['peak_in_window'] += 1
+                verdicts.append((centre, mult, expected, 'peak in window',
+                                 None))
                 continue
             m = (ppm >= lo) & (ppm <= hi)
             if m.sum() < 3:
+                verdicts.append((centre, mult, expected, 'off the axis', None))
                 continue
             seg = y[m]
             measured = (float(seg.max()) - float(seg.min())) / noise
             if measured * float(ratio) < expected:
                 counts['contradicted'] += 1
+                verdicts.append((centre, mult, expected, 'CONTRADICTED',
+                                 measured))
                 found.append({'ppm': centre, 'multiplicity': mult,
                               'protons': proton_count(dp),
+                              'looked_at': float(here),
                               'expected_snr': float(expected),
                               'measured_snr': float(measured)})
             else:
                 counts['signal_present'] += 1
+                verdicts.append((centre, mult, expected, 'signal present',
+                                 measured))
+        met['_fingerprint_verdicts'] = {
+            'own_shift_ppm': own_shift, 'anchor_snr': float(a_snr),
+            'signals': [{'ppm': c, 'multiplicity': mu, 'expected_snr': e,
+                         'verdict': v, 'measured_snr': me}
+                        for c, mu, e, v, me in verdicts]}
         if not found:
             met.pop('_fingerprint_contradictions', None)
             continue

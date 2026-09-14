@@ -231,3 +231,20 @@ class TestWhereAMissingSignalIsLookedFor:
         assert stats['matched'] == 1
         assert stats['contradicted'] == 1
         assert stats['analytes_marked'] == 1
+
+
+def test_a_missing_signal_is_looked_for_where_its_siblings_say_it_is():
+    """A molecule's resonances drift together. On the reference study
+    4-hydroxyphenylacetic acid's matched doublet sat +0.043 ppm from the
+    database; its unmatched sibling, looked for at the database position,
+    found noise, and the analyte was contradicted by its own drift."""
+    y = _spectrum((6.955, 200.0), (6.969, 200.0),      # matched, drifted +0.04
+                  (6.885, 150.0), (6.899, 150.0))      # sibling, drifted too
+    peaks = [_peak(1, 6.955), _peak(2, 6.969), _peak(3, 6.885), _peak(4, 6.899)]
+    met = _met('4-Hydroxyphenylacetic acid',
+               matched=[(1, 6.92, 'd', 2.0)],
+               db=[(6.92, 'd', 2.0), (6.852, 'd', 2.0)])
+    met['matched_peaks'][0]['peak_ppm'] = 6.96
+    # Narrow search: at the database position 6.852 +/- 0.01 there is nothing.
+    assert _run(y, peaks, [met], search_ppm=0.01) == 0
+    assert met['_fingerprint_verdicts']['own_shift_ppm'] == pytest.approx(0.04)
