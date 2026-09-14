@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import http.client
 import io
 import os
 import re
@@ -96,7 +97,11 @@ def _get(url, timeout=60, retries=4) -> bytes:
             req = urllib.request.Request(url, headers=UA)
             with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
-        except (urllib.error.URLError, OSError, TimeoutError) as e:
+        except (urllib.error.URLError, OSError, TimeoutError,
+                http.client.HTTPException) as e:
+            # HTTPException covers IncompleteRead: a tarball cut off
+            # mid-transfer, which is not an OSError and once escaped this
+            # loop, the worker and the pool, and ended the run at entry 29.
             last = e
             time.sleep(2.0 * (attempt + 1))
     raise last
@@ -159,7 +164,8 @@ def fetch_entry(bmse, compound_dir) -> int:
         ebase = f'{base}{entry}/'
         try:
             tars = [t for t in _listing(ebase) if _ONE_D_PROTON.match(t)]
-        except (urllib.error.URLError, OSError, TimeoutError):
+        except (urllib.error.URLError, OSError, TimeoutError,
+                http.client.HTTPException):
             continue
         dest = os.path.join(FIDS, bmse, entry)
         for name in tars:
@@ -206,8 +212,9 @@ def main():
         bmse, comp = item
         try:
             return bmse, comp, fetch_entry(bmse, comp), None
-        except (urllib.error.URLError, OSError, TimeoutError,
-                tarfile.TarError) as e:
+        except Exception as e:                      # noqa: BLE001
+            # Whatever one entry does, the other 479 go on; the error is
+            # logged against the entry and the run resumes it next time.
             return bmse, comp, 0, e
 
     from concurrent.futures import ThreadPoolExecutor
