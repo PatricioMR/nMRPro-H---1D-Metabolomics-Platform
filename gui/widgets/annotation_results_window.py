@@ -89,6 +89,30 @@ def _write_annotation_log(metabolites, stats):
                             f'{x.get("looked_at", x["ppm"]):.3f}: expected '
                             f'SNR {x["expected_snr"]:.0f}, region holds '
                             f'{x["measured_snr"]:.0f}\n')
+            f.write('\nEVERY MATCHED SIGNAL, and what annotation made of it\n')
+            f.write('  db ppm | mult | dppm | dJ or pattern residual (Hz) | '
+                    'lines found/expected | quality | reasons\n')
+            for met in sorted(metabolites or (),
+                              key=lambda m: str(m.get('name', ''))):
+                mps = [mp for mp in (met.get('matched_peaks') or ())
+                       if mp.get('peak_rank') is not None]
+                if not mps:
+                    continue
+                f.write(f'  {met.get("name", met.get("id"))}\n')
+                for mp in sorted(mps, key=lambda m: float(m.get('db_ppm') or 0)):
+                    dj = mp.get('delta_j_hz')
+                    dppm = mp.get('ppm_diff')
+                    reasons = '; '.join(str(r)[:70] for r in
+                                        (mp.get('_status_reasons') or [])[-2:])
+                    dppm_s = f'{dppm:+.3f}' if dppm is not None else '   -  '
+                    dj_s = f'{dj:5.2f}' if dj is not None else '  -  '
+                    f.write(f'      {float(mp.get("db_ppm") or 0):6.3f} '
+                            f'{str(mp.get("type") or mp.get("multiplicity") or "-"):>3} '
+                            f'{dppm_s} {dj_s} '
+                            f'{str(mp.get("_n_found_lines", "-"))}/'
+                            f'{str(mp.get("_n_exp_lines", "-")):<3} '
+                            f'{str(mp.get("annotation_quality") or "undecided"):<9} '
+                            f'{reasons}\n')
             f.write('\nNOT MARKED, and what stopped each missing signal\n')
             f.write('  (only metabolites with at least one missing signal '
                     'that would have been visible)\n')
