@@ -54,11 +54,28 @@ MEASURED_COLUMNS = (
     # hertz at both; an apparent splitting of a strongly coupled system does
     # not. This is the difference, and the flag it earns.
     ('j_field_dependence_hz', 'REAL'), ('j_flag', 'TEXT'),
+    # What the annotation should use, and why. 'measured' where the
+    # measurement stands, 'listed' where it does not, and 'review' where the
+    # two disagree beyond what a rounding could explain.
+    ('j_use', 'REAL'), ('j_use_source', 'TEXT'),
 )
 
 # A coupling that moves between fields by more than this, beyond the two
 # measurements' own errors, is not the first-order constant it is listed as.
 FIELD_DEPENDENCE_FLOOR_HZ = 0.30
+
+# When the measurement and the listing are further apart than this, one of
+# them is not a coupling: a listing above MAX_J is a line span of a strongly
+# coupled system written in the J column (apocholic acid 'd 64.05'), and a
+# measurement far from a plausible listing most likely picked the wrong lines
+# in a crowded region (N-acetyl-D-glucosamine 'd 3.20' measured 11.59 with a
+# sigma of 0.012 -- a small sigma says the lines were fitted well, not that
+# they were the right lines). Neither is handed to the annotation as fact:
+# the measurement stands where it corrects a listing by up to this much, or
+# where the listing was never a coupling; otherwise the row is marked for
+# review and the listing stays in force.
+MAX_CORRECTION_HZ = 1.5
+MAX_J_HZ = 20.0
 
 # Beyond this many of the measurement's own sigma, plus a floor for what a
 # curator could reasonably have rounded, the listing is not a rounding of the
@@ -102,9 +119,14 @@ def disagreements(measured) -> list[dict]:
         if m.get('status') != 'ok':
             continue
         lst = m['listed']
+        jl = _j_listed(lst.get('j_coupling'))
         row = {'ppm_listed': float(lst.get('ppm', 0.0)), 'ppm_meas': m['ppm'],
-               'j_listed': _j_listed(lst.get('j_coupling')),
+               'j_listed': jl,
                'j_meas': m.get('j_hz'), 'j_sigma': m.get('j_sigma_hz'),
+               'pattern': m.get('pattern_agreement'),
+               'linewidth_hz': m.get('linewidth_hz'), 'snr': m.get('snr'),
+               'j_use_source': coupling_to_use(jl, m.get('j_hz'),
+                                               m.get('j_flag'))[1],
                'multiplicity': m['multiplicity']}
         why = []
         if abs(row['ppm_meas'] - row['ppm_listed']) > PPM_FLOOR:
@@ -190,6 +212,19 @@ def field_dependence(per_field) -> tuple[float | None, str | None]:
     return worst, flag
 
 
+def coupling_to_use(j_listed, j_meas, j_flag=None):
+    """``(value, source)`` -- the coupling the annotation should read."""
+    if j_meas is None:
+        return (j_listed, 'listed') if j_listed is not None else (None, None)
+    if j_flag == 'second_order_suspect':
+        return j_meas, 'measured_second_order'
+    if j_listed is None or float(j_listed) > MAX_J_HZ:
+        return j_meas, 'measured'
+    if abs(float(j_meas) - float(j_listed)) <= MAX_CORRECTION_HZ:
+        return j_meas, 'measured'
+    return j_listed, 'review'
+
+
 def _load(proc_dir):
     ppm, X, _names, _labels = load_bruker_dataset(
         proc_dir, ppm_min=-1.0, ppm_max=12.0, n_points=2 ** 17)
@@ -251,16 +286,19 @@ def main():
                 # What the number is known to, once it is known to move.
                 j_sigma = max(float(j_sigma), float(dep) / 2.0)
             m['j_flag'] = flag
+            j_use, j_src = coupling_to_use(
+                _j_listed(m['listed'].get('j_coupling')), m.get('j_hz'), flag)
             con.execute(
                 'update shifts_1h set ppm_meas=?, j_meas=?, j_sigma=?, '
                 'linewidth_hz=?, snr_meas=?, pattern_meas=?, meas_status=?, '
                 'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
-                'meas_buffer=?, j_field_dependence_hz=?, j_flag=? where id=?',
+                'meas_buffer=?, j_field_dependence_hz=?, j_flag=?, '
+                'j_use=?, j_use_source=? where id=?',
                 (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
                  m.get('pattern_agreement'), m.get('status'), m.get('set'),
                  m.get('field'), cond.get('ph'), cond.get('temperature'),
-                 cond.get('buffer'), dep, flag, sid))
+                 cond.get('buffer'), dep, flag, j_use, j_src, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})
@@ -268,7 +306,8 @@ def main():
         con.commit()
     with open(REPORT, 'w', newline='', encoding='utf-8') as f:
         cols = ['bmse', 'name', 'multiplicity', 'ppm_listed', 'ppm_meas',
-                'j_listed', 'j_meas', 'j_sigma', 'disagrees_on']
+                'j_listed', 'j_meas', 'j_sigma', 'pattern', 'linewidth_hz',
+                'snr', 'j_use_source', 'disagrees_on']
         w = csv.DictWriter(f, fieldnames=cols)
         w.writeheader()
         for r in report:

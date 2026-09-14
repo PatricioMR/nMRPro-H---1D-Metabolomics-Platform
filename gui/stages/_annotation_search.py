@@ -129,9 +129,15 @@ def _measured_columns_sql(shift_cols) -> dict:
     """
     cols = set(shift_cols or ())
     ppm = 'COALESCE(s.ppm_meas, s.ppm)' if 'ppm_meas' in cols else 's.ppm'
-    j = ('CASE WHEN s.j_meas IS NOT NULL THEN CAST(s.j_meas AS TEXT) '
-         'ELSE s.j_coupling END' if 'j_meas' in cols else 's.j_coupling')
-    j_sigma = 's.j_sigma' if 'j_sigma' in cols else 'NULL'
+    # j_use is the build's verdict on which coupling to trust -- the
+    # measurement where it corrects the listing by a plausible amount or the
+    # listing was never a coupling, the listing where the two disagree
+    # beyond that and a reviewer has to look. Its sigma applies only when the
+    # measurement is what is being used.
+    j = ('CASE WHEN s.j_use IS NOT NULL THEN CAST(s.j_use AS TEXT) '
+         'ELSE s.j_coupling END' if 'j_use' in cols else 's.j_coupling')
+    j_sigma = ("CASE WHEN s.j_use_source LIKE 'measured%' THEN s.j_sigma "
+               "ELSE NULL END" if 'j_use_source' in cols else 'NULL')
     return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma}
 
 class _AnnotationSearchMixin:

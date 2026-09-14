@@ -331,25 +331,51 @@ class TestTheAppReadsTheMeasurement:
         from gui.stages._annotation_search import _measured_columns_sql
         v01 = _measured_columns_sql({'ppm', 'j_coupling'})
         assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL'}
-        v02 = _measured_columns_sql({'ppm', 'j_coupling', 'ppm_meas', 'j_meas',
-                                     'j_sigma'})
+        v02 = _measured_columns_sql({'ppm', 'j_coupling', 'ppm_meas', 'j_use',
+                                     'j_use_source', 'j_sigma'})
         assert 'COALESCE(s.ppm_meas, s.ppm)' == v02['ppm']
-        assert 'j_meas' in v02['j'] and 'ELSE s.j_coupling' in v02['j']
-        assert v02['j_sigma'] == 's.j_sigma'
+        assert 'j_use' in v02['j'] and 'ELSE s.j_coupling' in v02['j']
+        assert 'measured%' in v02['j_sigma']
 
     def test_the_sql_runs_against_a_v02_shaped_table(self, tmp_path):
         import sqlite3
         from gui.stages._annotation_search import _measured_columns_sql
         con = sqlite3.connect(':memory:')
         con.execute('create table shifts_1h (bmrb_id, ppm real, j_coupling '
-                    'text, ppm_meas real, j_meas real, j_sigma real)')
+                    'text, ppm_meas real, j_use real, j_use_source text, '
+                    'j_sigma real)')
         con.execute("insert into shifts_1h values ('a', 1.318, '7.50', "
-                    "1.3177, 6.936, 0.001)")
+                    "1.3177, 6.936, 'measured', 0.001)")
         con.execute("insert into shifts_1h values ('b', 1.317, '7.20', "
-                    "NULL, NULL, NULL)")
+                    "NULL, NULL, NULL, NULL)")
         cols = {r[1] for r in con.execute('pragma table_info(shifts_1h)')}
         m = _measured_columns_sql(cols)
         rows = con.execute(f"select s.bmrb_id, {m['ppm']}, {m['j']}, "
                            f"{m['j_sigma']} from shifts_1h s order by 1").fetchall()
         assert rows[0] == ('a', 1.3177, '6.936', 0.001)
         assert rows[1] == ('b', 1.317, '7.20', None)
+
+
+class TestWhichCouplingToUse:
+    """A small sigma says the lines were fitted well, not that they were the
+    right lines. The measurement stands where it corrects a listing by a
+    plausible amount or where the listing was never a coupling; otherwise
+    the listing stays and the row is marked for review."""
+
+    def _f(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import coupling_to_use
+        return coupling_to_use
+
+    def test_a_plausible_correction_is_used(self):
+        assert self._f()(7.50, 6.936) == (6.936, 'measured')
+
+    def test_a_listed_span_is_replaced_by_the_measurement(self):
+        assert self._f()(64.05, 8.49) == (8.49, 'measured')
+
+    def test_a_gross_disagreement_keeps_the_listing_for_review(self):
+        assert self._f()(3.20, 11.59) == (3.20, 'review')
+
+    def test_no_measurement_means_the_listing(self):
+        assert self._f()(7.20, None) == (7.20, 'listed')
