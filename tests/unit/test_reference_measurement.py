@@ -196,3 +196,97 @@ class TestTheV02Build:
         assert rows[0]['disagrees_on'] == 'J'
         assert rows[0]['j_listed'] == 7.50
         assert rows[0]['j_meas'] == pytest.approx(6.93, abs=0.03)
+
+
+class TestConditionsAndFieldDependence:
+    """A coupling is quoted in hertz because it does not move with the field.
+    An apparent splitting of a second-order system does; a rotamer-dependent
+    coupling moves with the pH. The measurement carries its conditions, and
+    a signal measured at two fields is tested for moving."""
+
+    STAR = '''
+save_sample_conditions_1
+   loop_
+      _Sample_condition_variable.Type
+      _Sample_condition_variable.Val
+      _Sample_condition_variable.Val_units
+     pH            7.4   pH
+     temperature   298   K
+   stop_
+save_
+save_sample_1
+   loop_
+      _Sample_component.ID
+      _Sample_component.Mol_common_name
+      _Sample_component.Type
+     1   'Lactic Acid'        Solute
+     2   D2O                  Solvent
+     3   'sodium phosphate'   Buffer
+     5   DSS                  Reference
+   stop_
+save_
+save_Bruker_DMX_500
+   _NMR_spectrometer.Field_strength  500
+save_
+save_Bruker_DMX_400
+   _NMR_spectrometer.Field_strength  400
+save_
+save_experiment_list
+   loop_
+      _Experiment.ID
+      _Experiment.Name
+      _Experiment.Raw_data_flag
+      _Experiment.NMR_spectrometer_label
+     1   '1D 1H'   yes   $Bruker_DMX_500
+     2   '1D 1H'   yes   $Bruker_DMX_400
+     3   '1D 13C'  yes   $Bruker_DMX_500
+   stop_
+   loop_
+      _Experiment_file.Experiment_ID
+      _Experiment_file.Name
+      _Experiment_file.Type
+      _Experiment_file.Directory_path
+     1   1   text/directory   nmr/set01/
+     2   1   text/directory   nmr/set02/
+     3   1   text/directory   nmr/set03/
+   stop_
+save_
+'''
+
+    def test_the_conditions_are_read_off_the_entry(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from download_bmrb_fids import sample_conditions
+        c = sample_conditions(self.STAR)
+        assert c['ph'] == 7.4 and c['temperature'] == 298.0
+        assert c['buffer'] == 'sodium phosphate' and c['reference'] == 'DSS'
+
+    def test_each_proton_spectrum_knows_its_field(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from download_bmrb_fids import one_d_proton_dirs
+        d = one_d_proton_dirs(self.STAR)
+        assert [(x['path'], x['field_mhz']) for x in d] == [
+            ('nmr/set01', 500.0), ('nmr/set02', 400.0)]
+
+    def test_a_coupling_that_holds_across_fields_is_not_flagged(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import field_dependence
+        dep, flag = field_dependence({500.0: (6.93, 0.02), 400.0: (6.95, 0.03)})
+        assert dep == pytest.approx(0.02)
+        assert flag is None
+
+    def test_a_splitting_that_moves_with_the_field_is_second_order(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import field_dependence
+        dep, flag = field_dependence({500.0: (15.9, 0.03), 400.0: (14.2, 0.04)})
+        assert dep == pytest.approx(1.7)
+        assert flag == 'second_order_suspect'
+
+    def test_one_field_gives_no_verdict(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import field_dependence
+        assert field_dependence({500.0: (6.93, 0.02)}) == (None, None)

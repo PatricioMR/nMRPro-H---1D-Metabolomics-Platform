@@ -38,11 +38,47 @@ sys.path.insert(0, ROOT)
 from build_bmrb_db import loop  # noqa: E402  (the NMR-STAR loop parser)
 
 
-def one_d_proton_dirs(star_text) -> list[tuple[str, str, str]]:
-    """``(experiment_name, directory_path, spectrometer_label)`` for every 1D
-    1H experiment that has raw data, in the order the entry lists them."""
+def spectrometer_fields(star_text) -> dict:
+    """``{save-frame label: field in MHz}`` for every spectrometer listed."""
+    out = {}
+    for m in re.finditer(r'save_(\S+)\s*\n(.*?)\n\s*save_\s*\n', star_text,
+                         re.S):
+        fs = re.search(r'_NMR_spectrometer\.Field_strength\s+([\d.]+)',
+                       m.group(2))
+        if fs:
+            out[m.group(1)] = float(fs.group(1))
+    return out
+
+
+def sample_conditions(star_text) -> dict:
+    """pH, temperature and the like, as the entry declares them. The
+    coupling of a freely rotating methyl does not move with any of these;
+    the coupling of a rotamer-dependent alpha/beta pair moves with the pH,
+    and the apparent splitting of a second-order system moves with the
+    field. A measurement without its conditions cannot say which it is."""
+    out = {}
+    for r in loop(star_text, '_Sample_condition_variable'):
+        t = (r.get('Type') or '').strip("'\"").lower()
+        try:
+            out[t] = float(r.get('Val'))
+        except (TypeError, ValueError):
+            pass
+    comps = loop(star_text, '_Sample_component')
+    buffers = [c.get('Mol_common_name', '').strip("'\"") for c in comps
+               if (c.get('Type') or '').lower() == 'buffer']
+    refs = [c.get('Mol_common_name', '').strip("'\"") for c in comps
+            if (c.get('Type') or '').lower() == 'reference']
+    out['buffer'] = ', '.join(b for b in buffers if b) or None
+    out['reference'] = ', '.join(r for r in refs if r) or None
+    return out
+
+
+def one_d_proton_dirs(star_text) -> list[dict]:
+    """Every 1D 1H experiment that has raw data, in the order the entry lists
+    them: ``{'name', 'path', 'spectrometer', 'field_mhz'}``."""
     exps = loop(star_text, '_Experiment')
     files = loop(star_text, '_Experiment_file')
+    fields = spectrometer_fields(star_text)
     out = []
     for e in exps:
         name = (e.get('Name') or '').strip("'\"")
@@ -51,13 +87,14 @@ def one_d_proton_dirs(star_text) -> list[tuple[str, str, str]]:
         if (e.get('Raw_data_flag') or '').lower() != 'yes':
             continue
         eid = e.get('ID')
+        label = (e.get('NMR_spectrometer_label') or '').lstrip('$')
         for f in files:
             if f.get('Experiment_ID') == eid and f.get('Type') == 'text/directory':
                 path = (f.get('Directory_path') or '').strip("'\"").strip('/')
                 if path:
-                    out.append((name, path,
-                                (e.get('NMR_spectrometer_label') or '')
-                                .lstrip('$')))
+                    out.append({'name': name, 'path': path,
+                                'spectrometer': label,
+                                'field_mhz': fields.get(label)})
     return out
 
 
@@ -130,7 +167,8 @@ def main():
         dirs = one_d_proton_dirs(text)
         if args.first_only:
             dirs = dirs[:1]
-        for name, path, spec in dirs:
+        for d in dirs:
+            name, path, spec = d['name'], d['path'], d['spectrometer']
             dest = os.path.join(FIDS, bmse, path.replace('/', os.sep))
             if already_have(dest):
                 skipped += 1

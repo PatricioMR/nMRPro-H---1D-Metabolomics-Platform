@@ -28,7 +28,10 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(ROOT)
 sys.path.insert(0, REPO)
 
-from data.bruker_loader import _find_experiments, load_bruker_dataset  # noqa: E402
+sys.path.insert(0, ROOT)
+from download_bmrb_fids import (  # noqa: E402
+    BMRB_ENTRIES, one_d_proton_dirs, sample_conditions)
+from data.bruker_loader import load_bruker_dataset  # noqa: E402
 from processing.reference_measurement import (  # noqa: E402
     measure_fingerprint, noise_sigma, reference_offset)
 
@@ -41,7 +44,21 @@ MEASURED_COLUMNS = (
     ('ppm_meas', 'REAL'), ('j_meas', 'REAL'), ('j_sigma', 'REAL'),
     ('linewidth_hz', 'REAL'), ('snr_meas', 'REAL'), ('pattern_meas', 'REAL'),
     ('meas_status', 'TEXT'), ('meas_set', 'TEXT'),
+    # The conditions the measurement was made under. A coupling is quoted
+    # in hertz because it does not move with the field; a second-order
+    # splitting does, and a rotamer-dependent one moves with the pH. Without
+    # these beside the number, nobody can say which kind it is.
+    ('meas_field_mhz', 'REAL'), ('meas_ph', 'REAL'), ('meas_temp_k', 'REAL'),
+    ('meas_buffer', 'TEXT'),
+    # The same signal at two fields. A true scalar coupling gives the same
+    # hertz at both; an apparent splitting of a strongly coupled system does
+    # not. This is the difference, and the flag it earns.
+    ('j_field_dependence_hz', 'REAL'), ('j_flag', 'TEXT'),
 )
+
+# A coupling that moves between fields by more than this, beyond the two
+# measurements' own errors, is not the first-order constant it is listed as.
+FIELD_DEPENDENCE_FLOOR_HZ = 0.30
 
 # Beyond this many of the measurement's own sigma, plus a floor for what a
 # curator could reasonably have rounded, the listing is not a rounding of the
@@ -115,16 +132,57 @@ def _ensure_v02():
 
 
 def _spectrum_sets(bmse):
-    """``(set_name, proc_dir)`` for every mirrored 1D 1H spectrum."""
+    """``(set_name, proc_dir, field_mhz)`` for every mirrored 1D 1H
+    spectrum, the field read from the entry's own declaration of which
+    spectrometer took it."""
     base = os.path.join(FIDS, bmse)
     if not os.path.isdir(base):
         return []
+    fields_by_set = {}
+    star = os.path.join(BMRB_ENTRIES, bmse, bmse + '.str')
+    if os.path.exists(star):
+        text = open(star, encoding='utf-8', errors='replace').read()
+        for d in one_d_proton_dirs(text):
+            fields_by_set[d['path'].split('/')[-1]] = d['field_mhz']
     out = []
     for root, dirs, files in os.walk(base):
         if '1r' in files and 'procs' in files:
             rel = os.path.relpath(root, base)
-            out.append((rel.split(os.sep)[1] if os.sep in rel else rel, root))
+            set_name = rel.split(os.sep)[1] if os.sep in rel else rel
+            out.append((set_name, root, fields_by_set.get(set_name)))
     return sorted(out)
+
+
+def _conditions(bmse) -> dict:
+    star = os.path.join(BMRB_ENTRIES, bmse, bmse + '.str')
+    if not os.path.exists(star):
+        return {}
+    return sample_conditions(
+        open(star, encoding='utf-8', errors='replace').read())
+
+
+def field_dependence(per_field) -> tuple[float | None, str | None]:
+    """``per_field`` is ``{field_mhz: (j_hz, j_sigma_hz)}`` for one signal.
+
+    Returns the largest difference in hertz between fields and, when it
+    exceeds the measurements' own errors by the floor, the flag. Two fields
+    are the minimum; with one there is nothing to compare and no verdict.
+    """
+    vals = [(f, j, s) for f, (j, s) in per_field.items() if j is not None]
+    if len(vals) < 2:
+        return None, None
+    worst, worst_sig = 0.0, 0.0
+    for i in range(len(vals)):
+        for k in range(i + 1, len(vals)):
+            d = abs(vals[i][1] - vals[k][1])
+            if d > worst:
+                worst = d
+                worst_sig = float(np.hypot(vals[i][2] or 0.0,
+                                           vals[k][2] or 0.0))
+    flag = ('second_order_suspect'
+            if worst > DISAGREE_SIGMAS * worst_sig + FIELD_DEPENDENCE_FLOOR_HZ
+            else None)
+    return worst, flag
 
 
 def _load(proc_dir):
@@ -154,32 +212,50 @@ def main():
                    for r in con.execute(
                        'select id, ppm, multiplicity, j_coupling from shifts_1h '
                        'where bmrb_id=? order by ppm', (key,))]
+        cond = _conditions(bmse)
         best: dict = {}
-        for set_name, proc_dir in sets:
+        per_field: dict = {}
+        for set_name, proc_dir, set_field in sets:
+            f_mhz = float(set_field or field or 500.0)
             try:
                 ppm, y = _load(proc_dir)
             except Exception as e:                      # noqa: BLE001
                 print(f'{bmse} {set_name}: cannot load ({e})')
                 continue
-            for m in measure_entry(ppm, y, signals, field_mhz=float(field or 500.0)):
+            for m in measure_entry(ppm, y, signals, field_mhz=f_mhz):
                 sid = m['listed']['id']
+                if m.get('status') == 'ok' and m.get('j_hz') is not None:
+                    # Best per field, for the field-dependence test.
+                    prev = per_field.setdefault(sid, {}).get(f_mhz)
+                    if prev is None or m['snr'] > prev[2]:
+                        per_field[sid][f_mhz] = (m['j_hz'], m['j_sigma_hz'],
+                                                 m['snr'])
                 # Several sets are several concentrations; the measurement
                 # from the strongest clean signal stands for the signal.
                 if m.get('status') == 'ok' and (
                         sid not in best or best[sid].get('status') != 'ok'
                         or m['snr'] > best[sid]['snr']):
-                    best[sid] = {**m, 'set': set_name}
+                    best[sid] = {**m, 'set': set_name, 'field': f_mhz}
                 elif sid not in best:
-                    best[sid] = {**m, 'set': set_name}
+                    best[sid] = {**m, 'set': set_name, 'field': f_mhz}
         for sid, m in best.items():
+            dep, flag = field_dependence(
+                {f: (j, s) for f, (j, s, _snr) in per_field.get(sid, {}).items()})
+            j_sigma = m.get('j_sigma_hz')
+            if flag and j_sigma is not None and dep is not None:
+                # What the number is known to, once it is known to move.
+                j_sigma = max(float(j_sigma), float(dep) / 2.0)
+            m['j_flag'] = flag
             con.execute(
                 'update shifts_1h set ppm_meas=?, j_meas=?, j_sigma=?, '
                 'linewidth_hz=?, snr_meas=?, pattern_meas=?, meas_status=?, '
-                'meas_set=? where id=?',
-                (m.get('ppm'), m.get('j_hz'), m.get('j_sigma_hz'),
+                'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
+                'meas_buffer=?, j_field_dependence_hz=?, j_flag=? where id=?',
+                (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
                  m.get('pattern_agreement'), m.get('status'), m.get('set'),
-                 sid))
+                 m.get('field'), cond.get('ph'), cond.get('temperature'),
+                 cond.get('buffer'), dep, flag, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})
