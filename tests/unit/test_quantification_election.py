@@ -237,3 +237,47 @@ class TestWhatWasSeenComesFirst:
         e = elect([self._c('G', None), self._c('R', 7, [7])], dj_gold_hz=0.5)
         assert e.winners['R'].peak_rank == 7
         assert 7 in e.claimed_peaks
+
+
+class TestAWinnerKeepsItsOtherSignals:
+    """Lactate was elected on its quartet at 4.11 ppm and left the election;
+    its methyl doublet at 1.33 -- the strongest signal in the region -- then
+    went uncontested to N-acetyl-L-alanine, reported at 4.5 mM in plasma off
+    the same molecule that stood at 2.3 mM four rows down under its own name.
+    """
+
+    def _cands(self):
+        from processing.quantification import Candidate
+        ev = {'multiplicity': 'd', 'n_found': 2, 'n_expected': 2,
+              'delta_j_hz': 0.0, 'ppm_diff': 0.0}
+        return [
+            # lactate: quartet first in the ordering (better score), doublet
+            # second -- both verified, both with peaks
+            Candidate('LAC', 1, frozenset({1, 2, 3, 4}),
+                      {**ev, 'multiplicity': 'q', 'n_found': 4,
+                       'n_expected': 4, 'score': 1.0}),
+            Candidate('LAC', 5, frozenset({5, 6}), {**ev, 'score': 0.9}),
+            # a rival whose only signal is lactate's doublet
+            Candidate('NAA', 5, frozenset({5, 6}), {**ev, 'score': 0.8}),
+        ]
+
+    def test_the_rival_does_not_get_the_winners_other_peak(self):
+        from processing.quantification import LOST_COMPETITION, elect
+        e = elect(self._cands(), dj_gold_hz=0.2)
+        assert 'LAC' in e.winners
+        assert e.rejected.get('NAA') == LOST_COMPETITION
+        assert {5, 6} <= set(e.claimed_peaks)
+
+    def test_losing_still_costs_only_a_signal(self):
+        """Rule 4 stands: a metabolite that loses one peak competes on the
+        next. Claiming a winner's other signals must not turn into claiming a
+        loser's."""
+        from processing.quantification import Candidate, elect
+        ev = {'multiplicity': 's', 'n_found': 1, 'n_expected': 1,
+              'delta_j_hz': 0.0}
+        cands = [Candidate('A', 1, frozenset({1}), {**ev, 'score': 1.0}),
+                 Candidate('B', 1, frozenset({1}), {**ev, 'score': 0.5}),
+                 Candidate('B', 2, frozenset({2}), {**ev, 'score': 0.4})]
+        e = elect(cands, dj_gold_hz=0.2)
+        assert e.winners['A'].peak_rank == 1
+        assert e.winners['B'].peak_rank == 2

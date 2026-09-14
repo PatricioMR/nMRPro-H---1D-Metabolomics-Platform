@@ -104,6 +104,10 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
        is skipped when its anchor OR any of its lines is already claimed.
     4. A metabolite keeps competing on its other signals after losing one, so
        losing a peak costs a signal, never the analyte.
+    5. And once it has won, its other verified signals stay its own: a peak a
+       present analyte holds elsewhere is not free for a rival to take --
+       unless the rival's evidence on that peak ranks higher, in which case
+       the rival already has it by the time the winner's claim comes round.
 
     Ties in the key are broken by ``met_id`` so two runs over the same data
     give the same answer; a coin toss here would move concentrations between
@@ -149,14 +153,31 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
     winners: dict = {}
     claimed: set = set()
     for c in eligible:
-        if c.met_id in winners:
-            continue
         if (c.peak_rank is None and not c.line_ranks
                 and c.met_id in has_detected):
             continue
         if c.peak_rank is not None and c.peak_rank in claimed:
             continue
         if c.line_ranks & claimed:
+            continue
+        if c.met_id in winners:
+            # A winner's OTHER verified signals are its own too. It stops
+            # competing once it has a window, but the peaks it holds elsewhere
+            # do not become free for a rival to take. On the reference study
+            # lactate was elected on its quartet at 4.11 ppm and left the
+            # election; its methyl doublet at 1.33 -- the strongest signal in
+            # the region -- then went uncontested to N-acetyl-L-alanine,
+            # reported at 4.5 mM in plasma off the same molecule that stood at
+            # 2.3 mM four rows down under its own name.
+            #
+            # Taken in the same order as everything else, so a rival with
+            # better evidence on that peak has already had it: the claim is
+            # for the peaks nobody better wanted, not a veto.
+            if c.peak_rank is None and not c.line_ranks:
+                continue
+            if c.peak_rank is not None:
+                claimed.add(c.peak_rank)
+            claimed |= set(c.line_ranks)
             continue
         winners[c.met_id] = c
         if c.peak_rank is not None:

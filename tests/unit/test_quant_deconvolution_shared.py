@@ -242,9 +242,11 @@ class TestInTheEngine:
     # ── the winner of a shared peak was credited with all of it ──────────────
 
     def test_the_winner_of_a_shared_peak_keeps_only_its_own_share(self):
-        """B wins the peak at 3.00 and used to be credited with the whole 500,
-        300 of which is A's."""
-        rows = self._run()
+        """A, present on its clean singlet, keeps the shared peak as its own
+        and is elected on it here; it used to be credited with the whole
+        500, 200 of which is B's."""
+        rows = self._run(a_prefers_the_shared_peak=True)
+        assert self._area(rows['A']) == pytest.approx(300.0, rel=0.05)
         assert self._area(rows['B']) == pytest.approx(200.0, rel=0.05)
 
     def test_the_claimant_that_did_not_win_it_gets_a_number_too(self):
@@ -316,12 +318,15 @@ class TestInTheEngine:
         """At 0.6 half-widths the window holds 30% of the line and the local
         baseline takes 25 of those, so nothing in it is worth attributing.
         The winner keeps the whole window and the row says the number is an
-        upper bound rather than leaving it to be read as a concentration."""
-        rows = self._run(foot=0.0012)
-        assert not rows['B']['_shared_with']
-        assert any('not split' in t for t in rows['B']['_status_reasons']), (
-            rows['B']['_status_reasons'])
-        assert rows['B']['_confidence'] <= 2
+        upper bound rather than leaving it to be read as a concentration.
+
+        A is elected on the shared peak here; B, whose only signal it is,
+        lost it and has no row to mark."""
+        rows = self._run(foot=0.0012, a_prefers_the_shared_peak=True)
+        assert not rows['A']['_shared_with']
+        assert any('not split' in t for t in rows['A']['_status_reasons']), (
+            rows['A']['_status_reasons'])
+        assert rows['A']['_confidence'] <= 2
 
 
 class TestTheSwitch:
@@ -332,8 +337,11 @@ class TestTheSwitch:
     """
 
     def test_off_leaves_the_winner_the_whole_window(self):
-        rows = TestInTheEngine()._run(deconvolve=False)
-        area = TestInTheEngine._area(rows['B'])
+        """A, elected on the shared peak, is credited with all 500 of it --
+        300 its own and 200 that are B's."""
+        rows = TestInTheEngine()._run(deconvolve=False,
+                                      a_prefers_the_shared_peak=True)
+        area = TestInTheEngine._area(rows['A'])
         assert area == pytest.approx(500.0, rel=0.05)
 
     def test_off_gives_the_analyte_that_lost_nothing(self):
@@ -389,9 +397,10 @@ class TestWhatARefusalCosts:
     def test_an_analyte_sharing_a_peak_is_marked_when_it_is_not_split(self):
         """Its number is then the whole of a window it holds with another, so
         it is an upper bound and the row has to say so."""
-        rows = TestInTheEngine()._run(foot=0.0012)
-        assert any('not split' in t for t in rows['B']['_status_reasons'])
-        assert rows['B']['_confidence'] <= 2
+        rows = TestInTheEngine()._run(foot=0.0012,
+                                      a_prefers_the_shared_peak=True)
+        assert any('not split' in t for t in rows['A']['_status_reasons'])
+        assert rows['A']['_confidence'] <= 2
 
 
 class TestWhatIsNotThere:
