@@ -107,6 +107,11 @@ def _write_annotation_log(metabolites, stats):
                     dppm = mp.get('ppm_diff')
                     reasons = '; '.join(str(r)[:70] for r in
                                         (mp.get('_status_reasons') or [])[-2:])
+                    _pf = mp.get('pattern_fit') or {}
+                    if _pf.get('snr') is not None:
+                        reasons = (f'fit SNR {float(_pf["snr"]):.0f}, explains '
+                                   f'{100 * float(_pf.get("explained") or 0):.0f}%'
+                                   f'; {reasons}')
                     dppm_s = f'{dppm:+.3f}' if dppm is not None else '   -  '
                     dj_s = f'{dj:5.2f}' if dj is not None else '  -  '
                     f.write(f'      {float(mp.get("db_ppm") or 0):6.3f} '
@@ -805,6 +810,9 @@ class AnnotationResultsWindow:
                 'pattern_residual_hz': r.get('pattern_residual_hz'),
                 'pattern_merge_hz': r.get('pattern_merge_hz'),
                 'pattern_floor': r.get('pattern_floor'),
+                'pattern_sigma': r.get('pattern_sigma'),
+                'pattern_tolerance_ppm': r.get('pattern_tolerance_ppm'),
+                'pattern_fit': r.get('pattern_fit'),
                 'study_linewidth_hz': r.get('study_linewidth_hz'),
                 'pattern_centre_offset_ppm': r.get('pattern_centre_offset_ppm'),
                 'expected_j_hz': r.get('expected_j_hz'),
@@ -1755,7 +1763,8 @@ class AnnotationResultsWindow:
                 s_dj, _dj_conf = resolve_dj(
                     mp, met, self.peaks, mult=mult_sc, params=self._params,
                     field_mhz=_field_sc, tolerance=_tol,
-                    remeasure=bool(getattr(self, '_lines_dirty', False)))
+                    remeasure=bool(getattr(self, '_lines_dirty', False)),
+                    trace=self._mean_trace())
 
                 # What the samples measured outranks what the mean spectrum
                 # did; MCR still has the last word inside an overlap, where the
@@ -3838,6 +3847,21 @@ class AnnotationResultsWindow:
             if _use_deconv_display and _cpy:
                 _mcp = min(_cpy.keys(), key=lambda cp: abs(cp - centre))
                 y_db *= _cpy[_mcp]
+            # A pattern fitted as a shape is drawn at the height it fitted:
+            # the largest copy that sits under the trace. Where it reaches
+            # the trace the pattern is alone; where the trace stands over it
+            # something else shares the region.
+            _pf = (mp_ref or {}).get('pattern_fit') or {}
+            _tr = self._mean_trace() if _is_pattern_dp else None
+            if _pf.get('amplitude') and _tr is not None and len(x_exp):
+                # the fit is in the study mean's units; the panel shows the
+                # best group's mean scaled to 1 -- the pattern is drawn at
+                # the fraction of the mean's height it accounted for
+                _tm = (_tr[0] >= min(stick_ppms_plot) - hwhm * 4) & (
+                    _tr[0] <= max(stick_ppms_plot) + hwhm * 4)
+                _mean_top = float(_tr[1][_tm].max()) if _tm.any() else 0.0
+                if _mean_top > 0:
+                    y_db *= min(1.5, float(_pf['amplitude']) / _mean_top)
 
         # ── What the Pearson r compares ─────────────────────────────────
         # MCR aligns the DB profile onto the signal before correlating, and this
@@ -3974,8 +3998,13 @@ class AnnotationResultsWindow:
                 _nf = mp_ref.get('_n_found_lines')
                 _ne = mp_ref.get('_n_exp_lines')
                 _res = mp_ref.get('pattern_residual_hz')
-                _lines_txt = (f'{_nf}/{_ne} lines' if _nf is not None
-                              and _ne is not None else f'{n_found} lines')
+                _pf = mp_ref.get('pattern_fit') or {}
+                _lines_txt = (f'{_nf}/{_ne} apices' if _nf is not None
+                              and _ne is not None else f'{n_found} apices')
+                if _pf.get('snr') is not None:
+                    _lines_txt += (f'  ·  fit SNR {float(_pf["snr"]):.0f}'
+                                   f'  ·  explains '
+                                   f'{100 * float(_pf.get("explained") or 0):.0f}%')
                 _complete = (_nf is not None and _ne is not None
                              and int(_nf) >= int(_ne))
                 if _res is not None:
@@ -4279,6 +4308,22 @@ class AnnotationResultsWindow:
         gcols = {g: gc.get(g) or _cmap(i)
                  for i, g in enumerate(groups)}
         return groups, gcols
+
+    def _mean_trace(self):
+        """``(ppm, mean intensity)`` of the study, the trace the search
+        measured on; None without a spectrum."""
+        ppm = getattr(self, 'ppm', None)
+        raw = getattr(self, 'all_intensities', None)
+        if ppm is None or raw is None:
+            return None
+        cached = getattr(self, '_mean_trace_cache', None)
+        if cached is not None and cached[0] is raw:
+            return cached[1]
+        arr = np.asarray(raw, dtype=float)
+        y = arr.mean(axis=1) if arr.ndim == 2 else arr
+        out = (np.asarray(ppm, dtype=float), y)
+        self._mean_trace_cache = (raw, out)
+        return out
 
     def _best_group_mean(self, mask, groups):
         """

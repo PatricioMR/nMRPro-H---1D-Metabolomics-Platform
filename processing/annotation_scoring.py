@@ -338,6 +338,14 @@ class LineMeasurement:
     # centre_ppm is where the signal is seen, and the two differ by the
     # pattern's asymmetry.
     origin_ppm: float | None = None
+    # For a pattern fitted as a shape (processing.pattern_shape): the fit's
+    # signal-to-noise, the fraction of the trace over its lines it accounts
+    # for, its coefficient of determination and its amplitude in trace
+    # units. None where the pattern was matched on the peak list instead.
+    pattern_snr: float | None = None
+    pattern_explained: float | None = None
+    pattern_r2: float | None = None
+    pattern_amplitude: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -678,7 +686,8 @@ def resolvable_pattern(pattern, merge_hz, fwhm_hz=None) -> list:
 
 def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                            anchor_ppm=None, merge_hz=None,
-                           fwhm_hz=None, floor=None) -> LineMeasurement:
+                           fwhm_hz=None, floor=None, trace=None,
+                           sigma=None, tolerance_ppm=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -697,6 +706,17 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     ``floor`` is the height under which detection reports nothing, kept as
     ``pattern_floor``; with the anchor peak's height it says which lines of
     the pattern this study could have seen (see ``match_pattern``).
+
+    Given ``trace`` (``(ppm, intensity)`` of the spectrum the peaks came
+    from), ``sigma`` (its noise) and ``tolerance_ppm``, the pattern is
+    fitted to the trace as a shape first (``processing.pattern_shape``): the
+    largest copy of it that fits under the trace, wherever in the tolerance
+    it fits. Its apices at this linewidth are then the lines expected, and
+    a line is found where the trace itself has a maximum within two hertz
+    of it -- the detector's list, which merges and splits at its own
+    thresholds, is not consulted. The fit's signal-to-noise, the fraction
+    of the trace it explains and its position ride on the measurement.
+    Without a trace the pattern is matched on the peak list as before.
     """
     pat = resolvable_pattern(pattern_offsets_hz(mp),
                              merge_hz if merge_hz is not None
@@ -711,6 +731,17 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     if anchor is None:
         return LineMeasurement(measured=False)
     _floor = floor if floor is not None else mp.get('pattern_floor')
+    _fwhm = fwhm_hz if fwhm_hz is not None else mp.get('study_linewidth_hz')
+    _sigma = sigma if sigma is not None else mp.get('pattern_sigma')
+    _tol = (tolerance_ppm if tolerance_ppm is not None
+            else mp.get('pattern_tolerance_ppm'))
+    if trace is not None and _fwhm and _sigma and _tol:
+        shaped = _measure_pattern_shape(
+            mp, pat, trace, field_mhz=float(field_mhz),
+            dj_gold_hz=dj_gold_hz, fwhm_hz=float(_fwhm),
+            sigma=float(_sigma), tolerance_ppm=float(_tol), floor=_floor)
+        if shaped is not None:
+            return shaped
     _anchor_h = None
     if _floor:
         _near = min((p for p in peaks if p.get('ppm') is not None
@@ -744,6 +775,73 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
         m.delta_j_hz = (float(pm['residual_hz']) * float(dj_gold_hz)
                         / PATTERN_GOLD_HZ)
         m.centre_ppm = pm['centre_ppm']
+    return m
+
+
+def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
+                           fwhm_hz, sigma, tolerance_ppm,
+                           floor=None) -> LineMeasurement | None:
+    """The pattern fitted to the trace as a shape; None when the trace does
+    not cover it. See ``measure_pattern_signal``."""
+    from processing.pattern_shape import (
+        fit_pattern_shape, simulate, trace_apices_near)
+    db_ppm = mp.get('db_ppm') or mp.get('ppm_center') or mp.get('ppm')
+    if db_ppm is None:
+        return None
+    ppm_axis, y_axis = trace
+    # the unmerged pattern is fitted -- the merging is the linewidth's, and
+    # the fit convolves with it -- so the offsets come from the record
+    raw = pattern_offsets_hz(mp) or pat
+    fit = fit_pattern_shape(ppm_axis, y_axis, raw, db_ppm=float(db_ppm),
+                            field_mhz=field_mhz, fwhm_hz=fwhm_hz,
+                            tolerance_ppm=tolerance_ppm, sigma=sigma)
+    if fit is None:
+        return None
+    apex = list(fit['apex_ppms'])
+    if len(apex) < 1:
+        return None
+    # the apices' relative heights at this width, for what is expected and
+    # for the weights quantification integrates by
+    heights = simulate(np.array(apex), raw, fit['origin_ppm'], fwhm_hz,
+                       field_mhz)
+    top = float(heights.max()) if heights.size else 1.0
+    rels = [float(h / top) if top > 0 else 1.0 for h in heights]
+    # A pattern under the detection floor is not there. Its lines are
+    # expected where the fit puts them above the floor, and the substantial
+    # ones regardless (see match_pattern).
+    present = fit['snr'] >= 1.0 and (
+        floor is None or fit['amplitude'] >= float(floor)
+        or fit['snr'] >= 3.0)
+    expected = [i for i, r in enumerate(rels)
+                if r >= GOVERN_MIN_REL
+                or floor is None or fit['amplitude'] * r >= float(floor)]
+    found_at = trace_apices_near(ppm_axis, y_axis, [apex[i] for i in expected],
+                                 tol_hz=PATTERN_LINE_TOL_HZ,
+                                 field_mhz=field_mhz) if present else []
+    pairs = [(apex[i], f) for i, f in zip(expected, found_at)
+             if f is not None]
+    m = LineMeasurement(n_expected=len(expected), n_found=len(pairs),
+                        found_ppms=[f for _a, f in pairs], measured=True)
+    m.predicted_lines = [{'ppm': float(apex[i]), 'rel_intensity': rels[i],
+                          'measured': True} for i in expected]
+    m.origin_ppm = float(fit['origin_ppm'])
+    m.centre_ppm = float(np.mean(apex))
+    m.pattern_snr = float(fit['snr'])
+    m.pattern_explained = float(fit['explained'])
+    m.pattern_r2 = float(fit['r2'])
+    m.pattern_amplitude = float(fit['amplitude'])
+    m.pattern_intensity_agreement = float(fit['explained'])
+    if len(pairs) >= 2:
+        pr = np.array([a for a, _f in pairs])
+        fd = np.array([f for _a, f in pairs])
+        m.pattern_residual_hz = float(np.sqrt(np.mean(
+            ((fd - fd.mean()) - (pr - pr.mean())) ** 2)) * field_mhz)
+    elif len(pairs) == 1:
+        m.pattern_residual_hz = float(abs(pairs[0][1] - pairs[0][0])
+                                      * field_mhz)
+    if m.complete and m.pattern_residual_hz is not None:
+        m.delta_j_hz = (m.pattern_residual_hz * float(dj_gold_hz)
+                        / PATTERN_GOLD_HZ)
     return m
 
 
@@ -1589,7 +1687,8 @@ def expected_lines_for(mp, met, *, mult) -> int:
 
 
 def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
-               tolerance: float, remeasure: bool) -> tuple[float, float]:
+               tolerance: float, remeasure: bool,
+               trace=None) -> tuple[float, float]:
     """Settle this signal's ΔJ and return ``(s_dj, dj_confidence)``.
 
     Writes the measurement back onto *mp* — line counts, observed J, ΔJ, and
@@ -1614,8 +1713,15 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     _lw_hz = mp.get('study_linewidth_hz')
     if normalize_mult(mult) == PATTERN_MULT:
         meas = measure_pattern_signal(mp, peaks, field_mhz=field_mhz,
-                                      dj_gold_hz=params['dj_gold_hz'])
+                                      dj_gold_hz=params['dj_gold_hz'],
+                                      trace=trace)
         mp['pattern_residual_hz'] = meas.pattern_residual_hz
+        if meas.pattern_snr is not None:
+            mp['pattern_fit'] = {'snr': meas.pattern_snr,
+                                 'explained': meas.pattern_explained,
+                                 'r2': meas.pattern_r2,
+                                 'amplitude': meas.pattern_amplitude}
+            mp['intensity_agreement'] = meas.pattern_intensity_agreement
     elif (not remeasure and mp.get('_n_found_lines') is not None
             and mp.get('_n_exp_lines') is not None):
         meas = LineMeasurement(

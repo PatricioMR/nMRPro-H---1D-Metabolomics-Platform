@@ -1416,9 +1416,10 @@ class _AnnotationSearchMixin:
                 # The height under which detection reports nothing: a line
                 # of a pattern the study could not have seen is not missing.
                 _pk_stage_fl = getattr(self, 'peak_stage', None)
+                _noise_sr = float(getattr(_pk_stage_fl, 'noise_std', 0.0)
+                                  or 0.0)
                 try:
-                    _floor_hz = (float(getattr(_pk_stage_fl, 'noise_std', 0.0)
-                                       or 0.0)
+                    _floor_hz = (_noise_sr
                                  * float(_pk_stage_fl.min_snr_var.get()))
                 except Exception:
                     _floor_hz = 0.0
@@ -1733,7 +1734,10 @@ class _AnnotationSearchMixin:
                             entry, local_peaks, field_mhz=mhz,
                             dj_gold_hz=_sc_params['dj_gold_hz'],
                             anchor_ppm=peak_ppm, merge_hz=_merge_hz,
-                            fwhm_hz=_lw_hz, floor=_floor_hz or None)
+                            fwhm_hz=_lw_hz, floor=_floor_hz or None,
+                            trace=((_ppm_arr, _mean_int) if has_spec
+                                   else None),
+                            sigma=_noise_sr or None, tolerance_ppm=tolerance)
                         _pattern_residual = _meas_sr.pattern_residual_hz
                         _pattern_agreement = _meas_sr.pattern_intensity_agreement
                     else:
@@ -1885,6 +1889,15 @@ class _AnnotationSearchMixin:
                     r['pattern_residual_hz'] = _pattern_residual
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
                     r['pattern_floor'] = (_floor_hz or None) if _pattern else None
+                    r['pattern_sigma'] = (_noise_sr or None) if _pattern else None
+                    r['pattern_tolerance_ppm'] = tolerance if _pattern else None
+                    r['pattern_fit'] = (
+                        {'snr': _meas_sr.pattern_snr,
+                         'explained': _meas_sr.pattern_explained,
+                         'r2': _meas_sr.pattern_r2,
+                         'amplitude': _meas_sr.pattern_amplitude}
+                        if _pattern and _meas_sr.pattern_snr is not None
+                        else None)
                     # What the lines were judged at, so a re-measurement after
                     # recalibration asks the same question of the same width.
                     r['study_linewidth_hz'] = _lw_hz or None
