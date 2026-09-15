@@ -117,6 +117,15 @@ def _sort_key(cand, *, dj_gold_hz, band_ppm=None):
                          band_ppm=PPM_BAND_PPM if band_ppm is None else band_ppm)
 
 
+def _detected(c) -> bool:
+    """Whether the spectrum shows this signal: a peak, lines, or a shape
+    fitted to the trace (ADR-013). A shape claims no peak -- its lines were
+    never found one by one -- but it is not an absence either: the fit
+    stood over detection's floor where the analyte's shape is."""
+    return bool(c.peak_rank is not None or c.line_ranks
+                or (c.evidence or {}).get('shape_fit'))
+
+
 def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
           ambiguous_ranks: Sequence = (), band_ppm=None) -> Election:
     """Give every peak to one metabolite, and say why the others got none.
@@ -166,8 +175,7 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
     # undetected still wins on one of them and is reported as a bound, which is
     # a real measurement of an upper limit; what it must never do is take
     # precedence over a peak the spectrum actually shows.
-    eligible.sort(key=lambda c: (0 if (c.peak_rank is not None or c.line_ranks)
-                                 else 1,
+    eligible.sort(key=lambda c: (0 if _detected(c) else 1,
                                  _sort_key(c, dj_gold_hz=dj_gold_hz,
                                            band_ppm=band_ppm), str(c.met_id)))
 
@@ -175,8 +183,7 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
     # does must never fall back to one that it does not: losing a contested
     # peak is losing, and reporting it instead on a signal nobody saw turns a
     # defeat into a measurement.
-    has_detected = {c.met_id for c in eligible
-                    if c.peak_rank is not None or c.line_ranks}
+    has_detected = {c.met_id for c in eligible if _detected(c)}
 
     winners: dict = {}
     claimed: set = set()
@@ -193,8 +200,7 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
                         _sort_key(w, dj_gold_hz=dj_gold_hz, band_ppm=band_ppm))))
 
     for c in eligible:
-        if (c.peak_rank is None and not c.line_ranks
-                and c.met_id in has_detected):
+        if not _detected(c) and c.met_id in has_detected:
             continue
         if c.peak_rank is not None and c.peak_rank in claimed:
             if c.met_id not in winners:

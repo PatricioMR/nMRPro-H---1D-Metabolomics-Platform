@@ -811,6 +811,7 @@ class AnnotationResultsWindow:
                 'pattern_merge_hz': r.get('pattern_merge_hz'),
                 'pattern_floor': r.get('pattern_floor'),
                 'pattern_sigma': r.get('pattern_sigma'),
+                'pattern_field_mhz': r.get('pattern_field_mhz'),
                 'pattern_tolerance_ppm': r.get('pattern_tolerance_ppm'),
                 'pattern_fit': r.get('pattern_fit'),
                 'pattern_profile': r.get('pattern_profile'),

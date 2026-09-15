@@ -13,6 +13,8 @@ else.
 """
 from __future__ import annotations
 
+import json
+
 import numpy as np
 
 from processing.annotation_scoring import DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS
@@ -53,6 +55,32 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                 continue
             rank = mp.get('peak_rank')
             lines = multiplet_line_peaks(mp, peaks_by_rank)
+            # A multiplet judged as a shape (ADR-013) claims no peak: its
+            # lines were never found one by one. It carries the fit instead,
+            # and the engine measures it from its shape.
+            _pf = mp.get('pattern_fit') or {}
+            _shape = None
+            if (_pf.get('snr') is not None and mp.get('peak_ppm') is not None
+                    and mp.get('study_linewidth_hz')
+                    and mp.get('pattern_field_mhz')):
+                _shape = {
+                    'origin_ppm': float(mp['peak_ppm']) - float(
+                        mp.get('pattern_centre_offset_ppm') or 0.0),
+                    'field_mhz': mp.get('pattern_field_mhz'),
+                    'study_linewidth_hz': mp.get('study_linewidth_hz'),
+                    'pattern_profile': mp.get('pattern_profile'),
+                    'profile_fwhm_hz': mp.get('profile_fwhm_hz'),
+                    'pattern_lines': (json.loads(mp['pattern_lines'])
+                                      if isinstance(mp.get('pattern_lines'), str)
+                                      else mp.get('pattern_lines')),
+                    'snr': _pf.get('snr'), 'explained': _pf.get('explained'),
+                    'apex_ppms': [l.get('ppm') for l
+                                  in (mp.get('predicted_lines') or ())],
+                    'apex_rel': [l.get('rel_intensity', 1.0) for l
+                                 in (mp.get('predicted_lines') or ())],
+                }
+            if _shape is not None:
+                rank, lines = None, []
             out.append(Candidate(
                 met_id=mid,
                 peak_rank=rank,
@@ -96,6 +124,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                                        if l.get('ppm') is not None]
                                       or ([mp.get('ppm')]
                                           if mp.get('ppm') is not None else []),
+                    'shape_fit': _shape,
                 },
                 payload={'name': met.get('name', mid), 'met': met, 'mp': mp},
             ))

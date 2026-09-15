@@ -39,6 +39,7 @@ from processing.quant_integration import (
     integrate_across_samples, integrate_sample, integrate_signal,
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     refine_apex_ppm)
+from processing.quant_shape import measure_shape
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect,
@@ -211,6 +212,11 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
               'bounds_no_anchor': 0}
     for c in candidates or ():
         counts['candidates'] += 1
+        if (c.evidence or {}).get('shape_fit'):
+            # a shape holds no peak and shares no window; its region is
+            # measured on its own terms (processing.quant_shape)
+            counts['shape'] = counts.get('shape', 0) + 1
+            continue
         ranks = sorted(int(r) for r in (c.line_ranks or ()))
         if not ranks and c.peak_rank is not None:
             ranks = [int(c.peak_rank)]
@@ -667,6 +673,22 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     # can win and still have nothing to measure.
     measured, per_proton_areas, unmeasurable = {}, {}, []
     for mid, cand in election.winners.items():
+        if (cand.evidence or {}).get('shape_fit'):
+            # A multiplet judged as a shape holds no peak; its amount is
+            # the copy of its shape that fits under each sample's trace
+            # (processing.quant_shape). The shape's area is exact, so no
+            # capture correction and no neighbour subtraction apply.
+            nh = signal_nh((cand.evidence or {}).get('protons'))
+            out = measure_shape(cand.evidence, ppm, intensities,
+                                included=included, noise_sigma=noise_sigma,
+                                blank_indices=blank_indices)
+            if not out or not out['areas'] or not nh or nh <= 0:
+                unmeasurable.append(mid)
+                continue
+            measured[mid] = {'signal': cand, 'nh': nh, **out}
+            per_proton_areas[mid] = {s: a / nh
+                                     for s, a in out['areas'].items()}
+            continue
         lines = [peaks_by_rank[r] for r in sorted(cand.line_ranks)
                  if r in peaks_by_rank]
         if not lines and cand.peak_rank in peaks_by_rank:
@@ -1085,7 +1107,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         'status': dots,
         'vip_score': float('nan'),
         '_confidence': level,
-        '_integ_mode': 'Multiplet',
+        '_integ_mode': 'Shape' if info.get('shape') else 'Multiplet',
         '_not_quantified': not good,
         '_peak': None,
         '_peak_rank': sig.peak_rank,
@@ -1112,6 +1134,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
         '_status_reasons': (_shared_reason(info)
+                            + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # Whether this number came out of a window held with other analytes,
@@ -1124,6 +1147,22 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_lorentz': None,
         '_is_is': False,
     }
+
+
+def _shape_reason(info) -> list:
+    """Said of a shape quantified in a region it does not hold alone: the
+    copy that fits under the trace is bounded by the least overlapped apex,
+    so the number is an upper bound there."""
+    if not info.get('shape'):
+        return []
+    ex = info.get('shape_explained')
+    if ex is None:
+        return ['Quantified from its fitted shape; no peak claimed.']
+    if float(ex) >= 0.9:
+        return [f'Quantified from its fitted shape, which explains '
+                f'{100 * float(ex):.0f}% of its region.']
+    return [f'Upper bound: quantified from its fitted shape in a region it '
+            f'shares -- the shape explains {100 * float(ex):.0f}% of it.']
 
 
 def _weak_reason(info, loq_mm) -> list:

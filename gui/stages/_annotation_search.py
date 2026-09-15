@@ -1899,6 +1899,7 @@ class _AnnotationSearchMixin:
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
                     r['pattern_floor'] = (_floor_hz or None) if _pattern else None
                     r['pattern_sigma'] = (_noise_sr or None) if _pattern else None
+                    r['pattern_field_mhz'] = mhz if _pattern else None
                     r['pattern_tolerance_ppm'] = tolerance if _pattern else None
                     r['pattern_fit'] = (
                         {'snr': _meas_sr.pattern_snr,
