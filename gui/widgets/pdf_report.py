@@ -502,7 +502,7 @@ _MULT_NAMES = {
     'td': 'Triplet of doublets', 'tt': 'Triplet of triplets',
     'ddd': 'Doublet of doublets of doublets', 'dq': 'Doublet of quartets',
     'm': 'Multiplet', 'multiplet': 'Multiplet',
-    'm*': 'Complex multiplet (measured shape)',
+    'm*': 'Complex multiplet',
     'br s': 'Broad singlet', 'brs': 'Broad singlet',
 }
 

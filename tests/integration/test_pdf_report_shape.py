@@ -81,7 +81,7 @@ def test_the_crop_draws_the_fitted_copy():
 def test_the_integration_row_names_method_multiplicity_and_protons():
     name = _report()._multiplicity_name
     assert name('d') == 'Doublet'
-    assert name('m*') == 'Complex multiplet (measured shape)'
+    assert name('m*') == 'Complex multiplet'
     assert name('dd') == 'Doublet of doublets'
     assert name(None) == '—'
     assert name('xyz') == 'xyz'
