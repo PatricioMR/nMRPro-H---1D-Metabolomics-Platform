@@ -813,3 +813,15 @@ def test_satellites_do_not_make_a_singlet_a_pattern():
     assert not pattern_governs('s', creatinine)
     cystine = [[-6.0, 0.9], [-1.3, 1.0], [1.5, 0.97], [6.3, 0.83]]
     assert pattern_governs('s', cystine)
+
+
+def test_a_substantial_line_is_expected_whatever_the_anchor_height():
+    """Anchored on a small peak the scale shrinks; the floor must not shrink
+    the pattern to the two lines that happened to be found."""
+    from processing.annotation_scoring import match_pattern
+    pat = [(-9.0, 1.0), (-3.0, 0.9), (3.0, 0.8), (9.0, 0.05)]
+    peaks = [{'ppm': 3.0 + o / 600.0, 'height': 1.0}
+             for o, r in pat[:2]]
+    pm = match_pattern(pat, peaks, anchor_ppm=3.0 - 9.0 / 600.0,
+                       field_mhz=600.0, anchor_height=1.0, floor=100.0)
+    assert pm['n_expected'] == 3 and pm['n_found'] == 2

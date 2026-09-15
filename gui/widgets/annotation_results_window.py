@@ -3518,8 +3518,13 @@ class AnnotationResultsWindow:
         # away.
         _pattern_sticks = pattern_offsets_hz(dp) or (
             pattern_offsets_hz(mp_ref) if mp_ref else [])
-        _is_pattern_dp = bool(_pattern_sticks)
-        if _is_pattern_dp:
+        # The shape is the measured one whenever the DB measured it; but
+        # the signal is a pattern -- judged on its residual, counted as
+        # the study resolves it -- only when the row is one. A triplet
+        # whose pattern agrees with its letter is judged on its J.
+        _is_pattern_dp = (bool(_pattern_sticks)
+                          and _db_mult == PATTERN_MULT)
+        if _pattern_sticks:
             # peak_ppm is the centre of the found lines; the reference
             # position sits pattern_centre_offset_ppm below it.
             _origin = centre - float((mp_ref or {}).get(
@@ -3556,7 +3561,7 @@ class AnnotationResultsWindow:
         # Prefer predicted_lines (already shifted to observed ppm during annotation
         # search) over raw DB sticks centred on peak_ppm (which may be one outer
         # line of the multiplet, not the multiplet centre).
-        if _is_pattern_dp:
+        if _pattern_sticks:
             plot_sticks = _db_sticks_raw
         elif mp_ref and not is_singlet_dp:
             _pl_raw = mp_ref.get('predicted_lines') or []
@@ -3586,7 +3591,7 @@ class AnnotationResultsWindow:
         hwhm     = max(stick_span_plot / 6 if stick_span_plot > 0
                        else db_width / 2, 0.001)
         _lw_hz_plot = (mp_ref or {}).get('study_linewidth_hz')
-        if _is_pattern_dp and _lw_hz_plot:
+        if _pattern_sticks and _lw_hz_plot:
             # drawn at the study's own linewidth, so lines this study
             # cannot resolve merge on the curve as they do on the spectrum
             hwhm = max(float(_lw_hz_plot) / _fmhz / 2.0, 0.0005)
@@ -3808,7 +3813,7 @@ class AnnotationResultsWindow:
         n_expected_snap = len(plot_sticks)
 
         # Rebuild plot_sticks centred on observed peaks so DB curve aligns correctly
-        if _det_found and not is_singlet_dp and not _is_pattern_dp:
+        if _det_found and not is_singlet_dp and not _pattern_sticks:
             _obs_ctr_pre = float(np.mean([float(p['ppm']) for p in _det_found]))
             # Shift _db_sticks_raw (centred on 'centre') to observed centre
             _sticks_shift = _obs_ctr_pre - centre

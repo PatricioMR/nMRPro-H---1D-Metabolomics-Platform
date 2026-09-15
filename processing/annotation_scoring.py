@@ -537,9 +537,15 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
         pred = [shift + o / float(field_mhz) for o in offs]
         if (anchor_height is not None and floor is not None
                 and rels[k] > 0 and float(floor) > 0):
+            # The floor excuses only the minor lines. A line above
+            # GOVERN_MIN_REL of the tallest is always expected: anchored on
+            # a small peak, the scale shrank until two lines of fourteen
+            # were all that was expected, and the two were found.
             scale = float(anchor_height) / rels[k]
+            top = max(rels) or 1.0
             expected = [i for i in range(n)
-                        if scale * rels[i] >= float(floor)]
+                        if rels[i] / top >= GOVERN_MIN_REL
+                        or scale * rels[i] >= float(floor)]
         else:
             expected = list(range(n))
         found, used = [], set()
