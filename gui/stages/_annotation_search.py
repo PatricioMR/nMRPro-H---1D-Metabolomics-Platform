@@ -1589,7 +1589,14 @@ class _AnnotationSearchMixin:
                     _eff_j_ppm = j_ppm if j_hz > 0 else 0.0
 
                     multiplet_centre = peak_ppm
-                    if not is_singlet and _eff_j_ppm > 0 and n_lns >= 2:
+                    # A pattern's lines are found by match_pattern, two hertz
+                    # from where the shape puts them. Walking siblings from
+                    # the anchor at the list's first coupling -- 1.2 Hz for
+                    # NAD's 8.197 ppm pattern -- within 1.5 tolerances took
+                    # any peak 0.075 ppm away for a line, and the multiplet
+                    # centre, and the plot's window, landed on it.
+                    if (not is_singlet and _eff_j_ppm > 0 and n_lns >= 2
+                            and not _pattern):
                         found_line_ppms = [peak_ppm]
                         for k in range(1, n_lns):
                             for sign in (+1, -1):
