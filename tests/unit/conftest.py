@@ -66,6 +66,15 @@ def _install_mocks():
 
     # ── matplotlib (stub enough for module-level imports) ─────────────────────
     mpl = types.ModuleType('matplotlib')
+    # where the real package lives: a module that locates its fonts beside
+    # matplotlib's own can still be imported under the stub
+    try:
+        import importlib.util
+        _spec = importlib.util.find_spec('matplotlib')
+        if _spec and _spec.origin:
+            mpl.__file__ = _spec.origin
+    except Exception:
+        pass
     mpl.use = lambda *a, **kw: None
     mpl.rcParams = {}
 
@@ -90,6 +99,11 @@ def _install_mocks():
     )
     plt.subplots = lambda *a, **kw: (plt.Figure(), plt.Figure().add_subplot())
     plt.close    = lambda *a, **kw: None
+
+    ticker_mod = types.ModuleType('matplotlib.ticker')
+    ticker_mod.FormatStrFormatter = lambda *a, **kw: None
+    ticker_mod.MaxNLocator = lambda *a, **kw: None
+    mpl.ticker = ticker_mod
 
     gs_mod = types.ModuleType('matplotlib.gridspec')
     gs_mod.GridSpec = lambda *a, **kw: types.SimpleNamespace(
@@ -134,6 +148,7 @@ def _install_mocks():
         (mpl,           'matplotlib'),
         (plt,           'matplotlib.pyplot'),
         (gs_mod,        'matplotlib.gridspec'),
+        (ticker_mod,    'matplotlib.ticker'),
         (backends,      'matplotlib.backends'),
         (backend_tkagg, 'matplotlib.backends.backend_tkagg'),
         (colors_mod,    'matplotlib.colors'),
