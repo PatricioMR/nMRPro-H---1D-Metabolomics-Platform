@@ -151,6 +151,7 @@ from processing.annotation_scoring import (
     expected_line_count,
     is_singlet_like,
     measure_multiplet,
+    pattern_governs,
     pattern_offsets_hz,
     ppm_score,
     PATTERN_BAD_HZ,
@@ -803,6 +804,7 @@ class AnnotationResultsWindow:
                 'pattern_lines':   r.get('pattern_lines'),
                 'pattern_residual_hz': r.get('pattern_residual_hz'),
                 'pattern_merge_hz': r.get('pattern_merge_hz'),
+                'pattern_floor': r.get('pattern_floor'),
                 'study_linewidth_hz': r.get('study_linewidth_hz'),
                 'pattern_centre_offset_ppm': r.get('pattern_centre_offset_ppm'),
                 'expected_j_hz': r.get('expected_j_hz'),
@@ -907,8 +909,8 @@ class AnnotationResultsWindow:
                     # the unresolved-multiplet sweep below drops the row and
                     # the found signal has no line to sit on.
                     for dp in rows:
-                        if (pattern_offsets_hz(dp) and (dp.get('type') or '')
-                                .lower().strip() in ('m', 'multiplet')):
+                        if pattern_governs(dp.get('type'),
+                                           dp.get('pattern_lines')):
                             dp['type'] = PATTERN_MULT
                     if 'transitions' in tables:
                         for dp in rows:

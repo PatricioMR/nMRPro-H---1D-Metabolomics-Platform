@@ -489,9 +489,15 @@ PATTERN_LINE_TOL_HZ = 2.0
 PATTERN_GOLD_HZ = 0.5
 PATTERN_BAD_HZ = 1.5
 
+# A measured line must stand this high against the pattern's tallest to
+# count against the listed multiplicity (see pattern_governs). Outer lines
+# of a second-order system reach a third; satellites and sidebands do not.
+GOVERN_MIN_REL = 0.30
+
 
 def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
-                  line_tol_hz=PATTERN_LINE_TOL_HZ) -> dict:
+                  line_tol_hz=PATTERN_LINE_TOL_HZ, anchor_height=None,
+                  floor=None) -> dict:
     """Lay a measured pattern on detected peaks and count what it finds.
 
     ``pattern`` is ``[(offset_hz, rel_height)]`` from the reference DB;
@@ -506,6 +512,13 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     ``found_idx`` says which pattern line each found peak is. The residual is over the found lines,
     after centring found and predicted on each other, so a drift of the
     whole multiplet is delta-ppm's business and not the pattern's.
+
+    Given ``anchor_height`` (the anchor peak's) and ``floor`` (the height
+    below which detection reports nothing), a line is expected only where
+    the pattern's heights put it above the floor: the reference measured
+    its lines at a signal-to-noise of thousands, and a line at a twentieth
+    of the tallest is real there and invisible in a study at twenty. What
+    could not have been seen is not counted missing.
     """
     offs = [float(o) for o, _r in (pattern or ())]
     rels = [float(r) for _o, r in (pattern or ())]
@@ -522,8 +535,17 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     for k in range(n):
         shift = float(anchor_ppm) - offs[k] / float(field_mhz)
         pred = [shift + o / float(field_mhz) for o in offs]
+        if (anchor_height is not None and floor is not None
+                and rels[k] > 0 and float(floor) > 0):
+            scale = float(anchor_height) / rels[k]
+            expected = [i for i in range(n)
+                        if scale * rels[i] >= float(floor)]
+        else:
+            expected = list(range(n))
         found, used = [], set()
         for li, (pp, rel) in enumerate(zip(pred, rels)):
+            if li not in expected:
+                continue
             # nearest unused peak within tolerance
             order = np.argsort(np.abs(ppms - pp))
             hit = None
@@ -544,9 +566,12 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
             resid = float(np.sqrt(np.mean(((fd - fd.mean())
                                             - (pr - pr.mean())) ** 2))
                           * float(field_mhz))
-        key = (n_found, -(resid if resid is not None else 1e9))
+        n_exp = len(expected)
+        # whole first, then the most lines, then the closest shape
+        key = (n_found >= n_exp and n_found >= 2, n_found,
+               -(resid if resid is not None else 1e9))
         if best is None or key > best[0]:
-            best = (key, {'n_found': n_found, 'n_expected': n,
+            best = (key, {'n_found': n_found, 'n_expected': n_exp,
                           'residual_hz': resid,
                           'centre_ppm': (float(np.mean([f[1] for f in found]))
                                          if found else None),
@@ -555,6 +580,49 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
                           'found_idx': [f[3] for f in found],
                           'predicted_ppms': pred})
     return best[1]
+
+
+def pattern_governs(mult, pattern) -> bool:
+    """Whether a signal's measured line pattern, not its listed letter, says
+    what to look for.
+
+    An unresolved 'm' has no letter to speak of. A letter whose line count
+    the measurement contradicts is a curator's simplification: taurine's
+    3.41 ppm signal is listed 'd' 6.25 Hz and measured as three lines 6.7
+    Hz apart at 1:2:1 -- a triplet, as its two equivalent CH2 neighbours
+    make it. Judged as a doublet it found two lines of three and was Bad
+    on every study. The measurement was made on the pure compound at a
+    signal-to-noise of thousands; where it and the letter disagree on how
+    many lines there are, the measurement stands.
+    """
+    lines = (list(pattern) if isinstance(pattern, list)
+             else pattern_offsets_hz({'pattern_lines': pattern}))
+    if len(lines) < 2:
+        return False
+    m = normalize_mult(mult)
+    if m in ('m', 'multiplet'):
+        return True
+    # Only lines of some height argue with the letter. At a signal-to-noise
+    # of six hundred thousand acetate's singlet carries a pair of lines at
+    # seven percent, 5.5 Hz either side; whatever they are, they are not
+    # what makes it a singlet or not.
+    # The letter's own lines are held to the same bar -- a septet's outer
+    # lines are a twentieth of its centre and a quintet's a sixth -- so a
+    # first-order multiplet measured as itself agrees with its letter.
+    measured = sum(1 for _o, r in lines if float(r) >= GOVERN_MIN_REL)
+    if measured < 2:
+        return False
+    # A letter this table does not know (a broad or exchangeable label)
+    # is left as listed: the pattern of a broad line is not a multiplet.
+    if m in ('s', 'singlet'):
+        listed = 1
+    elif m in LINE_INTENSITIES:
+        top = max(LINE_INTENSITIES[m])
+        listed = sum(1 for h in LINE_INTENSITIES[m]
+                     if h / top >= GOVERN_MIN_REL)
+    else:
+        listed = LINE_COUNTS.get(m)
+    return listed is not None and listed != measured
 
 
 def pattern_offsets_hz(mp) -> list:
@@ -604,7 +672,7 @@ def resolvable_pattern(pattern, merge_hz, fwhm_hz=None) -> list:
 
 def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                            anchor_ppm=None, merge_hz=None,
-                           fwhm_hz=None) -> LineMeasurement:
+                           fwhm_hz=None, floor=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -620,6 +688,9 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     detector's minimum spacing, whichever is larger -- and lines of the
     pattern closer than that are expected as one. Remembered on the matched
     peak as ``pattern_merge_hz`` so a later re-measurement asks the same.
+    ``floor`` is the height under which detection reports nothing, kept as
+    ``pattern_floor``; with the anchor peak's height it says which lines of
+    the pattern this study could have seen (see ``match_pattern``).
     """
     pat = resolvable_pattern(pattern_offsets_hz(mp),
                              merge_hz if merge_hz is not None
@@ -633,8 +704,19 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
         anchor = mp.get('peak_ppm') or mp.get('ppm_center') or mp.get('db_ppm')
     if anchor is None:
         return LineMeasurement(measured=False)
+    _floor = floor if floor is not None else mp.get('pattern_floor')
+    _anchor_h = None
+    if _floor:
+        _near = min((p for p in peaks if p.get('ppm') is not None
+                     and p.get('height') is not None),
+                    key=lambda p: abs(float(p['ppm']) - float(anchor)),
+                    default=None)
+        if (_near is not None and abs(float(_near['ppm']) - float(anchor))
+                <= PATTERN_LINE_TOL_HZ / float(field_mhz)):
+            _anchor_h = float(_near['height'])
     pm = match_pattern(pat, peaks, anchor_ppm=float(anchor),
-                       field_mhz=float(field_mhz))
+                       field_mhz=float(field_mhz),
+                       anchor_height=_anchor_h, floor=_floor)
     m = LineMeasurement(n_expected=pm['n_expected'], n_found=pm['n_found'],
                         found_ppms=list(pm['found_ppms']), measured=True)
     # The pattern's own relative heights ride with the lines: quantification

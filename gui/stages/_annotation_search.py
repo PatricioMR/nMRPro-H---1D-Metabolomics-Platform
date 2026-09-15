@@ -35,7 +35,7 @@ from utils.profiling import profiled
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    PATTERN_MULT, measure_pattern_signal, pattern_offsets_hz,
+    PATTERN_MULT, measure_pattern_signal, pattern_governs, pattern_offsets_hz,
     candidate_key, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
@@ -1413,6 +1413,15 @@ class _AnnotationSearchMixin:
                 # list whatever the trace shows.
                 _lw_hz = _lw_ppm * mhz if mhz else 0.0
                 _merge_hz = _min_dist_ppm * mhz if mhz else 0.0
+                # The height under which detection reports nothing: a line
+                # of a pattern the study could not have seen is not missing.
+                _pk_stage_fl = getattr(self, 'peak_stage', None)
+                try:
+                    _floor_hz = (float(getattr(_pk_stage_fl, 'noise_std', 0.0)
+                                       or 0.0)
+                                 * float(_pk_stage_fl.min_snr_var.get()))
+                except Exception:
+                    _floor_hz = 0.0
 
                 for i, entry in enumerate(db_entries):
                     db_ppm   = float(
@@ -1433,10 +1442,13 @@ class _AnnotationSearchMixin:
                     # measured is a multiplet with lines to find, not a
                     # generic 'm'. Relabelled so every rule downstream -- tier,
                     # competition, the line count -- treats it as one.
-                    _pattern = pattern_of(entry, mhz) if mult_raw in (
-                        'm', 'multiplet') else []
+                    _pattern = (pattern_of(entry, mhz)
+                                if pattern_governs(
+                                    mult_raw, entry.get('pattern_lines'))
+                                else [])
                     if _pattern:
                         mult_raw = PATTERN_MULT
+                        is_singlet = False
                         entry = dict(entry)
                         entry['type'] = PATTERN_MULT
                         entry['multiplicity'] = PATTERN_MULT
@@ -1721,7 +1733,7 @@ class _AnnotationSearchMixin:
                             entry, local_peaks, field_mhz=mhz,
                             dj_gold_hz=_sc_params['dj_gold_hz'],
                             anchor_ppm=peak_ppm, merge_hz=_merge_hz,
-                            fwhm_hz=_lw_hz)
+                            fwhm_hz=_lw_hz, floor=_floor_hz or None)
                         _pattern_residual = _meas_sr.pattern_residual_hz
                         _pattern_agreement = _meas_sr.pattern_intensity_agreement
                     else:
@@ -1872,6 +1884,7 @@ class _AnnotationSearchMixin:
                     r['_n_exp_lines']   = n_exp_sr
                     r['pattern_residual_hz'] = _pattern_residual
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
+                    r['pattern_floor'] = (_floor_hz or None) if _pattern else None
                     # What the lines were judged at, so a re-measurement after
                     # recalibration asks the same question of the same width.
                     r['study_linewidth_hz'] = _lw_hz or None
