@@ -33,13 +33,20 @@ sys.path.insert(0, REPO)
 sys.path.insert(0, ROOT)
 from download_bmrb_fids import BMRB_ENTRIES, sample_conditions  # noqa: E402
 from data.bruker_loader import load_bruker_dataset  # noqa: E402
+from processing.pattern_shape import (  # noqa: E402
+    PROFILE_STEP_HZ, encode_profile)
 from processing.reference_measurement import (  # noqa: E402
-    measure_fingerprint, measure_pattern_extended, noise_sigma,
-    reference_offset)
+    linewidth_ppm, measure_fingerprint, measure_pattern_extended,
+    noise_sigma, reference_offset)
 
 FIDS = os.path.join(REPO, 'databases', 'bmrb_fids')
 V01 = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_v01.db')
 V02 = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_v02.db')
+# v03: v02 plus the multiplet's measured profile -- the trace itself over the
+# multiplet, on a 0.1 Hz grid -- and the width it was measured at. On the
+# reference spectra the profile explains 97% of the trace, the lines 76%.
+V03 = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_v03.db')
+OUT_DB = V03
 REPORT = os.path.join(ROOT, '_v02_disagreements.csv')
 
 MEASURED_COLUMNS = (
@@ -65,6 +72,12 @@ MEASURED_COLUMNS = (
     # can be verified about it; for a resolved one it is the same information
     # the multiplicity and J already give, kept for the same reason.
     ('pattern_lines', 'TEXT'), ('pattern_n', 'INTEGER'),
+    # The multiplet's own trace over its window, baseline taken off and
+    # scaled to a tallest point of 1, as JSON {"start": hz, "step": hz,
+    # "h": [...]} with offsets from the reference position; and the
+    # linewidth of the spectrum it was cut from, read on the DSS line, so a
+    # study's wider lines can be put on it by convolution.
+    ('pattern_profile', 'TEXT'), ('profile_fwhm_hz', 'REAL'),
 )
 
 # A coupling that moves between fields by more than this, beyond the two
@@ -114,6 +127,14 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
     sigma = noise_sigma(ppm - off, y)
     out = measure_fingerprint(ppm - off, y, signals, field_mhz=field_mhz,
                               sigma=sigma)
+    # the spectrum's linewidth, on the reference line: one line, resolved,
+    # in every spectrum -- read on a multiplet the walk crosses half
+    # maximum on the envelope of unresolved lines
+    _dss = (np.abs(ppm - off) <= 0.05)
+    spec_fwhm_hz = None
+    if _dss.any():
+        _w = linewidth_ppm(ppm - off, y, float((ppm - off)[_dss][np.argmax(y[_dss])]))
+        spec_fwhm_hz = float(_w) * float(field_mhz) if _w else None
     centres = sorted(float(s_.get('ppm', 0.0)) for s_ in signals)
     for m in out:
         m['reference_offset_ppm'] = float(off)
@@ -155,7 +176,34 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
             m['status'] = 'pattern'
             m['ppm'] = pat['centre_ppm']
             m['snr'] = pat['snr']
+        # The profile: the trace over the pattern's window, offsets from
+        # the position the pattern's lines are quoted from.
+        m['profile'] = None
+        m['profile_fwhm_hz'] = spec_fwhm_hz
+        if pat.get('status') == 'ok' and pat.get('window') and m.get('ppm'):
+            m['profile'] = cut_profile(ppm - off, y, centre_ppm=float(m['ppm']),
+                                       window=pat['window'],
+                                       field_mhz=float(field_mhz))
     return out
+
+
+def cut_profile(ppm, y, *, centre_ppm, window, field_mhz,
+                step_hz=PROFILE_STEP_HZ) -> str | None:
+    """The trace over ``window`` on a ``step_hz`` grid of offsets from
+    ``centre_ppm``, its floor (the window's 5th percentile) taken off,
+    encoded for the database. None when the window holds too little."""
+    lo, hi = float(min(window)), float(max(window))
+    offs = np.arange((lo - centre_ppm) * field_mhz,
+                     (hi - centre_ppm) * field_mhz + step_hz / 2, step_hz)
+    if offs.size < 3:
+        return None
+    asc = ppm[0] < ppm[-1]
+    h = np.interp(centre_ppm + offs / field_mhz,
+                  ppm if asc else ppm[::-1], y if asc else y[::-1])
+    h = np.clip(h - np.percentile(h, 5), 0.0, None)
+    if h.max() <= 0:
+        return None
+    return encode_profile(offs, h)
 
 
 def disagreements(measured) -> list[dict]:
@@ -187,10 +235,10 @@ def disagreements(measured) -> list[dict]:
     return rows
 
 
-def _ensure_v02():
-    if not os.path.exists(V02):
-        shutil.copyfile(V01, V02)
-    con = sqlite3.connect(V02)
+def _ensure_out_db():
+    if not os.path.exists(OUT_DB):
+        shutil.copyfile(V01, OUT_DB)
+    con = sqlite3.connect(OUT_DB)
     have = {r[1] for r in con.execute('pragma table_info(shifts_1h)')}
     for name, typ in MEASURED_COLUMNS:
         if name not in have:
@@ -281,7 +329,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--entries', default='')
     args = ap.parse_args()
-    con = _ensure_v02()
+    con = _ensure_out_db()
     mets = con.execute(
         'select bmrb_id, coalesce(bmse_id, bmrb_id), name, field_mhz '
         'from metabolites').fetchall()
@@ -346,14 +394,17 @@ def main():
                 'linewidth_hz=?, snr_meas=?, pattern_meas=?, meas_status=?, '
                 'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
                 'meas_buffer=?, j_field_dependence_hz=?, j_flag=?, '
-                'j_use=?, j_use_source=?, pattern_lines=?, pattern_n=? '
+                'j_use=?, j_use_source=?, pattern_lines=?, pattern_n=?, '
+                'pattern_profile=?, profile_fwhm_hz=? '
                 'where id=?',
                 (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
                  m.get('pattern_agreement'), m.get('status'), m.get('set'),
                  m.get('field'), cond.get('ph'), cond.get('temperature'),
                  cond.get('buffer'), dep, flag, j_use, j_src,
-                 pat_json, pat.get('n_lines') if pat_json else None, sid))
+                 pat_json, pat.get('n_lines') if pat_json else None,
+                 m.get('profile') if pat_json else None,
+                 m.get('profile_fwhm_hz') if pat_json else None, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})

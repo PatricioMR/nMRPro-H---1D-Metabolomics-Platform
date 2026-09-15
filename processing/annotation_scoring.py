@@ -781,65 +781,57 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
 def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
                            fwhm_hz, sigma, tolerance_ppm,
                            floor=None) -> LineMeasurement | None:
-    """The pattern fitted to the trace as a shape; None when the trace does
-    not cover it. See ``measure_pattern_signal``."""
-    from processing.pattern_shape import (
-        fit_pattern_shape, simulate, trace_apices_near)
+    """The multiplet judged as a shape and nothing else.
+
+    The reference's profile (``pattern_profile``, with its own width
+    ``profile_fwhm_hz``) or, without one, its lines, fitted to the trace by
+    ``processing.pattern_shape.fit_shape``. Two numbers decide: the fit's
+    signal-to-noise says whether the shape is here, and the fraction of the
+    trace it explains says whether it is alone. Under the fit's rule -- the
+    largest copy that fits under the trace -- a shape cannot contradict the
+    spectrum, so nothing here marks an identity wrong; what it does is rank.
+    The explained fraction stands in for delta-J, scaled onto its gates: a
+    shape explaining all of its region reads as a perfect coupling, one
+    explaining none of it as the worst allowed, never beyond -- overlap is
+    sharing, not disagreement.
+
+    None when the trace does not cover the region.
+    """
+    from processing.pattern_shape import fit_shape, parse_profile
     db_ppm = mp.get('db_ppm') or mp.get('ppm_center') or mp.get('ppm')
     if db_ppm is None:
         return None
     ppm_axis, y_axis = trace
-    # the unmerged pattern is fitted -- the merging is the linewidth's, and
-    # the fit convolves with it -- so the offsets come from the record
-    raw = pattern_offsets_hz(mp) or pat
-    fit = fit_pattern_shape(ppm_axis, y_axis, raw, db_ppm=float(db_ppm),
-                            field_mhz=field_mhz, fwhm_hz=fwhm_hz,
-                            tolerance_ppm=tolerance_ppm, sigma=sigma)
-    if fit is None:
+    profile = parse_profile(mp.get('pattern_profile'))
+    fit = fit_shape(ppm_axis, y_axis, db_ppm=float(db_ppm),
+                    field_mhz=field_mhz, fwhm_hz=fwhm_hz,
+                    tolerance_ppm=tolerance_ppm, sigma=sigma,
+                    profile=profile,
+                    profile_fwhm_hz=mp.get('profile_fwhm_hz'),
+                    lines=pattern_offsets_hz(mp) or pat)
+    if fit is None or not fit['apex_ppms']:
         return None
-    apex = list(fit['apex_ppms'])
-    if len(apex) < 1:
-        return None
-    # the apices' relative heights at this width, for what is expected and
-    # for the weights quantification integrates by
-    heights = simulate(np.array(apex), raw, fit['origin_ppm'], fwhm_hz,
-                       field_mhz)
-    top = float(heights.max()) if heights.size else 1.0
-    rels = [float(h / top) if top > 0 else 1.0 for h in heights]
-    # A pattern under the detection floor is not there. Its lines are
-    # expected where the fit puts them above the floor, and the substantial
-    # ones regardless (see match_pattern).
-    present = fit['snr'] >= 1.0 and (
-        floor is None or fit['amplitude'] >= float(floor)
-        or fit['snr'] >= 3.0)
-    expected = [i for i, r in enumerate(rels)
-                if r >= GOVERN_MIN_REL
-                or floor is None or fit['amplitude'] * r >= float(floor)]
-    found_at = trace_apices_near(ppm_axis, y_axis, [apex[i] for i in expected],
-                                 tol_hz=PATTERN_LINE_TOL_HZ,
-                                 field_mhz=field_mhz) if present else []
-    pairs = [(apex[i], f) for i, f in zip(expected, found_at)
-             if f is not None]
-    m = LineMeasurement(n_expected=len(expected), n_found=len(pairs),
-                        found_ppms=[f for _a, f in pairs], measured=True)
-    m.predicted_lines = [{'ppm': float(apex[i]), 'rel_intensity': rels[i],
-                          'measured': True} for i in expected]
+    # Here when the fit stands over detection's floor -- the same bar a
+    # peak had to clear to be in the list.
+    snr_min = (float(floor) / float(sigma)) if floor else 3.0
+    present = fit['snr'] >= snr_min
+    n = len(fit['apex_ppms'])
+    m = LineMeasurement(n_expected=n, n_found=n if present else 0,
+                        found_ppms=list(fit['apex_ppms']) if present else [],
+                        measured=True)
+    m.predicted_lines = [{'ppm': float(a), 'rel_intensity': float(r),
+                          'measured': True}
+                         for a, r in zip(fit['apex_ppms'], fit['apex_rel'])]
     m.origin_ppm = float(fit['origin_ppm'])
-    m.centre_ppm = float(np.mean(apex))
+    m.centre_ppm = float(np.mean(fit['apex_ppms']))
     m.pattern_snr = float(fit['snr'])
     m.pattern_explained = float(fit['explained'])
     m.pattern_r2 = float(fit['r2'])
     m.pattern_amplitude = float(fit['amplitude'])
     m.pattern_intensity_agreement = float(fit['explained'])
-    if len(pairs) >= 2:
-        pr = np.array([a for a, _f in pairs])
-        fd = np.array([f for _a, f in pairs])
-        m.pattern_residual_hz = float(np.sqrt(np.mean(
-            ((fd - fd.mean()) - (pr - pr.mean())) ** 2)) * field_mhz)
-    elif len(pairs) == 1:
-        m.pattern_residual_hz = float(abs(pairs[0][1] - pairs[0][0])
-                                      * field_mhz)
-    if m.complete and m.pattern_residual_hz is not None:
+    if present:
+        m.pattern_residual_hz = float(PATTERN_BAD_HZ
+                                      * (1.0 - float(fit['explained'])))
         m.delta_j_hz = (m.pattern_residual_hz * float(dj_gold_hz)
                         / PATTERN_GOLD_HZ)
     return m

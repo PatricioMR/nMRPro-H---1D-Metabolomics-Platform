@@ -143,7 +143,10 @@ def _measured_columns_sql(shift_cols) -> dict:
     j_sigma = ("CASE WHEN s.j_use_source LIKE 'measured%' THEN s.j_sigma "
                "ELSE NULL END" if 'j_use_source' in cols else 'NULL')
     pattern = 's.pattern_lines' if 'pattern_lines' in cols else 'NULL'
-    return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma, 'pattern': pattern}
+    profile = 's.pattern_profile' if 'pattern_profile' in cols else 'NULL'
+    profile_w = 's.profile_fwhm_hz' if 'profile_fwhm_hz' in cols else 'NULL'
+    return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma, 'pattern': pattern,
+            'profile': profile, 'profile_fwhm': profile_w}
 
 
 def pattern_of(entry, mhz) -> list:
@@ -274,6 +277,8 @@ class _AnnotationSearchMixin:
                         f" {_rescue_meas['j']} as j_coupling,"
                         f" {_rescue_meas['j_sigma']} as j_sigma,"
                         f" {_rescue_meas['pattern']} as pattern_lines,"
+                        f" {_rescue_meas['profile']} as pattern_profile,"
+                        f" {_rescue_meas['profile_fwhm']} as profile_fwhm_hz,"
                         f" s.multiplicity{_rescue_protons_col},"
                         " ? as peak_ppm, ? as peak_rank,"
                         f" ABS({_rescue_meas['ppm']} - ?) as ppm_diff"
@@ -1286,6 +1291,8 @@ class _AnnotationSearchMixin:
                             f" {_meas['j']} as j_coupling,"
                             f" {_meas['j_sigma']} as j_sigma,"
                             f" {_meas['pattern']} as pattern_lines,"
+                            f" {_meas['profile']} as pattern_profile,"
+                            f" {_meas['profile_fwhm']} as profile_fwhm_hz,"
                             f" s.multiplicity{_protons_col}"
                             " FROM shifts_1h s"
                             " JOIN metabolites met"

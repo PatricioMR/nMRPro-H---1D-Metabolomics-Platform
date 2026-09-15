@@ -813,6 +813,8 @@ class AnnotationResultsWindow:
                 'pattern_sigma': r.get('pattern_sigma'),
                 'pattern_tolerance_ppm': r.get('pattern_tolerance_ppm'),
                 'pattern_fit': r.get('pattern_fit'),
+                'pattern_profile': r.get('pattern_profile'),
+                'profile_fwhm_hz': r.get('profile_fwhm_hz'),
                 'study_linewidth_hz': r.get('study_linewidth_hz'),
                 'pattern_centre_offset_ppm': r.get('pattern_centre_offset_ppm'),
                 'expected_j_hz': r.get('expected_j_hz'),
@@ -902,6 +904,8 @@ class AnnotationResultsWindow:
                     _fp_meas = _measured_columns_sql(_fp_cols)
                     _fp_pat = ("pattern_lines, pattern_n,"
                                if 'pattern_lines' in _fp_cols else '')
+                    _fp_pat += (" pattern_profile, profile_fwhm_hz,"
+                                if 'pattern_profile' in _fp_cols else '')
                     cur.execute(
                         f"SELECT {_fp_meas['ppm']} AS ppm_center,"
                         f" {_fp_meas['ppm']} AS ppm_start,"
@@ -3837,8 +3841,28 @@ class AnnotationResultsWindow:
         # ── DB multiplet simulated shape ───────────────────────────────────────
         x_db = np.linspace(lo, hi, 600)
         y_db = np.zeros_like(x_db)
-        for st_ppm, st_rel in plot_sticks:
-            y_db += st_rel * hwhm**2 / ((x_db - st_ppm)**2 + hwhm**2)
+        _shape_drawn = False
+        if _is_pattern_dp and mp_ref and _lw_hz_plot:
+            # the shape as it was fitted: the reference's profile where the
+            # database holds one, its lines where not, broadened to the
+            # study's width and placed where the reference position fell
+            from processing.pattern_shape import (
+                lines_model, parse_profile, profile_model)
+            _origin_p = centre - float(mp_ref.get('pattern_centre_offset_ppm')
+                                       or 0.0)
+            _prof = parse_profile(mp_ref.get('pattern_profile'))
+            if _prof is not None:
+                _extra = max(0.0, float(_lw_hz_plot)
+                             - float(mp_ref.get('profile_fwhm_hz') or 0.0))
+                y_db = profile_model(x_db, _prof, _origin_p, _extra, _fmhz)
+                _shape_drawn = True
+            elif _pattern_sticks:
+                y_db = lines_model(x_db, _pattern_sticks, _origin_p,
+                                   float(_lw_hz_plot), _fmhz)
+                _shape_drawn = True
+        if not _shape_drawn:
+            for st_ppm, st_rel in plot_sticks:
+                y_db += st_rel * hwhm**2 / ((x_db - st_ppm)**2 + hwhm**2)
         if y_db.max() > 0:
             y_db /= y_db.max()
             # When deconvolved display is active, scale DB curve to the matched
@@ -3992,34 +4016,32 @@ class AnnotationResultsWindow:
                              ha='center', va='bottom', zorder=9, clip_on=True)
 
             if _is_pattern_dp and mp_ref:
-                # A measured pattern has no single J. What was judged is the
-                # RMS of its found lines against the reference shape, and
-                # how many of the lines this study can resolve were found.
-                _nf = mp_ref.get('_n_found_lines')
-                _ne = mp_ref.get('_n_exp_lines')
-                _res = mp_ref.get('pattern_residual_hz')
+                # A multiplet judged as a shape: here or not (the fit's
+                # SNR against detection's floor), alone or shared (the
+                # fraction of the trace over its apices it explains).
                 _pf = mp_ref.get('pattern_fit') or {}
-                _lines_txt = (f'{_nf}/{_ne} apices' if _nf is not None
-                              and _ne is not None else f'{n_found} apices')
+                _res = mp_ref.get('pattern_residual_hz')
+                _here = bool(mp_ref.get('_n_found_lines'))
                 if _pf.get('snr') is not None:
-                    _lines_txt += (f'  ·  fit SNR {float(_pf["snr"]):.0f}'
-                                   f'  ·  explains '
-                                   f'{100 * float(_pf.get("explained") or 0):.0f}%')
-                _complete = (_nf is not None and _ne is not None
-                             and int(_nf) >= int(_ne))
-                if _res is not None:
-                    j_card = (f'pattern residual {float(_res):.2f} Hz'
-                              f'  —  {_lines_txt}')
-                    j_color = ('#1a7a1a' if _complete
-                               and float(_res) <= PATTERN_GOLD_HZ
-                               else '#7a6000' if _complete
-                               and float(_res) <= PATTERN_BAD_HZ
-                               else '#9a0000')
-                    _ann_text = (f'pattern: residual {float(_res):.2f} Hz'
-                                 f'  ({_lines_txt})')
+                    _ex = float(_pf.get('explained') or 0.0)
+                    if _here:
+                        j_card = (f'shape fits  ·  SNR {float(_pf["snr"]):.0f}'
+                                  f'  ·  explains {100 * _ex:.0f}% of the region')
+                        j_color = ('#1a7a1a' if _res is not None
+                                   and float(_res) <= PATTERN_GOLD_HZ
+                                   else '#7a6000')
+                    else:
+                        j_card = (f'shape not found  ·  SNR '
+                                  f'{float(_pf["snr"]):.1f} under the floor')
+                        j_color = '#9a0000'
+                    _ann_text = j_card
                 else:
-                    j_card = f'⚠ pattern: {_lines_txt}'
-                    j_color = '#9a0000'
+                    _nf = mp_ref.get('_n_found_lines')
+                    _ne = mp_ref.get('_n_exp_lines')
+                    j_card = (f'pattern on the peak list: {_nf}/{_ne} lines'
+                              + (f', residual {float(_res):.2f} Hz'
+                                 if _res is not None else ''))
+                    j_color = '#7a6000' if _here else '#9a0000'
                     _ann_text = j_card
                 self.ax.text(0.02, 0.04, _ann_text,
                              transform=self.ax.transAxes,

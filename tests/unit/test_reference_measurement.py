@@ -364,7 +364,12 @@ class TestTheAppReadsTheMeasurement:
         from gui.stages._annotation_search import _measured_columns_sql
         v01 = _measured_columns_sql({'ppm', 'j_coupling'})
         assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL',
-                       'pattern': 'NULL'}
+                       'pattern': 'NULL', 'profile': 'NULL',
+                       'profile_fwhm': 'NULL'}
+        v03 = _measured_columns_sql({'ppm', 'pattern_profile',
+                                     'profile_fwhm_hz'})
+        assert v03['profile'] == 's.pattern_profile'
+        assert v03['profile_fwhm'] == 's.profile_fwhm_hz'
         v02 = _measured_columns_sql({'ppm', 'j_coupling', 'ppm_meas', 'j_use',
                                      'j_use_source', 'j_sigma'})
         assert 'COALESCE(s.ppm_meas, s.ppm)' == v02['ppm']
