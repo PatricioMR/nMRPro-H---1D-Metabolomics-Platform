@@ -31,6 +31,7 @@ from ._annotation_helpers import (
     _stocsy_partner_count,
 )
 from processing.spectral_regions import measure_linewidth_ppm
+from utils.profiling import profiled
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
@@ -1142,6 +1143,10 @@ class _AnnotationSearchMixin:
         pw.update()
 
         def search_task():
+            with profiled('annotation_search'):
+                _search_task_body()
+
+        def _search_task_body():
             t0 = time.monotonic()
             all_results, peaks_matched = [], set()
             total_entries = 1
@@ -2033,6 +2038,14 @@ class _AnnotationSearchMixin:
     # ── Open results window ───────────────────────────────────────────────────
 
     def _open_results_window(self, results, pw, total_peaks, db_path, elapsed):
+        # The results window is built on the Tk thread and the app does not
+        # answer while it is; when it takes long, this is where to look.
+        with profiled('results_window'):
+            self._build_results_window(results, pw, total_peaks, db_path,
+                                       elapsed)
+
+    def _build_results_window(self, results, pw, total_peaks, db_path,
+                              elapsed):
         if not results:
             try:
                 pw.destroy()
