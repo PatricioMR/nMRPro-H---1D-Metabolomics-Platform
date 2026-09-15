@@ -136,8 +136,13 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
             lo, hi = c - half, c + half
         # Never into a neighbouring signal of the same compound: the window
         # may grow to the midpoint and no further.
-        below = [v for v in centres if v < c - 1e-6]
-        above = [v for v in centres if v > c + 1e-6]
+        # The signal's own listing is not a neighbour: measured half a
+        # millippm off its listed position, the midpoint to itself pinned
+        # the window at the listed value and every triplet lost a line.
+        own = float(lst.get('ppm', 0.0))
+        others = [v for v in centres if abs(v - own) > 1e-6]
+        below = [v for v in others if v < c - 1e-6]
+        above = [v for v in others if v > c + 1e-6]
         bounds = ((c + below[-1]) / 2.0 if below else float(lo) - 0.05,
                   (c + above[0]) / 2.0 if above else float(hi) + 0.05)
         pat = measure_pattern_extended(ppm - off, y, lo=float(lo), hi=float(hi),

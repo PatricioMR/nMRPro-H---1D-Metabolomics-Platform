@@ -198,6 +198,22 @@ class TestTheV02Build:
         lo, hi = out[0]['pattern']['window']
         assert lo < 3.411 < hi
 
+    def test_the_signals_own_listing_is_not_a_neighbour(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import measure_entry
+        # L-lysine's triplet: listed at 3.012 with a window that cuts the
+        # upper line, measured at 3.0115. The midpoint to its own listing
+        # is 3.0117, and the window could not grow past it.
+        y = _spectrum(_line(0.0, 5000.0),
+                      _multiplet(3.0115, 7.5, 3, 20000.0))
+        signals = [{'id': 1, 'ppm': 3.012, 'multiplicity': 't',
+                    'j_coupling': '7.55', 'ppm_min': 2.9854,
+                    'ppm_max': 3.0156, 'n_lines': 3}]
+        out = measure_entry(PPM, y, signals, field_mhz=FIELD)
+        assert out[0]['status'] == 'ok'
+        assert len(out[0]['pattern']['lines']) == 3
+
     def test_the_axis_is_referenced_on_dss_first(self):
         out = self._measured()
         assert out[0]['reference_offset_ppm'] == pytest.approx(0.0021,
@@ -609,9 +625,11 @@ class TestTheWindowLetsItselfOut:
     def test_a_window_already_on_noise_stays_put(self):
         from processing.reference_measurement import measure_pattern_extended
         y = _spectrum(*self._dd())
-        lo, hi = 3.232 - 0.03, 3.232 + 0.03
+        # edges 30 Hz out: the outer lines' tails are under the noise there
+        lo, hi = 3.232 - 0.06, 3.232 + 0.06
         pat = measure_pattern_extended(PPM, y, lo=lo, hi=hi, field_mhz=FIELD)
         assert pat['window'] == (lo, hi)
+        assert len(pat['lines']) == 4
 
 
 def test_the_per_sample_consensus_leaves_a_patterns_residual_alone():
@@ -697,3 +715,101 @@ class TestAPatternsDrift:
         assert mp['ppm_diff'] == pytest.approx(drift, abs=0.0005)
         assert mp['pattern_centre_offset_ppm'] == pytest.approx(
             mp['peak_ppm'] - (3.234 + drift), abs=5e-5)
+
+
+class TestTheMeasurementGoverns:
+    """Where the measured line count contradicts the listed letter, the
+    measurement says what to look for. Taurine's 3.41 ppm signal is listed
+    'd' and measured as three lines at 1:2:1; judged as a doublet it found two
+    of three and was Bad on every study."""
+
+    def test_an_unresolved_m_with_a_pattern_is_governed(self):
+        from processing.annotation_scoring import pattern_governs
+        assert pattern_governs('m', [[-7.0, 0.5], [0.0, 1.0], [7.0, 0.5]])
+
+    def test_a_letter_the_pattern_agrees_with_keeps_the_letter(self):
+        from processing.annotation_scoring import pattern_governs
+        assert not pattern_governs('d', [[-3.5, 1.0], [3.5, 1.0]])
+        assert not pattern_governs('t', [[-7.0, 0.5], [0.0, 1.0], [7.0, 0.5]])
+
+    def test_a_letter_the_pattern_contradicts_is_overruled(self):
+        import json
+        from processing.annotation_scoring import pattern_governs
+        taurine = [[-6.0, 0.663], [0.724, 1.0], [7.131, 0.456]]
+        assert pattern_governs('d', taurine)
+        assert pattern_governs('d', json.dumps(taurine))
+        assert pattern_governs('s', [[-1.0, 0.9], [0.0, 1.0], [1.0, 0.9]])
+
+    def test_no_pattern_no_say(self):
+        from processing.annotation_scoring import pattern_governs
+        assert not pattern_governs('m', None)
+        assert not pattern_governs('d', [])
+        assert not pattern_governs('d', [[0.0, 1.0]])
+
+
+def test_a_curated_window_that_cuts_an_outer_line_is_let_out():
+    """L-lysine's 3.012 ppm triplet is listed with a window of 2.9854-3.0156:
+    the upper line at +7.5 Hz falls outside it. The window is full of signal,
+    so its own tenth percentile is a tail and the outer line's flank at the
+    edge sat below it; the floor must be the baseline around the multiplet."""
+    from processing.reference_measurement import measure_pattern_extended
+    y = _spectrum(_multiplet(3.0117, 7.5, 3, 20000.0))
+    pat = measure_pattern_extended(PPM, y, lo=2.9854, hi=3.0156,
+                                   field_mhz=FIELD)
+    assert pat['status'] == 'ok'
+    assert len(pat['lines']) == 3
+    lo, hi = pat['window']
+    assert hi > 3.0117 + 7.5 / FIELD
+
+
+class TestALineTheStudyCouldNotSee:
+    """The reference measured its lines at a signal-to-noise of thousands; a
+    line at a twentieth of the tallest is real there and invisible in a study
+    at twenty. What could not have been seen is not counted missing."""
+
+    PAT = [(-9.0, 0.05), (-3.0, 1.0), (3.0, 0.9), (9.0, 0.05)]
+
+    def _peaks(self):
+        return [{'rank': i, 'ppm': 3.0 + o / 600.0, 'height': 100.0 * r}
+                for i, (o, r) in enumerate(self.PAT) if r > 0.5]
+
+    def test_faint_lines_are_not_expected_under_the_floor(self):
+        from processing.annotation_scoring import match_pattern
+        pm = match_pattern(self.PAT, self._peaks(),
+                           anchor_ppm=3.0 - 3.0 / 600.0, field_mhz=600.0,
+                           anchor_height=100.0, floor=20.0)
+        assert pm['n_expected'] == 2 and pm['n_found'] == 2
+
+    def test_the_same_lines_are_expected_where_they_could_be_seen(self):
+        from processing.annotation_scoring import match_pattern
+        pm = match_pattern(self.PAT, self._peaks(),
+                           anchor_ppm=3.0 - 3.0 / 600.0, field_mhz=600.0,
+                           anchor_height=100.0, floor=2.0)
+        assert pm['n_expected'] == 4 and pm['n_found'] == 2
+
+    def test_without_a_floor_every_line_is_expected(self):
+        from processing.annotation_scoring import match_pattern
+        pm = match_pattern(self.PAT, self._peaks(),
+                           anchor_ppm=3.0 - 3.0 / 600.0, field_mhz=600.0)
+        assert pm['n_expected'] == 4
+
+    def test_the_floor_rides_on_the_matched_peak(self):
+        import json
+        from processing.annotation_scoring import (
+            PATTERN_MULT, measure_pattern_signal)
+        mp = {'db_ppm': 3.0, 'type': PATTERN_MULT,
+              'pattern_lines': json.dumps(self.PAT), 'pattern_floor': 20.0}
+        m = measure_pattern_signal(mp, self._peaks(), field_mhz=600.0,
+                                   dj_gold_hz=0.2,
+                                   anchor_ppm=3.0 - 3.0 / 600.0)
+        assert m.complete and m.n_expected == 2
+
+
+def test_satellites_do_not_make_a_singlet_a_pattern():
+    from processing.annotation_scoring import pattern_governs
+    acetate = [[-5.5, 0.07], [0.0, 1.0], [5.5, 0.06]]
+    assert not pattern_governs('s', acetate)
+    creatinine = [[-9.3, 0.07], [0.6, 1.0]]
+    assert not pattern_governs('s', creatinine)
+    cystine = [[-6.0, 0.9], [-1.3, 1.0], [1.5, 0.97], [6.3, 0.83]]
+    assert pattern_governs('s', cystine)

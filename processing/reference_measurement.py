@@ -342,7 +342,9 @@ def _edge_on_signal(ppm, y, edge_ppm, floor, sigma, half_hz, field_mhz):
     m = np.abs(ppm - edge_ppm) <= half_hz / float(field_mhz)
     if not m.any():
         return False
-    return float(y[m].max()) > floor + EDGE_SIGMA * sigma
+    # the band's median, not its maximum: one noise point over three sigma
+    # is not a line's flank, and a flank lifts the whole band
+    return float(np.median(y[m])) > floor + EDGE_SIGMA * sigma
 
 
 def measure_pattern_extended(ppm, y, *, lo, hi, field_mhz, sigma=None,
@@ -370,9 +372,17 @@ def measure_pattern_extended(ppm, y, *, lo, hi, field_mhz, sigma=None,
     b_lo, b_hi = (bounds if bounds else (lo - WIDEN_MAX_HZ / f,
                                          hi + WIDEN_MAX_HZ / f))
     lo0, hi0 = lo, hi
+    # The floor an edge is judged against is the baseline around the
+    # multiplet, not the window's own tenth percentile: a curated window of
+    # fifteen hertz over a triplet holds little but signal, its tenth
+    # percentile is a tail, and the outer line's flank at the edge sat
+    # below it -- L-lysine's 3.012 ppm triplet came out as two lines on 108
+    # triplets of the database. The floor is read over the widest reach the
+    # window could have, where noise between signals is.
+    reach = 3 * WIDEN_MAX_HZ / f
+    mf = (ppm >= max(b_lo, lo - reach)) & (ppm <= min(b_hi, hi + reach))
+    floor = float(np.percentile(y[mf], 10)) if mf.sum() >= 10 else 0.0
     for _ in range(int(2 * WIDEN_MAX_HZ / WIDEN_STEP_HZ) + 2):
-        m = (ppm >= lo) & (ppm <= hi)
-        floor = float(np.percentile(y[m], 10)) if m.sum() >= 10 else 0.0
         grew = False
         if (_edge_on_signal(ppm, y, lo, floor, sigma, 1.0, f)
                 and lo > b_lo and (lo0 - lo) * f < WIDEN_MAX_HZ):
