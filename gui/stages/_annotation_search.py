@@ -527,9 +527,17 @@ class _AnnotationSearchMixin:
             # the spacing of anything in particular.
             _is_pat = (str(r.get('type') or r.get('multiplicity') or '')
                        .lower().strip() == PATTERN_MULT)
+            # The per-sample reading compares its found centre with the
+            # database position; for a pattern that position is the centre
+            # the reference lines would have here, offset from db_ppm by the
+            # pattern's asymmetry.
+            _db_at = r.get('db_ppm')
+            if _is_pat and _db_at is not None:
+                _db_at = float(_db_at) + float(
+                    r.get('pattern_centre_offset_ppm') or 0.0)
             out = signal_across_samples(
                 line_pks, fits=_fits, included=incl,
-                db_ppm=r.get('db_ppm'),
+                db_ppm=_db_at,
                 db_j_hz=(None if _is_pat
                          else parse_first_j(r.get('j_coupling') or '')),
                 field_mhz=mhz, n_lines=len(_exp), j_from_db=_from_db)
@@ -1833,8 +1841,16 @@ class _AnnotationSearchMixin:
                     r['db_ppm']         = float(db_ppm)
                     _eff_centre = (_scorer_centre if _scorer_centre is not None
                                    else multiplet_centre)
-                    r['ppm_diff']       = float(abs(_eff_centre - db_ppm))
+                    # A pattern's drift is where its reference position fell,
+                    # not where its found lines centre: the two differ by the
+                    # pattern's asymmetry and by which lines were found.
+                    _origin = (_meas_sr.origin_ppm
+                               if _pattern and _meas_sr.origin_ppm is not None
+                               else _eff_centre)
+                    r['ppm_diff']       = float(abs(_origin - db_ppm))
                     r['peak_ppm']       = _eff_centre
+                    r['pattern_centre_offset_ppm'] = (
+                        float(_eff_centre - _origin) if _pattern else None)
                     r['peak_rank']      = peak_rank
                     r['is_sub_peak']    = bool(nearest.get('is_sub_peak', False))
                     r['predicted_lines']= predicted_lines

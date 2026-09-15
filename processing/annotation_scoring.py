@@ -331,6 +331,13 @@ class LineMeasurement:
     # The spacing the observed one was judged against: the reference J as it
     # appears at this study's linewidth, not the reference J itself.
     expected_j_hz: float | None = None
+    # For a measured pattern: where the database's reference position falls
+    # on this axis, given the lines found -- the found centre minus the mean
+    # offset of the lines it was made of. Compared with db_ppm it is the
+    # pattern's drift, whichever lines were found and whichever anchored it;
+    # centre_ppm is where the signal is seen, and the two differ by the
+    # pattern's asymmetry.
+    origin_ppm: float | None = None
 
     @property
     def complete(self) -> bool:
@@ -495,7 +502,8 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     most lines wins, ties going to the smaller residual.
 
     Returns ``{'n_found', 'n_expected', 'residual_hz', 'centre_ppm',
-    'found_ppms', 'predicted_ppms'}``. The residual is over the found lines,
+    'found_ppms', 'found_rel', 'found_idx', 'predicted_ppms'}``;
+    ``found_idx`` says which pattern line each found peak is. The residual is over the found lines,
     after centring found and predicted on each other, so a drift of the
     whole multiplet is delta-ppm's business and not the pattern's.
     """
@@ -505,6 +513,7 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     if n < 2 or not peaks or field_mhz <= 0:
         return {'n_found': 0, 'n_expected': n, 'residual_hz': None,
                 'centre_ppm': None, 'found_ppms': [], 'found_rel': [],
+                'found_idx': [],
                 'predicted_ppms': []}
     ppms = np.array(sorted(float(p['ppm']) for p in peaks
                            if p.get('ppm') is not None))
@@ -514,8 +523,7 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
         shift = float(anchor_ppm) - offs[k] / float(field_mhz)
         pred = [shift + o / float(field_mhz) for o in offs]
         found, used = [], set()
-        for pp, rel in zip(pred, rels):
-            i = int(np.argmin(np.abs(ppms - pp)))
+        for li, (pp, rel) in enumerate(zip(pred, rels)):
             # nearest unused peak within tolerance
             order = np.argsort(np.abs(ppms - pp))
             hit = None
@@ -527,12 +535,12 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
                     break
             if hit is not None:
                 used.add(hit)
-                found.append((pp, float(ppms[hit]), rel))
+                found.append((pp, float(ppms[hit]), rel, li))
         n_found = len(found)
         resid = None
         if n_found >= 2:
-            pr = np.array([a for a, _, _ in found])
-            fd = np.array([b for _, b, _ in found])
+            pr = np.array([f[0] for f in found])
+            fd = np.array([f[1] for f in found])
             resid = float(np.sqrt(np.mean(((fd - fd.mean())
                                             - (pr - pr.mean())) ** 2))
                           * float(field_mhz))
@@ -540,10 +548,11 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
         if best is None or key > best[0]:
             best = (key, {'n_found': n_found, 'n_expected': n,
                           'residual_hz': resid,
-                          'centre_ppm': (float(np.mean([b for _, b, _ in found]))
+                          'centre_ppm': (float(np.mean([f[1] for f in found]))
                                          if found else None),
-                          'found_ppms': [b for _, b, _ in found],
-                          'found_rel': [r for _, _, r in found],
+                          'found_ppms': [f[1] for f in found],
+                          'found_rel': [f[2] for f in found],
+                          'found_idx': [f[3] for f in found],
                           'predicted_ppms': pred})
     return best[1]
 
@@ -637,6 +646,12 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     m.pattern_residual_hz = pm['residual_hz']
     m.pattern_intensity_agreement = pattern_intensity_agreement(
         pm['found_ppms'], pm['found_rel'], peaks)
+    if pm['found_idx'] and pm['centre_ppm'] is not None:
+        # Delta-ppm is the pattern's drift, not the anchor's: glucose's
+        # 3.234 ppm pattern anchored on its lowest line read +0.002 while the
+        # pattern as a whole sat +0.017, with the rest of the analyte.
+        mean_off = float(np.mean([pat[i][0] for i in pm['found_idx']]))
+        m.origin_ppm = float(pm['centre_ppm']) - mean_off / float(field_mhz)
     if m.complete and pm['residual_hz'] is not None:
         m.delta_j_hz = (float(pm['residual_hz']) * float(dj_gold_hz)
                         / PATTERN_GOLD_HZ)
@@ -1556,8 +1571,15 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
         mp['delta_j_hz'] = meas.delta_j_hz
     db_ppm = float(mp.get('db_ppm') or 0)
     if meas.centre_ppm is not None and db_ppm != 0:
-        mp['ppm_diff'] = float(abs(meas.centre_ppm - db_ppm))
+        # A pattern's position is judged where its reference position fell,
+        # not where its centre of found lines is (see LineMeasurement).
+        _at = (meas.origin_ppm if meas.origin_ppm is not None
+               else meas.centre_ppm)
+        mp['ppm_diff'] = float(abs(_at - db_ppm))
         mp['peak_ppm'] = float(meas.centre_ppm)
+        if meas.origin_ppm is not None:
+            mp['pattern_centre_offset_ppm'] = float(meas.centre_ppm
+                                                    - meas.origin_ppm)
     # Every line found but J still not computable (the DB gave none): the term
     # is excluded rather than scored as a disagreement.
     return _score(meas.delta_j_hz), (0.0 if meas.delta_j_hz is None else 1.0)

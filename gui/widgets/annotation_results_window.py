@@ -802,6 +802,7 @@ class AnnotationResultsWindow:
                 'pattern_residual_hz': r.get('pattern_residual_hz'),
                 'pattern_merge_hz': r.get('pattern_merge_hz'),
                 'study_linewidth_hz': r.get('study_linewidth_hz'),
+                'pattern_centre_offset_ppm': r.get('pattern_centre_offset_ppm'),
                 'expected_j_hz': r.get('expected_j_hz'),
                 'j_sigma':         r.get('j_sigma'),
                 'ppm_center':      r.get('ppm_center', dp_ppm),

@@ -642,3 +642,58 @@ def test_a_pattern_carries_its_own_intensity_agreement():
     m = measure_pattern_signal(mp, peaks, field_mhz=600.0, dj_gold_hz=0.2)
     assert m.complete
     assert m.pattern_intensity_agreement > 0.95
+
+
+class TestAPatternsDrift:
+    """Delta-ppm of a pattern is where its reference position fell, not
+    where its centre of found lines is. Glucose's 3.234 pattern anchored on
+    its lowest line read +0.002 while the pattern as a whole sat +0.017, with
+    the rest of the analyte; and an asymmetric pattern's found centre is not
+    its reference position even when every line is found."""
+
+    PAT = [[-9.0, 0.7], [-0.9, 0.95], [0.2, 1.0], [8.2, 0.85]]
+
+    def _measure(self, anchor, drift_ppm, *, merge_hz=0.0):
+        import json
+        from processing.annotation_scoring import (
+            PATTERN_MULT, measure_pattern_signal)
+        # the pattern, drifted, with two of its lines merged as the study
+        # resolves them
+        offs = [-9.0, -0.35, 8.2]
+        peaks = [{'rank': i, 'ppm': 3.234 + drift_ppm + o / 600.0, 'height': 1.0}
+                 for i, o in enumerate(offs)]
+        mp = {'db_ppm': 3.234, 'type': PATTERN_MULT,
+              'pattern_lines': json.dumps(self.PAT)}
+        return measure_pattern_signal(mp, peaks, field_mhz=600.0,
+                                      dj_gold_hz=0.2, anchor_ppm=anchor,
+                                      merge_hz=2.0)
+
+    def test_the_origin_is_the_drift_whatever_line_anchored_it(self):
+        drift = 0.017
+        lowest = 3.234 + drift - 9.0 / 600.0
+        highest = 3.234 + drift + 8.2 / 600.0
+        a = self._measure(lowest, drift)
+        b = self._measure(highest, drift)
+        assert a.complete and b.complete
+        assert a.origin_ppm == pytest.approx(3.234 + drift, abs=0.0005)
+        assert b.origin_ppm == pytest.approx(a.origin_ppm, abs=1e-6)
+        # the centre of found lines is not the reference position
+        assert a.centre_ppm != pytest.approx(a.origin_ppm, abs=1e-4)
+
+    def test_resolve_dj_writes_the_drift_not_the_centre(self):
+        import json
+        from processing.annotation_scoring import (
+            PATTERN_MULT, SCORING_DEFAULTS, resolve_dj)
+        drift = 0.017
+        offs = [-9.0, -0.35, 8.2]
+        peaks = [{'rank': i, 'ppm': 3.234 + drift + o / 600.0, 'height': 1.0}
+                 for i, o in enumerate(offs)]
+        mp = {'db_ppm': 3.234, 'peak_ppm': 3.234 + drift - 9.0 / 600.0,
+              'type': PATTERN_MULT, 'pattern_lines': json.dumps(self.PAT),
+              'pattern_merge_hz': 2.0}
+        resolve_dj(mp, {'db_peaks': []}, peaks, mult=PATTERN_MULT,
+                   params=SCORING_DEFAULTS, field_mhz=600.0,
+                   tolerance=0.05, remeasure=True)
+        assert mp['ppm_diff'] == pytest.approx(drift, abs=0.0005)
+        assert mp['pattern_centre_offset_ppm'] == pytest.approx(
+            mp['peak_ppm'] - (3.234 + drift), abs=5e-5)
