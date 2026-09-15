@@ -36,7 +36,7 @@ from data.bruker_loader import load_bruker_dataset  # noqa: E402
 from processing.pattern_shape import (  # noqa: E402
     PROFILE_STEP_HZ, encode_profile)
 from processing.reference_measurement import (  # noqa: E402
-    linewidth_ppm, measure_fingerprint, measure_pattern_extended,
+    WIDEN_MAX_HZ, linewidth_ppm, measure_fingerprint, measure_pattern_extended,
     noise_sigma, reference_offset)
 
 FIDS = os.path.join(REPO, 'databases', 'bmrb_fids')
@@ -78,6 +78,12 @@ MEASURED_COLUMNS = (
     # linewidth of the spectrum it was cut from, read on the DSS line, so a
     # study's wider lines can be put on it by convolution.
     ('pattern_profile', 'TEXT'), ('profile_fwhm_hz', 'REAL'),
+    # The protons under the profile's window, measured: the window's share
+    # of the compound's signal area, times the compound's listed protons.
+    # The windows are bounded at the midpoints between the compound's
+    # signals, so they partition its area and a neighbour's tail inside one
+    # window is counted where it lies. What quantification divides by.
+    ('profile_nh', 'REAL'),
 )
 
 # A coupling that moves between fields by more than this, beyond the two
@@ -179,19 +185,59 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
         # The profile: the trace over the pattern's window, offsets from
         # the position the pattern's lines are quoted from.
         m['profile'] = None
+        m['profile_area'] = None
         m['profile_fwhm_hz'] = spec_fwhm_hz
         if pat.get('status') == 'ok' and pat.get('window') and m.get('ppm'):
-            m['profile'] = cut_profile(ppm - off, y, centre_ppm=float(m['ppm']),
-                                       window=pat['window'],
-                                       field_mhz=float(field_mhz))
+            # The floor taken off is the baseline around the multiplet, not
+            # the window's own percentile: a window packed with lines -- a
+            # quartet's -- has a percentile that is signal, and taking it
+            # off cost lactate's quartet a third of its protons while the
+            # doublet, sparser, gained them.
+            _reach = 3 * WIDEN_MAX_HZ / float(field_mhz)
+            _mf = ((ppm - off >= max(bounds[0], float(lo) - _reach))
+                   & (ppm - off <= min(bounds[1], float(hi) + _reach)))
+            _floor = (float(np.percentile(y[_mf], 10)) if _mf.sum() >= 10
+                      else 0.0)
+            cut = cut_profile(ppm - off, y, centre_ppm=float(m['ppm']),
+                              window=pat['window'], field_mhz=float(field_mhz),
+                              floor=_floor)
+            if cut is not None:
+                m['profile'], m['profile_area'] = cut
+    assign_profile_protons(out)
     return out
 
 
+def assign_profile_protons(measured) -> None:
+    """``profile_nh`` on every measurement with a profile: the window's
+    share of the compound's profiled area, times the listed protons of the
+    profiled signals.
+
+    The windows are bounded at the midpoints between the compound's
+    signals, so together they partition its signal area and a tail that
+    crosses into a neighbour's window is counted there. A signal whose
+    window holds a tenth of the area holds a tenth of the protons -- which
+    is what its shape, fitted in a study, must be divided by. Signals
+    without a profile (unresolved, outside the trace) take no part; the
+    protons they list are not in the area either."""
+    have = [m for m in measured
+            if m.get('profile_area') and m['listed'].get('protons')]
+    total_area = sum(float(m['profile_area']) for m in have)
+    total_nh = sum(float(m['listed']['protons']) for m in have)
+    for m in measured:
+        m['profile_nh'] = None
+    if total_area <= 0 or total_nh <= 0:
+        return
+    for m in have:
+        m['profile_nh'] = float(m['profile_area']) / total_area * total_nh
+
+
 def cut_profile(ppm, y, *, centre_ppm, window, field_mhz,
-                step_hz=PROFILE_STEP_HZ) -> str | None:
+                step_hz=PROFILE_STEP_HZ, floor=None) -> tuple[str, float] | None:
     """The trace over ``window`` on a ``step_hz`` grid of offsets from
-    ``centre_ppm``, its floor (the window's 5th percentile) taken off,
-    encoded for the database. None when the window holds too little."""
+    ``centre_ppm``, its floor taken off (``floor``, the baseline around the
+    multiplet; the window's own 5th percentile when none is given), encoded
+    for the database, with its area (intensity x Hz). None when the window
+    holds too little."""
     lo, hi = float(min(window)), float(max(window))
     offs = np.arange((lo - centre_ppm) * field_mhz,
                      (hi - centre_ppm) * field_mhz + step_hz / 2, step_hz)
@@ -200,10 +246,11 @@ def cut_profile(ppm, y, *, centre_ppm, window, field_mhz,
     asc = ppm[0] < ppm[-1]
     h = np.interp(centre_ppm + offs / field_mhz,
                   ppm if asc else ppm[::-1], y if asc else y[::-1])
-    h = np.clip(h - np.percentile(h, 5), 0.0, None)
+    base = float(np.percentile(h, 5)) if floor is None else float(floor)
+    h = np.clip(h - base, 0.0, None)
     if h.max() <= 0:
         return None
-    return encode_profile(offs, h)
+    return encode_profile(offs, h), float(h.sum() * step_hz)
 
 
 def disagreements(measured) -> list[dict]:
@@ -343,10 +390,10 @@ def main():
         if not sets:
             continue
         signals = [dict(zip(('id', 'ppm', 'multiplicity', 'j_coupling',
-                             'ppm_min', 'ppm_max', 'n_lines'), r))
+                             'ppm_min', 'ppm_max', 'n_lines', 'protons'), r))
                    for r in con.execute(
                        'select id, ppm, multiplicity, j_coupling, ppm_min, '
-                       'ppm_max, n_lines from shifts_1h '
+                       'ppm_max, n_lines, protons from shifts_1h '
                        'where bmrb_id=? order by ppm', (key,))]
         cond = _conditions(bmse)
         best: dict = {}
@@ -395,7 +442,7 @@ def main():
                 'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
                 'meas_buffer=?, j_field_dependence_hz=?, j_flag=?, '
                 'j_use=?, j_use_source=?, pattern_lines=?, pattern_n=?, '
-                'pattern_profile=?, profile_fwhm_hz=? '
+                'pattern_profile=?, profile_fwhm_hz=?, profile_nh=? '
                 'where id=?',
                 (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
@@ -404,7 +451,8 @@ def main():
                  cond.get('buffer'), dep, flag, j_use, j_src,
                  pat_json, pat.get('n_lines') if pat_json else None,
                  m.get('profile') if pat_json else None,
-                 m.get('profile_fwhm_hz') if pat_json else None, sid))
+                 m.get('profile_fwhm_hz') if pat_json else None,
+                 m.get('profile_nh') if pat_json else None, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})

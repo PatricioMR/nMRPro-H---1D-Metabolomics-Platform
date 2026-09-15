@@ -816,6 +816,7 @@ class AnnotationResultsWindow:
                 'pattern_fit': r.get('pattern_fit'),
                 'pattern_profile': r.get('pattern_profile'),
                 'profile_fwhm_hz': r.get('profile_fwhm_hz'),
+                'profile_nh': r.get('profile_nh'),
                 'study_linewidth_hz': r.get('study_linewidth_hz'),
                 'pattern_centre_offset_ppm': r.get('pattern_centre_offset_ppm'),
                 'expected_j_hz': r.get('expected_j_hz'),
@@ -907,6 +908,8 @@ class AnnotationResultsWindow:
                                if 'pattern_lines' in _fp_cols else '')
                     _fp_pat += (" pattern_profile, profile_fwhm_hz,"
                                 if 'pattern_profile' in _fp_cols else '')
+                    _fp_pat += (" profile_nh," if 'profile_nh' in _fp_cols
+                                else '')
                     cur.execute(
                         f"SELECT {_fp_meas['ppm']} AS ppm_center,"
                         f" {_fp_meas['ppm']} AS ppm_start,"

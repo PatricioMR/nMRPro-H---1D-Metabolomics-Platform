@@ -365,7 +365,7 @@ class TestTheAppReadsTheMeasurement:
         v01 = _measured_columns_sql({'ppm', 'j_coupling'})
         assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL',
                        'pattern': 'NULL', 'profile': 'NULL',
-                       'profile_fwhm': 'NULL'}
+                       'profile_fwhm': 'NULL', 'profile_nh': 'NULL'}
         v03 = _measured_columns_sql({'ppm', 'pattern_profile',
                                      'profile_fwhm_hz'})
         assert v03['profile'] == 's.pattern_profile'
@@ -830,3 +830,48 @@ def test_a_substantial_line_is_expected_whatever_the_anchor_height():
     pm = match_pattern(pat, peaks, anchor_ppm=3.0 - 9.0 / 600.0,
                        field_mhz=600.0, anchor_height=1.0, floor=100.0)
     assert pm['n_expected'] == 3 and pm['n_found'] == 2
+
+
+class TestTheProtonsUnderAProfile:
+    """What a shape is divided by is measured, not listed: the window's share
+    of the compound's profiled area times the listed protons. The windows
+    partition the compound's area, so a neighbour's tail inside a window is
+    counted where it lies."""
+
+    def _measured(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import measure_entry
+        # a CH3 doublet (3H) and a CH quartet (1H), well apart
+        y = _spectrum(_line(0.0, 5000.0),
+                      _multiplet(1.318, 6.93, 2, 3000.0),
+                      _multiplet(4.101, 6.93, 4, 500.0))
+        signals = [{'id': 1, 'ppm': 1.318, 'multiplicity': 'd',
+                    'j_coupling': '6.93', 'protons': 3},
+                   {'id': 2, 'ppm': 4.101, 'multiplicity': 'q',
+                    'j_coupling': '6.93', 'protons': 1}]
+        return measure_entry(PPM, y, signals, field_mhz=FIELD)
+
+    def test_the_shares_add_up_to_the_listed_protons(self):
+        out = self._measured()
+        nh = [m['profile_nh'] for m in out]
+        assert all(v is not None for v in nh)
+        assert sum(nh) == pytest.approx(4.0, abs=1e-6)
+
+    def test_the_protons_follow_the_areas_not_the_listing(self):
+        out = self._measured()
+        by = {m['listed']['id']: m['profile_nh'] for m in out}
+        # by construction: the doublet's lines are 3000 each (area 6000),
+        # the quartet's 1:3:3:1 with the tallest at 500 (area 1333) -- so
+        # the areas stand 4.5:1 whatever the listing says (3:1)
+        assert by[1] / by[2] == pytest.approx(4.5, rel=0.1)
+
+    def test_no_profile_no_share(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import assign_profile_protons
+        ms = [{'listed': {'protons': 2}, 'profile_area': 10.0},
+              {'listed': {'protons': 5}, 'profile_area': None}]
+        assign_profile_protons(ms)
+        assert ms[0]['profile_nh'] == pytest.approx(2.0)
+        assert ms[1]['profile_nh'] is None

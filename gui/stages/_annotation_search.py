@@ -145,8 +145,10 @@ def _measured_columns_sql(shift_cols) -> dict:
     pattern = 's.pattern_lines' if 'pattern_lines' in cols else 'NULL'
     profile = 's.pattern_profile' if 'pattern_profile' in cols else 'NULL'
     profile_w = 's.profile_fwhm_hz' if 'profile_fwhm_hz' in cols else 'NULL'
+    profile_nh = 's.profile_nh' if 'profile_nh' in cols else 'NULL'
     return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma, 'pattern': pattern,
-            'profile': profile, 'profile_fwhm': profile_w}
+            'profile': profile, 'profile_fwhm': profile_w,
+            'profile_nh': profile_nh}
 
 
 def pattern_of(entry, mhz) -> list:
@@ -279,6 +281,7 @@ class _AnnotationSearchMixin:
                         f" {_rescue_meas['pattern']} as pattern_lines,"
                         f" {_rescue_meas['profile']} as pattern_profile,"
                         f" {_rescue_meas['profile_fwhm']} as profile_fwhm_hz,"
+                        f" {_rescue_meas['profile_nh']} as profile_nh,"
                         f" s.multiplicity{_rescue_protons_col},"
                         " ? as peak_ppm, ? as peak_rank,"
                         f" ABS({_rescue_meas['ppm']} - ?) as ppm_diff"
@@ -1293,6 +1296,7 @@ class _AnnotationSearchMixin:
                             f" {_meas['pattern']} as pattern_lines,"
                             f" {_meas['profile']} as pattern_profile,"
                             f" {_meas['profile_fwhm']} as profile_fwhm_hz,"
+                            f" {_meas['profile_nh']} as profile_nh,"
                             f" s.multiplicity{_protons_col}"
                             " FROM shifts_1h s"
                             " JOIN metabolites met"
