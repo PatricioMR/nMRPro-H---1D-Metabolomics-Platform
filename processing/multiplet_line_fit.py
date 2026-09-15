@@ -28,8 +28,6 @@ are close enough to count as ties. No tolerance is invented here.
 """
 from __future__ import annotations
 
-from itertools import combinations
-
 import numpy as np
 
 from processing.peak_alignment import parabolic_apex
@@ -77,24 +75,6 @@ def _cap(cands):
     return sorted(kept, key=lambda t: t[0])
 
 
-def _spacing_residual_hz(expected, chosen, field_mhz):
-    """How far a candidate assignment's spacings sit from the expected ones.
-
-    Compared pair by consecutive pair, in Hz, so the number means the same
-    thing as ΔJ and can be judged by the same threshold. Translation is free:
-    only the gaps BETWEEN lines enter, never their absolute position, so a
-    multiplet that drifted with pH is not penalised for having drifted.
-
-    The worst pair decides, not the average — one leg landing on a foreign
-    resonance must not be hidden by the others agreeing.
-    """
-    if len(chosen) < 2:
-        return None
-    res = [abs((chosen[k + 1] - chosen[k]) - (expected[k + 1] - expected[k]))
-           for k in range(len(chosen) - 1)]
-    return float(max(res) * field_mhz)
-
-
 def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
               dj_gold_hz, max_drift_ppm=None):
     """Assign this multiplet's lines to the apices one sample actually has.
@@ -115,8 +95,9 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     Returns a dict with ``ppms`` (assigned positions, ascending), ``ranks``
     (which expected line each one is), ``residual_hz``, ``drift_ppm``,
     ``n_alternatives`` and ``fitted``. When nothing fits within ``dj_bad_hz``
-    the best attempt is still returned with ``fitted=False``, so the caller can
-    say the window held no such pattern instead of showing a forced reading.
+    the result is empty with ``fitted=False`` and the candidate count, so the
+    caller can say the window held no such pattern instead of showing a
+    forced reading.
     """
     exp = sorted(float(p) for p in (expected_ppms or ()))
     cands = _cap([(float(p), float(h)) for p, h in (candidates or ())])
@@ -145,24 +126,44 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
         return blank
 
     cand_ppms = [p for p, _ in cands]
+    bad = float(dj_bad_hz)
+    n_e, n_c = len(exp), len(cand_ppms)
+    # Every order-preserving assignment whose consecutive spacings all sit
+    # within dj_bad_hz, grown pair by pair. A pair that misses the spacing
+    # ends its branch: nothing built on it can fit, whichever lines follow.
+    # Enumerating every subset of lines against every subset of apices, as
+    # this did, and judging afterwards, cost fifty million spacing checks
+    # over one study -- sixteen minutes with the window frozen -- to find
+    # the handful that fit.
     scored = []
-    for k in range(min(len(exp), len(cand_ppms)), 1, -1):
-        for ranks in combinations(range(len(exp)), k):
-            sub_exp = [exp[r] for r in ranks]
-            for pick in combinations(range(len(cand_ppms)), k):
-                chosen = [cand_ppms[i] for i in pick]
-                res = _spacing_residual_hz(sub_exp, chosen, field_mhz)
-                if res is None:
+
+    def _record(ranks, picks, res):
+        chosen = [cand_ppms[i] for i in picks]
+        drift = abs(sum(chosen) / len(chosen)
+                    - sum(exp[r] for r in ranks) / len(ranks))
+        if max_drift_ppm is not None and drift > float(max_drift_ppm):
+            return
+        scored.append((len(ranks), res, drift, list(ranks), chosen))
+
+    def _extend(ranks, picks, res):
+        r0, c0 = ranks[-1], picks[-1]
+        for r in range(r0 + 1, n_e):
+            d_exp = exp[r] - exp[r0]
+            for c in range(c0 + 1, n_c):
+                pr = abs((cand_ppms[c] - cand_ppms[c0]) - d_exp) * field_mhz
+                if pr > bad:
                     continue
-                drift = abs(float(np.mean(chosen)) - float(np.mean(sub_exp)))
-                if max_drift_ppm is not None and drift > float(max_drift_ppm):
-                    continue
-                scored.append((k, res, drift, list(ranks), chosen))
+                worst = pr if pr > res else res
+                _record(ranks + [r], picks + [c], worst)
+                _extend(ranks + [r], picks + [c], worst)
+
+    for r in range(n_e):
+        for c in range(n_c):
+            _extend([r], [c], 0.0)
     if not scored:
         return blank
 
-    ok = [s for s in scored if s[1] <= float(dj_bad_hz)]
-    pool = ok or scored
+    pool = scored
     best = min(pool, key=lambda s: (-s[0], s[1], s[2]))
     k_b, res_b = best[0], best[1]
     # A rival that covers the same number of lines and agrees on the spacing to
@@ -179,7 +180,7 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     return dict(ppms=list(best[4]), ranks=list(best[3]),
                 heights=[float(_h.get(p, 0.0)) for p in best[4]],
                 residual_hz=float(res_b), drift_ppm=float(best[2]),
-                n_alternatives=int(alts), fitted=bool(ok),
+                n_alternatives=int(alts), fitted=True,
                 n_candidates=len(cands))
 
 
