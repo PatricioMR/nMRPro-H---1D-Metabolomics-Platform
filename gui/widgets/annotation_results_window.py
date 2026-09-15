@@ -153,6 +153,8 @@ from processing.annotation_scoring import (
     measure_multiplet,
     pattern_offsets_hz,
     ppm_score,
+    PATTERN_BAD_HZ,
+    PATTERN_GOLD_HZ,
     PATTERN_MULT,
 )
 
@@ -3507,7 +3509,24 @@ class AnnotationResultsWindow:
             # Parse letter by letter for compound multiplets
             _coupling_letters = [c for c in _db_mult if c in _letter_pattern]
 
-        _db_sticks_raw = [(centre, 1.0)]
+        # A measured pattern is drawn as measured: its lines at their offsets
+        # from the reference position, at their relative heights. Letters
+        # and couplings built nothing for 'm*' and the pattern showed as one
+        # line at the database position while its lines were found 0.02 ppm
+        # away.
+        _pattern_sticks = pattern_offsets_hz(dp) or (
+            pattern_offsets_hz(mp_ref) if mp_ref else [])
+        _is_pattern_dp = bool(_pattern_sticks)
+        if _is_pattern_dp:
+            # peak_ppm is the centre of the found lines; the reference
+            # position sits pattern_centre_offset_ppm below it.
+            _origin = centre - float((mp_ref or {}).get(
+                'pattern_centre_offset_ppm') or 0.0)
+            _db_sticks_raw = [(_origin + off / _fmhz, rel)
+                              for off, rel in _pattern_sticks]
+            _coupling_letters = []
+        else:
+            _db_sticks_raw = [(centre, 1.0)]
         for _li, _letter in enumerate(_coupling_letters):
             if _li < len(_db_j_hz_list):
                 _j_hz = _db_j_hz_list[_li]
@@ -3535,7 +3554,9 @@ class AnnotationResultsWindow:
         # Prefer predicted_lines (already shifted to observed ppm during annotation
         # search) over raw DB sticks centred on peak_ppm (which may be one outer
         # line of the multiplet, not the multiplet centre).
-        if mp_ref and not is_singlet_dp:
+        if _is_pattern_dp:
+            plot_sticks = _db_sticks_raw
+        elif mp_ref and not is_singlet_dp:
             _pl_raw = mp_ref.get('predicted_lines') or []
             if len(_pl_raw) >= 2:
                 _max_ri_pl = max(float(l.get('rel_intensity', 1.0)) for l in _pl_raw) or 1.0
@@ -3562,6 +3583,11 @@ class AnnotationResultsWindow:
         half_win = max(stick_span_plot * 2.5 + 0.012, 0.025)
         hwhm     = max(stick_span_plot / 6 if stick_span_plot > 0
                        else db_width / 2, 0.001)
+        _lw_hz_plot = (mp_ref or {}).get('study_linewidth_hz')
+        if _is_pattern_dp and _lw_hz_plot:
+            # drawn at the study's own linewidth, so lines this study
+            # cannot resolve merge on the curve as they do on the spectrum
+            hwhm = max(float(_lw_hz_plot) / _fmhz / 2.0, 0.0005)
 
         lo = centre - half_win
         hi = centre + half_win
@@ -3780,7 +3806,7 @@ class AnnotationResultsWindow:
         n_expected_snap = len(plot_sticks)
 
         # Rebuild plot_sticks centred on observed peaks so DB curve aligns correctly
-        if _det_found and not is_singlet_dp:
+        if _det_found and not is_singlet_dp and not _is_pattern_dp:
             _obs_ctr_pre = float(np.mean([float(p['ppm']) for p in _det_found]))
             # Shift _db_sticks_raw (centred on 'centre') to observed centre
             _sticks_shift = _obs_ctr_pre - centre
@@ -3866,6 +3892,9 @@ class AnnotationResultsWindow:
         _n_lines_map_plot = {'s':1,'singlet':1,'d':2,'doublet':2,'t':3,'triplet':3,
                              'q':4,'quartet':4,'dd':4,'dt':6,'td':6,'tt':9,'ddd':8}
         n_expected = _n_lines_map_plot.get(dp_type_j, len(plot_sticks))
+        if _is_pattern_dp and mp_ref and mp_ref.get('_n_exp_lines') is not None:
+            # as this study resolves it, not the reference's line count
+            n_expected = int(mp_ref['_n_exp_lines'])
 
         import re as _re2
         db_j_raw   = str(dp.get('j_coupling') or '').strip()
@@ -3931,7 +3960,40 @@ class AnnotationResultsWindow:
                              fontsize=7, color='#cc5500', fontweight='bold',
                              ha='center', va='bottom', zorder=9, clip_on=True)
 
-            if not is_singlet_dp:
+            if _is_pattern_dp and mp_ref:
+                # A measured pattern has no single J. What was judged is the
+                # RMS of its found lines against the reference shape, and
+                # how many of the lines this study can resolve were found.
+                _nf = mp_ref.get('_n_found_lines')
+                _ne = mp_ref.get('_n_exp_lines')
+                _res = mp_ref.get('pattern_residual_hz')
+                _lines_txt = (f'{_nf}/{_ne} lines' if _nf is not None
+                              and _ne is not None else f'{n_found} lines')
+                _complete = (_nf is not None and _ne is not None
+                             and int(_nf) >= int(_ne))
+                if _res is not None:
+                    j_card = (f'pattern residual {float(_res):.2f} Hz'
+                              f'  —  {_lines_txt}')
+                    j_color = ('#1a7a1a' if _complete
+                               and float(_res) <= PATTERN_GOLD_HZ
+                               else '#7a6000' if _complete
+                               and float(_res) <= PATTERN_BAD_HZ
+                               else '#9a0000')
+                    _ann_text = (f'pattern: residual {float(_res):.2f} Hz'
+                                 f'  ({_lines_txt})')
+                else:
+                    j_card = f'⚠ pattern: {_lines_txt}'
+                    j_color = '#9a0000'
+                    _ann_text = j_card
+                self.ax.text(0.02, 0.04, _ann_text,
+                             transform=self.ax.transAxes,
+                             fontsize=7, color=j_color, va='bottom',
+                             bbox=dict(boxstyle='round,pad=0.2',
+                                       facecolor='white',
+                                       edgecolor=j_color, alpha=0.85))
+                self._set_q('j_obs', j_card, j_color)
+
+            elif not is_singlet_dp:
                 mult_ok   = False
                 j_obs_det = None
                 dj_mean   = None
