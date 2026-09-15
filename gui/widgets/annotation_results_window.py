@@ -3229,12 +3229,31 @@ class AnnotationResultsWindow:
                 _child_dj_bad = (not _child_is_singlet
                                  and _child_dj is not None
                                  and float(_child_dj) >= 0.5)
+                _child_fit = ((mp_ref_child or {}).get('pattern_fit') or {}
+                              if is_matched else {})
                 if child_saved_quality == 'good':
                     child_tags = ('peak_match', 'qual_good')
                     match_mark = QUALITY_LABEL[SIGNAL_GOOD]
                 elif child_saved_quality == 'bad':
                     child_tags = ('peak_match', 'qual_bad')
                     match_mark = QUALITY_LABEL[SIGNAL_POOR]
+                elif _child_fit.get('snr') is not None:
+                    # A multiplet judged as a shape: the fraction of its
+                    # region the fitted shape explains, against the
+                    # thresholds in the Annotation Parameters.
+                    _ex = float(_child_fit.get('explained') or 0.0)
+                    _p_good = float(self._params.get('shape_good', 0.7))
+                    _p_min = float(self._params.get('shape_min', 0.4))
+                    if not _lines_complete or _ex < _p_min:
+                        child_tags = ('peak_match', 'qual_bad')
+                        match_mark = (f'✗ {100 * _ex:.0f}%'
+                                      if _lines_complete else '✗ not found')
+                    elif _ex >= _p_good and n_db_cands <= 1:
+                        child_tags = ('peak_match', 'qual_good')
+                        match_mark = f'✓ {100 * _ex:.0f}%'
+                    else:
+                        child_tags = ('peak_match', 'qual_mid')
+                        match_mark = f'~ {100 * _ex:.0f}%'
                 else:
                     # Auto-colour: red if not matched, lines missing, or ΔJ ≥ 0.5 Hz
                     if not is_matched:
@@ -3922,9 +3941,10 @@ class AnnotationResultsWindow:
                      color=db_color, linewidth=1.5, linestyle='--',
                      zorder=4, label=lbl)
 
-        # Individual sticks (highlight the multiplet lines)
+        # Individual sticks (highlight the multiplet lines). A shape has no
+        # lines to point at: the curve is the whole of it.
         _db_scale = float(y_db.max()) if len(y_db) > 0 and y_db.max() > 0 else 1.0
-        for st_ppm, st_rel in plot_sticks:
+        for st_ppm, st_rel in ([] if _is_pattern_dp else plot_sticks):
             _sh = st_rel * _db_scale * 0.95
             self.ax.plot([st_ppm, st_ppm], [0, _sh],
                          color=db_color, linewidth=2.2, alpha=0.85, zorder=5)
@@ -3973,7 +3993,7 @@ class AnnotationResultsWindow:
             # window — so the user can see all candidate peaks in the region
             # and judge which one is the "best match" for this analyte.
             _matched_ranks = {p.get('rank') for p in _det_found}
-            for _pk in (self.peaks or []):
+            for _pk in ([] if _is_pattern_dp else (self.peaks or [])):
                 try:
                     _pk_ppm = float(_pk.get('ppm', 0))
                 except (TypeError, ValueError):
@@ -3996,7 +4016,8 @@ class AnnotationResultsWindow:
             # Place bold orange markers on detected peaks matched to DB sticks.
             # When deconvolved display is active, use the matched component's own
             # peak height instead of the sum, so the arrow points to the correct peak.
-            for dp_pk in _det_found:
+            # A shape has no lines to point at.
+            for dp_pk in ([] if _is_pattern_dp else _det_found):
                 pk_ppm = float(dp_pk['ppm'])
                 if _comp_peak_y:
                     # Find nearest component peak to this detected ppm

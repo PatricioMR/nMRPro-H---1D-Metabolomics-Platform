@@ -1744,7 +1744,9 @@ class _AnnotationSearchMixin:
                             fwhm_hz=_lw_hz, floor=_floor_hz or None,
                             trace=((_ppm_arr, _mean_int) if has_spec
                                    else None),
-                            sigma=_noise_sr or None, tolerance_ppm=tolerance)
+                            sigma=_noise_sr or None, tolerance_ppm=tolerance,
+                            shape_good=_sc_params.get('shape_good'),
+                            shape_min=_sc_params.get('shape_min'))
                         _pattern_residual = _meas_sr.pattern_residual_hz
                         _pattern_agreement = _meas_sr.pattern_intensity_agreement
                     else:

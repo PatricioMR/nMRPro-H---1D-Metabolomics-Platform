@@ -687,7 +687,8 @@ def resolvable_pattern(pattern, merge_hz, fwhm_hz=None) -> list:
 def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                            anchor_ppm=None, merge_hz=None,
                            fwhm_hz=None, floor=None, trace=None,
-                           sigma=None, tolerance_ppm=None) -> LineMeasurement:
+                           sigma=None, tolerance_ppm=None,
+                           shape_good=None, shape_min=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -739,7 +740,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
         shaped = _measure_pattern_shape(
             mp, pat, trace, field_mhz=float(field_mhz),
             dj_gold_hz=dj_gold_hz, fwhm_hz=float(_fwhm),
-            sigma=float(_sigma), tolerance_ppm=float(_tol), floor=_floor)
+            sigma=float(_sigma), tolerance_ppm=float(_tol), floor=_floor,
+            shape_good=shape_good, shape_min=shape_min)
         if shaped is not None:
             return shaped
     _anchor_h = None
@@ -780,7 +782,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
 
 def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
                            fwhm_hz, sigma, tolerance_ppm,
-                           floor=None) -> LineMeasurement | None:
+                           floor=None, shape_good=None,
+                           shape_min=None) -> LineMeasurement | None:
     """The multiplet judged as a shape and nothing else.
 
     The reference's profile (``pattern_profile``, with its own width
@@ -790,10 +793,11 @@ def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
     trace it explains says whether it is alone. Under the fit's rule -- the
     largest copy that fits under the trace -- a shape cannot contradict the
     spectrum, so nothing here marks an identity wrong; what it does is rank.
-    The explained fraction stands in for delta-J, scaled onto its gates: a
-    shape explaining all of its region reads as a perfect coupling, one
-    explaining none of it as the worst allowed, never beyond -- overlap is
-    sharing, not disagreement.
+    The explained fraction is read against two thresholds (``shape_good``,
+    ``shape_min``; SCORING_DEFAULTS): resolved at or above the first, present
+    but shared between the two, not confirmed under the second. It stands in
+    for delta-J on its gates -- resolved reads as a perfect coupling, shared
+    runs from the gold band to the bad one, not confirmed is not found.
 
     None when the trace does not cover the region.
     """
@@ -812,9 +816,15 @@ def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
     if fit is None or not fit['apex_ppms']:
         return None
     # Here when the fit stands over detection's floor -- the same bar a
-    # peak had to clear to be in the list.
+    # peak had to clear to be in the list -- and confirmed when enough of
+    # its region is its own.
+    good = float(SCORING_DEFAULTS['shape_good'] if shape_good is None
+                 else shape_good)
+    least = float(SCORING_DEFAULTS['shape_min'] if shape_min is None
+                  else shape_min)
     snr_min = (float(floor) / float(sigma)) if floor else 3.0
-    present = fit['snr'] >= snr_min
+    explained = float(fit['explained'])
+    present = fit['snr'] >= snr_min and explained >= least
     n = len(fit['apex_ppms'])
     m = LineMeasurement(n_expected=n, n_found=n if present else 0,
                         found_ppms=list(fit['apex_ppms']) if present else [],
@@ -830,8 +840,14 @@ def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
     m.pattern_amplitude = float(fit['amplitude'])
     m.pattern_intensity_agreement = float(fit['explained'])
     if present:
-        m.pattern_residual_hz = float(PATTERN_BAD_HZ
-                                      * (1.0 - float(fit['explained'])))
+        # resolved -> 0; shared -> from the gold band at 'good' to the bad
+        # band at 'least'
+        if explained >= good:
+            m.pattern_residual_hz = 0.0
+        else:
+            frac = (good - explained) / max(good - least, 1e-9)
+            m.pattern_residual_hz = float(
+                PATTERN_GOLD_HZ + frac * (PATTERN_BAD_HZ - PATTERN_GOLD_HZ))
         m.delta_j_hz = (m.pattern_residual_hz * float(dj_gold_hz)
                         / PATTERN_GOLD_HZ)
     return m
@@ -937,6 +953,12 @@ SCORING_DEFAULTS: dict = {
     'dj_gold_hz':        0.20,
     'dj_bad_hz':         0.50,
     'dj_neutral':        0.00,
+    # A multiplet judged as a shape: the fraction of its region the fitted
+    # shape explains. Above 'shape_good' the multiplet is resolved -- its
+    # region is its own; between the two it is present but shared with
+    # something else; under 'shape_min' the shape is not confirmed here.
+    'shape_good':        0.70,
+    'shape_min':         0.40,
     'dppm_gold':         0.05,   # mirrors 'Tolerance (ppm)'; one input owns it
     'w_dj':              0.57,
     'w_cosine_ns':       0.14,
@@ -987,6 +1009,13 @@ PARAMETER_SPEC: list[tuple[str, str, str, str]] = [
      'ΔJ at or above this rejects the signal, with no exceptions'),
     ('Coupling (ΔJ)', 's_dj when ΔJ unmeasurable', 'dj_neutral',
      'Score given when J could not be measured; the term is excluded instead'),
+
+    ('Shape (m*)', 'Resolved at (fraction)', 'shape_good',
+     'A complex multiplet whose fitted shape explains at least this fraction '
+     'of its region is resolved: the region is its own'),
+    ('Shape (m*)', 'Confirmed at (fraction)', 'shape_min',
+     'Under this fraction the shape is not confirmed here: too much of the '
+     'region belongs to something else'),
 
     ('Evidence weight — signal', 'ΔJ', 'w_dj',
      'Coupling agreement — the strongest evidence a multiplet carries'),
@@ -1706,7 +1735,9 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     if normalize_mult(mult) == PATTERN_MULT:
         meas = measure_pattern_signal(mp, peaks, field_mhz=field_mhz,
                                       dj_gold_hz=params['dj_gold_hz'],
-                                      trace=trace)
+                                      trace=trace,
+                                      shape_good=params.get('shape_good'),
+                                      shape_min=params.get('shape_min'))
         mp['pattern_residual_hz'] = meas.pattern_residual_hz
         if meas.pattern_snr is not None:
             mp['pattern_fit'] = {'snr': meas.pattern_snr,
