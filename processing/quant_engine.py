@@ -685,7 +685,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             if not out or not out['areas'] or not nh or nh <= 0:
                 unmeasurable.append(mid)
                 continue
-            measured[mid] = {'signal': cand, 'nh': nh, **out}
+            measured[mid] = {'signal': cand, 'nh': nh,
+                             'noise_sigma': noise_sigma, **out}
             per_proton_areas[mid] = {s: a / nh
                                      for s, a in out['areas'].items()}
             continue
@@ -1108,6 +1109,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         'vip_score': float('nan'),
         '_confidence': level,
         '_integ_mode': 'Shape' if info.get('shape') else 'Multiplet',
+        # What the shape was, for a report to draw the fit it quantified
+        '_shape_fit': ((sig.evidence or {}).get('shape_fit')
+                       if info.get('shape') else None),
+        '_shape_explained': info.get('shape_explained'),
+        '_noise_sigma': info.get('noise_sigma'),
         '_not_quantified': not good,
         '_peak': None,
         '_peak_rank': sig.peak_rank,

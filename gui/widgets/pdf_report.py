@@ -198,7 +198,8 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
 
     # Multiplet mode: use the actual integration window and re-centre the crop on it.
     _mw = result.get('_multiplet_window')
-    if _mw and result.get('_integ_mode', '') == 'Multiplet':
+    _windowed = result.get('_integ_mode', '') in ('Multiplet', 'Shape')
+    if _mw and _windowed:
         ppm_lo, ppm_hi = min(_mw), max(_mw)
         ppm_ctr = (ppm_lo + ppm_hi) / 2.0   # centre on multiplet, not anchor peak
     else:
@@ -248,7 +249,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
 
     # Integration window indices
     _mw = result.get('_multiplet_window')
-    if _mw and result.get('_integ_mode', '') == 'Multiplet':
+    if _mw and _windowed:
         _f_lo_ppm, _f_hi_ppm = min(_mw), max(_mw)
         _step_f   = abs(float(ppm_f[1] - ppm_f[0])) if len(ppm_f) > 1 else 0.001
         _ppm_max_f = float(ppm_f.max())
@@ -258,8 +259,43 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         lo_f = max(lo_idx, i_lo)
         hi_f = min(hi_idx, i_hi)
 
+    # A multiplet quantified as a shape (ADR-013): what was integrated is the
+    # copy of the reference's shape that fits under the mean trace, not the
+    # trace itself. Filled as such, with the fitted curve over it.
+    _shape_ev = result.get('_shape_fit')
+    _shape_drawn = False
+    if _shape_ev and result.get('_integ_mode', '') == 'Shape':
+        try:
+            from processing.pattern_shape import _amplitude
+            from processing.quant_shape import shape_model
+            _built = shape_model({'shape_fit': _shape_ev}, ppm_f)
+            if _built is not None:
+                _xs, _ms, (_slo, _shi) = _built
+                _sel = (ppm_f >= _slo) & (ppm_f <= _shi)
+                _t = (np.mean(all_int[_sel, :], axis=1)
+                      if all_int.ndim > 1 else all_int[_sel])
+                _sig = float(result.get('_noise_sigma') or 0.0)
+                if _sig <= 0:
+                    _sig = float(np.std(_t[:max(3, len(_t) // 10)]) or 1.0)
+                _a, _sup = _amplitude(_t, _ms, _sig)
+                _order = np.argsort(_xs)
+                ax.fill_between(_xs[_order], 0, _a * _ms[_order],
+                                alpha=0.35, color=_ANALYTE_FILL, linewidth=0,
+                                zorder=2)
+                _ex = result.get('_shape_explained')
+                _lbl = ('Shape fit'
+                        + (f'  (explains {100 * float(_ex):.0f}%)'
+                           if _ex is not None else ''))
+                ax.plot(_xs[_order], _a * _ms[_order], color='#2e7d32',
+                        lw=1.4, ls='--', zorder=5, label=_lbl)
+                ax.legend(fontsize=6, loc='upper left',
+                          framealpha=0.7, edgecolor='#cccccc')
+                _shape_drawn = True
+        except Exception:
+            _shape_drawn = False
+
     # Single-colour fill of the integrated area (NNLS → this analyte's fraction).
-    if lo_f < hi_f:
+    if lo_f < hi_f and not _shape_drawn:
         xf = ppm_f[lo_f:hi_f + 1]
         yf = (np.mean(all_int[lo_f:hi_f + 1, :], axis=1)
               if all_int.ndim > 1 else all_int[lo_f:hi_f + 1])
@@ -453,6 +489,78 @@ def _quality_info(r, theoretical):
     else:         return 'CONF ●○○   33%', _RED
 
 
+# ── Methods and their references ─────────────────────────────────────────────
+# Every method a row can have been quantified by, with the reference the
+# reader needs to judge it. Only the ones a report actually used are listed
+# at its end.
+METHOD_REFERENCES = {
+    'Standard': ('Peak integration',
+                 'Trapezoidal integration of the elected signal over its '
+                 'window, foot to foot over its detected lines; Lorentzian '
+                 'capture correction (Abragam, The Principles of Nuclear '
+                 'Magnetism, Oxford 1961, ch. III).'),
+    'Shape': ('Shape fit (targeted profiling)',
+              'The reference compound\'s measured multiplet profile, broadened '
+              'to the study\'s linewidth, fitted to each sample as the largest '
+              'copy that fits under the trace; area = amplitude \u00d7 profile '
+              'area. Weljie A.M., Newton J., Mercier P., Carlson E., Slupsky '
+              'C.M., Targeted Profiling: Quantitative Analysis of 1H NMR '
+              'Metabolomics Data, Anal. Chem. 2006, 78, 4430-4442. One-sided '
+              'amplitude: Lawson C.L., Hanson R.J., Solving Least Squares '
+              'Problems, Prentice-Hall 1974 (NNLS).'),
+    'MCR': ('MCR-ALS',
+            'Multivariate curve resolution by alternating least squares '
+            '(Tauler R., Chemom. Intell. Lab. Syst. 1995, 30, 133-146).'),
+    'JG-Deconv': ('Shared-window balance',
+                  'Non-negative least squares over the windows two analytes '
+                  'share (Lawson & Hanson 1974).'),
+}
+
+
+def _methods_used(r) -> list:
+    out = []
+    if r.get('_integ_mode', '') == 'Shape':
+        out.append('Shape')
+    else:
+        out.append('Standard')
+    if r.get('_used_mcr'):
+        out.append('MCR')
+    if r.get('_used_j_resolve'):
+        out.append('JG-Deconv')
+    return out
+
+
+def _method_label(r) -> str:
+    keys = _methods_used(r)
+    label = ' + '.join(METHOD_REFERENCES[k][0] for k in keys)
+    if 'Shape' in keys:
+        ex = r.get('_shape_explained')
+        label += ' \u2014 Weljie et al. 2006'
+        if ex is not None:
+            label += (f'; explains {100 * float(ex):.0f}% of its region'
+                      + ('' if float(ex) >= 0.9 else ' (upper bound)'))
+    return label
+
+
+def _references_section(results, styles) -> list:
+    """A 'Methods and references' block for the methods this report used."""
+    used = []
+    for r in results:
+        for k in _methods_used(r):
+            if k not in used:
+                used.append(k)
+    if not used:
+        return []
+    from reportlab.platypus import Paragraph, Spacer
+    from reportlab.lib.units import cm as _cm
+    out = [Spacer(1, 0.3 * _cm),
+           Paragraph('Methods and references', styles['h2'])]
+    for k in used:
+        title, text = METHOD_REFERENCES[k]
+        out.append(Paragraph(f'<b>{title}.</b> {text}', styles['small']))
+    return out
+
+
 # ── Bloco de 1 analito ───────────────────────────────────────────────────────
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
@@ -531,8 +639,7 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         [P('Annotation score'), P(f"{r.get('_ann_score', 0.0):.3f}")],
         [P('SNR'),              P(snr_s)],
         [P('Method'),
-         P(('MCR ' if r.get('_used_mcr') else '') +
-           ('JG-Deconv ' if r.get('_used_j_resolve') else '') or 'Standard')],
+         P(_method_label(r))],
     ]
     for cl in conc_lines:
         rows.append([P('Concentration'), P(cl)])
@@ -723,4 +830,5 @@ def generate_pdf(output_path: str, quant_stage, app,
         spacer = Spacer(1, 0.15 * cm)
         story.append(KeepTogether([block, spacer]))
 
+    story.extend(_references_section(results_sorted, styles))
     doc.build(story)
