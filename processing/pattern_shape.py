@@ -117,6 +117,12 @@ def profile_model(x_ppm, profile, origin_ppm, extra_fwhm_hz,
         k = np.arange(-4 * float(extra_fwhm_hz),
                       4 * float(extra_fwhm_hz) + step, step)
         kern = hw ** 2 / (k ** 2 + hw ** 2)
+        # the broadened profile spreads past the cut: room for it, and
+        # for a kernel longer than a short profile
+        pad = k.size
+        h = np.concatenate([np.zeros(pad), h, np.zeros(pad)])
+        offs = np.concatenate([offs[0] - step * np.arange(pad, 0, -1), offs,
+                               offs[-1] + step * np.arange(1, pad + 1)])
         h = np.convolve(h, kern / kern.sum(), mode='same')
     x_hz = (np.asarray(x_ppm, dtype=float) - float(origin_ppm)) * float(field_mhz)
     y = np.interp(x_hz, offs, h, left=0.0, right=0.0)

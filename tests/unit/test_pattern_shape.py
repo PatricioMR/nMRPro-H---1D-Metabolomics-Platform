@@ -178,3 +178,10 @@ class TestThePatternMeasuredOnTheTrace:
                                    dj_gold_hz=0.2, anchor_ppm=3.217,
                                    merge_hz=0.0)
         assert m.complete and m.pattern_snr is None
+
+
+def test_a_short_profile_survives_a_wide_broadening():
+    offs = np.arange(-2.0, 2.0, 0.1)
+    h = np.exp(-offs ** 2)
+    m = profile_model(PPM, (offs, h), 3.2, 12.0, FIELD)
+    assert m.shape == PPM.shape and m.max() == pytest.approx(1.0)
