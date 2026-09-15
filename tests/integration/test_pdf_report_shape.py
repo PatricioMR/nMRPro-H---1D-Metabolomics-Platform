@@ -76,3 +76,12 @@ def test_the_crop_draws_the_fitted_copy():
     labels = [ln.get_label() for ln in ax.get_lines()]
     assert any(lb.startswith('Shape fit') for lb in labels)
     assert ax.collections, 'the fitted copy is filled'
+
+
+def test_the_integration_row_names_method_multiplicity_and_protons():
+    name = _report()._multiplicity_name
+    assert name('d') == 'Doublet'
+    assert name('m*') == 'Complex multiplet (measured shape)'
+    assert name('dd') == 'Doublet of doublets'
+    assert name(None) == '—'
+    assert name('xyz') == 'xyz'

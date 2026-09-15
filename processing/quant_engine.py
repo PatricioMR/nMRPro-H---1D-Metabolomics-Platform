@@ -1129,6 +1129,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_peak_align_shifts': info.get('shifts') or None,
         '_blk_mean_area': info.get('blank_area', float('nan')),
         '_is_singlet': (sig.evidence or {}).get('multiplicity') == 's',
+        '_multiplicity': (sig.evidence or {}).get('multiplicity'),
         '_ann_score': float((sig.evidence or {}).get('score') or 0.0),
         # Every quantified analyte carries its own limits now. Without them
         # nobody could tell a number ten times the limit from one at 1.1x, and

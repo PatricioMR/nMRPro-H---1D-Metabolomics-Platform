@@ -489,6 +489,31 @@ def _quality_info(r, theoretical):
     else:         return 'CONF ●○○   33%', _RED
 
 
+# ── Multiplicity, spelled out ────────────────────────────────────────────────
+_MULT_NAMES = {
+    's': 'Singlet', 'singlet': 'Singlet',
+    'd': 'Doublet', 'doublet': 'Doublet',
+    't': 'Triplet', 'triplet': 'Triplet',
+    'q': 'Quartet', 'quartet': 'Quartet',
+    'p': 'Quintet', 'quint': 'Quintet', 'quintet': 'Quintet', 'pentet': 'Quintet',
+    'h': 'Sextet', 'sext': 'Sextet', 'sextet': 'Sextet',
+    'sept': 'Septet', 'septet': 'Septet', 'hept': 'Septet', 'heptet': 'Septet',
+    'dd': 'Doublet of doublets', 'dt': 'Doublet of triplets',
+    'td': 'Triplet of doublets', 'tt': 'Triplet of triplets',
+    'ddd': 'Doublet of doublets of doublets', 'dq': 'Doublet of quartets',
+    'm': 'Multiplet', 'multiplet': 'Multiplet',
+    'm*': 'Complex multiplet (measured shape)',
+    'br s': 'Broad singlet', 'brs': 'Broad singlet',
+}
+
+
+def _multiplicity_name(mult) -> str:
+    key = str(mult or '').lower().strip()
+    if not key:
+        return '—'
+    return _MULT_NAMES.get(key, key)
+
+
 # ── Methods and their references ─────────────────────────────────────────────
 # Every method a row can have been quantified by, with the reference the
 # reader needs to judge it. Only the ones a report actually used are listed
@@ -628,7 +653,15 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
             st = styles['cell_b'] if bold else styles['cell']
         return Paragraph(str(txt).replace('\n', '<br/>'), st)
 
-    integ_label = f"{r.get('_integ_mode','—')}  |  nH={r.get('_nh',1):.0f}"
+    # What the number was made of: the method, the multiplicity the signal
+    # was matched as, and the protons it was divided by.
+    _nh = float(r.get('_nh', 1) or 1)
+    integ_label = (f"{r.get('_integ_mode', '—')}  |  "
+                   f"{_multiplicity_name(r.get('_multiplicity'))}  |  "
+                   f"nH={_nh:.0f}" if float(_nh).is_integer()
+                   else f"{r.get('_integ_mode', '—')}  |  "
+                   f"{_multiplicity_name(r.get('_multiplicity'))}  |  "
+                   f"nH={_nh:.2f}")
     if np.isfinite(lorentz_r2):
         integ_label += f"  |  R²={lorentz_r2:.4f}"
 
