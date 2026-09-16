@@ -314,7 +314,14 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
             continue
 
         counts['metabolites'] += 1
-        matched_at = {round(float(mp.get('db_ppm', 0.0)), 3) for mp in matched}
+        # A signal matched to a peak that cannot be it -- the anchor says
+        # SNR 268 and the matched peak stands at 7 -- is not matched; it is
+        # looked at like any missing signal. Creatinine claimed creatine's
+        # methyl singlet and its own second singlet, matched to a peak of
+        # noise, was never questioned.
+        matched_at = {}
+        for mp in matched:
+            matched_at[round(float(mp.get('db_ppm', 0.0)), 3)] = _apex_snr(mp)
         # Where this metabolite's signals actually sat, relative to the
         # database. A molecule's resonances drift together -- pH moves the
         # whole aromatic system, not one line of it -- so a missing signal is
@@ -336,10 +343,13 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                 counts['unresolved'] += 1
                 continue
             centre = float(dp.get('ppm_center', dp.get('ppm', 0.0)))
-            if round(centre, 3) in matched_at:
-                counts['matched'] += 1
-                continue
             expected = a_snr * (proton_count(dp) * _line_share(mult)) / a_per
+            if round(centre, 3) in matched_at:
+                got = matched_at[round(centre, 3)]
+                if got * float(ratio) >= expected:
+                    counts['matched'] += 1
+                    continue
+                counts['matched_to_noise'] = counts.get('matched_to_noise', 0) + 1
             if expected < float(min_expected_snr):
                 counts['faint'] += 1
                 verdicts.append((centre, mult, expected, 'faint', None))

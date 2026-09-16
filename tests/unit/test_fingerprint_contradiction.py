@@ -129,6 +129,22 @@ def test_a_tall_enough_peak_in_the_window_still_excuses():
     assert _run(y, peaks, [met]) == 0
 
 
+def test_a_signal_matched_to_a_peak_of_noise_is_looked_at_as_missing():
+    """Creatinine's second singlet was matched to a peak of SNR 7 where its
+    anchor said 268, and being matched it was never questioned."""
+    y, peaks, met = _aldehyde(y_extra=[(9.74, 7.0)])
+    noise_peak = _peak(9, 9.74)
+    noise_peak['snr'] = 7.0
+    peaks.append(noise_peak)
+    # the aldehyde singlet is "matched" -- to the noise peak
+    met['matched_peaks'].append({'db_ppm': 9.72, 'peak_ppm': 9.74,
+                                 'peak_rank': 9, 'type': 's', 'protons': 1,
+                                 'annotation_quality': None})
+    stats = {}
+    assert _run(y, peaks, [met], stats=stats) == 1
+    assert stats.get('matched_to_noise') == 1
+
+
 def test_a_signal_under_the_water_is_not_absence():
     """Lactate's CH quartet at 4.11 is the canonical case: 3H methyl doublet
     found, 1H quartet expected at 1/3 of it, and it sits where the solvent
