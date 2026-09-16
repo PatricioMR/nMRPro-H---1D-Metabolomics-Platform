@@ -31,7 +31,8 @@ from ._annotation_helpers import (
     _stocsy_partner_count,
 )
 from processing.spectral_regions import measure_linewidth_ppm
-from processing.annotation_consistency import consistent_candidates
+from processing.annotation_consistency import (
+    consistent_peaks, reference_per_proton)
 from utils.profiling import profiled
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
@@ -1445,6 +1446,14 @@ class _AnnotationSearchMixin:
                 except Exception:
                     _floor_hz = 0.0
 
+                # How tall each metabolite's signals should be, from the
+                # tallest peak any of them could anchor on: the anchor of a
+                # signal is then the nearest peak among those its own
+                # proportions allow, not the nearest peak of any height.
+                _ref_pp = reference_per_proton(
+                    db_entries, peaks_to_search, tolerance=tolerance,
+                    met_key=lambda e: e.get('hmdb_id') or e.get('bmrb_id'))
+
                 for i, entry in enumerate(db_entries):
                     db_ppm   = float(
                         entry.get('ppm_center') or entry.get('ppm') or 0)
@@ -1632,7 +1641,12 @@ class _AnnotationSearchMixin:
                                         '_obs_mult':     mult_raw,
                                     })
                         local_peaks = _syn_aug
-                    nearest   = min(good_in_tol, key=lambda p: abs(p['ppm'] - db_ppm))
+                    nearest   = min(
+                        consistent_peaks(
+                            good_in_tol, entry,
+                            _ref_pp.get(entry.get('hmdb_id')
+                                        or entry.get('bmrb_id'))),
+                        key=lambda p: abs(p['ppm'] - db_ppm))
                     delta_ppm = abs(nearest['ppm'] - db_ppm)
                     peak_rank = nearest.get('rank')   # None for spectrum-derived peaks
                     peak_ppm  = float(nearest['ppm'])
@@ -1999,13 +2013,6 @@ class _AnnotationSearchMixin:
                                    _pm=len(peaks_matched), _e=_el:
                             self._update_progress(_i, _t, _m, _pm, _e))
 
-                # Before one candidate per signal is kept by score, the
-                # metabolite's own proportions drop the ones its tallest
-                # signal rules out: the nearest peak is not the signal's
-                # when a peak thirty times taller sits within tolerance and
-                # the metabolite's other singlet says it must be that tall.
-                all_results = consistent_candidates(
-                    all_results, {p.get('rank'): p for p in peaks_to_search})
                 seen = {}
                 for r in all_results:
                     key = (
