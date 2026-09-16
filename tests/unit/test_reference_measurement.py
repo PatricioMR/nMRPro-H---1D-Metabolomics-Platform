@@ -860,19 +860,42 @@ class TestTheProtonsUnderAProfile:
                     'j_coupling': '6.93', 'protons': 1}]
         return measure_entry(PPM, y, signals, field_mhz=FIELD)
 
-    def test_the_shares_add_up_to_the_listed_protons(self):
+    def test_the_measured_shares_add_up_to_the_listed_protons(self):
         out = self._measured()
-        nh = [m['profile_nh'] for m in out]
+        nh = [m['profile_nh_meas'] for m in out]
         assert all(v is not None for v in nh)
         assert sum(nh) == pytest.approx(4.0, abs=1e-6)
 
-    def test_the_protons_follow_the_areas_not_the_listing(self):
+    def test_the_measured_shares_follow_the_areas_not_the_listing(self):
         out = self._measured()
-        by = {m['listed']['id']: m['profile_nh'] for m in out}
+        by = {m['listed']['id']: m['profile_nh_meas'] for m in out}
         # by construction: the doublet's lines are 3000 each (area 6000),
         # the quartet's 1:3:3:1 with the tallest at 500 (area 1333) -- so
         # the areas stand 4.5:1 whatever the listing says (3:1)
         assert by[1] / by[2] == pytest.approx(4.5, rel=0.1)
+        # and the share that strays too far from the listing is replaced
+        # by it: the quartet's 0.73 by its listed 1
+        use = {m['listed']['id']: m['profile_nh'] for m in out}
+        assert use[2] == pytest.approx(1.0)
+        assert use[1] == pytest.approx(by[1])
+
+    def test_a_share_far_from_the_listing_falls_back_to_it(self):
+        import sys
+        sys.path.insert(0, 'hmdb_api_download')
+        from measure_reference_db import assign_profile_protons
+        # lactate on the BMRB spectrum: the quartet holds 0.65 of its 1
+        ms = [{'listed': {'protons': 3}, 'profile_area': 3.35},
+              {'listed': {'protons': 1}, 'profile_area': 0.65}]
+        assign_profile_protons(ms)
+        assert ms[0]['profile_nh_meas'] == pytest.approx(3.35)
+        assert ms[0]['profile_nh'] == pytest.approx(3.35)   # within a quarter
+        assert ms[1]['profile_nh_meas'] == pytest.approx(0.65)
+        assert ms[1]['profile_nh'] == pytest.approx(1.0)    # a third off: listed
+        # within a quarter, the measurement stands
+        ms = [{'listed': {'protons': 3}, 'profile_area': 3.2},
+              {'listed': {'protons': 1}, 'profile_area': 0.8}]
+        assign_profile_protons(ms)
+        assert ms[1]['profile_nh'] == pytest.approx(0.8)
 
     def test_no_profile_no_share(self):
         import sys

@@ -354,6 +354,11 @@ class LineMeasurement:
                 and self.n_found >= self.n_expected)
 
 
+# The dip between two apices, as a fraction of the lower one, under which
+# they are one apex: a shoulder is not a line a detector can see.
+APEX_DIP_REL = 0.10
+
+
 def apparent_lines(lines, fwhm_hz, *, step_hz=0.02) -> list:
     """Where the apices sit when these lines are Lorentzians of this width.
 
@@ -386,10 +391,23 @@ def apparent_lines(lines, fwhm_hz, *, step_hz=0.02) -> list:
     for o, r in pts:
         y += r * hw ** 2 / ((x - o) ** 2 + hw ** 2)
     inner = (y[1:-1] > y[:-2]) & (y[1:-1] >= y[2:])
-    idx = np.nonzero(inner)[0] + 1
+    idx = list(np.nonzero(inner)[0] + 1)
     if len(idx) == 0:
         return pts
-    top = float(y[idx].max()) or 1.0
+    # Two maxima with hardly a dip between them are one apex: a shoulder
+    # is not a line a detector can see. Merged while the valley between
+    # neighbours stays above APEX_DIP_REL of the lower of the two.
+    changed = True
+    while changed and len(idx) > 1:
+        changed = False
+        for k in range(len(idx) - 1):
+            a, b = idx[k], idx[k + 1]
+            valley = float(y[a:b + 1].min())
+            if valley > (1.0 - APEX_DIP_REL) * min(float(y[a]), float(y[b])):
+                idx[k:k + 2] = [a if y[a] >= y[b] else b]
+                changed = True
+                break
+    top = float(max(y[i] for i in idx)) or 1.0
     out = []
     for i in idx:
         # parabola through the three samples around the maximum
@@ -440,16 +458,44 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     # first value in it is not the spacing of anything in particular.
     j_db = None if is_pattern else parse_first_j(j_coupling)
     pred = list(predicted_lines or [])
+    j_ref = j_db
+    if j_db is not None and linewidth_hz and field_mhz > 0 and n_expected >= 2:
+        # What the multiplet shows at this study's width. myo-Inositol's
+        # triplets of 2.8 Hz are one apex at a 2.6 Hz linewidth, leucine's
+        # methyl triplet two; asked for three lines they were incomplete on
+        # every study. The apices of the binomial pattern broadened to the
+        # study's width are the lines expected, and their spacing the
+        # coupling judged against.
+        half = (n_expected - 1) / 2.0
+        heights = pascal_weights(n_expected)
+        seen = apparent_lines([((k - half) * float(j_db), float(h))
+                               for k, h in enumerate(heights)],
+                              float(linewidth_hz))
+        if 1 <= len(seen) < n_expected:
+            centre = float(centre_hint or db_ppm or 0)
+            pred = [{'ppm': centre + o / float(field_mhz), 'rel_intensity': r,
+                     'apparent': True} for o, r in seen]
+            n_expected = len(seen)
+            offs = sorted(o for o, _r in seen)
+            j_ref = (float(np.median(np.diff(offs))) if len(offs) >= 2
+                     else None)
+        else:
+            j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
     if len(pred) < n_expected and field_mhz > 0 and j_db:
         pred = synthetic_lines(float(centre_hint or db_ppm or 0), j_db,
                                n_expected, field_mhz) or pred
 
-    if not pred or n_expected < 2:
+    if not pred:
         return LineMeasurement(measured=False)
-
-    j_ref = j_db
-    if j_db is not None and linewidth_hz:
-        j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
+    if n_expected < 2:
+        # one apex here: found or not, and no coupling to judge
+        found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
+        m = LineMeasurement(n_expected=1, n_found=min(len(found), 1),
+                            found_ppms=found[:1], measured=True)
+        m.predicted_lines = sync_predicted_lines(pred, found[:1], tolerance)
+        if found:
+            m.centre_ppm = float(found[0])
+        return m
 
     found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
     if j_ref is not None and len(found) == n_expected:
@@ -1187,8 +1233,8 @@ def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
     """
     if is_singlet_like(mult):
         return TIER_SINGLET
-    if (normalize_mult(mult) == PATTERN_MULT and n_expected is not None
-            and int(n_expected) < 2):
+    if n_expected is not None and int(n_expected) < 2:
+        # one apex at this study's width, whatever the letter or the shape
         return TIER_SINGLET
     complete = (n_found is None or n_expected is None
                 or (n_found >= n_expected >= 2))

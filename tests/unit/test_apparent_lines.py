@@ -100,3 +100,33 @@ def test_resolvable_pattern_without_width_merges_by_floor_only():
     pattern = [(-9.0, 0.7), (-0.9, 0.95), (0.25, 1.0), (8.2, 0.85)]
     assert len(resolvable_pattern(pattern, 0.0)) == 4
     assert len(resolvable_pattern(pattern, 2.0)) == 3
+
+
+def test_a_shoulder_is_not_an_apex():
+    # a 1:2:1 triplet at J = 2.8 Hz, linewidth 2.6: three maxima on a fine
+    # grid with hardly a dip between them -- one apex a detector can see
+    seen = apparent_lines([(-2.8, 0.5), (0.0, 1.0), (2.8, 0.5)], 2.6)
+    assert len(seen) == 1
+    # at J = 4.5 the dips are real
+    assert len(apparent_lines([(-4.5, 0.5), (0.0, 1.0), (4.5, 0.5)], 2.6)) == 3
+
+
+def test_measure_multiplet_expects_the_apices_at_this_width():
+    field = 500.0
+    # myo-inositol's triplet: one apex here, found on one peak
+    m = measure_multiplet([], [{'ppm': 4.047, 'rank': 1}], mult='t',
+                          j_coupling='2.8', db_ppm=4.047, centre_hint=4.047,
+                          n_expected=3, tolerance=0.05, field_mhz=field,
+                          linewidth_hz=2.6)
+    assert m.measured and m.n_expected == 1 and m.n_found == 1 and m.complete
+    assert m.delta_j_hz is None
+    # and without a linewidth the three lines are asked for, as before
+    m = measure_multiplet([], [{'ppm': 4.047, 'rank': 1}], mult='t',
+                          j_coupling='2.8', db_ppm=4.047, centre_hint=4.047,
+                          n_expected=3, tolerance=0.05, field_mhz=field)
+    assert m.n_expected == 3 and not m.complete
+
+
+def test_a_collapsed_multiplet_ranks_as_a_singlet():
+    from processing.annotation_scoring import TIER_SINGLET, candidate_tier
+    assert candidate_tier('t', None, 1, 1) == TIER_SINGLET

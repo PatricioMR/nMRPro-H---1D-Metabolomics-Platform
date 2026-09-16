@@ -84,6 +84,13 @@ MEASURED_COLUMNS = (
     # signals, so they partition its area and a neighbour's tail inside one
     # window is counted where it lies. What quantification divides by.
     ('profile_nh', 'REAL'),
+    # The share as measured, before the check against the listing. Where
+    # the two disagree by more than PROFILE_NH_TOLERANCE the reference
+    # spectrum itself is suspect there -- lactate's quartet at 4.10 ppm
+    # holds 0.65 protons of its listed 1 on the BMRB spectrum, attenuated
+    # by the water suppression -- and profile_nh falls back to the listing,
+    # which is stoichiometry and cannot be wrong by a third.
+    ('profile_nh_meas', 'REAL'),
 )
 
 # A coupling that moves between fields by more than this, beyond the two
@@ -207,6 +214,13 @@ def measure_entry(ppm, y, signals, *, field_mhz) -> list[dict]:
     return out
 
 
+# How far the measured proton share may sit from the listing before the
+# listing is used instead: the listing is stoichiometry; the measurement
+# adds the partition between overlapping windows, and the reference
+# spectrum's own artefacts with it.
+PROFILE_NH_TOLERANCE = 0.25
+
+
 def assign_profile_protons(measured) -> None:
     """``profile_nh`` on every measurement with a profile: the window's
     share of the compound's profiled area, times the listed protons of the
@@ -225,10 +239,15 @@ def assign_profile_protons(measured) -> None:
     total_nh = sum(float(m['listed']['protons']) for m in have)
     for m in measured:
         m['profile_nh'] = None
+        m['profile_nh_meas'] = None
     if total_area <= 0 or total_nh <= 0:
         return
     for m in have:
-        m['profile_nh'] = float(m['profile_area']) / total_area * total_nh
+        meas = float(m['profile_area']) / total_area * total_nh
+        listed = float(m['listed']['protons'])
+        m['profile_nh_meas'] = meas
+        m['profile_nh'] = (meas if abs(meas / listed - 1.0)
+                           <= PROFILE_NH_TOLERANCE else listed)
 
 
 def cut_profile(ppm, y, *, centre_ppm, window, field_mhz,
@@ -442,7 +461,8 @@ def main():
                 'meas_set=?, meas_field_mhz=?, meas_ph=?, meas_temp_k=?, '
                 'meas_buffer=?, j_field_dependence_hz=?, j_flag=?, '
                 'j_use=?, j_use_source=?, pattern_lines=?, pattern_n=?, '
-                'pattern_profile=?, profile_fwhm_hz=?, profile_nh=? '
+                'pattern_profile=?, profile_fwhm_hz=?, profile_nh=?, '
+                'profile_nh_meas=? '
                 'where id=?',
                 (m.get('ppm'), m.get('j_hz'), j_sigma,
                  m.get('linewidth_hz'), m.get('snr'),
@@ -452,7 +472,8 @@ def main():
                  pat_json, pat.get('n_lines') if pat_json else None,
                  m.get('profile') if pat_json else None,
                  m.get('profile_fwhm_hz') if pat_json else None,
-                 m.get('profile_nh') if pat_json else None, sid))
+                 m.get('profile_nh') if pat_json else None,
+                 m.get('profile_nh_meas') if pat_json else None, sid))
             n_sig += 1
         for d in disagreements(list(best.values())):
             report.append({'bmse': bmse, 'name': name, **d})

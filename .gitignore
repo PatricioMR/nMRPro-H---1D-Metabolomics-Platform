@@ -63,3 +63,4 @@ hmdb_api_download/_fid_download.log
 hmdb_api_download/_fid_errors.log
 hmdb_api_download/_v02_disagreements.csv
 databases/BMRB_Metabolomics_v02.db
+validation/out/
