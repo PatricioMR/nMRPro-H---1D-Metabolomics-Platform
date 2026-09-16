@@ -43,6 +43,55 @@ def multiplet_window(line_peaks) -> tuple[float, float] | None:
     return float(min(los)), float(max(his))
 
 
+# How far past its outer lines a signal's window reaches, in linewidths
+# (FWHM): three holds 90% of a Lorentzian's area on each side, and the
+# capture correction then scales by a number close to one. Detection's own
+# feet stop where the line meets the noise -- about 1.7 linewidths out for
+# a line of SNR 30 -- and a window that narrow held 67% of betaine's
+# singlet on a study whose answer was known, with the correction refused
+# for it, so the number came out 45% low.
+WINDOW_REACH_LINEWIDTHS = 3.0
+
+
+def signal_window(line_peaks, *, linewidth_ppm, other_peaks=()):
+    """Foot to foot over the signal's lines, let out to WINDOW_REACH_LINEWIDTHS
+    past the outer lines, and never into a neighbour: a foreign detected
+    peak bounds the window at the midpoint between it and the nearest
+    line, less half a linewidth.
+
+    Returns ``(lo, hi)`` or None without lines. ``other_peaks`` are
+    detected peaks that are not the signal's own lines.
+    """
+    base = multiplet_window(line_peaks)
+    if base is None:
+        return None
+    lo, hi = base
+    apexes = sorted(float(p.get('ppm', 0.0)) for p in line_peaks)
+    lw = abs(float(linewidth_ppm or 0.0))
+    if lw > 0:
+        lo = min(lo, apexes[0] - WINDOW_REACH_LINEWIDTHS * lw)
+        hi = max(hi, apexes[-1] + WINDOW_REACH_LINEWIDTHS * lw)
+        own = {id(p) for p in line_peaks}
+        own_ranks = {p.get('rank') for p in line_peaks if p.get('rank') is not None}
+        # A neighbour bounds the window whatever detection's feet said:
+        # the feet of a line that runs into its neighbour's are the
+        # neighbour's, and valine's doublet read 45% high with isoleucine's
+        # line inside its window that way. Never narrower than half a
+        # linewidth past the outer apex.
+        for q in other_peaks or ():
+            if id(q) in own or (q.get('rank') is not None
+                                and q.get('rank') in own_ranks):
+                continue
+            qp = float(q.get('ppm', 0.0))
+            if qp < apexes[0]:
+                lo = max(lo, min(apexes[0] - lw / 2.0,
+                                 (qp + apexes[0]) / 2.0 - lw / 2.0))
+            elif qp > apexes[-1]:
+                hi = min(hi, max(apexes[-1] + lw / 2.0,
+                                 (qp + apexes[-1]) / 2.0 + lw / 2.0))
+    return float(lo), float(hi)
+
+
 def _window_mask(ppm, lo, hi):
     ppm = np.asarray(ppm, dtype=float)
     if lo > hi:
@@ -185,7 +234,8 @@ def window_width_ppm(lo, hi) -> float:
 
 
 def integrate_signal(line_peaks, ppm, intensities, *, included=None,
-                     local_baseline=True, align=False, blank_indices=None):
+                     local_baseline=True, align=False, blank_indices=None,
+                     linewidth_ppm=None, other_peaks=()):
     """Everything the caller needs about one elected signal's area.
 
     Returns ``{'window': (lo, hi), 'width_ppm': w, 'areas': {sample: area},
@@ -197,8 +247,19 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
     ``blank_indices`` names the blank samples. They are integrated with the
     same window as everything else and their mean is subtracted, so the
     correction is measured in the region it corrects rather than assumed.
+
+    Given ``linewidth_ppm`` the window is ``signal_window``'s -- let out
+    past the outer lines, bounded by the neighbours in ``other_peaks`` --
+    and the result says so (``'geometry': 'lines'``), so the caller can
+    trust the capture correction on a window whose contents it knows.
     """
-    win = multiplet_window(line_peaks)
+    if linewidth_ppm:
+        win = signal_window(line_peaks, linewidth_ppm=linewidth_ppm,
+                            other_peaks=other_peaks)
+        geometry = 'lines'
+    else:
+        win = multiplet_window(line_peaks)
+        geometry = 'feet'
     if win is None:
         return None
     lo, hi = win
@@ -222,6 +283,7 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
         'areas': areas,
         'shifts': shifts,
         'blank_area': blank_area,
+        'geometry': geometry,
     }
 
 
@@ -236,7 +298,8 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
 MIN_TRUSTED_CAPTURE = 0.75
 
 
-def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm):
+def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
+                                 *, min_trusted=MIN_TRUSTED_CAPTURE):
     """How much of a signal's true area a window of these bounds contains.
 
     A Lorentzian's tails never end. Integrating between finite limits always
@@ -264,7 +327,10 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm):
     apodisation, so the correction is exact only to the extent the model holds;
     with no correction at all the error is the whole missing tail, which is
     larger. Returns None when it cannot be computed, and the caller then leaves
-    the area alone rather than scaling it by a guess.
+    the area alone rather than scaling it by a guess. ``min_trusted`` is the
+    fraction under which the window is not believed to describe the signal
+    (MIN_TRUSTED_CAPTURE); a caller that built the window itself, from the
+    lines and the neighbours, knows what it holds and may pass 0.
 
         Bharti, S.K. & Roy, R. (2012). Quantitative 1H NMR spectroscopy.
         TrAC Trends in Analytical Chemistry 35:5-26.
@@ -286,7 +352,7 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm):
                              - np.arctan((lo - p) / g)) / np.pi
     if not np.isfinite(f) or f <= 0:
         return None
-    if f < MIN_TRUSTED_CAPTURE:
+    if f < float(min_trusted):
         return None
     return float(min(f, 1.0))
 

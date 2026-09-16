@@ -36,6 +36,7 @@ from processing.quant_detection_limit import (
     integration_noise, local_noise_sigma, predicted_window, strength_band,
     window_is_excluded)
 from processing.quant_integration import (
+    MIN_TRUSTED_CAPTURE,
     integrate_across_samples, integrate_sample, integrate_signal,
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     refine_apex_ppm)
@@ -715,7 +716,9 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             lines = [peaks_by_rank[cand.peak_rank]]
         out = integrate_signal(lines, ppm, intensities, included=included,
                                local_baseline=local_baseline, align=align,
-                               blank_indices=blank_indices)
+                               blank_indices=blank_indices,
+                               linewidth_ppm=linewidth_ppm,
+                               other_peaks=list(peaks_by_rank.values()))
         if not out or not out['areas']:
             unmeasurable.append(mid)
             continue
@@ -731,9 +734,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         _lw = (cand.evidence or {}).get('line_weights')
         _weights = (list(_lw) if _lw and len(_lw) == len(lines)
                     else pascal_weights(len(lines)))
+        # A window built from the lines and the neighbours is known: the
+        # correction is arithmetic on it. Only a window from detection's
+        # feet alone is refused when it holds too little.
         captured = lorentzian_captured_fraction(
             [float(p.get('ppm', 0.0)) for p in lines],
-            _weights, lo, hi, linewidth_ppm / 2.0)
+            _weights, lo, hi, linewidth_ppm / 2.0,
+            min_trusted=(0.0 if out.get('geometry') == 'lines'
+                         else MIN_TRUSTED_CAPTURE))
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
@@ -1169,7 +1177,8 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # and how much of its own signal that window held. The overlap
         # correction the old stage promised, from the engine that now does it.
         '_used_j_resolve': bool(info.get('shared_with')),
-        '_j_resolve_frac': float(info.get('captured') or 1.0),
+        '_j_resolve_frac': (float(info.get('captured') or 1.0)
+                            if info.get('shared_with') else 1.0),
         '_used_mcr': False,
         '_mcr': None,
         '_lorentz': None,

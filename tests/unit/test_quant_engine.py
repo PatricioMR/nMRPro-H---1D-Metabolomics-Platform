@@ -55,8 +55,11 @@ class TestTheHappyPath:
     def test_the_window_is_reported_with_the_number(self):
         r = _run([_cand('A', 1, [1, 2])], _study([1.0, 1.0, 1.0]))[0]
         lo, hi = r['_multiplet_window']
-        assert lo == pytest.approx(1.464)
-        assert hi == pytest.approx(1.486)
+        # foot to foot over the lines, let out three linewidths (the
+        # engine's default 0.008 ppm) past the outer apices
+        assert lo == pytest.approx(1.47 - 3 * 0.008)
+        assert hi == pytest.approx(1.48 + 3 * 0.008)
+        assert lo <= 1.464 and hi >= 1.486
 
     def test_concentration_follows_the_signal_between_samples(self):
         rows = _run([_cand('A', 1, [1, 2])], _study([1.0, 2.0, 3.0]),
@@ -157,3 +160,33 @@ class TestTheContract:
         assert r['_used_j_resolve'] is False
         assert r['_j_resolve_frac'] == 1.0
         assert r['_used_mcr'] is False
+
+
+class TestTheSignalWindow:
+    def test_let_out_past_the_lines_and_never_into_a_neighbour(self):
+        from processing.quant_integration import signal_window
+        lines = [_peak(1, 1.47, half=0.003), _peak(2, 1.48, half=0.003)]
+        lo, hi = signal_window(lines, linewidth_ppm=0.005)
+        assert lo == pytest.approx(1.47 - 0.015)
+        assert hi == pytest.approx(1.48 + 0.015)
+        # a neighbour 0.012 above the upper line: the window stops at the
+        # midpoint plus half a linewidth, whatever the feet said
+        lo2, hi2 = signal_window(lines, linewidth_ppm=0.005,
+                                 other_peaks=[_peak(9, 1.492)])
+        assert hi2 == pytest.approx((1.492 + 1.48) / 2 + 0.0025)
+        assert lo2 == lo
+        # and never narrower than half a linewidth past the apex
+        lo3, hi3 = signal_window(lines, linewidth_ppm=0.005,
+                                 other_peaks=[_peak(9, 1.4805)])
+        assert hi3 == pytest.approx(1.48 + 0.0025)
+
+    def test_without_a_linewidth_the_feet_stand(self):
+        from processing.quant_integration import signal_window
+        lines = [_peak(1, 1.47, half=0.003), _peak(2, 1.48, half=0.003)]
+        lo, hi = signal_window(lines, linewidth_ppm=None)
+        assert (lo, hi) == pytest.approx((1.467, 1.483))
+
+    def test_the_capture_correction_applies_to_a_built_window(self):
+        r = _run([_cand('A', 1, [1, 2])], _study([1.0] * 3))[0]
+        assert r['_captured_fraction'] is not None
+        assert 0.85 < r['_captured_fraction'] <= 1.0

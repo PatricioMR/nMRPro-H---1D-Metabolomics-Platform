@@ -379,6 +379,10 @@ def run(db_path, *, seed=0, shapes=True):
         samples_info=SAMPLES, ref_peak=ref, ref_nh=STANDARD_NH,
         ref_conc=STANDARD_MM, ref_name='DSS', noise_sigma=sigma,
         use_pqn=False, local_baseline=False, quantify_shapes=shapes,
+        # as the application runs: the shared-window balance is parked
+        # (app_paths.DECONVOLUTION_ENABLED); on it gave lactate 40% of its
+        # own doublet, the rest to eight false claimants of the window
+        deconvolve=False,
         annotation_params=params)
     return report(rows, mets, truth, foreign, peaks, fp_stats)
 
