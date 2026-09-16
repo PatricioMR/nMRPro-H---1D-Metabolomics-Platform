@@ -175,10 +175,11 @@ class TestTheSignalWindow:
                                  other_peaks=[_peak(9, 1.492)])
         assert hi2 == pytest.approx((1.492 + 1.48) / 2 + 0.0025)
         assert lo2 == lo
-        # and never narrower than half a linewidth past the apex
+        # a neighbour right on the line still leaves half a linewidth
         lo3, hi3 = signal_window(lines, linewidth_ppm=0.005,
                                  other_peaks=[_peak(9, 1.4805)])
-        assert hi3 == pytest.approx(1.48 + 0.0025)
+        assert hi3 == pytest.approx((1.4805 + 1.48) / 2 + 0.0025)
+        assert hi3 >= 1.48 + 0.0025
 
     def test_without_a_linewidth_the_feet_stand(self):
         from processing.quant_integration import signal_window
