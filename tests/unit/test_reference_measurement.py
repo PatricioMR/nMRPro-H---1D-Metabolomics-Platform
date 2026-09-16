@@ -730,7 +730,11 @@ class TestTheMeasurementGoverns:
 
     def test_an_unresolved_m_with_a_pattern_is_governed(self):
         from processing.annotation_scoring import pattern_governs
-        assert pattern_governs('m', [[-7.0, 0.5], [0.0, 1.0], [7.0, 0.5]])
+        # a shape that is not a first-order letter
+        assert pattern_governs('m', [[-9.0, 0.7], [-0.9, 0.95], [0.25, 1.0],
+                                     [8.2, 0.85]])
+        # one that is, is matched as the letter instead
+        assert not pattern_governs('m', [[-7.0, 0.5], [0.0, 1.0], [7.0, 0.5]])
 
     def test_a_letter_the_pattern_agrees_with_keeps_the_letter(self):
         from processing.annotation_scoring import pattern_governs
@@ -740,9 +744,13 @@ class TestTheMeasurementGoverns:
     def test_a_letter_the_pattern_contradicts_is_overruled(self):
         import json
         from processing.annotation_scoring import pattern_governs
+        # a 'd' measured as an uneven three-line shape: the shape governs
+        uneven = [[-6.0, 0.663], [0.724, 1.0], [9.5, 0.456]]
+        assert pattern_governs('d', uneven)
+        assert pattern_governs('d', json.dumps(uneven))
+        # taurine's 'd', measured as an even triplet, is a triplet instead
         taurine = [[-6.0, 0.663], [0.724, 1.0], [7.131, 0.456]]
-        assert pattern_governs('d', taurine)
-        assert pattern_governs('d', json.dumps(taurine))
+        assert not pattern_governs('d', taurine)
         assert pattern_governs('s', [[-1.0, 0.9], [0.0, 1.0], [1.0, 0.9]])
 
     def test_no_pattern_no_say(self):
@@ -875,3 +883,38 @@ class TestTheProtonsUnderAProfile:
         assign_profile_protons(ms)
         assert ms[0]['profile_nh'] == pytest.approx(2.0)
         assert ms[1]['profile_nh'] is None
+
+
+class TestAMeasuredLetter:
+    """A pattern whose lines are evenly spaced at binomial heights is a
+    first-order multiplet, and is matched as one -- lines to find, a
+    coupling to measure -- whatever the listing said."""
+
+    def test_taurines_listed_doublet_is_a_triplet(self):
+        from processing.annotation_scoring import measured_letter, pattern_governs
+        pat = [[-6.0, 0.663], [0.724, 1.0], [7.131, 0.456]]
+        letter, j = measured_letter(pat)
+        assert letter == 't' and j == pytest.approx(6.57, abs=0.05)
+        assert not pattern_governs('d', pat)
+
+    def test_a_doublet_of_doublets_is_not_a_letter(self):
+        from processing.annotation_scoring import measured_letter, pattern_governs
+        pat = [[-9.035, 0.715], [-0.906, 0.944], [0.239, 1.0], [8.212, 0.862]]
+        assert measured_letter(pat) is None
+        assert pattern_governs('m', pat)
+
+    def test_a_one_hertz_splitting_is_not_a_doublet_here(self):
+        from processing.annotation_scoring import measured_letter
+        assert measured_letter([[-0.5, 0.97], [0.5, 1.0]]) is None
+
+    def test_uneven_spacing_or_wrong_heights_are_not_a_letter(self):
+        from processing.annotation_scoring import measured_letter
+        assert measured_letter([[-7.0, 1.0], [0.0, 1.0], [9.5, 1.0]]) is None
+        assert measured_letter([[-7.0, 0.1], [0.0, 1.0], [7.0, 0.1]]) is None
+        assert measured_letter([[-7.0, 1.0], [0.0, 0.3], [7.0, 1.0]]) is None
+
+    def test_a_quintets_faint_outer_pair_is_not_required(self):
+        from processing.annotation_scoring import measured_letter
+        pat = [[-14.0, 0.17], [-7.0, 0.67], [0.0, 1.0], [7.0, 0.67], [14.0, 0.17]]
+        letter, j = measured_letter(pat)
+        assert letter == 't' and j == pytest.approx(7.0)

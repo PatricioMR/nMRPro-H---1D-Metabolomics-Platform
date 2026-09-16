@@ -160,6 +160,7 @@ from processing.annotation_scoring import (
     expected_line_count,
     is_singlet_like,
     measure_multiplet,
+    measured_letter,
     pattern_governs,
     pattern_offsets_hz,
     ppm_score,
@@ -930,8 +931,13 @@ class AnnotationResultsWindow:
                     # the unresolved-multiplet sweep below drops the row and
                     # the found signal has no line to sit on.
                     for dp in rows:
-                        if pattern_governs(dp.get('type'),
-                                           dp.get('pattern_lines')):
+                        _letter = (measured_letter(pattern_offsets_hz(dp))
+                                   if dp.get('pattern_lines') else None)
+                        if _letter is not None:
+                            dp['type'] = _letter[0]
+                            dp['j_coupling'] = f'{float(_letter[1]):.2f}'
+                        elif pattern_governs(dp.get('type'),
+                                             dp.get('pattern_lines')):
                             dp['type'] = PATTERN_MULT
                     if 'transitions' in tables:
                         for dp in rows:

@@ -36,7 +36,8 @@ from utils.profiling import profiled
 from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
-    PATTERN_MULT, measure_pattern_signal, pattern_governs, pattern_offsets_hz,
+    PATTERN_MULT, measure_pattern_signal, measured_letter, pattern_governs,
+    pattern_offsets_hz,
     candidate_key, lines_explained, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
@@ -1458,6 +1459,25 @@ class _AnnotationSearchMixin:
                         j_hz = 0.0
 
                     is_singlet  = mult_raw in ('s', 'singlet', '')
+
+                    # A measured pattern that reads as a first-order letter
+                    # is matched as that letter with the spacing measured:
+                    # taurine's 3.41 is listed 'd' and is a triplet at 6.7
+                    # Hz, and a triplet it stays -- on the path with lines
+                    # to find and a coupling to measure.
+                    _letter = measured_letter(
+                        pattern_offsets_hz(entry)) if entry.get(
+                        'pattern_lines') else None
+                    if _letter is not None and _letter[0] != mult_raw:
+                        mult_raw, j_hz = _letter[0], float(_letter[1])
+                        j_raw = f'{j_hz:.2f}'
+                        is_singlet = False
+                        entry = dict(entry)
+                        entry['type'] = mult_raw
+                        entry['multiplicity'] = mult_raw
+                        entry['j_coupling'] = j_raw
+                        entry['listed_multiplicity'] = str(
+                            entry.get('type') or '')
 
                     # An unresolved multiplet whose pattern the reference DB
                     # measured is a multiplet with lines to find, not a

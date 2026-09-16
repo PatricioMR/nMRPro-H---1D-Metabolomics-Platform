@@ -596,6 +596,54 @@ def match_pattern(pattern, peaks, *, anchor_ppm, field_mhz,
     return best[1]
 
 
+# A measured pattern reads as a first-order letter when its lines are
+# evenly spaced -- the widest spacing within this factor of the narrowest --
+# and each line's height within this factor of the binomial one.
+LETTER_SPACING_RATIO = 1.3
+LETTER_HEIGHT_RATIO = 2.5
+# and a spacing at least this wide: a one-hertz splitting resolved on the
+# reference is a singlet at a study's linewidth, and asking for its two
+# lines would refuse the singlet that is there
+LETTER_MIN_J_HZ = 2.0
+_LETTER_BY_LINES = {2: 'd', 3: 't', 4: 'q', 5: 'quint', 6: 'sext', 7: 'sept'}
+
+
+def measured_letter(pattern, *, min_rel=GOVERN_MIN_REL) -> tuple | None:
+    """``(letter, j_hz)`` when the measured pattern is a first-order
+    multiplet -- lines evenly spaced at the heights the binomial theorem
+    gives -- else None.
+
+    Taurine's 3.41 ppm signal is listed 'd' and measured as three lines
+    6.7 Hz apart at 0.66 : 1 : 0.46: a triplet, and as a triplet it stays
+    on the first-order path -- lines to find, a coupling to measure --
+    rather than becoming a shape. Only lines above ``min_rel`` of the
+    tallest take part; the binomial's own outer lines are held to the same
+    bar, so a quintet's faint outer pair is not required of it.
+    """
+    lines = sorted((float(o), float(r)) for o, r in (pattern or ()))
+    lines = [(o, r) for o, r in lines if r >= min_rel]
+    n = len(lines)
+    if n < 2 or n not in _LETTER_BY_LINES:
+        return None
+    letter = _LETTER_BY_LINES[n]
+    expected = [h for h in LINE_INTENSITIES[letter]]
+    top = max(expected)
+    expected = [h / top for h in expected]
+    # the letter's own lines above the bar must be exactly these n
+    if sum(1 for h in expected if h >= min_rel) != n:
+        return None
+    spacings = [b - a for (a, _), (b, _) in zip(lines, lines[1:])]
+    if (min(spacings) < LETTER_MIN_J_HZ
+            or max(spacings) / min(spacings) > LETTER_SPACING_RATIO):
+        return None
+    kept_exp = [h for h in expected if h >= min_rel]
+    for (_o, r), e in zip(lines, kept_exp):
+        ratio = r / e
+        if ratio > LETTER_HEIGHT_RATIO or ratio < 1.0 / LETTER_HEIGHT_RATIO:
+            return None
+    return letter, float(sum(spacings) / len(spacings))
+
+
 def pattern_governs(mult, pattern) -> bool:
     """Whether a signal's measured line pattern, not its listed letter, says
     what to look for.
@@ -614,6 +662,10 @@ def pattern_governs(mult, pattern) -> bool:
     if len(lines) < 2:
         return False
     m = normalize_mult(mult)
+    # A pattern that reads as a first-order letter is matched as that
+    # letter (see measured_letter), whatever was listed
+    if measured_letter(lines) is not None:
+        return False
     if m in ('m', 'multiplet'):
         return True
     # Only lines of some height argue with the letter. At a signal-to-noise
