@@ -108,6 +108,27 @@ def test_a_peak_of_anybody_in_the_window_is_not_absence():
     assert _run(y, peaks, [met]) == 0
 
 
+def test_a_peak_of_noise_in_the_window_excuses_nothing():
+    """Creatinine's second singlet, expected at SNR 268, had a peak of SNR 7
+    in its window and was excused by it. A detected peak stands in for the
+    signal only when it is tall enough to be it."""
+    y, peaks, met = _aldehyde(y_extra=[(9.74, 7.0)])
+    noise_peak = _peak(9, 9.74)
+    noise_peak['snr'] = 7.0
+    peaks.append(noise_peak)
+    stats = {}
+    assert _run(y, peaks, [met], stats=stats) == 1
+    assert stats['contradicted'] == 1 and stats['peak_in_window'] == 0
+
+
+def test_a_tall_enough_peak_in_the_window_still_excuses():
+    y, peaks, met = _aldehyde(y_extra=[(9.74, 300.0)])
+    tall = _peak(9, 9.74)
+    tall['snr'] = 300.0
+    peaks.append(tall)
+    assert _run(y, peaks, [met]) == 0
+
+
 def test_a_signal_under_the_water_is_not_absence():
     """Lactate's CH quartet at 4.11 is the canonical case: 3H methyl doublet
     found, 1H quartet expected at 1/3 of it, and it sits where the solvent

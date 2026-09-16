@@ -169,8 +169,11 @@ def build_overlap_map(metabolites, peaks, *, tol: float = OVERLAP_TOL_PPM):
 #
 #   the signal would be clearly visible   expected SNR at or above the floor
 #   its region is not excluded            nothing in a suppressed region counts
-#   no detected peak sits in the window   a peak there is overlap, or the
-#                                         signal drifted; either way, not absent
+#   no detected peak that could be it     a peak there tall enough to be the
+#   sits in the window                    signal is overlap, or the signal
+#                                         drifted; either way, not absent. A
+#                                         peak of noise where SNR 268 was
+#                                         expected excuses nothing
 #   what IS there is far below expected   by the ratio, not by a little
 #
 # What fires is a contradiction of the fingerprint, and it marks every one of
@@ -186,6 +189,14 @@ CONTRADICTION_MIN_EXPECTED_SNR = 20.0
 # peak reads about 4 sigma, so a signal expected at 20 is contradicted only by
 # a region holding under 4 -- the noise itself -- and not by a weak line.
 CONTRADICTION_RATIO = 5.0
+
+
+def _peak_snr(pk) -> float:
+    try:
+        v = float(pk.get('snr'))
+    except (TypeError, ValueError):
+        return float('nan')
+    return v if v > 0 else float('nan')
 
 
 def _line_share(mult) -> float:
@@ -273,6 +284,9 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
              and float(noise) > 0 else estimate_noise(ppm, y))
     tol = abs(float(search_ppm if search_ppm is not None else tolerance_ppm))
     peak_ppms = np.array([float(p.get('ppm', 0.0)) for p in (peaks or ())])
+    # a detected peak's height, so a peak of noise in the window does not
+    # stand in for a signal thirty times its size
+    peak_snrs = np.array([_peak_snr(p) for p in (peaks or ())])
     counts = {'metabolites': 0, 'predicted': 0, 'matched': 0,
               'unresolved': 0, 'faint': 0, 'excluded': 0,
               'peak_in_window': 0, 'signal_present': 0, 'contradicted': 0,
@@ -338,11 +352,20 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                 counts['excluded'] += 1
                 verdicts.append((centre, mult, expected, 'excluded', None))
                 continue
-            if peak_ppms.size and np.any((peak_ppms >= lo) & (peak_ppms <= hi)):
-                counts['peak_in_window'] += 1
-                verdicts.append((centre, mult, expected, 'peak in window',
-                                 None))
-                continue
+            # A detected peak in the window exempts the signal only if it
+            # could be the signal: creatinine's second singlet, expected at
+            # SNR 268, had a peak of SNR 7 in its window and was excused
+            # by it. A peak with no recorded height still excuses -- it may
+            # be anything.
+            in_win = (peak_ppms >= lo) & (peak_ppms <= hi) if peak_ppms.size                 else np.zeros(0, dtype=bool)
+            if in_win.any():
+                tallest = peak_snrs[in_win]
+                known = tallest[np.isfinite(tallest)]
+                if known.size == 0 or float(known.max()) * float(ratio) >= expected:
+                    counts['peak_in_window'] += 1
+                    verdicts.append((centre, mult, expected, 'peak in window',
+                                     None))
+                    continue
             m = (ppm >= lo) & (ppm <= hi)
             if m.sum() < 3:
                 verdicts.append((centre, mult, expected, 'off the axis', None))
