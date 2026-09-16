@@ -225,6 +225,11 @@ def _line_share(mult) -> float:
 # peak further away than that is not this signal wearing a different shift.
 DRIFT_MULTIPLE = 3.0
 
+# The narrowest window a missing signal is looked for in around where its
+# siblings put it: six hertz at 600 MHz, about what pH moves the groups of
+# one molecule relative to each other.
+OWN_WINDOW_MIN_PPM = 0.010
+
 
 def search_half_width(*, tolerance_ppm, drift_ppm, linewidth_ppm) -> float:
     """Where a missing signal could be, if it were there at all.
@@ -255,7 +260,7 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                                search_ppm=None,
                                min_expected_snr=CONTRADICTION_MIN_EXPECTED_SNR,
                                ratio=CONTRADICTION_RATIO, manual_marks=None,
-                               stats=None, noise=None):
+                               stats=None, noise=None, linewidth_ppm=None):
     """Mark Bad every analyte whose fingerprint the spectrum contradicts.
 
     Returns the number of analytes marked. Each one carries
@@ -335,6 +340,20 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                   if mp.get('peak_ppm') is not None
                   and mp.get('db_ppm') is not None]
         own_shift = float(np.median(shifts)) if shifts else 0.0
+        # How far from its siblings' drift the missing signal may sit: the
+        # spread of the metabolite's own shifts, with margin, never under a
+        # few hertz -- pH moves the groups of one molecule by a little
+        # relative to each other -- and never past the study's window.
+        # The study's window is the drift of every analyte; a molecule
+        # whose two singlets sit +0.010 and +0.013 from the database does
+        # not have a third at +0.060, and a window that wide found lactate's
+        # quartet line and excused creatinine with it.
+        tol_met = tol
+        if shifts and linewidth_ppm:
+            spread = max((abs(v - own_shift) for v in shifts), default=0.0)
+            tol_met = min(tol, max(DRIFT_MULTIPLE * spread,
+                                   2.0 * float(linewidth_ppm),
+                                   OWN_WINDOW_MIN_PPM))
         found, verdicts = [], []
         for dp in met.get('db_peaks') or ():
             counts['predicted'] += 1
@@ -355,7 +374,7 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                 verdicts.append((centre, mult, expected, 'faint', None))
                 continue
             here = centre + own_shift
-            lo, hi = here - tol, here + tol
+            lo, hi = here - tol_met, here + tol_met
             if (in_excluded_region(lo, excluded_regions)
                     or in_excluded_region(hi, excluded_regions)
                     or in_excluded_region(here, excluded_regions)):

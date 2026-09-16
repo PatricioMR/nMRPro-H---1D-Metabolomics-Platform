@@ -2016,7 +2016,7 @@ class AnnotationResultsWindow:
             excluded_regions=excluded or (),
             manual_marks=(getattr(ann_stage, '_quality_marks', {})
                           if ann_stage else {}),
-            stats=stats, noise=noise_std)
+            stats=stats, noise=noise_std, linewidth_ppm=lw)
         stats['excluded_regions'] = list(excluded or ())
         stats['noise_source'] = ('detection' if noise_std else
                                  'tail estimate (no detection noise)')

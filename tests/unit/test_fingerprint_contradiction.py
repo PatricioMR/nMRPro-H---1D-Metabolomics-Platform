@@ -145,6 +145,22 @@ def test_a_signal_matched_to_a_peak_of_noise_is_looked_at_as_missing():
     assert stats.get('matched_to_noise') == 1
 
 
+def test_a_tall_peak_beyond_the_metabolites_own_drift_excuses_nothing():
+    """Creatinine's two singlets sat +0.010 and +0.013 from the database; a
+    third at +0.060 is not the same molecule. Lactate's quartet line 0.05
+    ppm away must not stand in for the missing one."""
+    y, peaks, met = _aldehyde(y_extra=[(9.77, 300.0)])     # +0.05 from 9.72
+    tall = _peak(9, 9.77)
+    tall['snr'] = 300.0
+    peaks.append(tall)
+    stats = {}
+    # the doublet sits +0.0075 from the database (own drift); with the
+    # linewidth the window is a few millippm, and 9.77 is outside it
+    assert _run(y, peaks, [met], stats=stats, linewidth_ppm=0.003) == 1
+    # without a linewidth the study window stands, as before
+    assert _run(y, peaks, [met]) == 0
+
+
 def test_a_signal_under_the_water_is_not_absence():
     """Lactate's CH quartet at 4.11 is the canonical case: 3H methyl doublet
     found, 1H quartet expected at 1/3 of it, and it sits where the solvent
