@@ -11,7 +11,8 @@ scores but whether anything else in the region could be the same peak.
 """
 from __future__ import annotations
 
-from processing.annotation_scoring import is_singlet_like
+from processing.annotation_scoring import (
+    is_singlet_like, lines_contradict_multiplicity)
 
 # Verdicts a signal can receive automatically. None is the middle band: the
 # evidence neither confirms nor rejects, and the analyst decides.
@@ -30,6 +31,9 @@ def quality_verdict(mp, *, params) -> tuple[str | None, str | None]:
                             it is alone in its window and uncontested.
       lines missing       → Bad. Some lines of the multiplet were not found, so
                             the coupling was never confirmed.
+      lines' heights      → Bad. All lines found, but the multiplet accounts
+      contradict            for too little of their height: a triplet claimed
+                            on a singlet and two lines of noise.
       all lines + Δppm    → Good, whatever the score says. A complete multiplet
       + ΔJ agreeing         at the right shift with the right coupling is an
                             identification; a composite number cannot overrule
@@ -53,6 +57,14 @@ def quality_verdict(mp, *, params) -> tuple[str | None, str | None]:
             and int(n_expected) >= 2 and int(n_found) < int(n_expected)):
         return QUALITY_BAD, (f'Incomplete multiplet: {n_found} of '
                              f'{n_expected} lines found')
+
+    _ex = mp.get('lines_explained')
+    if lines_contradict_multiplicity(mp.get('type') or mp.get('multiplicity'),
+                                     _ex, least=params.get('shape_min')):
+        return QUALITY_BAD, (f'Line intensities contradict the multiplicity: '
+                             f'the multiplet accounts for '
+                             f'{100 * float(_ex):.0f}% of the height it '
+                             f'claims')
 
     ppm_diff = float(mp.get('ppm_diff', 0) or 0)
     ppm_ok = ppm_diff < params['dppm_gold']

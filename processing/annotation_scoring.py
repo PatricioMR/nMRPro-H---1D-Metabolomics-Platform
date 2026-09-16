@@ -1066,13 +1066,83 @@ TIER_SINGLET = 2               # no J evidence by construction
 _BIG_BAND = 10 ** 6
 
 
-def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None) -> int:
-    """Evidence tier of one candidate — the first key of the ranking."""
+def lines_explained(ranks, heights, mult) -> float | None:
+    """The fraction of the found lines' height the multiplet accounts for.
+
+    The same question the shape fit asks of a complex multiplet, asked of a
+    first-order one: the largest copy of the binomial pattern that fits
+    under the found lines is bounded by the line that stands lowest against
+    its expected height -- other signals add height, never take it -- and
+    what that copy leaves unexplained belongs to something else. A triplet
+    claimed on a singlet of SNR 417 and two lines of noise at 5 accounts
+    for 5% of what it claims; a doublet with one leg under a neighbour
+    twice its height, for 50%; lactate's own doublet, for all of it.
+
+    ``pascal_agreement`` cannot tell those first two apart (0.67 for both):
+    it compares proportions after scaling each set to its own maximum,
+    and both are one line too tall or two lines too short by the same
+    amount. None where there is nothing to judge.
+    """
+    pattern = LINE_INTENSITIES.get(normalize_mult(mult))
+    if not pattern:
+        return None
+    rs = list(ranks or ())
+    hs = list(heights or ())
+    if len(rs) != len(hs) or len(rs) < 2:
+        return None
+    try:
+        obs = [float(h) for h in hs]
+    except (TypeError, ValueError):
+        return None
+    if any(not np.isfinite(o) or o < 0 for o in obs):
+        return None
+    if not all(0 <= int(r) < len(pattern) for r in rs):
+        return None
+    exp = [float(pattern[int(r)]) for r in rs]
+    total = sum(obs)
+    if total <= 0 or min(exp) <= 0:
+        return None
+    scale = min(o / e for o, e in zip(obs, exp))
+    return float(min(1.0, scale * sum(exp) / total))
+
+
+def lines_contradict_multiplicity(mult, explained, *, least=None) -> bool:
+    """Whether the found lines' heights rule the multiplicity out: the
+    multiplet accounts for less than ``least`` (``shape_min``, the same bar
+    a complex multiplet is confirmed at) of the height it claims.
+
+    Only for a first-order letter; a measured shape is judged by its own
+    fit.
+    """
+    m = normalize_mult(mult)
+    if is_singlet_like(m) or m == PATTERN_MULT or m not in LINE_INTENSITIES:
+        return False
+    bar = float(SCORING_DEFAULTS['shape_min'] if least is None else least)
+    return explained is not None and float(explained) < bar
+
+
+def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
+                   lines_explained_frac=None) -> int:
+    """Evidence tier of one candidate — the first key of the ranking.
+
+    A multiplet is confirmed by its lines being all there, its coupling
+    measured, and its lines standing in the proportions the multiplicity
+    says; the last is the evidence position alone cannot give, and a
+    triplet accounting for 5% of the height it claims is a singlet with
+    neighbours.
+    A shape that shows one apex at this study's width is a singlet's worth
+    of evidence, whatever the reference measured.
+    """
     if is_singlet_like(mult):
+        return TIER_SINGLET
+    if (normalize_mult(mult) == PATTERN_MULT and n_expected is not None
+            and int(n_expected) < 2):
         return TIER_SINGLET
     complete = (n_found is None or n_expected is None
                 or (n_found >= n_expected >= 2))
     if delta_j_hz is None or not complete:
+        return TIER_UNCONFIRMED_MULTIPLET
+    if lines_contradict_multiplicity(mult, lines_explained_frac):
         return TIER_UNCONFIRMED_MULTIPLET
     return TIER_CONFIRMED_MULTIPLET
 
@@ -1261,8 +1331,9 @@ def is_competitor(cand) -> bool:
     if is_singlet_like(mult):
         return True
     return candidate_tier(mult, cand.get('delta_j_hz'),
-                          cand.get('n_found'),
-                          cand.get('n_expected')) != TIER_UNCONFIRMED_MULTIPLET
+                          cand.get('n_found'), cand.get('n_expected'),
+                          cand.get('lines_explained')
+                          ) != TIER_UNCONFIRMED_MULTIPLET
 
 
 class CandidateKey(NamedTuple):
@@ -1335,7 +1406,8 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     return CandidateKey(
         manual=0 if manual == 'good' else 1,
         tier=candidate_tier(mult, cand.get('delta_j_hz'),
-                            cand.get('n_found'), cand.get('n_expected')),
+                            cand.get('n_found'), cand.get('n_expected'),
+                            cand.get('lines_explained')),
         dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz,
                    ref_sigma_hz=cand.get('j_sigma_hz')),
         ppm=ppm_band(cand.get('ppm_diff'), band_ppm),

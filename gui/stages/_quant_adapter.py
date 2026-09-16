@@ -97,6 +97,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'n_found': mp.get('_n_found_lines'),
                     'n_expected': mp.get('_n_exp_lines'),
                     'intensity_agreement': mp.get('intensity_agreement'),
+                    'lines_explained': mp.get('lines_explained'),
                     # The corroboration criterion. Annotation measured it; the
                     # election has to see the same number, or the winner here
                     # and the winner the Annotation window shows would be

@@ -36,7 +36,7 @@ from processing.annotation_scoring import (
     signal_score, dj_score, peak_shape_score, SCORING_DEFAULTS,
     measure_multiplet, expected_line_count, search_multiplet_in_window,
     PATTERN_MULT, measure_pattern_signal, pattern_governs, pattern_offsets_hz,
-    candidate_key, pascal_agreement, synthetic_lines,
+    candidate_key, lines_explained, pascal_agreement, synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
@@ -562,7 +562,7 @@ class _AnnotationSearchMixin:
             # A triplet is 1:2:1 by the binomial theorem, so this is evidence
             # about the claim that position cannot give — and the median over
             # samples is what keeps one overlapped apex from deciding it.
-            _ags = []
+            _ags, _exs = [], []
             for _s_i, _f in _fits.items():
                 if not _f.get('fitted'):
                     continue
@@ -570,6 +570,12 @@ class _AnnotationSearchMixin:
                                       r.get('type') or r.get('multiplicity'))
                 if _a is not None:
                     _ags.append(_a)
+                # and how much of the lines' height the multiplet accounts
+                # for -- the bar a first-order multiplet is confirmed at
+                _e = lines_explained(_f.get('ranks'), _f.get('heights'),
+                                     r.get('type') or r.get('multiplicity'))
+                if _e is not None:
+                    _exs.append(_e)
             # A pattern's agreement was measured at the match, against the
             # pattern's own heights; the comb fit has nothing to say about it
             # and must not overwrite it with None -- None sorts last in the
@@ -578,6 +584,8 @@ class _AnnotationSearchMixin:
             if not _is_pat:
                 r['intensity_agreement'] = (float(np.median(_ags))
                                             if _ags else None)
+                r['lines_explained'] = (float(np.median(_exs))
+                                        if _exs else None)
             r['intensity_n'] = len(_ags)
 
             r['per_sample_consensus'] = {

@@ -112,6 +112,10 @@ def _write_annotation_log(metabolites, stats):
                         reasons = (f'fit SNR {float(_pf["snr"]):.0f}, explains '
                                    f'{100 * float(_pf.get("explained") or 0):.0f}%'
                                    f'; {reasons}')
+                    elif mp.get('lines_explained') is not None:
+                        reasons = (f'lines explain '
+                                   f'{100 * float(mp["lines_explained"]):.0f}%'
+                                   f'; {reasons}')
                     dppm_s = f'{dppm:+.3f}' if dppm is not None else '   -  '
                     dj_s = f'{dj:5.2f}' if dj is not None else '  -  '
                     f.write(f'      {float(mp.get("db_ppm") or 0):6.3f} '
@@ -814,6 +818,7 @@ class AnnotationResultsWindow:
                 'pattern_field_mhz': r.get('pattern_field_mhz'),
                 'pattern_tolerance_ppm': r.get('pattern_tolerance_ppm'),
                 'pattern_fit': r.get('pattern_fit'),
+                'lines_explained': r.get('lines_explained'),
                 'pattern_profile': r.get('pattern_profile'),
                 'profile_fwhm_hz': r.get('profile_fwhm_hz'),
                 'profile_nh': r.get('profile_nh'),
