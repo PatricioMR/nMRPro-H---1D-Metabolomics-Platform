@@ -135,3 +135,51 @@ class TestTheShapeInTheEngine:
                         noise_sigma=SIGMA, deconvolve=False)
         row = next(r for r in rows if r['hmdb_id'] == 'S')
         assert any('Upper bound' in r for r in row['_status_reasons'])
+
+
+class TestTheShapeSwitch:
+    def _cands(self):
+        shape = Candidate(met_id='S', peak_rank=None, line_ranks=frozenset(),
+                          evidence=_shape_ev())
+        other = Candidate(met_id='D', peak_rank=1, line_ranks=frozenset({1, 2}),
+                          evidence={'multiplicity': 'd', 'delta_j_hz': 0.05,
+                                    'ppm_diff': 0.001, 'n_found': 2,
+                                    'n_expected': 2, 'protons': 1.0})
+        return shape, other
+
+    def _peaks(self):
+        return {1: {'rank': 1, 'ppm': 3.30, 'start_ppm': 3.294, 'end_ppm': 3.306},
+                2: {'rank': 2, 'ppm': 3.31, 'start_ppm': 3.304, 'end_ppm': 3.316}}
+
+    def test_off_reports_the_shape_as_not_quantified_and_moves_nothing_else(self):
+        from processing.quantification import SHAPES_OFF
+        shape, other = self._cands()
+        X = _study([100.0, 200.0, 400.0])
+        X[:, :] += 50.0 * (lines_model(PPM, [(-3.0, 1.0), (3.0, 1.0)], 3.305,
+                                       FWHM, FIELD))[:, None]
+        kw = dict(peaks_by_rank=self._peaks(), ppm=PPM, intensities=X,
+                  samples_info=[], included=[0, 1, 2], groups={'G': [0, 1, 2]},
+                  dj_gold_hz=0.2, noise_sigma=SIGMA, deconvolve=False)
+        on = {r['hmdb_id']: r for r in quantify(candidates=[shape, other], **kw)}
+        diag = {}
+        off = {r['hmdb_id']: r for r in quantify(candidates=[shape, other],
+                                                  quantify_shapes=False,
+                                                  diagnostics=diag, **kw)}
+        assert not on['S']['_not_quantified']
+        assert off['S']['_not_quantified']
+        assert off['S']['_rejection'] == SHAPES_OFF
+        assert 'shape fit' in off['S']['_status_reasons'][0]
+        assert off['D']['_areas_per_sample'] == on['D']['_areas_per_sample']
+        assert diag['shapes'] == {'off': True, 'left_out': 1}
+
+    def test_off_a_metabolite_with_a_peak_signal_still_competes_on_it(self):
+        shape, other = self._cands()
+        same = Candidate(met_id='S', peak_rank=1, line_ranks=frozenset({1, 2}),
+                         evidence=other.evidence)
+        rows = quantify(candidates=[shape, same], peaks_by_rank=self._peaks(),
+                        ppm=PPM, intensities=_study([100.0]), samples_info=[],
+                        included=[0], groups={'G': [0]}, dj_gold_hz=0.2,
+                        noise_sigma=SIGMA, deconvolve=False,
+                        quantify_shapes=False)
+        row = next(r for r in rows if r['hmdb_id'] == 'S')
+        assert row['_integ_mode'] == 'Multiplet'

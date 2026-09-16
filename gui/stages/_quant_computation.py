@@ -128,7 +128,8 @@ def _competitor_counts(metabolites) -> dict:
 
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                      ref_peak, ref_conc, ref_nh, ext_is, n_samples,
-                     excluded_regions, local_baseline, diagnostics=None):
+                     excluded_regions, local_baseline, shapes=None,
+                     diagnostics=None):
     """The run, written down where it can be read after the window closes.
 
     Two sections earn their place. The summary table is what was measured. The
@@ -150,6 +151,7 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'blk_sub      : {blk_sub}')
         _dbg(f, f'local_basel. : {local_baseline}')
         _dbg(f, f'window_align : {align}')
+        _dbg(f, f'shape_fit m* : {shapes}')
         # What was excluded is part of what the peak list means: the same
         # spectrum detected with a different window is a different study.
         _dbg(f, f'excluded     : {excluded_regions}')
@@ -513,6 +515,11 @@ class _QuantCompMixin:
         _dv = getattr(self, 'deconv_var', None)
         _deconv = (DECONVOLUTION_ENABLED if _dv is None
                    else bool(_dv.get()) and DECONVOLUTION_ENABLED)
+        # Complex multiplets by shape fit (ADR-013) are the analyst's choice
+        # too; off, they are reported as not quantified and nothing else
+        # in the table moves.
+        _sv = getattr(self, 'shape_var', None)
+        _shapes = bool(_sv.get()) if _sv is not None else False
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -538,6 +545,7 @@ class _QuantCompMixin:
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
             excluded_regions=_excl or (),
             deconvolve=_deconv,
+            quantify_shapes=_shapes,
             diagnostics=_diag,
         )
 
@@ -578,6 +586,7 @@ class _QuantCompMixin:
                          ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
                          excluded_regions=_excluded_used,
                          local_baseline=local_baseline,
+                         shapes=_shapes,
                          diagnostics=_diag)
 
         _norm_f = norm_mode

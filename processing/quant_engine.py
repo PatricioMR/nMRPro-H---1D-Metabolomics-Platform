@@ -42,7 +42,7 @@ from processing.quant_integration import (
 from processing.quant_shape import measure_shape
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
-    LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, elect,
+    LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, SHAPES_OFF, elect,
     is_competitor)
 
 # The status dots the results table shows. Confidence is about how much of the
@@ -642,7 +642,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              align=False, blank_indices=None,
              noise_sigma=None, linewidth_ppm=0.008,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
-             diagnostics=None) -> list[dict]:
+             quantify_shapes=True, diagnostics=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -658,11 +658,30 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     That is what the engine did before the balance existed, and it is the
     setting to compare against when a number moves.
 
+    ``quantify_shapes`` off leaves every complex multiplet (a candidate that
+    carries a ``shape_fit``, ADR-013) out of the election and out of the
+    table's numbers: they hold no peak, so nothing else moves, and each is
+    reported as not quantified with the switch named. The rest of the run
+    is then the plain peak-integration engine.
+
     ``diagnostics``, when a dict is passed, is filled with what the run did
     that no row can show — how many windows were shared, and why the ones that
     resolved nothing resolved nothing. A step that silently does nothing is
     indistinguishable from a step that is not there.
     """
+    candidates = list(candidates or ())
+    shapes_off: dict = {}
+    if not quantify_shapes:
+        kept = [c for c in candidates
+                if not (c.evidence or {}).get('shape_fit')]
+        with_peaks = {c.met_id for c in kept}
+        for c in candidates:
+            if (c.evidence or {}).get('shape_fit') \
+                    and c.met_id not in with_peaks:
+                shapes_off[c.met_id] = SHAPES_OFF
+        candidates = kept
+        if diagnostics is not None:
+            diagnostics['shapes'] = {'off': True, 'left_out': len(shapes_off)}
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                     ambiguous_ranks=ambiguous_ranks)
 
@@ -850,6 +869,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
 
     names = {c.met_id: ((c.payload or {}).get('name') if isinstance(
         c.payload, dict) else None) or c.met_id for c in (candidates or ())}
+    for mid, reason in shapes_off.items():
+        rows.append(_rejected_row(mid, reason))
     for mid, reason in election.rejected.items():
         if mid in recovered:
             continue

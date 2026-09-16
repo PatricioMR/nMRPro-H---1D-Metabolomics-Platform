@@ -286,6 +286,17 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         if DECONVOLUTION_ENABLED:
             self._j_resolve_cb.pack(side=tk.LEFT)
             self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
+        # Complex multiplets (m*) hold no peak: their lines were never found
+        # one by one. Quantifying them means fitting the reference's shape
+        # to each sample (ADR-013) -- a separate method, switched on here.
+        mf3 = ttk.Frame(s2); mf3.pack(fill=tk.X, pady=1)
+        self.shape_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            mf3, text='Quantify complex multiplets (m*) by shape fit',
+            variable=self.shape_var).pack(side=tk.LEFT)
+        ttk.Label(mf3, text='off: m* signals are listed as not quantified',
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         ttk.Label(s2,
                   text='Multiplicity: integrates the union of the multiplet signals\' '
                        'Signal-List boundaries; uses total nH.\n'

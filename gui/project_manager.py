@@ -229,6 +229,7 @@ class ProjectManager:
                 'mcr':              _safe_var(qnt, 'mcr_var'),
                 'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
                 'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
+                'shape_fit':        _safe_var(qnt, 'shape_var'),
                 # Saved under its old key: the setting is the same question
                 # and an old project that answered it must keep its answer.
                 'j_resolve':        _safe_var(qnt, 'deconv_var'),
@@ -578,7 +579,10 @@ class ProjectManager:
                 _set_var(qnt, 'blk_sub_var',     qnt_state.get('blk_sub'))
                 _set_var(qnt, 'ext_is_var',        qnt_state.get('ext_is'))
                 _set_var(qnt, 'local_baseline_var', qnt_state.get('local_baseline'))
-                _set_var(qnt, 'j_resolve_var',    qnt_state.get('j_resolve'))
+                _set_var(qnt, 'shape_var',        qnt_state.get('shape_fit'))
+                # saved under 'j_resolve' since the JG-Deconv box; the
+                # variable is deconv_var, and 'j_resolve_var' never existed
+                _set_var(qnt, 'deconv_var',       qnt_state.get('j_resolve'))
                 _set_var(qnt, 'ref_ppm_var',     qnt_state.get('ref_ppm'))
                 _set_var(qnt, 'ref_nh_var',      qnt_state.get('ref_nh'))
                 _set_var(qnt, 'ref_conc_var',    qnt_state.get('ref_conc'))

@@ -36,6 +36,7 @@ AMBIGUOUS_RANK = 'ambiguous_rank'
 NO_ELIGIBLE_SIGNAL = 'no_eligible_signal'
 NO_MEASURABLE_WINDOW = 'no_measurable_window'
 NOT_DETECTED = 'not_detected'
+SHAPES_OFF = 'shapes_off'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -50,6 +51,11 @@ REJECTION_TEXT = {
     NO_ELIGIBLE_SIGNAL:
         'Not quantified: no eligible signal — every one was marked Bad or has '
         'no detected peak.',
+    SHAPES_OFF:
+        'Not quantified: complex multiplet (m*) — its lines were never found '
+        'one by one, so it holds no peak to integrate, and shape fitting is '
+        'off in Quantification. Tick "Quantify complex multiplets by shape '
+        'fit" to measure it from its fitted shape.',
     NO_MEASURABLE_WINDOW:
         'Not quantified: no measurable window — the signal won its contest but '
         'no detected line bounds a region to integrate. Nothing is integrated '
