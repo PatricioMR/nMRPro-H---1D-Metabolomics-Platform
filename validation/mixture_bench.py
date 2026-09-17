@@ -425,7 +425,10 @@ def run(db_path, *, seed=0, shapes=True, shared=False):
         deconvolve=False,
         resolve_shared=shared,
         annotation_params=params)
-    return report(rows, mets, truth, foreign, peaks, fp_stats)
+    rep = report(rows, mets, truth, foreign, peaks, fp_stats)
+    # the study itself, for anything that wants to look at a row
+    rep.update({'rows': rows, 'ppm': PPM, 'X': X, 'samples_info': SAMPLES})
+    return rep
 
 
 def report(rows, mets, truth, foreign, peaks, fp_stats):
@@ -525,7 +528,7 @@ def main():
         '_shared' if args.shared else '')
     with open(os.path.join(OUT_DIR, f'bench_{tag}_seed{args.seed}.json'),
               'w', encoding='utf-8') as f:
-        json.dump({k: v for k, v in rep.items() if k != 'fingerprint'}, f,
+        json.dump({k: v for k, v in rep.items() if k not in ('fingerprint', 'rows', 'ppm', 'X', 'samples_info')}, f,
                   indent=1, default=float)
     print(f'({time.time() - t0:.0f} s)')
 

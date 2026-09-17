@@ -909,6 +909,7 @@ class _AnnotationSearchMixin:
                     _q_stage._quant_results       = []
                     _q_stage._all_peak_quant       = {}
                     _q_stage._quant_peak_overrides = {}
+                    _q_stage._deconv_overrides = {}
                     try:
                         _q_stage._populate_tree()
                     except Exception:

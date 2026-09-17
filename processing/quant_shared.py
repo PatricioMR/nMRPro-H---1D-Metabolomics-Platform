@@ -306,7 +306,7 @@ def _lines_of(ev) -> list:
 def resolve_shared_windows(measured, candidates, ppm, intensities, *,
                            per_proton_areas, included=None, linewidth_ppm,
                            names=None, is_accepted=None, lines_of=None,
-                           noise_sigma=None) -> dict:
+                           overrides=None, noise_sigma=None) -> dict:
     """Resolve, by their shapes, the windows of the winners that hold another
     accepted analyte's signal.
 
@@ -327,6 +327,12 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
     arbitrary share. What was left out is recorded in ``skipped`` on the
     result and said on the row.
 
+    ``overrides`` is what the analyst decided in the review window, by
+    owner: ``{'off': True}`` leaves that owner's window whole, and
+    ``{'exclude': [met_id, ...]}`` keeps those analytes out of it. Either
+    is said on the row: an edit that leaves no trace is a number nobody
+    can question.
+
     Returns ``{owner_met_id: result}`` with the owner's areas replaced in
     ``measured`` and ``per_proton_areas``, and ``shared_with``,
     ``deconv`` (the fit's components and remainder) and
@@ -335,6 +341,7 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
     names = names or {}
     accept = is_accepted or (lambda ev: True)
     where = lines_of or (lambda c: [])
+    overrides = overrides or {}
 
     def _evidence(c):
         ev = dict(c.evidence or {})
@@ -375,6 +382,15 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
     results = {}
     skipped: dict = {}
     for members in groups.values():
+        if any((overrides.get(m) or {}).get('off') for m in members):
+            for m in members:
+                winners[m]['unshared_reason'] = (
+                    'the analyst switched the resolution of this window off')
+            continue
+        excluded = set()
+        for m in members:
+            excluded |= {str(x) for x in
+                         (overrides.get(m) or {}).get('exclude', ())}
         lo = min(winners[m]['window'][0] for m in members)
         hi = max(winners[m]['window'][1] for m in members)
         comps = []
@@ -395,9 +411,11 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
             lines = _lines_of(ev)
             if not lines or not any(lo <= v <= hi for v in lines):
                 continue
-            if not found:
+            if not found or m in excluded:
                 skipped.setdefault(tuple(members), []).append(
-                    f"{names.get(m, m)} {str(ev.get('multiplicity') or '')}")
+                    f"{names.get(m, m)} {str(ev.get('multiplicity') or '')}"
+                    + (' (left out by the analyst)' if m in excluded else ''))
+                seen.add(m)
                 continue
             hint = None
             pp = per_proton_areas.get(m) or {}
@@ -422,7 +440,8 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
                 for m in members:
                     winners[m]['unshared_reason'] = (
                         f"{', '.join(left_out)} is listed inside it but "
-                        f"detection placed no line of it")
+                        f"took no share: not placed by detection, or left "
+                        f"out by the analyst")
             continue
         out = resolve_window(comps, ppm, intensities, included=included,
                              noise_sigma=noise_sigma)
@@ -449,3 +468,53 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
                                    for s_i, a in rec['areas'].items()}
             results[m] = out
     return results
+
+
+def refit_record(deconv, ppm, intensities, *, exclude=(), included=None,
+                 noise_sigma=None):
+    """The fit a recorded resolution would give without the analytes in
+    ``exclude`` -- what the review window shows before the analyst applies
+    an edit and the quantification is run again. Returns what
+    ``resolve_window`` returns, with the owners' windows as the record
+    had them: None when fewer than two components are left."""
+    exclude = {str(m) for m in exclude}
+    comps = [component_from_record(rec)
+             for rec in (deconv or {}).get('components', ())
+             if str(rec.get('met_id')) not in exclude]
+    comps = [c for c in comps if c is not None]
+    if len(comps) < 2:
+        return None
+    return resolve_window(comps, ppm, intensities, included=included,
+                          noise_sigma=noise_sigma)
+
+
+def component_curves(deconv, ppm, sample=None) -> list:
+    """Each recorded component's curve over the record's window at the
+    amplitude the fit gave it -- for ``sample`` (an index), or at the median
+    amplitude over samples when None. ``[(record, x, y), ...]``, x ascending
+    in ppm."""
+    if not deconv:
+        return []
+    p = np.asarray(ppm, dtype=float)
+    lo, hi = deconv['window']
+    sel = (p >= lo) & (p <= hi)
+    x = p[sel]
+    order = np.argsort(x)
+    x = x[order]
+    out = []
+    for rec in deconv.get('components', ()):
+        c = component_from_record(rec)
+        if c is None:
+            continue
+        amps = (deconv.get('amplitudes') or {}).get(rec['met_id']) or {}
+        if sample is not None:
+            a = amps.get(int(sample), amps.get(str(sample)))
+        else:
+            a = float(np.median(list(amps.values()))) if amps else None
+        if a is None:
+            continue
+        m = np.asarray(c.model(x), dtype=float)
+        top = float(m.max()) if m.size else 0.0
+        m = m / top if top > 0 else m
+        out.append((rec, x, float(a) * m))
+    return out

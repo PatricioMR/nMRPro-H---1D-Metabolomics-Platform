@@ -223,6 +223,9 @@ class ProjectManager:
                 'quant_peak_overrides': {
                     str(k): v for k, v in
                     (getattr(qnt, '_quant_peak_overrides', {}) or {}).items()},
+                'deconv_overrides': {
+                    str(k): dict(v) for k, v in
+                    (getattr(qnt, '_deconv_overrides', {}) or {}).items()},
                 'integ':            _safe_var(qnt, 'integ_var'),
                 'norm':             _safe_var(qnt, 'norm_var'),
                 'proton_corr':      _safe_var(qnt, 'proton_corr_var'),
@@ -570,6 +573,9 @@ class ProjectManager:
                         pass
                 qnt._quant_peak_overrides = dict(
                     qnt_state.get('quant_peak_overrides', {}) or {})
+                qnt._deconv_overrides = {
+                    str(k): dict(v) for k, v in
+                    (qnt_state.get('deconv_overrides', {}) or {}).items()}
                 _integ_loaded = qnt_state.get('integ')
                 if _integ_loaded == 'Lorentz':
                     _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed

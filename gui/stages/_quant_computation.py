@@ -433,6 +433,8 @@ class _QuantCompMixin:
         # survive a re-quantification. They are cleared when annotation re-runs.
         if not hasattr(self, '_quant_peak_overrides'):
             self._quant_peak_overrides = {}
+        if not hasattr(self, '_deconv_overrides'):
+            self._deconv_overrides = {}
         self._peak_competitor_count = {}
         self._pqn_factor = 1.0
 
@@ -580,6 +582,7 @@ class _QuantCompMixin:
             deconvolve=_deconv,
             quantify_shapes=_shapes,
             resolve_shared=_shared,
+            shared_overrides=dict(self._deconv_overrides or {}),
             diagnostics=_diag,
         )
 

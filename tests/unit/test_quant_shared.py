@@ -198,4 +198,58 @@ def test_the_winners_windows_are_resolved_with_accepted_intruders():
         lines_of=lambda c: ([lines[r] for r in c.line_ranks]
                             if c is not bet_here else []))
     assert res == {}
-    assert 'detection placed no line' in measured['TAU']['unshared_reason']
+    assert 'not placed by detection' in measured['TAU']['unshared_reason']
+
+
+def test_the_analysts_overrides_are_honoured_and_said():
+    X = _study([100, 120, 90], [60, 50, 70])
+    tau = _Cand('TAU', {'multiplicity': 't', 'protons': 2,
+                        'predicted_ppms': [3.25 - J / FIELD, 3.25,
+                                           3.25 + J / FIELD]}, ranks=(1, 2, 3))
+    bet_here = _Cand('BET', {'multiplicity': 's', 'protons': 9,
+                             'predicted_ppms': [3.254]}, ranks=(4,))
+    bet_own = _Cand('BET', {'multiplicity': 's', 'protons': 2,
+                            'predicted_ppms': [3.90]}, ranks=(9,))
+    lines = {1: 3.25 - J / FIELD, 2: 3.25, 3: 3.25 + J / FIELD, 4: 3.254,
+             9: 3.90}
+
+    def run(overrides):
+        measured = {
+            'TAU': {'signal': tau, 'nh': 2.0, 'window': (3.22, 3.28),
+                    'areas': {0: 1.0, 1: 1.0, 2: 1.0}, 'captured': 0.9},
+            'BET': {'signal': bet_own, 'nh': 2.0, 'window': (3.88, 3.92),
+                    'areas': {0: 1.0, 1: 1.0, 2: 1.0}, 'captured': 0.9}}
+        ppa = {'TAU': {0: 0.5, 1: 0.5, 2: 0.5},
+               'BET': {0: 0.5, 1: 0.5, 2: 0.5}}
+        res = resolve_shared_windows(
+            measured, [tau, bet_here, bet_own], PPM, X, per_proton_areas=ppa,
+            included=[0, 1, 2], linewidth_ppm=LW_PPM, names={'BET': 'betaine'},
+            lines_of=lambda c: [lines[r] for r in c.line_ranks],
+            overrides=overrides)
+        return res, measured
+
+    res, measured = run({'TAU': {'off': True}})
+    assert res == {}
+    assert 'analyst switched' in measured['TAU']['unshared_reason']
+    res, measured = run({'TAU': {'exclude': ['BET']}})
+    assert res == {}
+    assert 'left out by the analyst' in measured['TAU']['unshared_reason']
+    res, _ = run({'BET': {'off': True}})     # another owner's window: no effect
+    assert set(res) == {'TAU'}
+
+
+def test_a_record_can_be_refitted_without_an_analyte_and_drawn():
+    from processing.quant_shared import component_curves, refit_record
+    X = _study([100, 120, 90], [60, 50, 70])
+    out = resolve_window([_taurine(owner=True), _betaine()], PPM, X,
+                         included=[0, 1, 2])
+    again = refit_record(out, PPM, X, included=[0, 1, 2])
+    assert again['areas']['TAU'][0] == pytest.approx(out['areas']['TAU'][0])
+    assert refit_record(out, PPM, X, exclude=['BET']) is None
+    curves = component_curves(out, PPM)
+    assert [r['met_id'] for r, _, _ in curves] == ['TAU', 'BET']
+    rec, x, y = curves[0]
+    assert np.all(np.diff(x) > 0) and y.max() == pytest.approx(
+        np.median(list(out['amplitudes']['TAU'].values())), rel=1e-6)
+    rec, x, y1 = component_curves(out, PPM, sample=1)[1]
+    assert y1.max() == pytest.approx(out['amplitudes']['BET'][1], rel=1e-6)

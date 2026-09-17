@@ -645,7 +645,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              noise_sigma=None, linewidth_ppm=0.008,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
              quantify_shapes=True, resolve_shared=False,
-             diagnostics=None) -> list[dict]:
+             shared_overrides=None, diagnostics=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -671,7 +671,9 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     that hold another accepted analyte's signal (processing.quant_shared):
     the owner is credited with what its shape accounts for, the intruder
     held to its own clean measurement, the rest a remainder on the row.
-    Off, a window is its owner's whole, as before.
+    Off, a window is its owner's whole, as before. ``shared_overrides`` is
+    what the analyst decided per owner in the review window (see
+    ``quant_shared.resolve_shared_windows``).
 
     ``diagnostics``, when a dict is passed, is filled with what the run did
     that no row can show — how many windows were shared, and why the ones that
@@ -812,7 +814,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             per_proton_areas=per_proton_areas, included=included,
             linewidth_ppm=linewidth_ppm, names=_shared_names,
             lines_of=lambda c: _found_lines(c, peaks_by_rank),
-            noise_sigma=noise_sigma)
+            overrides=shared_overrides, noise_sigma=noise_sigma)
         if diagnostics is not None:
             diagnostics['shape_deconvolution'] = {
                 'windows': len(_resolved),
@@ -1198,6 +1200,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_captured_fraction': info.get('captured'),
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
+        '_unshared_reason': info.get('unshared_reason'),
         '_status_reasons': ((_deconv_reason(info) if info.get('deconv')
                              else _shared_reason(info))
                             + _shape_reason(info)
@@ -1243,8 +1246,8 @@ def _deconv_reason(info) -> list:
            f"area is what this analyte's own shape accounts for."]
     if d.get('skipped'):
         out.append(f"{', '.join(d['skipped'])} is listed here too but "
-                   f"took no share: not placed by detection, or a shape "
-                   f"this signal's own shape makes.")
+                   f"took no share: not placed by detection, a shape this "
+                   f"signal's own shape makes, or left out by the analyst.")
     if med >= REMAINDER_NOTE:
         out.append(f'The accepted shapes leave {100 * med:.0f}% of the '
                    f'window unexplained: something else is here.')

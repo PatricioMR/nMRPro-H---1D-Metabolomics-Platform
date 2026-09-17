@@ -45,6 +45,9 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # User multiplet overrides (hmdb_id → anchor peak_rank). Persist across
         # re-runs (cleared only when annotation is re-run); never reset in _run().
         self._quant_peak_overrides = {}
+        # What the analyst decided in the deconvolution review window, by
+        # owner; cleared with the peak overrides when annotation re-runs.
+        self._deconv_overrides = {}
         self._pqn_factor      = 1.0
         self._right_widget    = None
         self._detail_fig      = None
@@ -307,6 +310,9 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         ttk.Label(mf4, text='off: a window is its owner\'s whole',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        ttk.Button(s2, text='Review deconvolution…',
+                   command=lambda: self._open_deconvolution_window()).pack(
+                       anchor=tk.W, padx=4, pady=(1, 3))
         ttk.Label(s2,
                   text='Multiplicity: integrates the union of the multiplet signals\' '
                        'Signal-List boundaries; uses total nH.\n'
@@ -783,6 +789,11 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         menu.add_command(
             label='Quant Signals',
             command=lambda: self._open_quant_peaks_window(r))
+        if r.get('_deconv') or r.get('_unshared_reason'):
+            menu.add_command(
+                label='Deconvolution…',
+                command=lambda: self._open_deconvolution_window(
+                    str(r.get('hmdb_id', r['metabolite']))))
         menu.add_separator()
         if peak_rank is not None:
             menu.add_command(
@@ -863,6 +874,26 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             close_cb = lambda: self._on_quant_peaks_close(win)
             win._close_cb = close_cb
             win.win.protocol('WM_DELETE_WINDOW', win._do_close)
+        except Exception:
+            import traceback
+            traceback.print_exc()
+
+    def _open_deconvolution_window(self, select=None):
+        """Open or raise the review of the windows resolved by shape."""
+        from gui.widgets.deconvolution_window import DeconvolutionWindow
+        existing = getattr(self, '_deconv_win', None)
+        if existing is not None:
+            try:
+                if existing.win.winfo_exists():
+                    existing.refresh(select=select)
+                    existing.win.lift()
+                    return
+            except Exception:
+                pass
+            self._deconv_win = None
+        try:
+            self._deconv_win = DeconvolutionWindow(self.frame, self,
+                                                   select=select)
         except Exception:
             import traceback
             traceback.print_exc()

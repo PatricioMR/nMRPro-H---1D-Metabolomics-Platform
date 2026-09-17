@@ -242,3 +242,243 @@ def fit_shape(ppm, y, *, db_ppm, field_mhz, fwhm_hz, tolerance_ppm, sigma,
             'apex_ppms': [float(v) for v in xs[idx]],
             'apex_rel': [float(v) for v in ms[idx]],
             'model': lambda xx, _o=origin: model(np.asarray(xx, dtype=float), _o)}
+
+
+def profile_model(x_ppm, profile, origin_ppm, extra_fwhm_hz, field_mhz,
+                  *, step_hz=0.1) -> np.ndarray:
+    """The measured profile of a multiplet laid on ``x_ppm``.
+
+    ``profile`` is ``(offsets_hz, heights)`` sampled on a uniform grid at
+    ``step_hz`` from the reference spectrum, offsets from the reference
+    position. A study's lines are wider than the reference's; a Lorentzian
+    of width ``extra_fwhm_hz`` -- the study's width less the reference's,
+    Lorentzian widths adding under convolution -- broadens the profile to
+    the study's. Scaled so the tallest point is 1.
+    """
+    offs = np.asarray(profile[0], dtype=float)
+    h = np.asarray(profile[1], dtype=float)
+    if offs.size < 3 or h.max() <= 0:
+        return np.zeros(len(x_ppm))
+    if extra_fwhm_hz and float(extra_fwhm_hz) > 0:
+        hw = float(extra_fwhm_hz) / 2.0
+        k_off = np.arange(-4 * float(extra_fwhm_hz), 4 * float(extra_fwhm_hz)
+                          + step_hz, step_hz)
+        kern = hw ** 2 / (k_off ** 2 + hw ** 2)
+        kern /= kern.sum()
+        h = np.convolve(h, kern, mode='same')
+    x_hz = (np.asarray(x_ppm, dtype=float) - float(origin_ppm)) * float(field_mhz)
+    y = np.interp(x_hz, offs, h, left=0.0, right=0.0)
+    top = float(y.max()) if y.size else 0.0
+    return y / top if top > 0 else y
+
+
+def fit_profile_shape(ppm, y, profile, *, db_ppm, field_mhz, fwhm_hz,
+                      ref_fwhm_hz, tolerance_ppm, sigma,
+                      step_hz=0.5) -> dict | None:
+    """``fit_pattern_shape`` with the reference's measured profile as the
+    shape instead of Lorentzians on its lines. Same return."""
+    offs = np.asarray(profile[0], dtype=float)
+    if offs.size < 3 or not field_mhz or float(sigma or 0) <= 0:
+        return None
+    f = float(field_mhz)
+    extra = max(0.0, float(fwhm_hz or 0) - float(ref_fwhm_hz or 0))
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    half_span = (offs.max() - offs.min()) / 2.0 / f
+    reach = float(tolerance_ppm) + half_span + 3.0 * max(extra, 1.0) / f
+    sel = (ppm >= float(db_ppm) - reach) & (ppm <= float(db_ppm) + reach)
+    if sel.sum() < 8:
+        return None
+    x = ppm[sel]
+    t = y[sel]
+
+    def _at(origin):
+        m = profile_model(x, profile, origin, extra, f)
+        return _amplitude(t, m, sigma), m
+
+    best = None
+    for d in np.arange(-float(tolerance_ppm), float(tolerance_ppm) + 1e-12,
+                       float(step_hz) / f):
+        a, _m = _at(float(db_ppm) + d)
+        if best is None or a > best[0]:
+            best = (a, float(db_ppm) + d)
+    for d in np.arange(-float(step_hz), float(step_hz) + 1e-12,
+                       FINE_STEP_HZ) / f:
+        a, _m = _at(best[1] + d)
+        if a > best[0]:
+            best = (a, best[1] + d)
+    a, origin = best
+    m = profile_model(x, profile, origin, extra, f)
+    sup = m >= SUPPORT_REL
+    fitted = a * m
+    denom = float(t[sup].sum())
+    explained = float(min(1.0, fitted[sup].sum() / denom)) if denom > 0 else 0.0
+    ss_res = float(((t[sup] - fitted[sup]) ** 2).sum())
+    ss_tot = float(((t[sup] - t[sup].mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    inner = (m[1:-1] > m[:-2]) & (m[1:-1] >= m[2:]) & (m[1:-1] >= SUPPORT_REL)
+    apex = sorted(float(v) for v in x[1:-1][inner])
+    return {'origin_ppm': float(origin),
+            'shift_ppm': float(origin - float(db_ppm)),
+            'amplitude': float(a), 'snr': float(a / float(sigma)),
+            'explained': explained, 'r2': float(r2), 'apex_ppms': apex}
+
+
+def profile_model(x_ppm, profile, origin_ppm, extra_fwhm_hz, field_mhz,
+                  *, step_hz=0.1) -> np.ndarray:
+    """The measured profile of a multiplet laid on ``x_ppm``.
+
+    ``profile`` is ``(offsets_hz, heights)`` sampled on a uniform grid at
+    ``step_hz`` from the reference spectrum, offsets from the reference
+    position. A study's lines are wider than the reference's; a Lorentzian
+    of width ``extra_fwhm_hz`` -- the study's width less the reference's,
+    Lorentzian widths adding under convolution -- broadens the profile to
+    the study's. Scaled so the tallest point is 1.
+    """
+    offs = np.asarray(profile[0], dtype=float)
+    h = np.asarray(profile[1], dtype=float)
+    if offs.size < 3 or h.max() <= 0:
+        return np.zeros(len(x_ppm))
+    if extra_fwhm_hz and float(extra_fwhm_hz) > 0:
+        hw = float(extra_fwhm_hz) / 2.0
+        k_off = np.arange(-4 * float(extra_fwhm_hz), 4 * float(extra_fwhm_hz)
+                          + step_hz, step_hz)
+        kern = hw ** 2 / (k_off ** 2 + hw ** 2)
+        kern /= kern.sum()
+        h = np.convolve(h, kern, mode='same')
+    x_hz = (np.asarray(x_ppm, dtype=float) - float(origin_ppm)) * float(field_mhz)
+    y = np.interp(x_hz, offs, h, left=0.0, right=0.0)
+    top = float(y.max()) if y.size else 0.0
+    return y / top if top > 0 else y
+
+
+def fit_profile_shape(ppm, y, profile, *, db_ppm, field_mhz, fwhm_hz,
+                      ref_fwhm_hz, tolerance_ppm, sigma,
+                      step_hz=0.5) -> dict | None:
+    """``fit_pattern_shape`` with the reference's measured profile as the
+    shape instead of Lorentzians on its lines. Same return."""
+    offs = np.asarray(profile[0], dtype=float)
+    if offs.size < 3 or not field_mhz or float(sigma or 0) <= 0:
+        return None
+    f = float(field_mhz)
+    extra = max(0.0, float(fwhm_hz or 0) - float(ref_fwhm_hz or 0))
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    half_span = (offs.max() - offs.min()) / 2.0 / f
+    reach = float(tolerance_ppm) + half_span + 3.0 * max(extra, 1.0) / f
+    sel = (ppm >= float(db_ppm) - reach) & (ppm <= float(db_ppm) + reach)
+    if sel.sum() < 8:
+        return None
+    x = ppm[sel]
+    t = y[sel]
+
+    def _at(origin):
+        m = profile_model(x, profile, origin, extra, f)
+        return _amplitude(t, m, sigma), m
+
+    best = None
+    for d in np.arange(-float(tolerance_ppm), float(tolerance_ppm) + 1e-12,
+                       float(step_hz) / f):
+        a, _m = _at(float(db_ppm) + d)
+        if best is None or a > best[0]:
+            best = (a, float(db_ppm) + d)
+    for d in np.arange(-float(step_hz), float(step_hz) + 1e-12,
+                       FINE_STEP_HZ) / f:
+        a, _m = _at(best[1] + d)
+        if a > best[0]:
+            best = (a, best[1] + d)
+    a, origin = best
+    m = profile_model(x, profile, origin, extra, f)
+    sup = m >= SUPPORT_REL
+    fitted = a * m
+    denom = float(t[sup].sum())
+    explained = float(min(1.0, fitted[sup].sum() / denom)) if denom > 0 else 0.0
+    ss_res = float(((t[sup] - fitted[sup]) ** 2).sum())
+    ss_tot = float(((t[sup] - t[sup].mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    inner = (m[1:-1] > m[:-2]) & (m[1:-1] >= m[2:]) & (m[1:-1] >= SUPPORT_REL)
+    apex = sorted(float(v) for v in x[1:-1][inner])
+    return {'origin_ppm': float(origin),
+            'shift_ppm': float(origin - float(db_ppm)),
+            'amplitude': float(a), 'snr': float(a / float(sigma)),
+            'explained': explained, 'r2': float(r2), 'apex_ppms': apex}
+
+
+def profile_model(x_ppm, profile, origin_ppm, extra_fwhm_hz, field_mhz,
+                  *, step_hz=0.1) -> np.ndarray:
+    """The measured profile of a multiplet laid on ``x_ppm``.
+
+    ``profile`` is ``(offsets_hz, heights)`` sampled on a uniform grid at
+    ``step_hz`` from the reference spectrum, offsets from the reference
+    position. A study's lines are wider than the reference's; a Lorentzian
+    of width ``extra_fwhm_hz`` -- the study's width less the reference's,
+    Lorentzian widths adding under convolution -- broadens the profile to
+    the study's. Scaled so the tallest point is 1.
+    """
+    offs = np.asarray(profile[0], dtype=float)
+    h = np.asarray(profile[1], dtype=float)
+    if offs.size < 3 or h.max() <= 0:
+        return np.zeros(len(x_ppm))
+    if extra_fwhm_hz and float(extra_fwhm_hz) > 0:
+        hw = float(extra_fwhm_hz) / 2.0
+        k_off = np.arange(-4 * float(extra_fwhm_hz), 4 * float(extra_fwhm_hz)
+                          + step_hz, step_hz)
+        kern = hw ** 2 / (k_off ** 2 + hw ** 2)
+        kern /= kern.sum()
+        h = np.convolve(h, kern, mode='same')
+    x_hz = (np.asarray(x_ppm, dtype=float) - float(origin_ppm)) * float(field_mhz)
+    y = np.interp(x_hz, offs, h, left=0.0, right=0.0)
+    top = float(y.max()) if y.size else 0.0
+    return y / top if top > 0 else y
+
+
+def fit_profile_shape(ppm, y, profile, *, db_ppm, field_mhz, fwhm_hz,
+                      ref_fwhm_hz, tolerance_ppm, sigma,
+                      step_hz=0.5) -> dict | None:
+    """``fit_pattern_shape`` with the reference's measured profile as the
+    shape instead of Lorentzians on its lines. Same return."""
+    offs = np.asarray(profile[0], dtype=float)
+    if offs.size < 3 or not field_mhz or float(sigma or 0) <= 0:
+        return None
+    f = float(field_mhz)
+    extra = max(0.0, float(fwhm_hz or 0) - float(ref_fwhm_hz or 0))
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    half_span = (offs.max() - offs.min()) / 2.0 / f
+    reach = float(tolerance_ppm) + half_span + 3.0 * max(extra, 1.0) / f
+    sel = (ppm >= float(db_ppm) - reach) & (ppm <= float(db_ppm) + reach)
+    if sel.sum() < 8:
+        return None
+    x = ppm[sel]
+    t = y[sel]
+
+    def _at(origin):
+        m = profile_model(x, profile, origin, extra, f)
+        return _amplitude(t, m, sigma), m
+
+    best = None
+    for d in np.arange(-float(tolerance_ppm), float(tolerance_ppm) + 1e-12,
+                       float(step_hz) / f):
+        a, _m = _at(float(db_ppm) + d)
+        if best is None or a > best[0]:
+            best = (a, float(db_ppm) + d)
+    for d in np.arange(-float(step_hz), float(step_hz) + 1e-12,
+                       FINE_STEP_HZ) / f:
+        a, _m = _at(best[1] + d)
+        if a > best[0]:
+            best = (a, best[1] + d)
+    a, origin = best
+    m = profile_model(x, profile, origin, extra, f)
+    sup = m >= SUPPORT_REL
+    fitted = a * m
+    denom = float(t[sup].sum())
+    explained = float(min(1.0, fitted[sup].sum() / denom)) if denom > 0 else 0.0
+    ss_res = float(((t[sup] - fitted[sup]) ** 2).sum())
+    ss_tot = float(((t[sup] - t[sup].mean()) ** 2).sum())
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+    inner = (m[1:-1] > m[:-2]) & (m[1:-1] >= m[2:]) & (m[1:-1] >= SUPPORT_REL)
+    apex = sorted(float(v) for v in x[1:-1][inner])
+    return {'origin_ppm': float(origin),
+            'shift_ppm': float(origin - float(db_ppm)),
+            'amplitude': float(a), 'snr': float(a / float(sigma)),
+            'explained': explained, 'r2': float(r2), 'apex_ppms': apex}
