@@ -230,6 +230,7 @@ class ProjectManager:
                 'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
                 'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
                 'shape_fit':        _safe_var(qnt, 'shape_var'),
+                'shared_deconv':    _safe_var(qnt, 'shared_var'),
                 # Saved under its old key: the setting is the same question
                 # and an old project that answered it must keep its answer.
                 'j_resolve':        _safe_var(qnt, 'deconv_var'),
@@ -580,6 +581,7 @@ class ProjectManager:
                 _set_var(qnt, 'ext_is_var',        qnt_state.get('ext_is'))
                 _set_var(qnt, 'local_baseline_var', qnt_state.get('local_baseline'))
                 _set_var(qnt, 'shape_var',        qnt_state.get('shape_fit'))
+                _set_var(qnt, 'shared_var',       qnt_state.get('shared_deconv'))
                 # saved under 'j_resolve' since the JG-Deconv box; the
                 # variable is deconv_var, and 'j_resolve_var' never existed
                 _set_var(qnt, 'deconv_var',       qnt_state.get('j_resolve'))

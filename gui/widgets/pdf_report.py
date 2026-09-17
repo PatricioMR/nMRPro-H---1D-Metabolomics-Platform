@@ -294,6 +294,42 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         except Exception:
             _shape_drawn = False
 
+    # A window resolved by shape (ADR-015): this analyte's component filled,
+    # the others' drawn, so the reader sees what the number was cut from.
+    _dc = result.get('_deconv')
+    if _dc and not _shape_drawn:
+        try:
+            from processing.quant_shared import component_from_record
+            _wlo, _whi = _dc['window']
+            _sel = (ppm_f >= _wlo) & (ppm_f <= _whi)
+            _xs = ppm_f[_sel]
+            _order = np.argsort(_xs)
+            _mid = result.get('hmdb_id')
+            for _rec in _dc.get('components', ()):
+                _c = component_from_record(_rec)
+                if _c is None:
+                    continue
+                _amps = (_dc.get('amplitudes') or {}).get(_rec['met_id']) or {}
+                if not _amps:
+                    continue
+                _m = np.asarray(_c.model(_xs), dtype=float)
+                _top = float(_m.max()) if _m.size else 0.0
+                _m = _m / _top if _top > 0 else _m
+                _y = float(np.median(list(_amps.values()))) * _m
+                if _rec['met_id'] == _mid:
+                    ax.fill_between(_xs[_order], 0, _y[_order], alpha=0.35,
+                                    color=_ANALYTE_FILL, linewidth=0, zorder=2)
+                    ax.plot(_xs[_order], _y[_order], color='#2e7d32', lw=1.4,
+                            ls='--', zorder=5, label=_rec.get('label', ''))
+                else:
+                    ax.plot(_xs[_order], _y[_order], color='#c62828', lw=1.0,
+                            ls=':', zorder=4, label=_rec.get('label', ''))
+            ax.legend(fontsize=6, loc='upper left', framealpha=0.7,
+                      edgecolor='#cccccc')
+            _shape_drawn = True
+        except Exception:
+            _shape_drawn = False
+
     # Single-colour fill of the integrated area (NNLS → this analyte's fraction).
     if lo_f < hi_f and not _shape_drawn:
         xf = ppm_f[lo_f:hi_f + 1]
@@ -539,6 +575,15 @@ METHOD_REFERENCES = {
     'JG-Deconv': ('Shared-window balance',
                   'Non-negative least squares over the windows two analytes '
                   'share (Lawson & Hanson 1974).'),
+    'Resolved': ('Shared window resolved by shape',
+                 'The window is modelled per sample as a non-negative sum of '
+                 'the shapes of the analytes the annotation accepted in it, '
+                 "each at the study's linewidth on its detected lines; the "
+                 "area is what this analyte's own shape accounts for, an "
+                 'intruder held to at most twice what its own clean signal '
+                 'predicts. Bounded least squares: Lawson & Hanson 1974; '
+                 'targeted profiling: Weljie et al., Anal. Chem. 2006, 78, '
+                 '4430-4442.'),
 }
 
 
@@ -552,6 +597,8 @@ def _methods_used(r) -> list:
         out.append('MCR')
     if r.get('_used_j_resolve'):
         out.append('JG-Deconv')
+    if r.get('_deconv'):
+        out.append('Resolved')
     return out
 
 
@@ -564,6 +611,14 @@ def _method_label(r) -> str:
         if ex is not None:
             label += (f'; explains {100 * float(ex):.0f}% of its region'
                       + ('' if float(ex) >= 0.9 else ' (upper bound)'))
+    if 'Resolved' in keys:
+        d = r['_deconv']
+        others = [c['label'] for c in d.get('components', ())
+                  if c.get('met_id') != r.get('hmdb_id')]
+        rem = list((d.get('remainder') or {}).values())
+        label += f"; with {', '.join(others)}"
+        if rem:
+            label += f'; remainder {100 * float(np.median(rem)):.0f}%'
     return label
 
 

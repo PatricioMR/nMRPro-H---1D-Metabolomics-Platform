@@ -41,6 +41,7 @@ from processing.quant_integration import (
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     refine_apex_ppm)
 from processing.quant_shape import measure_shape
+from processing.quant_shared import REMAINDER_NOTE, resolve_shared_windows
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.quantification import (
     LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, SHAPES_OFF, elect,
@@ -643,7 +644,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              align=False, blank_indices=None,
              noise_sigma=None, linewidth_ppm=0.008,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
-             quantify_shapes=True, diagnostics=None) -> list[dict]:
+             quantify_shapes=True, resolve_shared=False,
+             diagnostics=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -664,6 +666,12 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     table's numbers: they hold no peak, so nothing else moves, and each is
     reported as not quantified with the switch named. The rest of the run
     is then the plain peak-integration engine.
+
+    ``resolve_shared`` on resolves, by their shapes, the winners' windows
+    that hold another accepted analyte's signal (processing.quant_shared):
+    the owner is credited with what its shape accounts for, the intruder
+    held to its own clean measurement, the rest a remainder on the row.
+    Off, a window is its owner's whole, as before.
 
     ``diagnostics``, when a dict is passed, is filled with what the run did
     that no row can show — how many windows were shared, and why the ones that
@@ -790,6 +798,26 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             v['neighbour_share'] = _removed.get(k, 0.0)
             per_proton_areas[k] = {s_i: a / v['nh']
                                    for s_i, a in v['areas'].items()}
+
+    # ── A window holding another accepted analyte's signal ───────────────
+    # Resolved by the shapes of the accepted analytes only, after each has
+    # been measured on its own; an intruder is held to what that
+    # measurement predicts (processing.quant_shared, ADR-015).
+    if resolve_shared:
+        _shared_names = {c.met_id: ((c.payload or {}).get('name')
+                                    if isinstance(c.payload, dict) else None)
+                         or c.met_id for c in candidates}
+        _resolved = resolve_shared_windows(
+            measured, candidates, ppm, intensities,
+            per_proton_areas=per_proton_areas, included=included,
+            linewidth_ppm=linewidth_ppm, names=_shared_names,
+            lines_of=lambda c: _found_lines(c, peaks_by_rank),
+            noise_sigma=noise_sigma)
+        if diagnostics is not None:
+            diagnostics['shape_deconvolution'] = {
+                'windows': len(_resolved),
+                'remainder_median': {m: float(np.median(list(
+                    r['remainder'].values()))) for m, r in _resolved.items()}}
 
     # ── Two analytes on one peak ───────────────────────────────────────
     # The election gives a contested peak to one owner, which is right -- two
@@ -1142,6 +1170,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_shape_fit': ((sig.evidence or {}).get('shape_fit')
                        if info.get('shape') else None),
         '_shape_explained': info.get('shape_explained'),
+        '_deconv': info.get('deconv'),
         '_noise_sigma': info.get('noise_sigma'),
         '_not_quantified': not good,
         '_peak': None,
@@ -1169,7 +1198,8 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_captured_fraction': info.get('captured'),
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
-        '_status_reasons': (_shared_reason(info)
+        '_status_reasons': ((_deconv_reason(info) if info.get('deconv')
+                             else _shared_reason(info))
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -1184,6 +1214,41 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_lorentz': None,
         '_is_is': False,
     }
+
+
+def _found_ranks(cand) -> list:
+    return sorted(cand.line_ranks or ()) or (
+        [cand.peak_rank] if cand.peak_rank is not None else [])
+
+
+def _found_lines(cand, peaks_by_rank) -> list:
+    """The peaks detection found for a signal, in ppm; empty when it found
+    none."""
+    return [float(peaks_by_rank[r].get('ppm', 0.0))
+            for r in _found_ranks(cand) if r in peaks_by_rank]
+
+
+def _deconv_reason(info) -> list:
+    """Said of a window resolved by shapes: with whom, and what the shapes
+    left unexplained."""
+    d = info.get('deconv')
+    if not d:
+        return []
+    mid = getattr(info.get('signal'), 'met_id', None)
+    others = [c['label'] for c in d.get('components', ())
+              if c.get('met_id') != mid]
+    rem = d.get('remainder') or {}
+    med = float(np.median(list(rem.values()))) if rem else 0.0
+    out = [f"Shared window resolved by shape with {', '.join(others)}: this "
+           f"area is what this analyte's own shape accounts for."]
+    if d.get('skipped'):
+        out.append(f"{', '.join(d['skipped'])} is listed here too but "
+                   f"took no share: not placed by detection, or a shape "
+                   f"this signal's own shape makes.")
+    if med >= REMAINDER_NOTE:
+        out.append(f'The accepted shapes leave {100 * med:.0f}% of the '
+                   f'window unexplained: something else is here.')
+    return out
 
 
 def _shape_reason(info) -> list:

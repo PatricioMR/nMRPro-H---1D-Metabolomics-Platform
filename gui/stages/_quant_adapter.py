@@ -375,7 +375,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      local_baseline=True, proton_correction=True, align=False,
                      subtract_blanks=False, noise_sigma=None,
                      excluded_regions=(), deconvolve=True,
-                     quantify_shapes=True, diagnostics=None):
+                     quantify_shapes=True, resolve_shared=False,
+                     diagnostics=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -476,5 +477,6 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         excluded_regions=excluded_regions,
         deconvolve=deconvolve,
         quantify_shapes=quantify_shapes,
+        resolve_shared=resolve_shared,
         diagnostics=diagnostics,
     ), n_s), metabolites, peaks_by_rank)

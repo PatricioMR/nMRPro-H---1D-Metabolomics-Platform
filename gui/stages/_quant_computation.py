@@ -129,7 +129,7 @@ def _competitor_counts(metabolites) -> dict:
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                      ref_peak, ref_conc, ref_nh, ext_is, n_samples,
                      excluded_regions, local_baseline, shapes=None,
-                     diagnostics=None):
+                     shared=None, diagnostics=None):
     """The run, written down where it can be read after the window closes.
 
     Two sections earn their place. The summary table is what was measured. The
@@ -152,6 +152,7 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'local_basel. : {local_baseline}')
         _dbg(f, f'window_align : {align}')
         _dbg(f, f'shape_fit m* : {shapes}')
+        _dbg(f, f'shared deconv: {shared}')
         # What was excluded is part of what the peak list means: the same
         # spectrum detected with a different window is a different study.
         _dbg(f, f'excluded     : {excluded_regions}')
@@ -238,7 +239,37 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                 _dbg(f, '  not resolve. Look at those regions before trusting '
                         'their neighbours.')
 
-        shared = [r for r in rows if r.get('_shared_with')]
+        resolved = [r for r in rows if r.get('_deconv')]
+        sd = (diagnostics or {}).get('shape_deconvolution')
+        if resolved or sd is not None:
+            _dbg(f, '')
+            _dbg(f, '── WINDOWS RESOLVED BY SHAPE ────────────────────────')
+            _dbg(f, "  Windows holding another accepted analyte's signal, "
+                    'modelled as the sum of')
+            _dbg(f, '  the accepted shapes. Each area is what its own shape '
+                    'accounts for; the')
+            _dbg(f, '  remainder is what no accepted shape explains.')
+            _dbg(f, '')
+            _dbg(f, f'  {"Metabolite":<30s}  {"window (ppm)":>16}'
+                    f'  {"mean mM":>9}  {"remainder":>9}  resolved with')
+            _dbg(f, '  ' + '-' * 90)
+            for r in sorted(resolved, key=lambda r: str(r.get('metabolite', ''))):
+                d = r['_deconv']
+                w = d.get('window') or (float('nan'),) * 2
+                rem = list((d.get('remainder') or {}).values())
+                med = float(np.median(rem)) if rem else float('nan')
+                others = [c['label'] for c in d.get('components', ())
+                          if c.get('met_id') != r.get('hmdb_id')]
+                _dbg(f, f'  {str(r.get("metabolite", "?"))[:30]:<30s}'
+                        f'  {w[0]:7.4f}-{w[1]:<7.4f}'
+                        f'  {r.get("conc_mm", float("nan")):>9.4f}'
+                        f'  {100 * med:>8.0f}%  {", ".join(others)}')
+            if not resolved:
+                _dbg(f, "  (none: no winner's window holds another accepted "
+                        "analyte's signal)")
+
+        shared = [r for r in rows if r.get('_shared_with')
+                  and not r.get('_deconv')]
         sh = (diagnostics or {}).get('shared')
         if sh and sh.get('off'):
             shared = []
@@ -520,6 +551,8 @@ class _QuantCompMixin:
         # in the table moves.
         _sv = getattr(self, 'shape_var', None)
         _shapes = bool(_sv.get()) if _sv is not None else False
+        _rv = getattr(self, 'shared_var', None)
+        _shared = bool(_rv.get()) if _rv is not None else False
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -546,6 +579,7 @@ class _QuantCompMixin:
             excluded_regions=_excl or (),
             deconvolve=_deconv,
             quantify_shapes=_shapes,
+            resolve_shared=_shared,
             diagnostics=_diag,
         )
 
@@ -586,7 +620,7 @@ class _QuantCompMixin:
                          ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
                          excluded_regions=_excluded_used,
                          local_baseline=local_baseline,
-                         shapes=_shapes,
+                         shapes=_shapes, shared=_shared,
                          diagnostics=_diag)
 
         _norm_f = norm_mode

@@ -85,3 +85,49 @@ def test_the_integration_row_names_method_multiplicity_and_protons():
     assert name('dd') == 'Doublet of doublets'
     assert name(None) == '—'
     assert name('xyz') == 'xyz'
+
+
+def _resolved_row():
+    from processing.quant_shared import component_from_evidence, resolve_window
+    lw = 2.6 / FIELD
+    tau = component_from_evidence(
+        'TAU', {'multiplicity': 't',
+                'predicted_ppms': [3.2 - 6.6 / FIELD, 3.2, 3.2 + 6.6 / FIELD]},
+        label='taurine t', linewidth_ppm=lw, nh=2, owner=True)
+    bet = component_from_evidence(
+        'BET', {'multiplicity': 's', 'peak_ppm': 3.204}, label='betaine s',
+        linewidth_ppm=lw, nh=9, per_proton_hint=1.0)
+    y = 100 * tau.model(PPM) + 60 * bet.model(PPM)
+    X = np.column_stack([y, y * 1.1])
+    out = resolve_window([tau, bet], PPM, X)
+    return X, {'metabolite': 'Taurine', 'hmdb_id': 'TAU', 'ppm': 3.2,
+               '_integ_mode': 'Multiplet', '_multiplet_window': [3.18, 3.22],
+               '_deconv': {'window': out['window'],
+                           'remainder': out['remainder'],
+                           'components': out['components'],
+                           'amplitudes': out['amplitudes'], 'skipped': []}}
+
+
+def test_a_resolved_window_names_its_method_and_partners():
+    rep = _report()
+    X, row = _resolved_row()
+    label = rep._method_label(row)
+    assert 'resolved by shape' in label and 'betaine s' in label
+    assert 'remainder' in label
+    assert rep._methods_used(row) == ['Standard', 'Resolved']
+    text = ' '.join(getattr(f, 'text', '') for f in
+                    rep._references_section([row], rep._make_styles()))
+    assert 'Weljie' in text and 'Lawson' in text
+
+
+def test_the_crop_draws_every_component_of_a_resolved_window():
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    X, row = _resolved_row()
+    fig, _r2 = _report()._peak_crop_fig(PPM, X, row, [], {})
+    ax = fig.axes[0]
+    labels = [ln.get_label() for ln in ax.get_lines()]
+    assert 'taurine t' in labels and 'betaine s' in labels
+    assert ax.collections, "the owner's component is filled"

@@ -297,6 +297,16 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         ttk.Label(mf3, text='off: m* signals are listed as not quantified',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        # A window holding another accepted analyte's signal, resolved by
+        # the two shapes after each was measured on its own (ADR-015).
+        mf4 = ttk.Frame(s2); mf4.pack(fill=tk.X, pady=1)
+        self.shared_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            mf4, text='Deconvolve windows two accepted analytes share (by shape)',
+            variable=self.shared_var).pack(side=tk.LEFT)
+        ttk.Label(mf4, text='off: a window is its owner\'s whole',
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         ttk.Label(s2,
                   text='Multiplicity: integrates the union of the multiplet signals\' '
                        'Signal-List boundaries; uses total nH.\n'

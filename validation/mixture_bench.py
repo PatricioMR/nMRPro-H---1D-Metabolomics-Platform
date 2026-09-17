@@ -399,7 +399,7 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
     return mets, params, stats
 
 
-def run(db_path, *, seed=0, shapes=True):
+def run(db_path, *, seed=0, shapes=True, shared=False):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
@@ -423,6 +423,7 @@ def run(db_path, *, seed=0, shapes=True):
         # (app_paths.DECONVOLUTION_ENABLED); on it gave lactate 40% of its
         # own doublet, the rest to eight false claimants of the window
         deconvolve=False,
+        resolve_shared=shared,
         annotation_params=params)
     return report(rows, mets, truth, foreign, peaks, fp_stats)
 
@@ -452,10 +453,15 @@ def report(rows, mets, truth, foreign, peaks, fp_stats):
         err_a = (got_a - t['A']) / t['A'] * 100 if np.isfinite(got_a) else np.nan
         err_b = (got_b - t['B']) / t['B'] * 100 if np.isfinite(got_b) else np.nan
         win = r.get('_multiplet_window') or [0, 0]
+        d = r.get('_deconv') or {}
+        rem = d.get('remainder') or {}
+        tag = (f" shared[{','.join(c['label'][:12] + ' sep=' + str(round(c.get('separability') or 0, 2)) for c in d.get('components', ()) if c.get('met_id') != r.get('hmdb_id'))}"
+               f" rem={100 * float(np.median(list(rem.values()))):.0f}%]"
+               if d else '')
         found.append((t['name'], t['A'], got_a, err_a, t['B'], got_b, err_b,
                       r.get('_integ_mode'), r.get('_multiplicity'),
                       f"{min(win):.3f}-{max(win):.3f} nH={r.get('_nh')} "
-                      f"cap={r.get('_captured_fraction')}"))
+                      f"cap={r.get('_captured_fraction')}{tag}"))
         errors += [e for e in (err_a, err_b) if np.isfinite(e)]
     false_pos = [(r['metabolite'], float(r.get('conc_mm') or 0),
                   float(r.get('ppm') or 0))
@@ -505,13 +511,18 @@ def main():
     ap.add_argument('--db', default=DB_DEFAULT)
     ap.add_argument('--seed', type=int, default=0)
     ap.add_argument('--no-shapes', action='store_true')
+    ap.add_argument('--shared', action='store_true',
+                    help='resolve shared windows by shape')
     args = ap.parse_args()
     t0 = time.time()
-    rep = run(args.db, seed=args.seed, shapes=not args.no_shapes)
+    rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
+              shared=args.shared)
     print_report(rep, label=f"{os.path.basename(args.db)}  shapes="
-                            f"{not args.no_shapes}  seed={args.seed}")
+                            f"{not args.no_shapes}  shared={args.shared}  "
+                            f"seed={args.seed}")
     os.makedirs(OUT_DIR, exist_ok=True)
-    tag = 'shapes' if not args.no_shapes else 'noshapes'
+    tag = ('shapes' if not args.no_shapes else 'noshapes') + (
+        '_shared' if args.shared else '')
     with open(os.path.join(OUT_DIR, f'bench_{tag}_seed{args.seed}.json'),
               'w', encoding='utf-8') as f:
         json.dump({k: v for k, v in rep.items() if k != 'fingerprint'}, f,
