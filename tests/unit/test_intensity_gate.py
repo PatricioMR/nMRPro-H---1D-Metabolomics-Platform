@@ -171,7 +171,12 @@ def test_delta_ppm_is_banded_from_the_studys_common_drift():
         annotate_drift_spread, candidate_key, study_drift)
     lac = {'id': 'LAC', 'matched_peaks': [
         {'peak_rank': 1, 'peak_ppm': 1.335, 'db_ppm': 1.318, 'delta_j_hz': 0.1,
-         '_n_found_lines': 2, '_n_exp_lines': 2, 'multiplicity': 'd'}]}
+         '_n_found_lines': 2, '_n_exp_lines': 2, 'multiplicity': 'd',
+         'annotation_quality': 'good'},
+        # a candidate the annotation did not accept says nothing
+        {'peak_rank': 9, 'peak_ppm': 4.20, 'db_ppm': 4.26, 'delta_j_hz': 0.1,
+         '_n_found_lines': 2, '_n_exp_lines': 2, 'multiplicity': 'd',
+         'annotation_quality': None}]}
     cre = {'id': 'CRE', 'matched_peaks': [
         {'peak_rank': 6, 'peak_ppm': 3.044, 'db_ppm': 3.024, 'multiplicity': 's'}]}
     pcr = {'id': 'PCR', 'matched_peaks': [

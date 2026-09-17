@@ -1533,7 +1533,12 @@ def study_drift(metabolites) -> float | None:
     shifts = []
     for met in metabolites or ():
         for mp in met.get('matched_peaks') or ():
-            if mp.get('peak_rank') is None or mp.get('annotation_quality') == 'bad':
+            # only what the annotation accepted: every database signal
+            # within tolerance of a peak is a candidate, and the median
+            # shift of all of them is the tolerance's centre, zero
+            if mp.get('peak_rank') is None or mp.get('annotation_quality') != 'good':
+                continue
+            if normalize_mult(mp.get('type') or mp.get('multiplicity')) == PATTERN_MULT:
                 continue
             n_f, n_e = mp.get('_n_found_lines'), mp.get('_n_exp_lines')
             if (mp.get('delta_j_hz') is None or n_f is None or n_e is None
