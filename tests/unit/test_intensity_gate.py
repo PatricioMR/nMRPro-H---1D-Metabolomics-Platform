@@ -164,3 +164,27 @@ def test_two_singlets_tied_on_every_band_are_ambiguous_whatever_the_score():
     b2 = dict(b, cosine=0.8)
     _o, amb = rank_candidates([a, b2], dj_gold_hz=0.2)
     assert amb is False
+
+
+def test_delta_ppm_is_banded_from_the_studys_common_drift():
+    from processing.annotation_scoring import (
+        annotate_drift_spread, candidate_key, study_drift)
+    lac = {'id': 'LAC', 'matched_peaks': [
+        {'peak_rank': 1, 'peak_ppm': 1.335, 'db_ppm': 1.318, 'delta_j_hz': 0.1,
+         '_n_found_lines': 2, '_n_exp_lines': 2, 'multiplicity': 'd'}]}
+    cre = {'id': 'CRE', 'matched_peaks': [
+        {'peak_rank': 6, 'peak_ppm': 3.044, 'db_ppm': 3.024, 'multiplicity': 's'}]}
+    pcr = {'id': 'PCR', 'matched_peaks': [
+        {'peak_rank': 6, 'peak_ppm': 3.044, 'db_ppm': 3.029, 'multiplicity': 's'}]}
+    assert study_drift([lac, cre, pcr]) == pytest.approx(0.017)
+    annotate_drift_spread([lac, cre, pcr])
+    a = cre['matched_peaks'][0]; b = pcr['matched_peaks'][0]
+    assert a['ppm_off_drift'] == pytest.approx(0.003)
+    assert b['ppm_off_drift'] == pytest.approx(0.002)
+    ka = candidate_key(dict(a, ppm_diff=0.020), dj_gold_hz=0.2)
+    kb = candidate_key(dict(b, ppm_diff=0.015), dj_gold_hz=0.2)
+    assert ka.ppm == kb.ppm == 0
+    # without a confirmed multiplet there is no common drift, and delta-ppm
+    # is banded from zero as before
+    annotate_drift_spread([cre, pcr])
+    assert cre['matched_peaks'][0]['ppm_off_drift'] is None

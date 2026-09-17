@@ -102,6 +102,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'lines_explained': mp.get('lines_explained'),
                     'lines_covary': mp.get('lines_covary'),
                     'drift_spread_ppm': mp.get('drift_spread_ppm'),
+                    'ppm_off_drift': mp.get('ppm_off_drift'),
                     # The corroboration criterion. Annotation measured it; the
                     # election has to see the same number, or the winner here
                     # and the winner the Annotation window shows would be

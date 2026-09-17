@@ -99,6 +99,7 @@ def candidate_evidence(mp, *, manual_quality=None) -> dict:
         'lines_covary':   mp.get('lines_covary'),
         'stocsy_partners': mp.get('stocsy_partners'),
         'drift_spread_ppm': mp.get('drift_spread_ppm'),
+        'ppm_off_drift':  mp.get('ppm_off_drift'),
         'cosine':         mp.get('_s_cosine'),
         'manual_quality': manual_quality,
         'quality':        mp.get('annotation_quality'),

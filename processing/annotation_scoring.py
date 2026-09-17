@@ -1525,13 +1525,50 @@ def drift_spread(matched_peaks) -> float | None:
     return float(max(abs(v - med) for v in shifts))
 
 
+def study_drift(metabolites) -> float | None:
+    """The study's common drift: the signed median shift of the confirmed
+    multiplets -- lines found, coupling measured -- from the database.
+    A multiplet confirmed on its coupling is where it is; a singlet's shift
+    is the thing in question. None without one."""
+    shifts = []
+    for met in metabolites or ():
+        for mp in met.get('matched_peaks') or ():
+            if mp.get('peak_rank') is None or mp.get('annotation_quality') == 'bad':
+                continue
+            n_f, n_e = mp.get('_n_found_lines'), mp.get('_n_exp_lines')
+            if (mp.get('delta_j_hz') is None or n_f is None or n_e is None
+                    or int(n_e) < 2 or int(n_f) < int(n_e)):
+                continue
+            try:
+                shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return float(np.median(shifts)) if shifts else None
+
+
 def annotate_drift_spread(metabolites) -> None:
-    """Write ``drift_spread_ppm`` on every matched peak of every metabolite,
-    so the ranking key can read it wherever a candidate is judged."""
+    """Write ``drift_spread_ppm`` and ``ppm_off_drift`` on every matched
+    peak of every metabolite, so the ranking key can read them wherever a
+    candidate is judged.
+
+    ``ppm_off_drift`` is the signal's shift measured from the study's common
+    drift rather than from zero. On the skin study every confirmed
+    multiplet sat +0.008 to +0.02 ppm from the database; a singlet at +0.020
+    is where this study puts things, not further from home than one at
+    +0.015, and the fixed band drawn at 0.020 from zero cut between them."""
+    common = study_drift(metabolites)
     for met in metabolites or ():
         spread = drift_spread(met.get('matched_peaks'))
         for mp in met.get('matched_peaks') or ():
             mp['drift_spread_ppm'] = spread
+            off = None
+            if common is not None and mp.get('peak_ppm') is not None                     and mp.get('db_ppm') is not None:
+                try:
+                    off = abs(float(mp['peak_ppm']) - float(mp['db_ppm'])
+                              - common)
+                except (TypeError, ValueError):
+                    off = None
+            mp['ppm_off_drift'] = off
 
 
 def corroboration_band(n_partners, cap: int = STOCSY_BAND_CAP) -> int:
@@ -1673,7 +1710,9 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
                             cand.get('lines_covary')),
         dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz,
                    ref_sigma_hz=cand.get('j_sigma_hz')),
-        ppm=ppm_band(cand.get('ppm_diff'), band_ppm),
+        ppm=ppm_band(cand.get('ppm_off_drift')
+                     if cand.get('ppm_off_drift') is not None
+                     else cand.get('ppm_diff'), band_ppm),
         quality=0 if quality == 'good' else 1,
         intensity=pascal_band(cand.get('intensity_agreement')),
         corroboration=corroboration_band(cand.get('stocsy_partners')),
