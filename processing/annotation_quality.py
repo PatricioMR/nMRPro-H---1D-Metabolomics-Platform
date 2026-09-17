@@ -66,6 +66,10 @@ def quality_verdict(mp, *, params) -> tuple[str | None, str | None]:
                              f'{100 * float(_ex):.0f}% of the height it '
                              f'claims')
 
+    if mp.get('lines_covary') is False:
+        return QUALITY_BAD, ('Lines do not co-vary across the samples: they '
+                            'are not one molecule')
+
     ppm_diff = float(mp.get('ppm_diff', 0) or 0)
     ppm_ok = ppm_diff < params['dppm_gold']
     dj = mp.get('delta_j_hz')

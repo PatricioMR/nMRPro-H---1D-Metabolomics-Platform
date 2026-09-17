@@ -78,6 +78,35 @@ def select_metabolite_per_rank(metabolites, manual_quality=None):
     return out
 
 
+def candidate_evidence(mp, *, manual_quality=None) -> dict:
+    """The evidence ``candidate_key`` reads, taken from a matched peak.
+
+    One place, so the ambiguity test here, the quantification adapter and
+    the election judge the same numbers: this dict once carried nine keys
+    of the eleven the key reads, and a contest the election settled on
+    STOCSY corroboration or drift coherence was declared ambiguous here
+    for want of them.
+    """
+    return {
+        'multiplicity':   mp.get('type') or mp.get('multiplicity'),
+        'delta_j_hz':     mp.get('delta_j_hz'),
+        'j_sigma_hz':     mp.get('j_sigma'),
+        'ppm_diff':       mp.get('ppm_diff'),
+        'n_found':        mp.get('_n_found_lines'),
+        'n_expected':     mp.get('_n_exp_lines'),
+        'intensity_agreement': mp.get('intensity_agreement'),
+        'lines_explained': mp.get('lines_explained'),
+        'lines_covary':   mp.get('lines_covary'),
+        'stocsy_partners': mp.get('stocsy_partners'),
+        'drift_spread_ppm': mp.get('drift_spread_ppm'),
+        'cosine':         mp.get('_s_cosine'),
+        'manual_quality': manual_quality,
+        'quality':        mp.get('annotation_quality'),
+        'score':          mp.get('composite_score',
+                                 mp.get('multiplet_score', 0.0)),
+    }
+
+
 def ambiguous_peak_ranks(metabolites, manual_quality=None,
                          dj_gold_hz=DJ_GOLD_HZ_DEFAULT):
     """Return peak ranks whose top candidates are too close to resolve safely.
@@ -102,20 +131,8 @@ def ambiguous_peak_ranks(metabolites, manual_quality=None,
             rank = mp.get("peak_rank")
             if rank is None or mp.get("annotation_quality") == "bad":
                 continue
-            by_rank.setdefault(rank, {})[mid] = {
-                'multiplicity':   mp.get('type') or mp.get('multiplicity'),
-                'delta_j_hz':     mp.get('delta_j_hz'),
-                'j_sigma_hz':     mp.get('j_sigma'),
-                'ppm_diff':       mp.get('ppm_diff'),
-                'n_found':        mp.get('_n_found_lines'),
-                'n_expected':     mp.get('_n_exp_lines'),
-                'intensity_agreement': mp.get('intensity_agreement'),
-                'cosine':         mp.get('_s_cosine'),
-                'manual_quality': manual_quality.get((mid, rank)),
-                'quality':        mp.get('annotation_quality'),
-                'score':          mp.get('composite_score',
-                                         mp.get('multiplet_score', 0.0)),
-            }
+            by_rank.setdefault(rank, {})[mid] = candidate_evidence(
+                mp, manual_quality=manual_quality.get((mid, rank)))
 
     ambiguous = set()
     for rank, by_mid in by_rank.items():

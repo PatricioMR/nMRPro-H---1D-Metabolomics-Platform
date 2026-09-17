@@ -159,6 +159,7 @@ from processing.annotation_scoring import (
     dj_score,
     expected_line_count,
     is_singlet_like,
+    annotate_drift_spread,
     measure_multiplet,
     measured_letter,
     pattern_governs,
@@ -820,6 +821,7 @@ class AnnotationResultsWindow:
                 'pattern_tolerance_ppm': r.get('pattern_tolerance_ppm'),
                 'pattern_fit': r.get('pattern_fit'),
                 'lines_explained': r.get('lines_explained'),
+                'lines_covary': r.get('lines_covary'),
                 'pattern_profile': r.get('pattern_profile'),
                 'profile_fwhm_hz': r.get('profile_fwhm_hz'),
                 'profile_nh': r.get('profile_nh'),
@@ -2197,6 +2199,9 @@ class AnnotationResultsWindow:
         _manual_for_q = {(str(k[0]), k[1]): v
                          for k, v in (_qm_for_q or {}).items()}
         from gui.stages._annotation_helpers import ambiguous_peak_ranks
+        # how far each metabolite's own signals sit from their common
+        # drift, for the ranking to read
+        annotate_drift_spread(self.metabolites)
         self._ambiguous_peak_ranks = ambiguous_peak_ranks(
             self.metabolites, manual_quality=_manual_for_q)
 

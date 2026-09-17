@@ -1204,6 +1204,104 @@ def lines_explained(ranks, heights, mult) -> float | None:
     return float(min(1.0, scale * sum(exp) / total))
 
 
+# The lines of one multiplet are one molecule at one concentration: across
+# samples their heights rise and fall together. Two singlets of different
+# molecules at the right spacing -- creatine's methylene and betaine's, 12 Hz
+# apart, claimed as uridine's doublet -- do not. Judged only where both lines
+# stand well over the noise, so a faint line's noise does not read as a
+# molecule that is not there.
+COVARY_MIN_SAMPLES = 5
+COVARY_MIN_SNR = 30.0
+
+
+def lines_covary(fits, *, noise=None, min_r=None,
+                 min_samples=COVARY_MIN_SAMPLES,
+                 min_snr=COVARY_MIN_SNR) -> bool | None:
+    """Whether the found lines of a multiplet rise and fall together across
+    the samples: the least Pearson r between any two lines' heights is at
+    least ``min_r`` -- the same bar STOCSY corroboration uses.
+
+    ``fits`` maps sample index to a per-sample fit with ``ranks`` and
+    ``heights`` (``multiplet_line_fit.fit_across_samples``). None when
+    there is nothing to judge: fewer than ``min_samples`` samples with two
+    lines fitted, or lines whose median height, against ``noise``, is
+    under ``min_snr`` -- where the noise alone would break the
+    correlation. None is not disagreement.
+    """
+    by_rank: dict = {}
+    for s_i, f in (fits or {}).items():
+        if not f or not f.get('fitted'):
+            continue
+        for r, h in zip(f.get('ranks') or (), f.get('heights') or ()):
+            try:
+                by_rank.setdefault(int(r), {})[s_i] = float(h)
+            except (TypeError, ValueError):
+                continue
+    ranks = sorted(by_rank)
+    if len(ranks) < 2:
+        return None
+    worst = None
+    for i in range(len(ranks)):
+        for j in range(i + 1, len(ranks)):
+            a, b = by_rank[ranks[i]], by_rank[ranks[j]]
+            common = sorted(set(a) & set(b))
+            if len(common) < int(min_samples):
+                continue
+            ha = np.array([a[k] for k in common])
+            hb = np.array([b[k] for k in common])
+            if noise:
+                if (np.median(ha) < float(min_snr) * float(noise)
+                        or np.median(hb) < float(min_snr) * float(noise)):
+                    continue
+            if ha.std() <= 0 or hb.std() <= 0:
+                continue
+            r = float(np.corrcoef(ha, hb)[0, 1])
+            worst = r if worst is None else min(worst, r)
+    if worst is None:
+        return None
+    return worst >= float(STOCSY_MIN_R if min_r is None else min_r)
+
+
+def line_heights_per_sample(ppm, intensities, line_ppms, *, included=None,
+                            half_ppm) -> dict:
+    """``{line_index: {sample: apex height}}`` -- the tallest point within
+    ``half_ppm`` of each line in every sample, straight off the traces. The
+    detector's per-sample fit is not needed for this: a line is where it
+    is, and how tall it stands in each sample is what co-variation reads."""
+    ppm = np.asarray(ppm, dtype=float)
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    n_s = arr.shape[1]
+    idx = range(n_s) if included is None else [i for i in included
+                                              if 0 <= i < n_s]
+    out: dict = {}
+    for li, lp in enumerate(line_ppms or ()):
+        m = np.abs(ppm - float(lp)) <= float(half_ppm)
+        if not m.any():
+            continue
+        out[li] = {int(s): float(arr[m, s].max()) for s in idx}
+    return out
+
+
+def lines_covary_on_trace(ppm, intensities, line_ppms, *, included=None,
+                          half_ppm, noise=None, **kw) -> bool | None:
+    """``lines_covary`` read off the traces: the lines' apex heights per
+    sample, then the same test. For any multi-line candidate, a pattern
+    matched on the peak list included."""
+    heights = line_heights_per_sample(ppm, intensities, line_ppms,
+                                      included=included, half_ppm=half_ppm)
+    if len(heights) < 2:
+        return None
+    samples = sorted(set().union(*(set(v) for v in heights.values())))
+    fits = {s: {'fitted': True,
+                'ranks': [li for li in heights if s in heights[li]],
+                'heights': [heights[li][s] for li in heights
+                            if s in heights[li]]}
+            for s in samples}
+    return lines_covary(fits, noise=noise, **kw)
+
+
 def lines_contradict_multiplicity(mult, explained, *, least=None) -> bool:
     """Whether the found lines' heights rule the multiplicity out: the
     multiplet accounts for less than ``least`` (``shape_min``, the same bar
@@ -1220,7 +1318,7 @@ def lines_contradict_multiplicity(mult, explained, *, least=None) -> bool:
 
 
 def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
-                   lines_explained_frac=None) -> int:
+                   lines_explained_frac=None, covary=None) -> int:
     """Evidence tier of one candidate — the first key of the ranking.
 
     A multiplet is confirmed by its lines being all there, its coupling
@@ -1241,6 +1339,9 @@ def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
     if delta_j_hz is None or not complete:
         return TIER_UNCONFIRMED_MULTIPLET
     if lines_contradict_multiplicity(mult, lines_explained_frac):
+        return TIER_UNCONFIRMED_MULTIPLET
+    if covary is False:
+        # lines that do not rise and fall together are not one molecule
         return TIER_UNCONFIRMED_MULTIPLET
     return TIER_CONFIRMED_MULTIPLET
 
@@ -1381,6 +1482,52 @@ def corroborating_partners(peak_rank, partner_ranks, peak_corr,
     return n
 
 
+# One band of drift coherence: what pH moves the groups of one molecule
+# relative to each other, and the precision a position is measured to.
+DRIFT_BAND_PPM = 0.005
+DRIFT_BAND_CAP = 3
+
+
+def drift_band(spread_ppm, band: float = DRIFT_BAND_PPM,
+               cap: int = DRIFT_BAND_CAP) -> int:
+    """The spread of a metabolite's own shifts as a rank band; lower is
+    better; a metabolite with nothing to spread sorts first."""
+    if spread_ppm is None:
+        return 0
+    try:
+        v = abs(float(spread_ppm))
+    except (TypeError, ValueError):
+        return 0
+    return int(min(cap, v // float(band)))
+
+
+def drift_spread(matched_peaks) -> float | None:
+    """How far the metabolite's matched signals sit from their common
+    drift: the largest |shift - median shift| over the signals with a peak
+    that are not marked Bad. None with fewer than two."""
+    shifts = []
+    for mp in matched_peaks or ():
+        if mp.get('peak_rank') is None or mp.get('annotation_quality') == 'bad':
+            continue
+        try:
+            shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if len(shifts) < 2:
+        return None
+    med = float(np.median(shifts))
+    return float(max(abs(v - med) for v in shifts))
+
+
+def annotate_drift_spread(metabolites) -> None:
+    """Write ``drift_spread_ppm`` on every matched peak of every metabolite,
+    so the ranking key can read it wherever a candidate is judged."""
+    for met in metabolites or ():
+        spread = drift_spread(met.get('matched_peaks'))
+        for mp in met.get('matched_peaks') or ():
+            mp['drift_spread_ppm'] = spread
+
+
 def corroboration_band(n_partners, cap: int = STOCSY_BAND_CAP) -> int:
     """Corroborating partners as a rank band; lower is better.
 
@@ -1430,7 +1577,7 @@ def is_competitor(cand) -> bool:
         return True
     return candidate_tier(mult, cand.get('delta_j_hz'),
                           cand.get('n_found'), cand.get('n_expected'),
-                          cand.get('lines_explained')
+                          cand.get('lines_explained'), cand.get('lines_covary')
                           ) != TIER_UNCONFIRMED_MULTIPLET
 
 
@@ -1449,6 +1596,7 @@ class CandidateKey(NamedTuple):
     quality: int
     intensity: int
     corroboration: int
+    drift: int
     cosine: float
     score: float
 
@@ -1491,9 +1639,19 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
        pathway track each other — and above the cosine and the score because
        both of those are fingerprint blends that this asks a sharper question
        than.
-    7. cosine — fingerprint similarity, orthogonal evidence for contests the
+    7. drift coherence — how far apart the metabolite's own matched signals
+       sit from their common drift. The resonances of one molecule move
+       together: creatine's two singlets both +0.008 ppm from the database,
+       creatine phosphate's +0.003 and -0.008 for the same two peaks. A
+       spread wider than the drift band is a molecule that is not there as a
+       whole. Below corroboration because a spread is a weaker statement
+       than a measured co-variation, above the blends because it is one
+       physical fact; a metabolite with one matched signal has no spread
+       and sorts with the coherent ones -- absence of a test is not
+       evidence against.
+    8. cosine — fingerprint similarity, orthogonal evidence for contests the
        criteria above leave tied.
-    8. the annotation score — last resort. It is a Δppm-weighted blend, so it
+    9. the annotation score — last resort. It is a Δppm-weighted blend, so it
        must never outrank the criteria above; it only orders what nothing else
        can.
     """
@@ -1505,13 +1663,15 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
         manual=0 if manual == 'good' else 1,
         tier=candidate_tier(mult, cand.get('delta_j_hz'),
                             cand.get('n_found'), cand.get('n_expected'),
-                            cand.get('lines_explained')),
+                            cand.get('lines_explained'),
+                            cand.get('lines_covary')),
         dj=dj_band(cand.get('delta_j_hz'), dj_gold_hz,
                    ref_sigma_hz=cand.get('j_sigma_hz')),
         ppm=ppm_band(cand.get('ppm_diff'), band_ppm),
         quality=0 if quality == 'good' else 1,
         intensity=pascal_band(cand.get('intensity_agreement')),
         corroboration=corroboration_band(cand.get('stocsy_partners')),
+        drift=drift_band(cand.get('drift_spread_ppm')),
         cosine=-float(cand.get('cosine') or 0.0),
         score=-float(cand.get('score') or cand.get('composite_score') or 0.0),
     )
@@ -1546,10 +1706,17 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
     # ambiguous contest has no winner at all -- so the two analytes the new
     # criterion exists to separate would both end with nothing.
     _banded = ('manual', 'tier', 'dj', 'ppm', 'quality', 'intensity',
-               'corroboration')
-    ambiguous = (all(getattr(k0, f) == getattr(k1, f) for f in _banded)
-                 and abs(k0.cosine - k1.cosine) < COSINE_TIE
-                 and abs(k0.score - k1.score) < SCORE_TIE)
+               'corroboration', 'drift')
+    tied = all(getattr(k0, f) == getattr(k1, f) for f in _banded)
+    # The score cannot settle two singlets: a singlet's score is its
+    # position again, and a contest settled by its third decimal reports a
+    # decision the data does not support -- acetate's singlet against
+    # mesaconic acid's, 0.014 ppm apart, both within the drift. The cosine
+    # may, where it differs: it reads the metabolite's whole fingerprint.
+    both_singlets = (k0.tier == TIER_SINGLET and k1.tier == TIER_SINGLET)
+    cosine_tied = abs(k0.cosine - k1.cosine) < COSINE_TIE
+    ambiguous = tied and cosine_tied and (
+        both_singlets or abs(k0.score - k1.score) < SCORE_TIE)
     return ordered, ambiguous
 
 

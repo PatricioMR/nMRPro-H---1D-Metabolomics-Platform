@@ -39,7 +39,9 @@ from processing.annotation_scoring import (
     measure_multiplet, expected_line_count, search_multiplet_in_window,
     PATTERN_MULT, measure_pattern_signal, measured_letter, pattern_governs,
     pattern_offsets_hz,
-    candidate_key, lines_explained, pascal_agreement, synthetic_lines,
+    candidate_key, lines_covary, lines_covary_on_trace, lines_explained,
+    pascal_agreement,
+    synthetic_lines,
     parse_first_j)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
@@ -589,6 +591,10 @@ class _AnnotationSearchMixin:
                                             if _ags else None)
                 r['lines_explained'] = (float(np.median(_exs))
                                         if _exs else None)
+                # and whether the lines rise and fall together: one
+                # molecule at one concentration, or two at the right spacing
+                if r.get('lines_covary') is None:
+                    r['lines_covary'] = lines_covary(_fits, noise=_noise or None)
             r['intensity_n'] = len(_ags)
 
             r['per_sample_consensus'] = {
@@ -1435,6 +1441,14 @@ class _AnnotationSearchMixin:
                 # list whatever the trace shows.
                 _lw_hz = _lw_ppm * mhz if mhz else 0.0
                 _merge_hz = _min_dist_ppm * mhz if mhz else 0.0
+                # the analytical samples, for reading heights across them
+                try:
+                    incl_samples = included_sample_indices(
+                        self.app.samples_info,
+                        int(getattr(_raw_int, 'shape', (0, 0))[1])
+                        if getattr(_raw_int, 'ndim', 1) == 2 else 0)
+                except Exception:
+                    incl_samples = None
                 # The height under which detection reports nothing: a line
                 # of a pattern the study could not have seen is not missing.
                 _pk_stage_fl = getattr(self, 'peak_stage', None)
@@ -1959,6 +1973,20 @@ class _AnnotationSearchMixin:
                     # recalibration asks the same question of the same width.
                     r['study_linewidth_hz'] = _lw_hz or None
                     r['expected_j_hz'] = _meas_sr.expected_j_hz
+                    # Do the lines rise and fall together across the samples?
+                    # One molecule's do; two singlets of different molecules at
+                    # the right spacing do not. Read off the traces, so a
+                    # pattern matched on the peak list is judged too.
+                    _line_ppms_cv = [float(l['ppm']) for l in
+                                     (predicted_lines or ()) if 'ppm' in l]
+                    r['lines_covary'] = (
+                        lines_covary_on_trace(
+                            _ppm_arr, _raw_int, _line_ppms_cv,
+                            included=incl_samples,
+                            half_ppm=max(_lw_ppm / 2.0, 0.001),
+                            noise=_noise_sr or None)
+                        if has_spec and len(_line_ppms_cv) >= 2
+                        and getattr(_raw_int, 'ndim', 1) == 2 else None)
                     if _pattern:
                         r['intensity_agreement'] = _pattern_agreement
                     r['j_coupling']     = j_raw

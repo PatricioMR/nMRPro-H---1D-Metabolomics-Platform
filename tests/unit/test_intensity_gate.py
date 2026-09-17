@@ -62,3 +62,96 @@ def test_the_verdict_names_the_contradiction():
     mp['lines_explained'] = 0.9
     q, why = quality_verdict(mp, params=SCORING_DEFAULTS)
     assert q == 'good'
+
+
+class TestLinesCovary:
+    def _fits(self, a, b):
+        return {i: {'fitted': True, 'ranks': [0, 1], 'heights': [x, y]}
+                for i, (x, y) in enumerate(zip(a, b))}
+
+    def test_one_molecules_lines_rise_and_fall_together(self):
+        from processing.annotation_scoring import lines_covary
+        a = [100, 120, 90, 130, 110, 95, 125, 105]
+        b = [200, 240, 180, 260, 220, 190, 250, 210]
+        assert lines_covary(self._fits(a, b), noise=1.0) is True
+
+    def test_two_molecules_at_the_right_spacing_do_not(self):
+        from processing.annotation_scoring import lines_covary
+        a = [100, 120, 90, 130, 110, 95, 125, 105]
+        b = [210, 190, 250, 180, 230, 260, 200, 220]
+        assert lines_covary(self._fits(a, b), noise=1.0) is False
+
+    def test_faint_lines_are_not_judged(self):
+        from processing.annotation_scoring import lines_covary
+        a = [10, 12, 9, 13, 11, 9.5, 12.5, 10.5]
+        b = [21, 19, 25, 18, 23, 26, 20, 22]
+        assert lines_covary(self._fits(a, b), noise=1.0) is None   # SNR 10 < 30
+        assert lines_covary(self._fits(a[:3], b[:3]), noise=0.01) is None
+
+    def test_read_off_the_traces(self):
+        import numpy as np
+        from processing.annotation_scoring import lines_covary_on_trace
+        from processing.pattern_shape import lines_model
+        ppm = np.linspace(3.0, 3.2, 2000)
+        rng = np.random.default_rng(0)
+        cols = []
+        for k in range(8):
+            a = 100 * np.exp(rng.normal(0, 0.15))
+            b = 100 * np.exp(rng.normal(0, 0.15))
+            cols.append(a * lines_model(ppm, [(0.0, 1.0), (1e-3, 0.0)], 3.08, 2.6, 500.0)
+                        + b * lines_model(ppm, [(0.0, 1.0), (1e-3, 0.0)], 3.10, 2.6, 500.0)
+                        + rng.normal(0, 0.5, ppm.size))
+        X = np.column_stack(cols)
+        assert lines_covary_on_trace(ppm, X, [3.08, 3.10], half_ppm=0.003,
+                                     noise=0.5) is False
+        cols = []
+        for k in range(8):
+            a = 100 * np.exp(rng.normal(0, 0.15))
+            cols.append(a * lines_model(ppm, [(0.0, 1.0), (1e-3, 0.0)], 3.08, 2.6, 500.0)
+                        + a * lines_model(ppm, [(0.0, 1.0), (1e-3, 0.0)], 3.10, 2.6, 500.0)
+                        + rng.normal(0, 0.5, ppm.size))
+        X = np.column_stack(cols)
+        assert lines_covary_on_trace(ppm, X, [3.08, 3.10], half_ppm=0.003,
+                                     noise=0.5) is True
+
+    def test_lines_that_do_not_covary_are_an_unverified_multiplet(self):
+        from processing.annotation_scoring import (
+            TIER_UNCONFIRMED_MULTIPLET, candidate_tier, is_competitor)
+        assert candidate_tier('d', 0.1, 2, 2, 0.9, False) == TIER_UNCONFIRMED_MULTIPLET
+        assert not is_competitor({'multiplicity': 'd', 'delta_j_hz': 0.1,
+                                  'n_found': 2, 'n_expected': 2,
+                                  'lines_covary': False})
+
+
+class TestDriftCoherence:
+    def test_the_spread_of_a_metabolites_own_shifts(self):
+        from processing.annotation_scoring import drift_band, drift_spread
+        cre = [{'peak_rank': 6, 'peak_ppm': 3.032, 'db_ppm': 3.024},
+               {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.920}]
+        pcr = [{'peak_rank': 6, 'peak_ppm': 3.032, 'db_ppm': 3.029},
+               {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.936}]
+        assert drift_spread(cre) == pytest.approx(0.0, abs=1e-9)
+        assert drift_spread(pcr) == pytest.approx(0.0055, abs=1e-9)
+        assert drift_band(drift_spread(cre)) < drift_band(drift_spread(pcr))
+        assert drift_spread(cre[:1]) is None and drift_band(None) == 0
+
+    def test_the_ranking_prefers_the_coherent_molecule(self):
+        from processing.annotation_scoring import rank_candidates
+        s = dict(multiplicity='s', ppm_diff=0.008, stocsy_partners=1,
+                 quality=None, score=0.5)
+        cre = dict(s, drift_spread_ppm=0.0001)
+        pcr = dict(s, ppm_diff=0.003, drift_spread_ppm=0.0055)
+        ordered, amb = rank_candidates([pcr, cre], dj_gold_hz=0.2)
+        assert ordered[0] is cre and not amb
+
+
+def test_two_singlets_tied_on_every_band_are_ambiguous_whatever_the_score():
+    from processing.annotation_scoring import rank_candidates
+    a = dict(multiplicity='s', ppm_diff=0.008, quality=None, score=0.47)
+    b = dict(multiplicity='s', ppm_diff=0.006, quality=None, score=0.70)
+    _o, amb = rank_candidates([a, b], dj_gold_hz=0.2)
+    assert amb is True
+    # a cosine that differs settles it
+    b2 = dict(b, cosine=0.8)
+    _o, amb = rank_candidates([a, b2], dj_gold_hz=0.2)
+    assert amb is False

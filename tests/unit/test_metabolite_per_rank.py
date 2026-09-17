@@ -47,12 +47,14 @@ def test_j_confirmed_multiplet_beats_higher_singlet():
     assert select_metabolite_per_rank(mets)[1] == 'Doublet'
 
 
-def test_pure_score_when_no_bonuses():
+def test_two_singlets_apart_only_on_score_have_no_winner():
+    # a singlet's score is its position again; the third decimal of it
+    # does not settle a contest
     mets = [
         _met('Lo', [_mp(1, 0.50, mult='s')]),
         _met('Hi', [_mp(1, 0.80, mult='s')]),
     ]
-    assert select_metabolite_per_rank(mets)[1] == 'Hi'
+    assert select_metabolite_per_rank(mets).get(1) is None
 
 
 def test_high_delta_j_multiplet_not_excluded():

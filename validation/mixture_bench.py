@@ -51,7 +51,8 @@ from processing.annotation_quality import (  # noqa: E402
     promote_singlets, quality_verdict)
 from processing.annotation_scoring import (  # noqa: E402
     PATTERN_MULT, SCORING_DEFAULTS, apply_per_sample_consensus, dj_score,
-    expected_line_count, is_singlet_like, lines_explained, measure_multiplet,
+    annotate_drift_spread, expected_line_count, is_singlet_like, lines_covary,
+    lines_covary_on_trace, lines_explained, measure_multiplet,
     measure_pattern_signal, measured_letter, pascal_agreement,
     pattern_governs, pattern_offsets_hz, ppm_score, score_signal,
     synthetic_lines)
@@ -65,8 +66,12 @@ from processing.quant_detection_limit import project_drift  # noqa: E402
 from processing.quantification import eligible_metabolite_ids  # noqa: E402
 from processing.spectral_regions import (  # noqa: E402
     DEFAULT_EXCLUDED_REGIONS, measure_linewidth_ppm)
+from gui.stages._annotation_helpers import (  # noqa: E402
+    _multi_peak_coherence, _stocsy_coherence, _stocsy_partner_count,
+    ambiguous_peak_ranks)
 from gui.stages._annotation_search import _measured_columns_sql  # noqa: E402
 from gui.stages._quant_adapter import quantify_project  # noqa: E402
+from processing.stocsy import compute_peak_correlation_matrix  # noqa: E402
 
 DB_DEFAULT = os.path.join(REPO, 'databases',
                           'BMRB_Metabolomics_Mammalian_v03.db')
@@ -226,6 +231,15 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
 
     ref_pp = reference_per_proton(entries, peaks, tolerance=tol,
                                   met_key=lambda e: e['hmdb_id'])
+    # co-variation across samples, as the application computes it after
+    # detection: the evidence that separates two analytes whose contested
+    # signal is identical
+    pk_corr = compute_peak_correlation_matrix(peaks, included=incl)
+    all_peaks_by_id: dict = {}
+    for e in entries:
+        all_peaks_by_id.setdefault(e['hmdb_id'], []).append(
+            (float(e['ppm_center']), 1.0))
+    n_samp = len(incl)
     mets = []
     for mid, met in by_met.items():
         mps = []
@@ -331,8 +345,16 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
                             exs.append(x_)
                     mp['intensity_agreement'] = float(np.median(ags)) if ags else None
                     mp['lines_explained'] = float(np.median(exs)) if exs else None
+                    mp['lines_covary'] = lines_covary(fits, noise=noise)
                     mp['per_sample_consensus'] = out
                     apply_per_sample_consensus(mp, params=params)
+            # co-variation off the traces, for letters and patterns alike
+            _lp = [float(l['ppm']) for l in (mp.get('predicted_lines') or ())
+                   if 'ppm' in l]
+            if len(_lp) >= 2 and mp.get('lines_covary') is None:
+                mp['lines_covary'] = lines_covary_on_trace(
+                    ppm, X, _lp, included=incl, half_ppm=max(lw_ppm / 2, 0.001),
+                    noise=noise)
             s_ppm = ppm_score(mp['ppm_diff'], tol / 2.0)
             dj = mp.get('delta_j_hz')
             s_dj = dj_score(dj, params['dj_gold_hz'], params['dj_bad_hz'],
@@ -340,6 +362,19 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
             score_signal(mp, s_ppm=s_ppm, s_dj=s_dj,
                          dj_conf=0.0 if dj is None else 1.0,
                          coverage=1.0, params=params)
+            # the application's multi-peak coherence and STOCSY terms on
+            # the composite, and the partner count the election ranks on
+            coh, _cov, _rm = _multi_peak_coherence(mid, all_peaks_by_id,
+                                                   peaks, tol)
+            comp = float(mp.get('composite_score') or 0.0)
+            comp *= 0.05 + 0.95 * float(coh)
+            st = _stocsy_coherence(mid, all_peaks_by_id, peaks, tol, pk_corr)
+            if st is not None:
+                w = 1.0 - float(np.exp(-0.25 * max(0, n_samp - 2)))
+                comp *= float(np.exp(0.10 * max(0.0, st) * w))
+            mp['composite_score'] = comp
+            mp['stocsy_partners'] = _stocsy_partner_count(
+                mid, mp.get('peak_rank'), all_peaks_by_id, peaks, tol, pk_corr)
             q, why = quality_verdict(mp, params=params)
             mp['annotation_quality'] = q
             mp['_status_reasons'] = [why] if why else []
@@ -353,6 +388,7 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
                                    'pattern_lines': s.get('pattern_lines')}
                                   for s in met['signals']]})
     promote_singlets(mets, peaks, params=params)
+    annotate_drift_spread(mets)
     drift = project_drift(mets)
     half = search_half_width(tolerance_ppm=tol, drift_ppm=drift,
                              linewidth_ppm=lw_ppm)
@@ -373,11 +409,15 @@ def run(db_path, *, seed=0, shapes=True):
     mets, params, fp_stats = annotate(PPM, X, peaks, sigma, db_path,
                                       shapes=shapes)
     eligible = eligible_metabolite_ids(mets)
+    # a peak whose candidates tie on every criterion has no winner, as the
+    # results window decides before quantification
+    ambiguous = ambiguous_peak_ranks(mets, manual_quality={})
     ref = min(peaks, key=lambda p: abs(float(p['ppm']) - STANDARD_PPM))
     rows = quantify_project(
         metabolites=mets, peaks=peaks, ppm=PPM, intensities=X,
         samples_info=SAMPLES, ref_peak=ref, ref_nh=STANDARD_NH,
         ref_conc=STANDARD_MM, ref_name='DSS', noise_sigma=sigma,
+        ambiguous_ranks=ambiguous,
         use_pqn=False, local_baseline=False, quantify_shapes=shapes,
         # as the application runs: the shared-window balance is parked
         # (app_paths.DECONVOLUTION_ENABLED); on it gave lactate 40% of its
@@ -423,6 +463,8 @@ def report(rows, mets, truth, foreign, peaks, fp_stats):
     false_pos.sort(key=lambda t: -t[1])
     return {'found': found, 'missed': missed, 'false_positives': false_pos,
             'errors_pct': errors, 'n_peaks': len(peaks),
+            'n_ambiguous': sum(1 for r in rows
+                               if r.get('_rejection') == 'ambiguous_rank'),
             'fingerprint': fp_stats, 'n_rows': len(rows),
             'n_quantified': len(quantified)}
 
@@ -433,7 +475,7 @@ def print_report(rep, *, label):
           f"quantified {rep['n_quantified']}")
     n_true = len(rep['found']) + len(rep['missed'])
     print(f"recall {len(rep['found'])}/{n_true}   false positives "
-          f"{len(rep['false_positives'])}")
+          f"{len(rep['false_positives'])}   ambiguous {rep.get('n_ambiguous')}")
     errs = np.array(rep['errors_pct'])
     if errs.size:
         print(f"concentration error: median {np.median(np.abs(errs)):.0f}%  "

@@ -92,6 +92,7 @@ _CRITERION_TEXT = {
     'quality': 'annotation quality',
     'intensity': 'line intensities',
     'corroboration': 'STOCSY corroboration',
+    'drift': 'drift coherence (its signals drift together)',
     'cosine': 'fingerprint cosine',
     'score': 'the annotation score',
 }

@@ -17,7 +17,8 @@ import json
 
 import numpy as np
 
-from processing.annotation_scoring import DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS
+from processing.annotation_scoring import (
+    DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread)
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
 from processing.quant_integration import (
@@ -43,6 +44,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
     answer.
     """
     qm = quality_marks or {}
+    annotate_drift_spread(metabolites)
     out = []
     for met in metabolites or ():
         mid = str(met.get('id', met.get('name', '')))
@@ -98,6 +100,8 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'n_expected': mp.get('_n_exp_lines'),
                     'intensity_agreement': mp.get('intensity_agreement'),
                     'lines_explained': mp.get('lines_explained'),
+                    'lines_covary': mp.get('lines_covary'),
+                    'drift_spread_ppm': mp.get('drift_spread_ppm'),
                     # The corroboration criterion. Annotation measured it; the
                     # election has to see the same number, or the winner here
                     # and the winner the Annotation window shows would be
