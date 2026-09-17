@@ -38,6 +38,11 @@ from processing.peak_alignment import parabolic_apex
 # cost seconds. 12 leaves every DB multiplicity (at most 8 lines) room to pick.
 MAX_CANDIDATES = 12
 
+# An apex under this fraction of the tallest in reach is not the singlet
+# being read; the same ratio the annotation's consistency and contradiction
+# rules use.
+SINGLET_HEIGHT_RATIO = 5.0
+
 
 def candidate_apices(ppm, y, lo, hi, noise_floor=0.0):
     """Every local maximum of ``y`` between ``lo`` and ``hi`` ppm.
@@ -110,9 +115,16 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     if len(exp) == 1:
         # A singlet has no spacing to judge, so the nearest apex to where it is
         # expected is the reading — and how many other apices sit just as close
-        # is the whole of its uncertainty.
-        within = [(abs(p - exp[0]), p) for p, _ in cands
-                  if max_drift_ppm is None or abs(p - exp[0]) <= float(max_drift_ppm)]
+        # is the whole of its uncertainty. Nearest among the apices that could
+        # be it: one under a fifth of the tallest in reach is noise beside the
+        # signal, and taking it for being nearer put creatine phosphate's
+        # methylene on a peak of SNR 12 in the samples where one sat closer
+        # than the peak of SNR 189.
+        reach = [(p, h) for p, h in cands
+                 if max_drift_ppm is None or abs(p - exp[0]) <= float(max_drift_ppm)]
+        tallest = max((h for _p, h in reach), default=0.0)
+        within = [(abs(p - exp[0]), p) for p, h in reach
+                  if tallest <= 0 or h * SINGLET_HEIGHT_RATIO >= tallest]
         if not within:
             return blank
         within.sort()

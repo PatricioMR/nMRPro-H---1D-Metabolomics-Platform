@@ -81,6 +81,15 @@ class TestLinesCovary:
         b = [210, 190, 250, 180, 230, 260, 200, 220]
         assert lines_covary(self._fits(a, b), noise=1.0) is False
 
+    def test_one_overlapped_line_does_not_refuse_the_multiplet(self):
+        from processing.annotation_scoring import lines_covary
+        a = [100, 120, 90, 130, 110, 95, 125, 105]
+        b = [200, 240, 180, 260, 220, 190, 250, 210]
+        c = [210, 190, 250, 180, 230, 260, 200, 220]     # under a neighbour
+        fits = {i: {'fitted': True, 'ranks': [0, 1, 2], 'heights': [x, y, z]}
+                for i, (x, y, z) in enumerate(zip(a, b, c))}
+        assert lines_covary(fits, noise=1.0) is True
+
     def test_faint_lines_are_not_judged(self):
         from processing.annotation_scoring import lines_covary
         a = [10, 12, 9, 13, 11, 9.5, 12.5, 10.5]

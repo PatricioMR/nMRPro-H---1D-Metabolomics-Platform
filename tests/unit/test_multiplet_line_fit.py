@@ -157,6 +157,12 @@ class TestSinglets:
         assert fit['ppms'] == pytest.approx([3.205])
         assert fit['fitted'] is True
 
+    def test_a_nearer_apex_of_noise_is_not_the_singlet(self):
+        # the signal of height 190 sits 0.008 out; an apex of 12 sits 0.006 out
+        fit = fit_lines([3.936], [(3.928, 190.0), (3.942, 12.0)], field_mhz=MHZ,
+                        dj_bad_hz=BAD, dj_gold_hz=GOLD, max_drift_ppm=0.05)
+        assert fit['ppms'] == [3.928]
+
     def test_a_singlet_has_no_coupling(self):
         fit = fit_lines([3.20], [(3.20, 1.0)], field_mhz=MHZ, dj_bad_hz=BAD,
                         dj_gold_hz=GOLD, max_drift_ppm=0.05)

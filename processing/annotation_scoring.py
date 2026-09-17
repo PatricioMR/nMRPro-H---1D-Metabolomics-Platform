@@ -1218,8 +1218,14 @@ def lines_covary(fits, *, noise=None, min_r=None,
                  min_samples=COVARY_MIN_SAMPLES,
                  min_snr=COVARY_MIN_SNR) -> bool | None:
     """Whether the found lines of a multiplet rise and fall together across
-    the samples: the least Pearson r between any two lines' heights is at
-    least ``min_r`` -- the same bar STOCSY corroboration uses.
+    the samples: some pair of lines correlates at ``min_r`` or better --
+    the same bar STOCSY corroboration uses.
+
+    Some pair, not every pair. A line under a neighbour's signal carries
+    that neighbour's variation too: taurine's outer line at 3.44 ppm on the
+    skin study correlated at 0.45 with its siblings while the other two
+    stood at 0.96, and asking every pair refused taurine. Two singlets of
+    different molecules have no pair that correlates at all.
 
     ``fits`` maps sample index to a per-sample fit with ``ranks`` and
     ``heights`` (``multiplet_line_fit.fit_across_samples``). None when
@@ -1240,7 +1246,7 @@ def lines_covary(fits, *, noise=None, min_r=None,
     ranks = sorted(by_rank)
     if len(ranks) < 2:
         return None
-    worst = None
+    best = None
     for i in range(len(ranks)):
         for j in range(i + 1, len(ranks)):
             a, b = by_rank[ranks[i]], by_rank[ranks[j]]
@@ -1256,10 +1262,10 @@ def lines_covary(fits, *, noise=None, min_r=None,
             if ha.std() <= 0 or hb.std() <= 0:
                 continue
             r = float(np.corrcoef(ha, hb)[0, 1])
-            worst = r if worst is None else min(worst, r)
-    if worst is None:
+            best = r if best is None else max(best, r)
+    if best is None:
         return None
-    return worst >= float(STOCSY_MIN_R if min_r is None else min_r)
+    return best >= float(STOCSY_MIN_R if min_r is None else min_r)
 
 
 def line_heights_per_sample(ppm, intensities, line_ppms, *, included=None,
