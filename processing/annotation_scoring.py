@@ -1489,8 +1489,12 @@ def corroborating_partners(peak_rank, partner_ranks, peak_corr,
 
 
 # One band of drift coherence: what pH moves the groups of one molecule
-# relative to each other, and the precision a position is measured to.
-DRIFT_BAND_PPM = 0.005
+# relative to each other -- the same six hertz the fingerprint gate allows
+# a missing signal around its siblings (annotation_detectability.
+# OWN_WINDOW_MIN_PPM). Creatine's methyl and methylene sat 0.013 ppm apart
+# in their drift on the skin study and were one molecule; a band of half
+# that put creatine behind glycolate, which has one signal and no spread.
+DRIFT_BAND_PPM = 0.010
 DRIFT_BAND_CAP = 3
 
 
@@ -1507,10 +1511,18 @@ def drift_band(spread_ppm, band: float = DRIFT_BAND_PPM,
     return int(min(cap, v // float(band)))
 
 
-def drift_spread(matched_peaks) -> float | None:
-    """How far the metabolite's matched signals sit from their common
-    drift: the largest |shift - median shift| over the signals with a peak
-    that are not marked Bad. None with fewer than two."""
+def drift_spread(matched_peaks, *, common=None) -> float | None:
+    """How far the metabolite's matched signals stray from the drift they
+    should share.
+
+    Against the study's common drift where it is known (``common``, from
+    ``study_drift``): the largest |shift - common| over the signals with a
+    peak that are not marked Bad. Creatine's two singlets on the skin study
+    sat at the study's drift; creatine phosphate's, for the same two
+    peaks, +0.005 and -0.016 from it. Without a common drift, the largest
+    |shift - the metabolite's own median|, which needs two signals; a
+    single signal against the common drift is judged on its own.
+    """
     shifts = []
     for mp in matched_peaks or ():
         if mp.get('peak_rank') is None or mp.get('annotation_quality') == 'bad':
@@ -1519,6 +1531,10 @@ def drift_spread(matched_peaks) -> float | None:
             shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
         except (KeyError, TypeError, ValueError):
             continue
+    if common is not None:
+        if not shifts:
+            return None
+        return float(max(abs(v - float(common)) for v in shifts))
     if len(shifts) < 2:
         return None
     med = float(np.median(shifts))
@@ -1563,7 +1579,7 @@ def annotate_drift_spread(metabolites) -> None:
     +0.015, and the fixed band drawn at 0.020 from zero cut between them."""
     common = study_drift(metabolites)
     for met in metabolites or ():
-        spread = drift_spread(met.get('matched_peaks'))
+        spread = drift_spread(met.get('matched_peaks'), common=common)
         for mp in met.get('matched_peaks') or ():
             mp['drift_spread_ppm'] = spread
             off = None

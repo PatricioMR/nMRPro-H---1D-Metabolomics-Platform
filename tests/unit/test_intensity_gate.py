@@ -138,18 +138,26 @@ class TestDriftCoherence:
         cre = [{'peak_rank': 6, 'peak_ppm': 3.032, 'db_ppm': 3.024},
                {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.920}]
         pcr = [{'peak_rank': 6, 'peak_ppm': 3.032, 'db_ppm': 3.029},
-               {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.936}]
+               {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.905}]
         assert drift_spread(cre) == pytest.approx(0.0, abs=1e-9)
-        assert drift_spread(pcr) == pytest.approx(0.0055, abs=1e-9)
+        assert drift_spread(pcr) == pytest.approx(0.010, abs=1e-9)
         assert drift_band(drift_spread(cre)) < drift_band(drift_spread(pcr))
         assert drift_spread(cre[:1]) is None and drift_band(None) == 0
+        # against the study's common drift, each signal on its own: the
+        # methylene of creatine phosphate sits 0.016 from a drift of +0.008
+        pcr2 = [{'peak_rank': 6, 'peak_ppm': 3.032, 'db_ppm': 3.029},
+                {'peak_rank': 7, 'peak_ppm': 3.928, 'db_ppm': 3.936}]
+        assert drift_spread(cre, common=0.008) == pytest.approx(0.0, abs=1e-9)
+        assert drift_spread(pcr2, common=0.008) == pytest.approx(0.016, abs=1e-9)
+        assert drift_band(drift_spread(pcr2, common=0.008)) == 1
+        assert drift_spread(cre[:1], common=0.008) == pytest.approx(0.0, abs=1e-9)
 
     def test_the_ranking_prefers_the_coherent_molecule(self):
         from processing.annotation_scoring import rank_candidates
         s = dict(multiplicity='s', ppm_diff=0.008, stocsy_partners=1,
                  quality=None, score=0.5)
         cre = dict(s, drift_spread_ppm=0.0001)
-        pcr = dict(s, ppm_diff=0.003, drift_spread_ppm=0.0055)
+        pcr = dict(s, ppm_diff=0.003, drift_spread_ppm=0.0105)
         ordered, amb = rank_candidates([pcr, cre], dj_gold_hz=0.2)
         assert ordered[0] is cre and not amb
 
