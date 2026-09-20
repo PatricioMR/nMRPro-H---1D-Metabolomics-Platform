@@ -559,7 +559,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             ('ppm',         'PPM',             70),
             ('conc_mm',     'Mean Conc (mM)', 110),
             ('raw_area',    'Mean Area',        90),
-            ('snr',         'Mean SNR',         60),
+            ('snr',         'SNR (group)',  80),
             ('vip_score',   'VIP',              55),
             ('status',      'Quality',          70),
         ]:
@@ -677,7 +677,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                          else 'Mean Area (a.u.)')
         labels = {'peak_num': '#', 'metabolite': 'Metabolite', 'ppm': 'PPM',
                   'conc_mm': _conc_hdr, 'raw_area': 'Mean Area',
-                  'snr': 'Mean SNR', 'vip_score': 'VIP', 'status': 'Conf'}
+                  'snr': 'SNR (group)', 'vip_score': 'VIP', 'status': 'Conf'}
         for cid, lbl in labels.items():
             arrow = (' ▲' if not self._sort_rev else ' ▼') \
                     if cid == self._sort_col else ''

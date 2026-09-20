@@ -111,22 +111,26 @@ def test_a_shoulder_is_not_an_apex():
     assert len(apparent_lines([(-4.5, 0.5), (0.0, 1.0), (4.5, 0.5)], 2.6)) == 3
 
 
-def test_measure_multiplet_expects_the_apices_at_this_width():
+def test_every_line_of_a_letter_is_expected_whatever_the_width():
+    """A triplet of 2.8 Hz at a 2.6 Hz linewidth shows one apex. That does
+    not make it a singlet here: it is a multiplet this study cannot verify
+    -- three lines expected, one found, no coupling -- and it is reported
+    incomplete. Expecting only the apices the width leaves turned a 2 Hz
+    doublet into "one expected, one found, complete" and let it through
+    Good on a hump with nothing verified."""
     field = 500.0
-    # myo-inositol's triplet: one apex here, found on one peak
-    m = measure_multiplet([], [{'ppm': 4.047, 'rank': 1}], mult='t',
-                          j_coupling='2.8', db_ppm=4.047, centre_hint=4.047,
-                          n_expected=3, tolerance=0.05, field_mhz=field,
-                          linewidth_hz=2.6)
-    assert m.measured and m.n_expected == 1 and m.n_found == 1 and m.complete
-    assert m.delta_j_hz is None
-    # and without a linewidth the three lines are asked for, as before
-    m = measure_multiplet([], [{'ppm': 4.047, 'rank': 1}], mult='t',
-                          j_coupling='2.8', db_ppm=4.047, centre_hint=4.047,
-                          n_expected=3, tolerance=0.05, field_mhz=field)
-    assert m.n_expected == 3 and not m.complete
+    for lw in (2.6, None):
+        m = measure_multiplet([], [{'ppm': 4.047, 'rank': 1}], mult='t',
+                              j_coupling='2.8', db_ppm=4.047, centre_hint=4.047,
+                              n_expected=3, tolerance=0.05, field_mhz=field,
+                              linewidth_hz=lw)
+        assert m.measured and m.n_expected == 3 and m.n_found == 1
+        assert not m.complete and m.delta_j_hz is None
 
 
-def test_a_collapsed_multiplet_ranks_as_a_singlet():
-    from processing.annotation_scoring import TIER_SINGLET, candidate_tier
-    assert candidate_tier('t', None, 1, 1) == TIER_SINGLET
+def test_a_letter_with_lines_missing_is_unconfirmed_never_a_singlet():
+    from processing.annotation_scoring import (
+        TIER_SINGLET, TIER_UNCONFIRMED_MULTIPLET, candidate_tier)
+    assert candidate_tier('t', None, 1, 3) == TIER_UNCONFIRMED_MULTIPLET
+    assert candidate_tier('d', None, 1, 2) == TIER_UNCONFIRMED_MULTIPLET
+    assert candidate_tier('t', None, 1, 1) != TIER_SINGLET

@@ -101,3 +101,65 @@ def representative_snr(snr_by_sample) -> float:
     """
     v = [float(x) for x in (snr_by_sample or {}).values() if np.isfinite(x)]
     return float(np.median(v)) if v else float('nan')
+
+
+def group_evidence(ppm, intensities, groups, *, lo, hi, noise,
+                   lines=(), weights=(), hwhm=None) -> dict:
+    """What the elected signal looks like on each group's mean trace:
+    ``{group: {'snr': float, 'cosine': float | None}}``.
+
+    The signal, not its anchor peak: the window is the one the signal was
+    integrated on, so a doublet's SNR is its higher line above the window's
+    own endpoint line, against the noise detection measured for the study
+    (``window_snr`` with the global noise). The cosine is the annotation's
+    own shape term (``peak_shape_score``: the predicted pattern of lines and
+    relative intensities against the trace in the signal's window), read on
+    the group's mean rather than on the study's. Same functions, same
+    numbers the analyst already reads elsewhere -- one per group.
+
+    Blanks are not a group (``gui.stages._quant_adapter.sample_groups``).
+    A group with no sample in the matrix is absent from the result.
+    """
+    from processing.annotation_scoring import peak_shape_score
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    p = np.asarray(ppm, dtype=float)
+    ppms = [float(v) for v in (lines or ()) if v is not None]
+    w = list(weights or ())
+    if len(w) != len(ppms) or not ppms or sum(w) <= 0:
+        w = [1.0] * len(ppms)
+    sticks = list(zip(ppms, w))
+    out = {}
+    for g, idxs in (groups or {}).items():
+        cols = [int(i) for i in idxs if 0 <= int(i) < arr.shape[1]]
+        if not cols:
+            continue
+        mean = arr[:, cols].mean(axis=1)
+        snr = window_snr(p, mean, lo, hi, noise).get(0, float('nan'))
+        cos = None
+        if sticks and hwhm and float(hwhm) > 0:
+            cos = peak_shape_score(p, mean, sticks, float(np.mean(ppms)), {},
+                                   hwhm_default=float(hwhm))
+        out[str(g)] = {'snr': float(snr), 'cosine': cos}
+    return out
+
+
+def best_group(evidence, *, cosine_tie=None) -> str | None:
+    """The group the figure shows and the numbers come from: the best
+    cosine, and among the groups within ``cosine_tie`` of it (the
+    annotation's own tie band, ``COSINE_TIE``) the highest SNR. Without a
+    cosine anywhere, the highest SNR alone. None when nothing was measured.
+    """
+    from processing.annotation_scoring import COSINE_TIE
+    tie = COSINE_TIE if cosine_tie is None else float(cosine_tie)
+    rows = [(g, e) for g, e in (evidence or {}).items()
+            if e and np.isfinite(e.get('snr', float('nan')))]
+    if not rows:
+        return None
+    cosines = [e['cosine'] for _, e in rows if e.get('cosine') is not None]
+    if cosines:
+        top = max(cosines)
+        rows = [(g, e) for g, e in rows
+                if e.get('cosine') is not None and e['cosine'] >= top - tie]
+    return max(rows, key=lambda ge: ge[1]['snr'])[0]

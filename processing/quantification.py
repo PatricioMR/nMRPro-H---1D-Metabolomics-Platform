@@ -37,6 +37,7 @@ NO_ELIGIBLE_SIGNAL = 'no_eligible_signal'
 NO_MEASURABLE_WINDOW = 'no_measurable_window'
 NOT_DETECTED = 'not_detected'
 SHAPES_OFF = 'shapes_off'
+PARTIAL_MULTIPLET = 'partial_multiplet'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -56,6 +57,11 @@ REJECTION_TEXT = {
         'one by one, so it holds no peak to integrate, and shape fitting is '
         'off in Quantification. Tick "Quantify complex multiplets by shape '
         'fit" to measure it from its fitted shape.',
+    PARTIAL_MULTIPLET:
+        'Not quantified: partial multiplet — detection placed too few of the '
+        'pattern\'s lines for the area to be scaled to the whole signal; a '
+        'window holding under three quarters of its lines is not describing '
+        'the signal.',
     NO_MEASURABLE_WINDOW:
         'Not quantified: no measurable window — the signal won its contest but '
         'no detected line bounds a region to integrate. Nothing is integrated '

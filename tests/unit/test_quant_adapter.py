@@ -113,6 +113,36 @@ class TestWholeProject:
         assert rows[0]['_integ_mode'] == 'Multiplet'
         assert rows[0]['_peak'] is not None, 'the detected peak travels too'
 
+    def test_the_snr_shown_is_the_signals_on_the_group_the_figure_draws(self):
+        """One trace for the picture and the numbers: the elected signal's
+        SNR and shape agreement are read on each group's mean, and the row
+        names the group it shows -- best cosine, then highest SNR."""
+        ppm, X = self._project()
+        rows = quantify_project(
+            metabolites=[_met('A', 'Ala', [_mp(1)])],
+            peaks=list(PEAKS.values()), ppm=ppm, intensities=X,
+            samples_info=[{'label': 'A'}, {'label': 'B'}, {'label': 'B'}],
+            noise_sigma=0.01)
+        r = rows[0]
+        assert set(r['_snr_by_group']) == {'A', 'B'}
+        assert r['_snr_group'] == 'B', 'B is 2.5x A on the same shape'
+        assert r['snr'] == r['_snr_by_group']['B']
+        assert r['_snr_by_group']['B'] > r['_snr_by_group']['A']
+        assert all(0 < c <= 1 for c in r['_cosine_by_group'].values())
+
+    def test_the_reference_pattern_travels_to_the_row(self):
+        """Every line the reference lists, at the centre the annotation
+        found: the plot draws them beside the lines integrated, so a doublet
+        fused into one apex still shows where its two lines are."""
+        ppm, X = self._project()
+        mp = _mp(1, reference_lines=[{'ppm': 1.47, 'rel_intensity': 1.0},
+                                     {'ppm': 1.48, 'rel_intensity': 1.0}])
+        rows = quantify_project(
+            metabolites=[_met('A', 'Ala', [mp])],
+            peaks=list(PEAKS.values()), ppm=ppm, intensities=X,
+            samples_info=[{'label': 'G'}] * 3)
+        assert rows[0]['_reference_lines'] == [1.47, 1.48]
+
     def test_blanks_are_dropped_by_the_same_rule_detection_uses(self):
         """Three engines must not disagree about which samples a study has."""
         ppm, X = self._project()

@@ -1,16 +1,31 @@
 # processing/quant_integration.py
 """The area of an elected signal, measured in each sample on its own.
 
-One integration mode: the whole multiplet, foot to foot. The old engine carried
-five — multiplet, area, Lorentz fit, MCR component and a database gap-fill —
-and every one of them was a second answer to the same question, reached by a
-different path and reconciled nowhere.
+One integration mode: the multiplet's own lines, each between its own feet.
+The old engine carried five — multiplet, area, Lorentz fit, MCR component and
+a database gap-fill — and every one of them was a second answer to the same
+question, reached by a different path and reconciled nowhere.
 
-Foot to foot means the left foot of the leftmost line to the right foot of the
-rightmost, taken from detection's own boundaries. Not a window centred on the
-database position and not a fixed width: the analyte's lines are where
-detection found them, and the area that belongs to the analyte is the area
-between its own feet.
+Each line is a window of its own: its feet from detection, let out past the
+apex, and never past a foreign detected peak. Lines whose windows touch make
+one segment; a foreign peak sitting BETWEEN two lines keeps them apart, and
+the gap it sits in is not integrated. A triplet with somebody's doublet in
+its middle is measured on its three lines and not on the doublet -- the whole
+multiplet, foot to foot, took the doublet in as if it were the analyte's.
+What the segments leave outside (the tails between them and beyond the outer
+lines) is the same known quantity the capture correction already puts back.
+
+This is the qNMR practice of integrating the resolved part of a multiplet and
+scaling by the intensity pattern the multiplicity dictates (Bharti & Roy
+2012; Pauli et al. 2012), with the scale computed from the Lorentzian
+lineshape rather than read off the binomial row: the lineshape says how much
+of every line each segment holds.
+
+    Bharti, S.K. & Roy, R. (2012). Quantitative 1H NMR spectroscopy. TrAC
+    Trends in Analytical Chemistry 35:5-26.
+    Pauli, G.F., Gödecke, T., Jaki, B.U., Lankin, D.C. (2012). Quantitative
+    1H NMR: development and potential of an analytical method -- an update.
+    J. Nat. Prod. 75:834-851.
 
 Each sample is integrated separately, on its own trace. A mean spectrum has no
 concentration, and a study's job is to tell the samples apart.
@@ -53,43 +68,87 @@ def multiplet_window(line_peaks) -> tuple[float, float] | None:
 WINDOW_REACH_LINEWIDTHS = 3.0
 
 
-def signal_window(line_peaks, *, linewidth_ppm, other_peaks=()):
-    """Foot to foot over the signal's lines, let out to WINDOW_REACH_LINEWIDTHS
-    past the outer lines, and never into a neighbour: a foreign detected
-    peak bounds the window at the midpoint between it and the nearest
-    line, less half a linewidth.
+def _bound_by_neighbours(apex, lo, hi, other_ppms, lw):
+    """``(lo, hi)`` pulled in to the midpoint between ``apex`` and each
+    foreign peak, less half a linewidth, and never nearer than half a
+    linewidth to the apex: the feet of a line that runs into its neighbour's
+    are the neighbour's, and valine's doublet read 45% high with
+    isoleucine's line inside its window that way."""
+    for qp in other_ppms:
+        if qp < apex:
+            lo = max(lo, min(apex - lw / 2.0, (qp + apex) / 2.0 - lw / 2.0))
+        elif qp > apex:
+            hi = min(hi, max(apex + lw / 2.0, (qp + apex) / 2.0 + lw / 2.0))
+    return lo, hi
 
-    Returns ``(lo, hi)`` or None without lines. ``other_peaks`` are
-    detected peaks that are not the signal's own lines.
+
+def _foreign_ppms(line_peaks, other_peaks):
+    own = {id(p) for p in line_peaks}
+    own_ranks = {p.get('rank') for p in line_peaks if p.get('rank') is not None}
+    return [float(q.get('ppm', 0.0)) for q in other_peaks or ()
+            if id(q) not in own and not (q.get('rank') is not None
+                                         and q.get('rank') in own_ranks)]
+
+
+def signal_segments(line_peaks, *, linewidth_ppm, other_peaks=()):
+    """One window per line of the signal, merged where they touch.
+
+    A line's window is its own feet let out to WINDOW_REACH_LINEWIDTHS past
+    its apex, and bounded by every foreign detected peak the way
+    ``signal_window`` bounds the outer lines: at the midpoint less half a
+    linewidth, never nearer than half a linewidth to the apex. Windows that
+    overlap are one segment. A foreign peak between two lines bounds them
+    both, and where the bounds leave a gap the gap is out.
+
+    Returns ``[(lo, hi), ...]`` in ascending ppm, or an empty list without
+    lines. Without a linewidth the feet stand and the segments are the
+    lines' own feet. ``other_peaks`` are detected peaks that are not the
+    signal's own lines.
     """
-    base = multiplet_window(line_peaks)
-    if base is None:
-        return None
-    lo, hi = base
-    apexes = sorted(float(p.get('ppm', 0.0)) for p in line_peaks)
     lw = abs(float(linewidth_ppm or 0.0))
-    if lw > 0:
-        lo = min(lo, apexes[0] - WINDOW_REACH_LINEWIDTHS * lw)
-        hi = max(hi, apexes[-1] + WINDOW_REACH_LINEWIDTHS * lw)
-        own = {id(p) for p in line_peaks}
-        own_ranks = {p.get('rank') for p in line_peaks if p.get('rank') is not None}
-        # A neighbour bounds the window whatever detection's feet said:
-        # the feet of a line that runs into its neighbour's are the
-        # neighbour's, and valine's doublet read 45% high with isoleucine's
-        # line inside its window that way. Never narrower than half a
-        # linewidth past the outer apex.
-        for q in other_peaks or ():
-            if id(q) in own or (q.get('rank') is not None
-                                and q.get('rank') in own_ranks):
-                continue
-            qp = float(q.get('ppm', 0.0))
-            if qp < apexes[0]:
-                lo = max(lo, min(apexes[0] - lw / 2.0,
-                                 (qp + apexes[0]) / 2.0 - lw / 2.0))
-            elif qp > apexes[-1]:
-                hi = min(hi, max(apexes[-1] + lw / 2.0,
-                                 (qp + apexes[-1]) / 2.0 + lw / 2.0))
-    return float(lo), float(hi)
+    foreign = _foreign_ppms(line_peaks or (), other_peaks) if lw > 0 else []
+    wins = []
+    for pk in line_peaks or ():
+        apex = float(pk.get('ppm', 0.0))
+        a = float(pk.get('start_ppm', apex))
+        b = float(pk.get('end_ppm', apex))
+        lo, hi = min(a, b), max(a, b)
+        if lw > 0:
+            lo = min(lo, apex - WINDOW_REACH_LINEWIDTHS * lw)
+            hi = max(hi, apex + WINDOW_REACH_LINEWIDTHS * lw)
+            lo, hi = _bound_by_neighbours(apex, lo, hi, foreign, lw)
+        wins.append((float(lo), float(hi)))
+    wins.sort()
+    merged: list = []
+    for lo, hi in wins:
+        if merged and lo <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], hi))
+        else:
+            merged.append((lo, hi))
+    return merged
+
+
+def foreign_between_lines(line_peaks, other_peaks) -> list:
+    """The foreign detected peaks that lie between the signal's outer apices,
+    in ppm: the ones that cut its window, said on the row."""
+    apexes = [float(p.get('ppm', 0.0)) for p in line_peaks or ()]
+    if len(apexes) < 2:
+        return []
+    lo, hi = min(apexes), max(apexes)
+    return sorted(q for q in _foreign_ppms(line_peaks, other_peaks)
+                  if lo < q < hi)
+
+
+def signal_window(line_peaks, *, linewidth_ppm, other_peaks=()):
+    """The span of ``signal_segments``: foot to foot over the signal's
+    lines, let out to WINDOW_REACH_LINEWIDTHS past the outer lines, and
+    never into a neighbour. Returns ``(lo, hi)`` or None without lines.
+    """
+    segs = signal_segments(line_peaks, linewidth_ppm=linewidth_ppm,
+                           other_peaks=other_peaks)
+    if not segs:
+        return None
+    return float(segs[0][0]), float(segs[-1][1])
 
 
 def _window_mask(ppm, lo, hi):
@@ -99,7 +158,7 @@ def _window_mask(ppm, lo, hi):
     return (ppm >= lo) & (ppm <= hi)
 
 
-def integrate_sample(ppm, y, lo, hi, *, local_baseline=True):
+def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None):
     """Area of one sample between ``lo`` and ``hi`` ppm.
 
     ``local_baseline`` subtracts the straight line joining the window's two
@@ -107,6 +166,13 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True):
     broad component a multiplet happens to be sitting on. The endpoints are
     clipped at zero first, so a negative excursion at one foot cannot tilt the
     baseline up into the signal.
+
+    ``segments`` sums only the points inside those pieces of the window, the
+    baseline still drawn through the WINDOW's two endpoints: a foreign peak
+    between two lines cuts the window around it, and a baseline drawn through
+    the cut would be drawn through that peak's flank -- measured, it took the
+    area negative. The window's feet are where the signal is not; the cut is
+    where somebody else is.
 
     A negative area is returned as it comes out. A window over noise integrates
     to something near zero and sometimes below it, and that is the honest
@@ -127,10 +193,19 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True):
         base = np.linspace(max(float(seg[0]), 0.0), max(float(seg[-1]), 0.0),
                            seg.size)
         seg = seg - base
-    try:
-        return float(np.trapezoid(seg, x=x))
-    except AttributeError:                       # numpy < 2
-        return float(np.trapz(seg, x=x))
+    pieces = ([(min(a, b), max(a, b)) for a, b in segments]
+              if segments else [(min(lo, hi), max(lo, hi))])
+    total, any_piece = 0.0, False
+    for a, b in pieces:
+        k = (x >= a) & (x <= b)
+        if k.sum() < 2:
+            continue
+        any_piece = True
+        try:
+            total += float(np.trapezoid(seg[k], x=x[k]))
+        except AttributeError:                       # numpy < 2
+            total += float(np.trapz(seg[k], x=x[k]))
+    return total if any_piece else None
 
 
 def window_shifts(line_peaks, *, max_shift_ppm=None) -> dict:
@@ -198,7 +273,8 @@ def subtract_blank(areas: dict, blank_areas: dict) -> dict:
 
 
 def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
-                             local_baseline=True, shifts=None) -> dict:
+                             local_baseline=True, shifts=None,
+                             segments=None) -> dict:
     """The signal's area in every sample the caller allows.
 
     ``included`` is the list of sample indices to measure — blanks and excluded
@@ -207,6 +283,10 @@ def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
     ``shifts`` moves each sample's window by its own drift, as
     ``window_shifts`` computes it. A sample with no shift keeps the window
     where it is.
+
+    ``segments`` are the pieces of the window the area is summed over (what
+    ``signal_segments`` cut around the lines), the baseline drawn through the
+    span's two ends; ``lo``/``hi`` are then the span of the segments.
 
     Returns ``{sample_idx: area}``. A sample whose window holds too few points
     is absent from the mapping rather than present with a zero: no measurement
@@ -219,11 +299,16 @@ def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
     idx = range(n_s) if included is None else [i for i in included
                                               if 0 <= i < n_s]
     sh = dict(shifts or {})
+    segs = [(float(a), float(b)) for a, b in (segments or ())]
+    if segs:
+        lo, hi = min(a for a, _ in segs), max(b for _, b in segs)
     out = {}
     for s in idx:
         d = float(sh.get(int(s), 0.0))
         a = integrate_sample(ppm, arr[:, s], lo + d, hi + d,
-                             local_baseline=local_baseline)
+                             local_baseline=local_baseline,
+                             segments=[(a_ + d, b_ + d) for a_, b_ in segs]
+                             or None)
         if a is not None:
             out[int(s)] = a
     return out
@@ -238,52 +323,61 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
                      linewidth_ppm=None, other_peaks=()):
     """Everything the caller needs about one elected signal's area.
 
-    Returns ``{'window': (lo, hi), 'width_ppm': w, 'areas': {sample: area},
-    'shifts': {sample: delta}, 'blank_area': mean}``, or None when the signal
-    has no lines to bound a window with. The window and the shifts travel with
-    the areas so the report can show which region produced the number — a
-    concentration whose window nobody can see is not auditable.
+    Returns ``{'window': (lo, hi), 'segments': [(lo, hi), ...],
+    'width_ppm': w, 'areas': {sample: area}, 'shifts': {sample: delta},
+    'blank_area': mean, 'foreign_inside': [ppm, ...]}``, or None when the
+    signal has no lines to bound a window with. The window and the shifts
+    travel with the areas so the report can show which region produced the
+    number — a concentration whose window nobody can see is not auditable.
 
     ``blank_indices`` names the blank samples. They are integrated with the
     same window as everything else and their mean is subtracted, so the
     correction is measured in the region it corrects rather than assumed.
 
-    Given ``linewidth_ppm`` the window is ``signal_window``'s -- let out
-    past the outer lines, bounded by the neighbours in ``other_peaks`` --
-    and the result says so (``'geometry': 'lines'``), so the caller can
-    trust the capture correction on a window whose contents it knows.
+    Given ``linewidth_ppm`` the segments are ``signal_segments``' -- one
+    per line, let out past the apex, bounded by the neighbours in
+    ``other_peaks``, merged where they touch -- and the result says so
+    (``'geometry': 'lines'``), so the caller can trust the capture
+    correction on windows whose contents it knows. ``foreign_inside`` names
+    the neighbours found between the signal's own lines: the ones that kept
+    the segments apart. ``window`` is the segments' span.
     """
     if linewidth_ppm:
-        win = signal_window(line_peaks, linewidth_ppm=linewidth_ppm,
-                            other_peaks=other_peaks)
+        segs = signal_segments(line_peaks, linewidth_ppm=linewidth_ppm,
+                               other_peaks=other_peaks)
         geometry = 'lines'
+        foreign = foreign_between_lines(line_peaks, other_peaks)
     else:
         win = multiplet_window(line_peaks)
+        segs = [win] if win else []
         geometry = 'feet'
-    if win is None:
+        foreign = []
+    if not segs:
         return None
-    lo, hi = win
+    lo, hi = float(segs[0][0]), float(segs[-1][1])
     shifts = window_shifts(line_peaks) if align else {}
     areas = integrate_across_samples(ppm, intensities, lo, hi,
                                      included=included,
                                      local_baseline=local_baseline,
-                                     shifts=shifts)
+                                     shifts=shifts, segments=segs)
     blank_area = float('nan')
     if blank_indices:
         blanks = integrate_across_samples(ppm, intensities, lo, hi,
                                           included=list(blank_indices),
                                           local_baseline=local_baseline,
-                                          shifts=shifts)
+                                          shifts=shifts, segments=segs)
         if blanks:
             blank_area = float(np.mean(list(blanks.values())))
             areas = subtract_blank(areas, blanks)
     return {
         'window': (lo, hi),
+        'segments': [(float(a), float(b)) for a, b in segs],
         'width_ppm': window_width_ppm(lo, hi),
         'areas': areas,
         'shifts': shifts,
         'blank_area': blank_area,
         'geometry': geometry,
+        'foreign_inside': foreign,
     }
 
 
@@ -299,7 +393,8 @@ MIN_TRUSTED_CAPTURE = 0.75
 
 
 def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
-                                 *, min_trusted=MIN_TRUSTED_CAPTURE):
+                                 *, min_trusted=MIN_TRUSTED_CAPTURE,
+                                 segments=None):
     """How much of a signal's true area a window of these bounds contains.
 
     A Lorentzian's tails never end. Integrating between finite limits always
@@ -332,6 +427,11 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
     (MIN_TRUSTED_CAPTURE); a caller that built the window itself, from the
     lines and the neighbours, knows what it holds and may pass 0.
 
+    ``segments`` replaces the one window with several disjoint ones, the
+    fraction being the sum over them: a triplet integrated on its outer lines
+    alone holds half of itself, and dividing by that half is what puts the
+    middle line back.
+
         Bharti, S.K. & Roy, R. (2012). Quantitative 1H NMR spectroscopy.
         TrAC Trends in Analytical Chemistry 35:5-26.
     """
@@ -339,8 +439,10 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
     if not ppms or not hwhm or float(hwhm) <= 0:
         return None
     g = float(hwhm)
-    lo, hi = (min(lo, hi), max(lo, hi))
-    if hi <= lo:
+    segs = [(min(float(a), float(b)), max(float(a), float(b)))
+            for a, b in (segments or ())] or [(min(lo, hi), max(lo, hi))]
+    segs = [(a, b) for a, b in segs if b > a]
+    if not segs:
         return None
     w = list(weights or ())
     if len(w) != len(ppms) or sum(w) <= 0:
@@ -348,8 +450,9 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
     total = float(sum(w))
     f = 0.0
     for p, wi in zip(ppms, w):
-        f += (wi / total) * (np.arctan((hi - p) / g)
-                             - np.arctan((lo - p) / g)) / np.pi
+        for a, b in segs:
+            f += (wi / total) * (np.arctan((b - p) / g)
+                                 - np.arctan((a - p) / g)) / np.pi
     if not np.isfinite(f) or f <= 0:
         return None
     if f < float(min_trusted):
@@ -413,3 +516,56 @@ def refine_apex_ppm(ppm, trace, apex_ppm, *, search=2):
         return float(apex_ppm)
     step = float(x[i + 1] - x[i - 1]) / 2.0
     return float(x[i] + delta * step)
+
+
+def pattern_lines(predicted_ppms, found_ppms, *, weights=None, tolerance=None):
+    """The multiplet's whole pattern, with the lines detection found at their
+    apices and the rest where the annotation predicted them.
+
+    Returns ``(ppms, weights, found_mask, share)``: one entry per pattern
+    line, ``found_mask`` saying which carry a detected line, ``share`` the
+    fraction of the pattern's intensity those hold. A triplet found on its
+    middle line alone has ``share`` 0.5 -- and its area, divided by the
+    fraction the window holds of all THREE lines, is the triplet's. That is
+    the qNMR practice of integrating the resolved part of a multiplet and
+    scaling by the intensity pattern (Pauli et al. 2012), with the scale
+    computed from the lineshape.
+
+    Each predicted line takes the nearest found line within ``tolerance``
+    (half the pattern's smallest spacing by default, the same rule the
+    adapter matches lines with), each found line at most once. Predicted
+    lines fewer than the found ones -- nothing to scale by -- give the found
+    lines as they are, with ``share`` 1.
+    """
+    pred = [float(v) for v in (predicted_ppms or ()) if v is not None]
+    found = sorted(float(v) for v in (found_ppms or ()) if v is not None)
+    if len(pred) <= len(found) or not found:
+        return found, list(pascal_weights(len(found))), [True] * len(found), 1.0
+    w = list(weights or ())
+    if len(w) != len(pred) or sum(w) <= 0:
+        w = pascal_weights(len(pred))
+    if tolerance is None:
+        gaps = sorted(abs(b - a) for a, b in zip(pred, pred[1:]) if b != a)
+        tolerance = (gaps[0] / 2.0) if gaps else 0.002
+    order = sorted(range(len(pred)), key=lambda i: pred[i])
+    pred = [pred[i] for i in order]
+    w = [w[i] for i in order]
+    ppms, mask, used = [], [], set()
+    for p in pred:
+        best, bd = None, float(tolerance)
+        for j, f in enumerate(found):
+            if j in used:
+                continue
+            d = abs(f - p)
+            if d < bd:
+                bd, best = d, j
+        if best is None:
+            ppms.append(p)
+            mask.append(False)
+        else:
+            ppms.append(found[best])
+            mask.append(True)
+            used.add(best)
+    total = float(sum(w))
+    share = float(sum(wi for wi, m in zip(w, mask) if m)) / total
+    return ppms, w, mask, share

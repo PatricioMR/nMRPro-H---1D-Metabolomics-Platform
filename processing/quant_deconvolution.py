@@ -43,7 +43,7 @@ def _height(x, centre, hwhm):
 
 
 def fraction_in_window(line_ppms, weights, lo, hi, hwhm, *,
-                       local_baseline=False) -> float:
+                       local_baseline=False, segments=None) -> float:
     """How much of a signal's area a window of these bounds actually measures.
 
     The same expression as the capture correction, read the other way round:
@@ -63,39 +63,47 @@ def fraction_in_window(line_ppms, weights, lo, hi, hwhm, *,
     rather than in the error. Without it a narrow window's area, divided by the
     fraction it was supposed to hold, comes back far short and the balance
     hands the difference to whoever is left.
+
+    ``segments`` replaces the one window with several disjoint ones (the
+    pieces a signal is integrated on, each with its own baseline), and the
+    fraction is the sum over them.
     """
     ppms = [float(p) for p in (line_ppms or ()) if p is not None]
     if not ppms or not hwhm or float(hwhm) <= 0:
         return 0.0
-    lo, hi = (min(lo, hi), max(lo, hi))
+    segs = [(min(float(a), float(b)), max(float(a), float(b)))
+            for a, b in (segments or ())] or [(min(lo, hi), max(lo, hi))]
     w = list(weights or ())
     if len(w) != len(ppms) or sum(w) <= 0:
         w = [1.0] * len(ppms)
     total = float(sum(w))
     f = 0.0
     for p, wi in zip(ppms, w):
-        share = (_cumulative(hi, p, hwhm) - _cumulative(lo, p, hwhm))
-        if local_baseline:
-            share -= (hi - lo) * (_height(lo, p, hwhm)
-                                  + _height(hi, p, hwhm)) / 2.0
-        f += (wi / total) * share
+        for a, b in segs:
+            share = (_cumulative(b, p, hwhm) - _cumulative(a, p, hwhm))
+            if local_baseline:
+                share -= (b - a) * (_height(a, p, hwhm)
+                                    + _height(b, p, hwhm)) / 2.0
+            f += (wi / total) * share
     return float(f) if np.isfinite(f) else 0.0
 
 
-def neighbour_leak(window, neighbours, hwhm) -> float:
+def neighbour_leak(window, neighbours, hwhm, *, segments=None) -> float:
     """The area inside ``window`` that belongs to the signals around it.
 
     ``neighbours`` are ``(line_ppms, weights, total_area)`` for every other
     signal. Their total areas are what their own windows measured, corrected
     for their own tails, so this asks how much of a known quantity lands here
-    rather than inferring an unknown one.
+    rather than inferring an unknown one. ``segments``, when the signal was
+    integrated on pieces, are the pieces the leak is summed over.
     """
     lo, hi = window
     leak = 0.0
     for ppms, weights, area in neighbours or ():
         if area is None or not np.isfinite(area):
             continue
-        leak += float(area) * fraction_in_window(ppms, weights, lo, hi, hwhm)
+        leak += float(area) * fraction_in_window(ppms, weights, lo, hi, hwhm,
+                                                 segments=segments)
     return float(leak)
 
 
@@ -103,7 +111,8 @@ def subtract_neighbours(signals, hwhm, *, max_fraction=0.5):
     """Each signal's area with the other signals' tails taken out.
 
     ``signals`` maps a key to ``{'window': (lo, hi), 'lines': [...],
-    'weights': [...], 'areas': {sample: area}}``. Returns
+    'weights': [...], 'areas': {sample: area}}``, with ``'segments'`` where
+    the signal was integrated on pieces of its window. Returns
     ``{key: {sample: corrected_area}}`` alongside ``{key: leak_fraction}`` so
     the caller can say how much was removed and from what.
 
@@ -135,7 +144,7 @@ def subtract_neighbours(signals, hwhm, *, max_fraction=0.5):
             continue
         others = [(signals[j].get('lines'), signals[j].get('weights'),
                    totals[j]) for j in keys if j != k]
-        leak = neighbour_leak(win, others, hwhm)
+        leak = neighbour_leak(win, others, hwhm, segments=sig.get('segments'))
         own = totals[k]
         if (not np.isfinite(leak) or leak <= 0 or not np.isfinite(own)
                 or own <= 0 or leak > float(max_fraction) * own):

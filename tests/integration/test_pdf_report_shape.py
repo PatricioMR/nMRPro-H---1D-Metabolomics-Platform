@@ -131,3 +131,117 @@ def test_the_crop_draws_every_component_of_a_resolved_window():
     labels = [ln.get_label() for ln in ax.get_lines()]
     assert 'taurine t' in labels and 'betaine s' in labels
     assert ax.collections, "the owner's component is filled"
+
+
+def test_the_crop_leaves_the_gap_around_a_foreign_peak_unpainted():
+    """A window cut around a foreign peak between two lines is painted on
+    its pieces, the gap open, the foreign peak marked."""
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    lw = 2.6 / FIELD
+    g = lw / 2
+    lines = [3.2 - 6.6 / FIELD, 3.2, 3.2 + 6.6 / FIELD]
+    y = sum(a * g ** 2 / ((PPM - c) ** 2 + g ** 2)
+            for c, a in zip(lines, (1, 2, 1)))
+    X = np.column_stack([y, y])
+    cut = (lines[0] + lines[1]) / 2
+    row = {'metabolite': 'Taurine', 'hmdb_id': 'TAU', 'ppm': 3.2,
+           '_integ_mode': 'Multiplet', '_multiplet_window': [3.18, 3.22],
+           '_integ_segments': [[3.18, cut - lw / 2], [cut + lw / 2, 3.22]],
+           '_foreign_inside': [cut], '_line_ppms': lines}
+    fig, _r2 = _report()._peak_crop_fig(PPM, X, row, [], {})
+    ax = fig.axes[0]
+    assert ax.collections, 'the pieces are filled'
+    verts = np.vstack([p.vertices for p in ax.collections[0].get_paths()])
+    inside_gap = (verts[:, 0] > cut - lw / 2 + 1e-6) & \
+                 (verts[:, 0] < cut + lw / 2 - 1e-6) & (verts[:, 1] > 0)
+    assert not inside_gap.any(), 'nothing painted in the gap'
+    marks = {round(float(ln.get_xdata()[0]), 6): ln.get_color()
+             for ln in ax.get_lines() if len(ln.get_xdata()) == 2}
+    assert marks.get(round(cut, 6)) == '#b0b0b0', 'the foreign peak, grey'
+    for c in lines:
+        assert marks.get(round(c, 6)) == '#e63946', 'each own line, red'
+
+
+def test_the_crop_draws_one_mean_per_group_and_fills_the_best():
+    """The traces are the groups' means of what was integrated -- blanks
+    out, no global mean -- and the fill sits on the group whose mean stands
+    highest in the window, the trace the annotation window shows."""
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    lw = 2.6 / FIELD
+    g = lw / 2
+    y = g ** 2 / ((PPM - 3.2) ** 2 + g ** 2)
+    X = np.column_stack([y, y * 3.0, np.zeros_like(y)])    # A, B, blank
+    si = [{'label': 'A', 'type': 'Sample'}, {'label': 'B', 'type': 'Sample'},
+          {'label': 'BLK', 'type': 'BLK'}]
+    row = {'metabolite': 'X', 'hmdb_id': 'X', 'ppm': 3.2,
+           '_integ_mode': 'Multiplet', '_multiplet_window': [3.18, 3.22]}
+    fig, _r2 = _report()._peak_crop_fig(PPM, X, row, si, {'A': '#111111',
+                                                          'B': '#222222'})
+    ax = fig.axes[0]
+    labels = [ln.get_label() for ln in ax.get_lines()]
+    assert 'A' in labels and 'B' in labels and 'BLK' not in labels
+    top = max(float(np.max(ln.get_ydata())) for ln in ax.get_lines()
+              if ln.get_label() == 'B')
+    filled = np.vstack([p.vertices for p in ax.collections[0].get_paths()])
+    assert float(filled[:, 1].max()) == pytest.approx(top, rel=0.02), \
+        'the fill follows B, three times A'
+
+
+def _polygon_area(collection):
+    """Shoelace over every filled path, so the area painted can be held
+    against the area reported."""
+    total = 0.0
+    for path in collection.get_paths():
+        v = path.vertices
+        x, y = v[:, 0], v[:, 1]
+        total += 0.5 * abs(float(np.dot(x, np.roll(y, 1))
+                                 - np.dot(y, np.roll(x, 1))))
+    return total
+
+
+def test_the_shaded_area_is_the_area_the_number_came_from():
+    """The report's figure is evidence: the region painted on the group's
+    mean trace must integrate to that group's reported area, before the
+    capture correction. Same window, same baseline, same trace."""
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    from gui.stages._quant_adapter import quantify_project
+    ppm = np.linspace(1.40, 1.60, 6000)
+    g = 0.0015
+    y = sum(g ** 2 / ((ppm - c) ** 2 + g ** 2) for c in (1.470, 1.482))
+    X = np.column_stack([y, y * 1.2, y * 3.0, y * 3.3])
+    si = [{'label': 'A', 'type': 'Sample'}, {'label': 'A', 'type': 'Sample'},
+          {'label': 'B', 'type': 'Sample'}, {'label': 'B', 'type': 'Sample'}]
+    peaks = [{'rank': 1, 'ppm': 1.470, 'start_ppm': 1.465, 'end_ppm': 1.476,
+              'snr': 50.0},
+             {'rank': 2, 'ppm': 1.482, 'start_ppm': 1.476, 'end_ppm': 1.487,
+              'snr': 50.0}]
+    mp = {'db_ppm': 1.476, 'ppm': 1.476, 'peak_rank': 1, 'multiplicity': 'd',
+          'type': 'd', 'delta_j_hz': 0.05, 'ppm_diff': 0.0, '_n_found_lines': 2,
+          '_n_exp_lines': 2, 'protons': 3, 'annotation_quality': 'good',
+          'predicted_lines': [{'ppm': 1.470}, {'ppm': 1.482}]}
+    rows = quantify_project(
+        metabolites=[{'id': 'D', 'name': 'Doublet', 'matched_peaks': [mp]}],
+        peaks=peaks, ppm=ppm, intensities=X, samples_info=si,
+        noise_sigma=0.001, use_pqn=False,
+        deconvolve=False)   # as the app runs (app_paths.DECONVOLUTION_ENABLED)
+    row = next(r for r in rows if r.get('hmdb_id') == 'D')
+    assert row['_not_quantified'] is False
+    grp = row['_snr_group']
+    fig, _r2 = _report()._peak_crop_fig(ppm, X, row, si, {})
+    ax = fig.axes[0]
+    painted = _polygon_area(ax.collections[0])
+    # the group's reported area, with the capture correction undone: what
+    # the integration actually summed on that group's samples
+    idx = [i for i, s_ in enumerate(si) if s_['label'] == grp]
+    reported = np.mean([row['_areas_per_sample'][i] for i in idx])
+    reported *= float(row['_captured_fraction'] or 1.0)
+    assert painted == pytest.approx(reported, rel=0.02)

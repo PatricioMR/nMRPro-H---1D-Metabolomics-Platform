@@ -136,6 +136,11 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                                       or ([mp.get('ppm')]
                                           if mp.get('ppm') is not None else []),
                     'shape_fit': _shape,
+                    # The reference's lines at the found centre, for the
+                    # plots: never integrated, never placed by them.
+                    'reference_ppms': [float(l['ppm']) for l
+                                       in (mp.get('reference_lines') or ())
+                                       if l.get('ppm') is not None],
                 },
                 payload={'name': met.get('name', mid), 'met': met, 'mp': mp},
             ))

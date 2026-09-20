@@ -166,7 +166,7 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
             _dbg(f, 'ref_peak     : NOT FOUND — no IS normalisation')
         _dbg(f, f'external_IS  : {ext_is}')
 
-        ok = [r for r in rows if not r.get('_not_quantified')]
+        ok = [r for r in rows if not r.get('_not_quantified') and not r.get('_is_is')]
         censored = [r for r in rows if r.get('_censored')]
         nq = [r for r in rows
               if r.get('_not_quantified') and not r.get('_censored')]
@@ -515,11 +515,20 @@ class _QuantCompMixin:
 
         quality_marks = getattr(ann, '_quality_marks', {}) or {}
         try:
-            from gui.stages._annotation_helpers import ambiguous_peak_ranks
+            from gui.stages._annotation_helpers import (
+                DJ_GOLD_HZ_DEFAULT, ambiguous_peak_ranks)
+            from processing.annotation_scoring import SCORING_DEFAULTS
+            # The gate the annotation ranked with. The params dict itself
+            # used to be passed here, in dj_gold_hz's position, and the
+            # check failed on every run -- quietly, into an empty set.
+            _ann_params = getattr(ann, '_params', None) or {}
+            _gold = float(_ann_params.get(
+                'dj_gold_hz', SCORING_DEFAULTS.get('dj_gold_hz',
+                                                   DJ_GOLD_HZ_DEFAULT)))
             ambiguous = ambiguous_peak_ranks(
                 metabolites,
                 {(str(k[0]), k[1]): v for k, v in quality_marks.items()},
-                getattr(ann, '_params', None))
+                dj_gold_hz=_gold)
         except Exception as _amb_exc:
             print(f'[Quant] ambiguity check unavailable: {_amb_exc}')
             ambiguous = set()
@@ -641,14 +650,17 @@ class _QuantCompMixin:
             # Counted once, for both places that report it. Two labels reading
             # the same list two different ways is how one of them kept saying
             # 100 after the other was taught to say 65.
-            _n_nq = sum(1 for _r in self._quant_results
-                        if _r.get('_not_quantified'))
-            _n_ok = len(self._quant_results) - _n_nq
+            # The internal standard is a row, not an analyte: it stood at
+            # 70 quantified here against 69 in the report, which leaves it
+            # out.
+            _analytes = [_r for _r in self._quant_results
+                         if not _r.get('_is_is')]
+            _n_nq = sum(1 for _r in _analytes if _r.get('_not_quantified'))
+            _n_ok = len(_analytes) - _n_nq
             # Censored analytes are counted apart from both. They are neither
             # a result nor a failure: the experiment looked and reported what
             # it could have seen, which is a different thing from not looking.
-            _n_cens = sum(1 for _r in self._quant_results
-                          if _r.get('_censored'))
+            _n_cens = sum(1 for _r in _analytes if _r.get('_censored'))
             _n_nq -= _n_cens
             _note = (f' PQN×{self._pqn_factor:.3f}'
                      if _norm_f == 'IS+PQN' else '')

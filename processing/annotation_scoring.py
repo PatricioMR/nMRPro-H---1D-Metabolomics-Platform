@@ -460,42 +460,23 @@ def measure_multiplet(predicted_lines: Sequence[dict], peaks: Iterable[dict],
     pred = list(predicted_lines or [])
     j_ref = j_db
     if j_db is not None and linewidth_hz and field_mhz > 0 and n_expected >= 2:
-        # What the multiplet shows at this study's width. myo-Inositol's
-        # triplets of 2.8 Hz are one apex at a 2.6 Hz linewidth, leucine's
-        # methyl triplet two; asked for three lines they were incomplete on
-        # every study. The apices of the binomial pattern broadened to the
-        # study's width are the lines expected, and their spacing the
-        # coupling judged against.
-        half = (n_expected - 1) / 2.0
-        heights = pascal_weights(n_expected)
-        seen = apparent_lines([((k - half) * float(j_db), float(h))
-                               for k, h in enumerate(heights)],
-                              float(linewidth_hz))
-        if 1 <= len(seen) < n_expected:
-            centre = float(centre_hint or db_ppm or 0)
-            pred = [{'ppm': centre + o / float(field_mhz), 'rel_intensity': r,
-                     'apparent': True} for o, r in seen]
-            n_expected = len(seen)
-            offs = sorted(o for o, _r in seen)
-            j_ref = (float(np.median(np.diff(offs))) if len(offs) >= 2
-                     else None)
-        else:
-            j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
+        # The spacing two resolved lines show at this study's width: apices
+        # of overlapping Lorentzians pull inward (glucose's anomeric doublet
+        # of 3.8 Hz read 2.7 Hz apart at a 2.7 Hz linewidth). The coupling
+        # is judged against that spacing -- but every line of the letter is
+        # still expected. A multiplet whose lines this study cannot resolve
+        # is not a singlet here; it is a multiplet this study cannot verify,
+        # and it is reported incomplete. Expecting only the apices the width
+        # leaves (be803b7) turned a 2 Hz doublet into "one line expected,
+        # one found, complete", with no coupling to check, and it came out
+        # Good on a hump.
+        j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
     if len(pred) < n_expected and field_mhz > 0 and j_db:
         pred = synthetic_lines(float(centre_hint or db_ppm or 0), j_db,
                                n_expected, field_mhz) or pred
 
     if not pred:
         return LineMeasurement(measured=False)
-    if n_expected < 2:
-        # one apex here: found or not, and no coupling to judge
-        found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
-        m = LineMeasurement(n_expected=1, n_found=min(len(found), 1),
-                            found_ppms=found[:1], measured=True)
-        m.predicted_lines = sync_predicted_lines(pred, found[:1], tolerance)
-        if found:
-            m.centre_ppm = float(found[0])
-        return m
 
     found = dedup_coincident(snap_lines_to_peaks(pred, peaks, tolerance))
     if j_ref is not None and len(found) == n_expected:
@@ -1332,13 +1313,13 @@ def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
     says; the last is the evidence position alone cannot give, and a
     triplet accounting for 5% of the height it claims is a singlet with
     neighbours.
-    A shape that shows one apex at this study's width is a singlet's worth
-    of evidence, whatever the reference measured.
     """
     if is_singlet_like(mult):
         return TIER_SINGLET
-    if n_expected is not None and int(n_expected) < 2:
-        # one apex at this study's width, whatever the letter or the shape
+    if (normalize_mult(mult) == PATTERN_MULT and n_expected is not None
+            and int(n_expected) < 2):
+        # a measured shape (ADR-013) that shows one apex at this width is a
+        # singlet's worth of evidence; a letter is never reduced to one
         return TIER_SINGLET
     complete = (n_found is None or n_expected is None
                 or (n_found >= n_expected >= 2))

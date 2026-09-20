@@ -39,13 +39,14 @@ from processing.quant_integration import (
     MIN_TRUSTED_CAPTURE,
     integrate_across_samples, integrate_sample, integrate_signal,
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
-    refine_apex_ppm)
+    pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
 from processing.quant_shared import REMAINDER_NOTE, resolve_shared_windows
-from processing.quant_snr import noise_level, representative_snr, window_snr
+from processing.quant_snr import (
+    best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    LOST_COMPETITION, NO_MEASURABLE_WINDOW, REJECTION_TEXT, SHAPES_OFF, elect,
-    is_competitor)
+    LOST_COMPETITION, NO_MEASURABLE_WINDOW, PARTIAL_MULTIPLET, REJECTION_TEXT,
+    SHAPES_OFF, elect, is_competitor)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -455,7 +456,7 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
 
 
 def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
-                   linewidth_ppm):
+                   linewidth_ppm, segments=None):
     """The SNR and the detection limits of one window, from one noise.
 
     One noise for the whole of quantification. The SNR column used to
@@ -468,7 +469,12 @@ def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
                                    global_sigma=noise_sigma) or noise_sigma
     snr = window_snr(ppm, intensities, lo, hi, sigma_here, included=included)
     _p = np.asarray(ppm, dtype=float)
-    n_pts = int(((_p >= lo) & (_p <= hi)).sum())
+    # The points the integration summed: the segments', where the signal was
+    # measured on pieces -- the noise on an area grows with the points in it.
+    _in = np.zeros(_p.shape, dtype=bool)
+    for a, b in (segments or [(lo, hi)]):
+        _in |= (_p >= min(a, b)) & (_p <= max(a, b))
+    n_pts = int(_in.sum())
     dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
     lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
     return snr, lod_a, loq_a
@@ -702,6 +708,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     # table cannot be questioned, and this is the one place where a metabolite
     # can win and still have nothing to measure.
     measured, per_proton_areas, unmeasurable = {}, {}, []
+    partial: dict = {}
     for mid, cand in election.winners.items():
         if (cand.evidence or {}).get('shape_fit'):
             # A multiplet judged as a shape holds no peak; its amount is
@@ -742,22 +749,38 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         # about 7% high against a standard whose own window held 94% of its
         # line while a doublet's held 83%.
         _lw = (cand.evidence or {}).get('line_weights')
-        _weights = (list(_lw) if _lw and len(_lw) == len(lines)
-                    else pascal_weights(len(lines)))
+        # The whole pattern, not only the lines detection placed: a triplet
+        # with one line found is a third of a pattern, and integrating that
+        # line as if it were the signal, then dividing by the triplet's
+        # protons, reports half of what is there. The missing lines stand
+        # where the annotation predicted them, and the fraction the window
+        # holds is computed over all of them -- so the area comes back as
+        # the multiplet's. Below MIN_TRUSTED_CAPTURE of the pattern the
+        # scale is not believed (one line of a triplet: x2 on a line that
+        # may be somebody else's) and the analyte is not quantified.
+        _ppms, _weights, _found_mask, _share = pattern_lines(
+            (cand.evidence or {}).get('predicted_ppms') or (),
+            [float(p.get('ppm', 0.0)) for p in lines],
+            weights=(list(_lw) if _lw else None))
+        _missing = [p for p, m in zip(_ppms, _found_mask) if not m]
+        if _share < MIN_TRUSTED_CAPTURE:
+            partial[mid] = (len(lines), len(_ppms), _share, _missing)
+            continue
         # A window built from the lines and the neighbours is known: the
         # correction is arithmetic on it. Only a window from detection's
         # feet alone is refused when it holds too little.
         captured = lorentzian_captured_fraction(
-            [float(p.get('ppm', 0.0)) for p in lines],
-            _weights, lo, hi, linewidth_ppm / 2.0,
+            _ppms, _weights, lo, hi, linewidth_ppm / 2.0,
             min_trusted=(0.0 if out.get('geometry') == 'lines'
-                         else MIN_TRUSTED_CAPTURE))
+                         else MIN_TRUSTED_CAPTURE),
+            segments=out.get('segments'))
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
         snr, lod_a, loq_a = _window_limits(
             ppm, intensities, lo, hi, included=included,
-            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
+            segments=out.get('segments'))
         med_area = (float(np.median(list(out['areas'].values())))
                     if out['areas'] else float('nan'))
         # Which samples actually show this signal, at the same ratio the
@@ -770,11 +793,30 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
                          'captured': captured, 'detected': detected,
                          'lines': [float(p.get('ppm', 0.0)) for p in lines],
+                         'pattern_lines': list(_ppms),
+                         'missing_lines': _missing,
+                         'pattern_share': _share,
                          'weights': _weights,
                          'lod_area': lod_a, 'loq_area': loq_a,
                          'area_median': med_area,
                          'strength': strength_band(med_area, loq_a), **out}
         per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
+
+    # ── The signal on each group's mean ─────────────────────────────────
+    # The figure the report draws is one group's mean, and the SNR and the
+    # shape agreement beside it must be read on THAT trace, for THIS
+    # signal -- not the anchor peak's SNR over the study's mean while the
+    # picture shows a group. Measured once here, so the table, the plot and
+    # the PDF cannot disagree about which group they are looking at.
+    if groups and linewidth_ppm:
+        for mid, info in measured.items():
+            lo, hi = info['window']
+            ev = group_evidence(
+                ppm, intensities, groups, lo=lo, hi=hi,
+                noise=noise_sigma, lines=info.get('lines') or (),
+                weights=info.get('weights') or (), hwhm=linewidth_ppm / 2.0)
+            info['group_evidence'] = ev
+            info['best_group'] = best_group(ev)
 
     # ── What each window holds of its neighbours ─────────────────────────────
     # A window is not a container for one signal. Lorentzian tails never reach
@@ -792,7 +834,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     if len(_trusted) > 1 and linewidth_ppm:
         _corrected, _removed = subtract_neighbours(
             {k: {'window': v['window'], 'lines': v['lines'],
-                 'weights': v['weights'], 'areas': v['areas']}
+                 'weights': v['weights'], 'areas': v['areas'],
+                 'segments': v.get('segments')}
              for k, v in _trusted.items()},
             linewidth_ppm / 2.0)
         for k, v in _trusted.items():
@@ -905,10 +948,23 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                          bool(external_standard_samples), dilution,
                          correction))
 
+    # What the integration subtracted, so a report can draw the very region
+    # the number came from: with a local baseline the area is between the
+    # trace and the line joining the window's ends, not down to zero.
+    for r in rows:
+        r['_local_baseline'] = bool(local_baseline)
+
     names = {c.met_id: ((c.payload or {}).get('name') if isinstance(
         c.payload, dict) else None) or c.met_id for c in (candidates or ())}
     for mid, reason in shapes_off.items():
         rows.append(_rejected_row(mid, reason))
+    for mid, (n_found, n_all, share, missing) in partial.items():
+        rows.append(_rejected_row(
+            mid, PARTIAL_MULTIPLET,
+            detail=(f' Here {n_found} of {n_all} lines were placed, holding '
+                    f'{100 * share:.0f}% of the pattern; the missing lines '
+                    f'were expected at '
+                    f'{", ".join("%.4f" % v for v in missing)} ppm.')))
     for mid, reason in election.rejected.items():
         if mid in recovered:
             continue
@@ -1163,7 +1219,17 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         'corr_area': float(np.mean(list(info['areas'].values()))),
         'conc_mm': float(np.mean(good)) if good else float('nan'),
         'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
-        'snr': representative_snr(info.get('snr')),
+        # The SNR shown is the signal's on the group the figure draws
+        # (best cosine, then highest SNR); the per-sample window SNR the
+        # limits are built on stays in _snr_per_sample.
+        'snr': (info['group_evidence'][info['best_group']]['snr']
+                if info.get('best_group') else
+                representative_snr(info.get('snr'))),
+        '_snr_group': info.get('best_group'),
+        '_snr_by_group': {g: e['snr'] for g, e in
+                          (info.get('group_evidence') or {}).items()},
+        '_cosine_by_group': {g: e['cosine'] for g, e in
+                             (info.get('group_evidence') or {}).items()},
         'status': dots,
         'vip_score': float('nan'),
         '_confidence': level,
@@ -1179,6 +1245,24 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_peak_rank': sig.peak_rank,
         '_display_peak_rank': sig.peak_rank,
         '_multiplet_window': [float(lo), float(hi)],
+        # The pieces of that window the area was summed over, and the
+        # foreign peaks between the lines that kept them apart: a triplet
+        # measured on its three lines around somebody's doublet says so.
+        '_integ_segments': [[float(a), float(b)]
+                            for a, b in (info.get('segments') or ())],
+        '_foreign_inside': [float(v) for v in (info.get('foreign_inside')
+                                               or ())],
+        # Where the signal's own lines are, so a plot can mark who is who --
+        # and where the pattern's missing lines were expected, so a signal
+        # scaled from part of its multiplet shows which part.
+        '_line_ppms': [float(v) for v in (info.get('lines') or ())],
+        '_missing_lines': [float(v) for v in (info.get('missing_lines') or ())],
+        '_pattern_share': info.get('pattern_share'),
+        # Every line the reference lists for this signal, at the centre the
+        # annotation found -- the pattern the letter promises, drawn beside
+        # the lines actually integrated.
+        '_reference_lines': [float(v) for v in
+                             ((sig.evidence or {}).get('reference_ppms') or ())],
         '_nh': float(info['nh']),
         '_areas_per_sample': info['areas'],
         '_concs_per_sample': conc,
@@ -1203,6 +1287,8 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_unshared_reason': info.get('unshared_reason'),
         '_status_reasons': ((_deconv_reason(info) if info.get('deconv')
                              else _shared_reason(info))
+                            + _pattern_reason(info)
+                            + _segments_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -1254,6 +1340,41 @@ def _deconv_reason(info) -> list:
     return out
 
 
+def _pattern_reason(info) -> list:
+    """Said of a multiplet measured on part of its lines: which were
+    missing, and that the area was scaled by the pattern to the whole."""
+    missing = [float(v) for v in (info.get('missing_lines') or ())]
+    if not missing:
+        return []
+    share = float(info.get('pattern_share') or 0.0)
+    n_all = len(info.get('pattern_lines') or ()) or (
+        len(info.get('lines') or ()) + len(missing))
+    return [f'Partial multiplet: {n_all - len(missing)} of {n_all} lines were '
+            f'placed by detection, holding {100 * share:.0f}% of the pattern; '
+            f'the missing lines were expected at '
+            f'{", ".join("%.4f" % v for v in missing)} ppm. The area is the '
+            f'placed lines scaled by the pattern to the whole multiplet, '
+            f'so it assumes the missing lines are there, under something.']
+
+
+def _segments_reason(info) -> list:
+    """Said of a signal whose window holds a foreign peak between its lines:
+    which peaks, and on how many pieces the lines were then integrated."""
+    foreign = [float(v) for v in (info.get('foreign_inside') or ())]
+    if not foreign or info.get('deconv'):
+        return []
+    segs = info.get('segments') or ()
+    where = ', '.join('%.4f' % v for v in foreign)
+    what = ('%d foreign peak%s at %s ppm %s between this signal\'s lines'
+            % (len(foreign), 's' if len(foreign) > 1 else '', where,
+               'lie' if len(foreign) > 1 else 'lies'))
+    if len(segs) > 1:
+        return ['%s; integrated on the lines alone, in %d pieces, the '
+                'gap left out' % (what, len(segs))]
+    return ['%s, too close to its lines to cut around; integrated whole'
+            % what]
+
+
 def _shape_reason(info) -> list:
     """Said of a shape quantified in a region it does not hold alone: the
     copy that fits under the trace is bounded by the least overlapped apex,
@@ -1300,7 +1421,7 @@ def _shared_reason(info) -> list:
 
 
 def _rejected_row(mid, reason, shared_reason=None, *, beaten=None,
-                  names=None) -> dict:
+                  names=None, detail='') -> dict:
     """A metabolite with no number still gets a row, and says why.
 
     An analyte that disappears from the table cannot be questioned, and the
@@ -1323,7 +1444,7 @@ def _rejected_row(mid, reason, shared_reason=None, *, beaten=None,
         '_confidence': 0,
         '_integ_mode': 'Multiplet',
         '_not_quantified': True,
-        '_status_reasons': ([REJECTION_TEXT.get(reason, str(reason))]
+        '_status_reasons': ([REJECTION_TEXT.get(reason, str(reason)) + detail]
                             + ([f'Its share of the shared window could not be '
                                 f'resolved: {shared_reason}']
                                if shared_reason else [])

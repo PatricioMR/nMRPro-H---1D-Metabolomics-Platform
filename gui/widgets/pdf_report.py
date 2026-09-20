@@ -109,32 +109,51 @@ def _make_styles():
 
 
 # ── Spectral overview: média por grupo ───────────────────────────────────────
+def _grp_color(group_colors, lbl):
+    return (group_colors or {}).get(lbl) or _DEFAULT_GROUP_COLORS.get(lbl, '#888888')
+
+
+def _group_means(all_int, samples_info):
+    """``[(group, mean trace)]`` in the analyst's order, blanks left out --
+    the same grouping the quantification reports by
+    (``_quant_adapter.sample_groups``). Nothing is computed here that the
+    table does not already show per group; this is the trace behind it."""
+    from gui.stages._quant_adapter import sample_groups
+    arr = np.asarray(all_int, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    out = []
+    for grp, idxs in sample_groups(samples_info, arr.shape[1]).items():
+        if idxs:
+            out.append((grp, np.mean(arr[:, idxs], axis=1)))
+    return out
+
+
+def _best_group_trace(group_means, mask, fallback, prefer=None):
+    """The trace the numbers were read on: the group quantification chose
+    (``prefer``, the row's ``_snr_group``); without one, the group whose
+    mean stands highest inside ``mask`` -- the annotation window's rule
+    (``_best_group_mean``) -- or ``fallback``."""
+    for grp, y in group_means:
+        if prefer is not None and str(grp) == str(prefer):
+            return y
+    best, best_val = None, -np.inf
+    for grp, y in group_means:
+        v = float(np.max(y[mask])) if mask.any() else -np.inf
+        if v > best_val:
+            best, best_val = y, v
+    return fallback if best is None else best
+
+
 def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
                           width_in=14, height_in=5,
                           ppm_range: tuple | None = None):
     """Uma linha por grupo (média). Sem stack."""
     import matplotlib.patches as mpatches
 
-    si = samples_info or []
-    n  = all_int.shape[1] if all_int.ndim > 1 else 1
     ppm_arr = np.asarray(ppm, dtype=float)
-
-    def _grp_color(lbl):
-        return group_colors.get(lbl) or _DEFAULT_GROUP_COLORS.get(lbl, '#888888')
-
-    groups_ordered = list(dict.fromkeys(
-        s.get('label', 'Unknown') for s in si
-        if str(s.get('type', s.get('label', ''))).upper() != 'BLK'))
-
-    grp_idx: dict[str, list[int]] = {}
-    for i, s in enumerate(si):
-        if i >= n:
-            break
-        lbl   = s.get('label', 'Unknown')
-        stype = str(s.get('type', lbl)).upper()
-        if stype == 'BLK':
-            continue
-        grp_idx.setdefault(lbl, []).append(i)
+    grp_means = _group_means(all_int, samples_info)
+    groups_ordered = [g for g, _ in grp_means]
 
     fig, ax = plt.subplots(figsize=(width_in, height_in))
     fig.patch.set_facecolor('white')
@@ -147,15 +166,10 @@ def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
 
     means = []
     if groups_ordered:
-        for grp in groups_ordered:
-            idxs = grp_idx.get(grp, [])
-            if not idxs:
-                continue
-            mat  = all_int[:, idxs] if all_int.ndim > 1 else all_int[:, None]
-            mean = mat.mean(axis=1)
+        for grp, mean in grp_means:
             means.append(mean[mask])
-            ax.plot(ppm_arr, mean, color=_grp_color(grp), lw=1.0, alpha=0.9,
-                    label=grp)
+            ax.plot(ppm_arr, mean, color=_grp_color(group_colors, grp),
+                    lw=1.0, alpha=0.9, label=grp)
     else:
         mean = np.mean(all_int, axis=1) if all_int.ndim > 1 else all_int
         means.append(mean[mask])
@@ -175,8 +189,8 @@ def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
     ax.yaxis.set_major_formatter(ticker.NullFormatter())
 
     if groups_ordered:
-        handles = [mpatches.Patch(color=_grp_color(g), label=g)
-                   for g in groups_ordered if grp_idx.get(g)]
+        handles = [mpatches.Patch(color=_grp_color(group_colors, g), label=g)
+                   for g in groups_ordered]
         ax.legend(handles=handles, fontsize=8, loc='upper right',
                   framealpha=0.8, edgecolor='#bdbdbd')
 
@@ -241,20 +255,45 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     # contribution fill. A non-deconv analyte fills its own whole peak in blue.
     _INTEG_COL    = '#2e6da4'   # blue — peak outline / standard fill
     _ANALYTE_FILL = '#43a047'   # green — this analyte's resolved portion
-    _y_mean_full = (all_int[i_lo:i_hi+1] if all_int.ndim == 1
-                    else np.mean(all_int[i_lo:i_hi+1, :], axis=1))
-    ax.plot(x, _y_mean_full, color=_INTEG_COL, lw=1.5, zorder=3)
+    # One mean per group, as the quantification stage draws them; blanks
+    # and the global mean are not traces anybody measured. The fill and
+    # every overlay sit on the group whose mean stands highest in the
+    # integration window -- the trace the annotation window shows.
+    _grp = _group_means(all_int, samples_info)
+    _in_win = np.zeros(ppm_f.shape, dtype=bool)
+    if _mw and _windowed:
+        _in_win = (ppm_f >= ppm_lo) & (ppm_f <= ppm_hi)
+    else:
+        _in_win[min(lo_idx, hi_idx):max(lo_idx, hi_idx) + 1] = True
+    _global = (np.asarray(all_int, dtype=float) if all_int.ndim == 1
+               else np.mean(all_int, axis=1))
+    _shown = result.get('_snr_group')
+    _best_full = _best_group_trace(_grp, _in_win, _global, prefer=_shown)
+    for _g, _y in _grp:
+        _is_shown = _shown is not None and str(_g) == str(_shown)
+        ax.plot(x, _y[i_lo:i_hi+1], color=_grp_color(group_colors, _g),
+                lw=1.6 if _is_shown else 0.8, alpha=0.95 if _is_shown else 0.6,
+                zorder=3, label=_g)
+    _y_mean_full = _best_full[i_lo:i_hi+1]
+    if not _grp:
+        ax.plot(x, _y_mean_full, color=_INTEG_COL, lw=1.5, zorder=3)
+    elif len(_grp) > 1:
+        ax.legend(fontsize=6, loc='upper right', framealpha=0.7,
+                  edgecolor='#cccccc')
     y_peak_max = float(np.max(_y_mean_full))
     all_ys.append(_y_mean_full)
 
-    # Integration window indices
+    # Integration window indices: the same ppm membership the integration
+    # used (processing.quant_integration._window_mask), not a step-count
+    # estimate that can land a point wide on either side.
     _mw = result.get('_multiplet_window')
     if _mw and _windowed:
         _f_lo_ppm, _f_hi_ppm = min(_mw), max(_mw)
-        _step_f   = abs(float(ppm_f[1] - ppm_f[0])) if len(ppm_f) > 1 else 0.001
-        _ppm_max_f = float(ppm_f.max())
-        lo_f = max(0, int((_ppm_max_f - _f_hi_ppm) / _step_f))
-        hi_f = min(len(ppm_f) - 1, int((_ppm_max_f - _f_lo_ppm) / _step_f))
+        _in_w = np.nonzero((ppm_f >= _f_lo_ppm) & (ppm_f <= _f_hi_ppm))[0]
+        if _in_w.size >= 2:
+            lo_f, hi_f = int(_in_w.min()), int(_in_w.max())
+        else:
+            lo_f, hi_f = 0, -1
     else:
         lo_f = max(lo_idx, i_lo)
         hi_f = min(hi_idx, i_hi)
@@ -272,8 +311,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
             if _built is not None:
                 _xs, _ms, (_slo, _shi) = _built
                 _sel = (ppm_f >= _slo) & (ppm_f <= _shi)
-                _t = (np.mean(all_int[_sel, :], axis=1)
-                      if all_int.ndim > 1 else all_int[_sel])
+                _t = _best_full[_sel]
                 _sig = float(result.get('_noise_sigma') or 0.0)
                 if _sig <= 0:
                     _sig = float(np.std(_t[:max(3, len(_t) // 10)]) or 1.0)
@@ -333,8 +371,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     # Single-colour fill of the integrated area (NNLS → this analyte's fraction).
     if lo_f < hi_f and not _shape_drawn:
         xf = ppm_f[lo_f:hi_f + 1]
-        yf = (np.mean(all_int[lo_f:hi_f + 1, :], axis=1)
-              if all_int.ndim > 1 else all_int[lo_f:hi_f + 1])
+        yf = _best_full[lo_f:hi_f + 1]
         _line_fracs = result.get('_jr_line_fracs') if _show_deconv else None
         if _show_deconv and _line_fracs:
             # Per-line fractions: paint each point by the fraction of its nearest
@@ -347,12 +384,49 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         elif _show_deconv:
             yf = yf * float(_jr_frac)
         _fill_col = _ANALYTE_FILL if _show_deconv else _INTEG_COL
-        ax.fill_between(xf, 0, np.maximum(yf, 0),
+        # Only the pieces the area was summed over: a foreign peak between
+        # two lines leaves a gap, and the gap is not painted.
+        _segs = result.get('_integ_segments') or []
+        _in_seg = None
+        if len(_segs) > 1:
+            _in_seg = np.zeros(xf.shape, dtype=bool)
+            for _a, _b in _segs:
+                _in_seg |= (xf >= min(_a, _b)) & (xf <= max(_a, _b))
+        # Who is who: the signal's own lines in the software's peak marker
+        # (red, dotted), a foreign peak between them in light grey.
+        for _lp in result.get('_line_ppms') or ():
+            ax.axvline(_lp, color='#e63946', lw=0.8, ls=':', alpha=0.6,
+                       zorder=4)
+        for _fp in result.get('_foreign_inside') or ():
+            ax.axvline(_fp, color='#b0b0b0', lw=0.8, ls=':', alpha=0.9,
+                       zorder=4)
+        # The whole pattern the reference lists for this signal, dashed
+        # grey; a reference line with no red line on it was not integrated
+        # -- fused into a neighbour at this linewidth, or never placed.
+        for _rl in (result.get('_reference_lines')
+                    or result.get('_missing_lines') or ()):
+            ax.axvline(_rl, color='#9e9e9e', lw=0.8, ls='--', alpha=0.9,
+                       zorder=3)
+        # The area the number came from: between the trace and the local
+        # baseline the integration subtracted (the line joining the window's
+        # two ends, clipped at zero -- processing.quant_integration
+        # .integrate_sample), on the pieces it summed. Down to zero only
+        # when no local baseline was used.
+        _order_f = np.argsort(xf)
+        if result.get('_local_baseline', True) and xf.size >= 2:
+            _y0 = max(float(yf[_order_f][0]), 0.0)
+            _y1 = max(float(yf[_order_f][-1]), 0.0)
+            _base = np.empty_like(yf)
+            _base[_order_f] = np.linspace(_y0, _y1, xf.size)
+            ax.plot(xf, _base, color='#ff6666', lw=0.8, ls='--', alpha=0.7,
+                    zorder=3, label='baseline')
+        else:
+            _base = np.zeros_like(yf)
+        ax.fill_between(xf, _base, yf, where=_in_seg,
                         alpha=0.35, color=_fill_col, linewidth=0, zorder=2)
 
     # Média global para Lorentz overlay
-    y_mean = (np.mean(all_int[i_lo:i_hi+1, :], axis=1)
-              if all_int.ndim > 1 else all_int[i_lo:i_hi+1])
+    y_mean = _best_full[i_lo:i_hi+1]
 
     # ── Overlay Lorentziana ───────────────────────────────────────────────
     lorentz_r2 = float('nan')
@@ -373,8 +447,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
             # Amplitude from baseline-corrected mean in integration window
             lo_r = max(lo_idx, i_lo); hi_r = min(hi_idx, i_hi)
             x_r  = ppm_f[lo_r:hi_r+1]
-            y_r  = (np.mean(all_int[lo_r:hi_r+1, :], axis=1)
-                    if all_int.ndim > 1 else all_int[lo_r:hi_r+1])
+            y_r  = _best_full[lo_r:hi_r+1]
             bl_r = bl_y0 + bl_slope * (x_r - bl_x0)
             cen_i = int(np.argmin(np.abs(x_r - cen)))
             A     = max(float((y_r - bl_r)[cen_i]), 1e-30)
@@ -654,6 +727,12 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
     conc_s = f'{conc:.4f} {unit}' if np.isfinite(conc) else 'N/A'
     snr    = r.get('snr', float('nan'))
     snr_s  = f'{snr:.1f}' if snr and np.isfinite(snr) else '—'
+    # Which group the figure draws and the SNR was read on, and the shape
+    # agreement there -- so the picture and the numbers are one trace.
+    _sg = r.get('_snr_group')
+    if _sg is not None:
+        _cos = (r.get('_cosine_by_group') or {}).get(_sg)
+        snr_s += f'  (group {_sg}' + (f', cosine {_cos:.2f}' if _cos is not None else '') + ')'
 
     # CV por grupo
     cv_grp = r.get('cv_by_group', {}) or {}
@@ -717,6 +796,23 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    else f"{r.get('_integ_mode', '—')}  |  "
                    f"{_multiplicity_name(r.get('_multiplicity'))}  |  "
                    f"nH={_nh:.2f}")
+    # How many of the pattern's lines the number stands on: a triplet
+    # measured on two of its lines says so beside its name.
+    _n_own = len(r.get('_line_ppms') or ())
+    _n_miss = len(r.get('_missing_lines') or ())
+    if _n_miss:
+        integ_label += f"  |  {_n_own} of {_n_own + _n_miss} lines"
+    # What separates the shaded area from the number: the tails the window
+    # left outside (capture), a neighbour's skirt removed, and windows that
+    # followed each sample's drift.
+    _cap = r.get('_captured_fraction')
+    if _cap is not None and np.isfinite(float(_cap)) and 0 < float(_cap) < 1:
+        integ_label += f"  |  window holds {100 * float(_cap):.0f}% of the lineshape, corrected"
+    _nbs = r.get('_neighbour_share')
+    if _nbs and np.isfinite(float(_nbs)) and float(_nbs) > 0:
+        integ_label += f"  |  {100 * float(_nbs):.1f}% neighbour skirt removed"
+    if r.get('_peak_align_shifts'):
+        integ_label += "  |  window follows each sample's drift"
     if np.isfinite(lorentz_r2):
         integ_label += f"  |  R²={lorentz_r2:.4f}"
 
@@ -786,7 +882,12 @@ def generate_pdf(output_path: str, quant_stage, app,
                  analytes_per_page: int = 5,
                  annotation_stage=None):
     ppm     = getattr(app, 'ppm', None)
-    all_int = getattr(app, 'all_intensities', None)
+    # The traces quantification integrated -- the baseline model applied,
+    # alignment already in all_intensities -- not the traces as loaded.
+    try:
+        all_int = app.corrected_intensities()
+    except Exception:
+        all_int = getattr(app, 'all_intensities', None)
     si      = getattr(app, 'samples_info', None) or []
     gc      = getattr(app, 'group_colors', {}) or {}
     results = [r for r in (quant_stage._quant_results or [])

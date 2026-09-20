@@ -20,7 +20,14 @@ def _finish_ui_src():
 def test_the_message_reports_what_was_quantified_not_the_row_count():
     src = _finish_ui_src()
     assert "_r.get('_not_quantified')" in src
-    assert '_n_ok = len(self._quant_results) - _n_nq' in src
+    assert '_n_ok = len(_analytes) - _n_nq' in src
+
+
+def test_the_standard_is_not_counted_as_a_quantified_analyte():
+    """The report leaves the internal standard's row out; the stage said 70
+    where the report said 69."""
+    src = _finish_ui_src()
+    assert "if not _r.get('_is_is')" in src
 
 
 def test_both_labels_read_the_same_count():

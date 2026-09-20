@@ -42,7 +42,7 @@ from processing.annotation_scoring import (
     candidate_key, lines_covary, lines_covary_on_trace, lines_explained,
     pascal_agreement,
     synthetic_lines,
-    parse_first_j)
+    parse_first_j, PATTERN_LINE_TOL_HZ)
 from processing.multiplet_line_fit import fit_across_samples
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.per_sample_signal import (
@@ -1677,6 +1677,14 @@ class _AnnotationSearchMixin:
                     # NAD's 8.197 ppm pattern -- within 1.5 tolerances took
                     # any peak 0.075 ppm away for a line, and the multiplet
                     # centre, and the plot's window, landed on it.
+                    #
+                    # A letter's siblings are looked for the same two hertz
+                    # from where the coupling puts them (PATTERN_LINE_TOL_HZ).
+                    # The annotation's tolerance is for where the multiplet
+                    # sits, not for where its lines sit: at 1.5 tolerances
+                    # IMP's doublet of 2.05 Hz took a peak six hertz off for
+                    # its second line, and the centre moved between the two.
+                    _sib_tol = (PATTERN_LINE_TOL_HZ / mhz) if mhz else tolerance
                     if (not is_singlet and _eff_j_ppm > 0 and n_lns >= 2
                             and not _pattern):
                         found_line_ppms = [peak_ppm]
@@ -1689,7 +1697,7 @@ class _AnnotationSearchMixin:
                                     default=None)
                                 if best_sib is not None:
                                     dist = abs(best_sib['ppm'] - expected)
-                                    if dist <= tolerance * 1.5:
+                                    if dist <= _sib_tol:
                                         if best_sib['ppm'] not in found_line_ppms:
                                             found_line_ppms.append(float(best_sib['ppm']))
                                         break
@@ -1948,6 +1956,11 @@ class _AnnotationSearchMixin:
                     r['peak_rank']      = peak_rank
                     r['is_sub_peak']    = bool(nearest.get('is_sub_peak', False))
                     r['predicted_lines']= predicted_lines
+                    # The reference's own lines, at the centre found here:
+                    # what the letter promises. A quantification plot draws
+                    # them beside the lines it integrated.
+                    r['reference_lines'] = [{'ppm': float(sp), 'rel_intensity': float(ri)}
+                                            for sp, ri in shifted_sticks]
                     # Single source: measure_multiplet above. It reports None
                     # when lines are missing, and None must stay None — a ΔJ
                     # measured on a different set of peaks is not this signal's.

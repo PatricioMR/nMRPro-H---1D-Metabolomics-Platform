@@ -165,7 +165,14 @@ class _QuantVisMixin:
         # Draw the SAME (baseline-corrected) matrix the integration used, so the
         # shaded area matches the reported value. Falls back to the raw spectrum
         # when a quantification has not run yet.
-        all_int = getattr(self, '_quant_int', None)
+        # What quantification integrated: the project's baseline model
+        # applied, alignment already in ``all_intensities``. Drawing the
+        # traces as loaded put a window over one spectrum and a number from
+        # another.
+        try:
+            all_int = self.app.corrected_intensities()
+        except Exception:
+            all_int = None
         if all_int is None:
             all_int = self.app.all_intensities
         si      = self.app.samples_info or []
@@ -264,7 +271,10 @@ class _QuantVisMixin:
                         ys.append(y_plot)
                 if ys:
                     gm = np.mean(ys, axis=0)
-                    ax1.plot(x_view, gm, color=col, lw=1.8, alpha=0.95, label=g)
+                    _shown = r.get('_snr_group') is not None and str(g) == str(r.get('_snr_group'))
+                    ax1.plot(x_view, gm, color=col, lw=2.6 if _shown else 1.4,
+                             alpha=0.95 if _shown else 0.7,
+                             label=(f'{g}  (SNR, cosine read here)' if _shown else g))
 
                     if integ_mode == 'Lorentz':
                         s_idxs = [i for i in idxs if i < n_s]
@@ -380,13 +390,34 @@ class _QuantVisMixin:
                              va='top', color='#333',
                              bbox=dict(fc='white', alpha=0.7, lw=0))
 
+            # The pieces of the window the area was summed over: a foreign
+            # peak between two lines is not filled, and the reader sees the
+            # gap the number was cut around.
+            _segs = r.get('_integ_segments') or []
+            _in_seg = None
+            if len(_segs) > 1:
+                _in_seg = np.zeros(x_reg.shape, dtype=bool)
+                for _a, _b in _segs:
+                    _in_seg |= (x_reg >= min(_a, _b)) & (x_reg <= max(_a, _b))
+            # The area the number came from: between the trace and the local
+            # baseline the integration subtracted (the line joining the
+            # window's ends, clipped at zero), as the PDF draws it.
+            _use_bl = r.get('_local_baseline', True)
+            _ord_r = np.argsort(x_reg)
             for g, idxs in groups.items():
                 s_idxs = [i for i in idxs if i < n_s]
                 if s_idxs:
                     y_g = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
                     if _show_deconv:
                         y_g = y_g * _jr_frac
-                    ax1.fill_between(x_reg, 0, y_g,
+                    if _use_bl and x_reg.size >= 2:
+                        _b = np.empty_like(y_g)
+                        _b[_ord_r] = np.linspace(max(float(y_g[_ord_r][0]), 0.0),
+                                                 max(float(y_g[_ord_r][-1]), 0.0),
+                                                 x_reg.size)
+                    else:
+                        _b = np.zeros_like(y_g)
+                    ax1.fill_between(x_reg, _b, y_g, where=_in_seg,
                                      alpha=0.14, color=g_colors.get(g, '#888'))
 
             if _show_deconv:
@@ -400,16 +431,32 @@ class _QuantVisMixin:
             ppm_hi = float(ppm_arr[hi_i])
             for xv in (ppm_lo, ppm_hi):
                 ax1.axvline(xv, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
-            # Red apex marker — only meaningful for a singlet (one detected line).
-            # For multiplets the quantified signal spans the whole multiplet window
-            # (the blue window markers), so a single apex line is misleading → hide.
-            _is_singlet = r.get('_is_singlet')
-            if _is_singlet is None:   # legacy result (pre-_is_singlet) → derive
+            if _in_seg is not None:
+                for _a, _b in _segs:
+                    for xv in (_a, _b):
+                        if ppm_lo < xv < ppm_hi:
+                            ax1.axvline(xv, color='#1565C0', lw=0.8, ls=':',
+                                        alpha=0.6)
+            # Who is who: the signal's own lines in the peak marker the rest
+            # of the software uses (red, dotted), a foreign peak between them
+            # in light grey. A legacy row without line positions falls back
+            # to the apex, which is only the whole signal for a singlet.
+            _own_lines = r.get('_line_ppms')
+            if _own_lines is None:
                 _h0 = (r.get('_hits') or [{}])[0]
-                _is_singlet = ((_h0.get('multiplicity') or _h0.get('type') or '')
-                               .strip().lower() in ('s', 'br s', 'brs', 'bs', ''))
-            if _is_singlet:
-                ax1.axvline(p['ppm'], color='#e63946', lw=0.9, ls=':', alpha=0.7)
+                _is_singlet = r.get('_is_singlet')
+                if _is_singlet is None:
+                    _is_singlet = ((_h0.get('multiplicity') or _h0.get('type')
+                                    or '').strip().lower()
+                                   in ('s', 'br s', 'brs', 'bs', ''))
+                _own_lines = [p['ppm']] if _is_singlet else []
+            for _lp in _own_lines:
+                ax1.axvline(_lp, color='#e63946', lw=0.9, ls=':', alpha=0.7)
+            for _fp in r.get('_foreign_inside') or ():
+                ax1.axvline(_fp, color='#b0b0b0', lw=0.9, ls=':', alpha=0.9)
+            for _rl in (r.get('_reference_lines')
+                        or r.get('_missing_lines') or ()):
+                ax1.axvline(_rl, color='#9e9e9e', lw=0.9, ls='--', alpha=0.9)
 
             v_lo = float(x_view.min())
             v_hi = float(x_view.max())

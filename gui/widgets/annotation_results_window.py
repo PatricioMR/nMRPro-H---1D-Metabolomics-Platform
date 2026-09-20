@@ -3836,10 +3836,11 @@ class AnnotationResultsWindow:
             _pred_centre = sum(_pl_ppms_raw) / len(_pl_ppms_raw)
             _cur_peak_ppm = float(mp_ref.get('peak_ppm', dp_ppm)) if mp_ref else dp_ppm
             _alignment_shift = _cur_peak_ppm - _pred_centre
-            _min_sep = min(abs(_pl_ppms_raw[k+1] - _pl_ppms_raw[k])
-                           for k in range(len(_pl_ppms_raw) - 1))
+            _min_sep = (min(abs(_pl_ppms_raw[k+1] - _pl_ppms_raw[k])
+                            for k in range(len(_pl_ppms_raw) - 1))
+                        if len(_pl_ppms_raw) >= 2 else 0.0)
             _half_span_p = (max(_pl_ppms_raw) - _pred_centre)
-            if abs(_alignment_shift) > _half_span_p + _min_sep * 0.5:
+            if len(_pl_ppms_raw) >= 2 and abs(_alignment_shift) > _half_span_p + _min_sep * 0.5:
                 _snap_ppms = [(float(l['ppm']) + _alignment_shift, 1.0)
                               for l in _pred_lines_plot]
             else:
@@ -3987,8 +3988,8 @@ class AnnotationResultsWindow:
         _n_lines_map_plot = {'s':1,'singlet':1,'d':2,'doublet':2,'t':3,'triplet':3,
                              'q':4,'quartet':4,'dd':4,'dt':6,'td':6,'tt':9,'ddd':8}
         n_expected = _n_lines_map_plot.get(dp_type_j, len(plot_sticks))
-        if _is_pattern_dp and mp_ref and mp_ref.get('_n_exp_lines') is not None:
-            # as this study resolves it, not the reference's line count
+        if mp_ref and mp_ref.get('_n_exp_lines') is not None:
+            # the scorer's count, the one the election and quantification read
             n_expected = int(mp_ref['_n_exp_lines'])
 
         import re as _re2
@@ -4111,8 +4112,11 @@ class AnnotationResultsWindow:
                     j_obs_det = _stored_j_obs
                     dj_mean   = _stored_dj
                     mult_ok   = (n_found == n_expected)
-                elif n_found >= 2:
+                elif n_found >= 2 and not (mp_ref and mp_ref.get('_n_exp_lines') is not None):
                     # Fallback for results annotated before this fix (no stored J).
+                    # Never where the scorer measured: J unset there means
+                    # the lines were not all found, and a J of the view's
+                    # own is not the scorer's.
                     _matched_idx  = [i for i, p in enumerate(_det_matched) if p is not None]
                     _ppms_det     = [float(_det_matched[i]['ppm']) for i in _matched_idx]
                     _idx_span     = max(_matched_idx) - min(_matched_idx)
@@ -4290,19 +4294,20 @@ class AnnotationResultsWindow:
         ovlp_card = f"  ⚠ {n_overlap} competing metabolite(s)" if n_overlap > 0 else ''
         # Show detected/expected lines so the quality card matches the table child row
         if n_sticks > 1 and is_matched:
-            _lines_txt = f"{n_found}/{n_sticks} lines detected"
+            _lines_txt = f"{n_found}/{n_expected} lines detected"
             _lines_col = ('#8B6914' if n_overlap > 0
-                          else '#1a7a1a' if n_found >= n_sticks
+                          else '#1a7a1a' if n_found >= n_expected
                           else '#7a6000' if n_found > 0 else '#9a0000')
         else:
             _lines_txt = f"{'✓ matched' if is_matched else '✗ missing'}"
             _lines_col = ('#8B6914' if (is_matched and n_overlap > 0)
                           else '#1a7a1a' if is_matched else '#9a0000')
         self._set_q('n_matched', f"{_lines_txt}{ovlp_card}", _lines_col)
-        # Cache counts on mp_ref so the table can use them without re-scanning
-        if mp_ref is not None and n_sticks > 1:
-            mp_ref['_n_found_lines'] = n_found
-            mp_ref['_n_exp_lines']   = n_sticks
+        # A view never writes into the annotation. This used to cache its own
+        # snap here as _n_found_lines / _n_exp_lines -- the view's count over
+        # the scorer's measured one -- and quantification changed with the
+        # click.
+        if mp_ref is not None and n_sticks > 1 and mp_ref.get('_n_exp_lines') is not None:
             self._refresh_child_match_mark(mp_ref)
         # J quality card: populated by the J block above when n_sticks≥2,
         # cleared here when the peak is a singlet or unmatched.
