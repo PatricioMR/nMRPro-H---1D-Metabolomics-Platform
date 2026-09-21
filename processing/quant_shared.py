@@ -84,6 +84,52 @@ SEPARABLE_MIN = 0.5
 # something the accepted shapes do not account for is here.
 REMAINDER_NOTE = 0.10
 
+# The remainder as evidence (resolve_residuals). A window whose accepted
+# shapes leave REMAINDER_NOTE or more is offered the signals of analytes the
+# election did NOT accept whose lines fall in it, one at a time. A signal
+# is offered only where the spectrum shows an apex of its own that no
+# accepted analyte holds: its amplitude is read from THAT apex, sample by
+# sample, and pinned -- the window then only tests whether the shape so
+# scaled accounts for what was left. Taken when, with it, the remainder
+# falls under RESIDUAL_ACCEPT (or the noise floor), when it accounts for at
+# least RESIDUAL_EXPLAINED of what stood above the floor, and when the
+# amount implied is one the rest of its fingerprint can carry. Measured
+# without the apex rule: a seven-line pattern was taken into a singlet's
+# window and two shapes into windows of analytes that were themselves
+# wrong -- a free shape fits any remainder, which is what made a shape
+# fitted alone worth 58 false positives.
+RESIDUAL_ACCEPT = 0.05
+RESIDUAL_EXPLAINED = 0.5
+# The remainder of a window never reaches zero: the positive half of the
+# noise integrates to sigma/sqrt(2 pi) per point whatever the shapes do.
+# The conditions are read against that floor (``remainder_floor`` on the
+# result): a window on a signal of SNR 26 has a floor near 6%, and an
+# absolute 5% was asking the impossible of it. Accepted below
+# RESIDUAL_FLOOR_MULTIPLE floors, or below RESIDUAL_ACCEPT, whichever is
+# looser; explained is the fall over what stood above the floor.
+RESIDUAL_FLOOR_MULTIPLE = 1.5
+# A pinned shape -- its amount read off its own free apex -- is taken when
+# it accounts for at least this share of what stood above the floor, and
+# refused when, at that amount, it overshoots the trace in the owner's
+# window by more than the noise allows (RESIDUAL_FLOOR_MULTIPLE floors):
+# an apex whose shape does not fit under the spectrum is not this
+# analyte's. Several may be taken into one window, each subtracted before
+# the next is tried; a window with two intruders' tails in it is the case
+# that made "explains half of the remainder" the wrong question.
+RESIDUAL_MIN_SHARE = 0.2
+
+# The fourth condition: the amount the remainder implies must be consistent
+# with the rest of the analyte's fingerprint (ADR-012, "a measurable
+# absence contradicts"). Every other listed signal of a taken analyte, at
+# the implied per-proton amount, must find a region holding at least a
+# RESIDUAL_FINGERPRINT_RATIO-th of the height it predicts; a signal that
+# would stand under FINGERPRINT_MIN_SNR is not asked. Measured on the
+# mixture bench without it: a seven-line pattern was taken into pyruvate's
+# singlet window and adenosine, at 1.7 mM, into a window at 3.88 while
+# nothing stood at its aromatic lines.
+RESIDUAL_FINGERPRINT_RATIO = 2.0
+FINGERPRINT_MIN_SNR = 20.0
+
 # The geometry refinement: a component may slide this far, in linewidths,
 # from where annotation placed it (an apex pulled by a neighbour moves a
 # fraction of a width, never a whole one), and the study's width may be
@@ -118,6 +164,9 @@ class Component:
     # an inseparable intruder whose amplitude was fixed at what its own
     # clean signal predicts, and subtracted, rather than fitted
     fixed: bool = False
+    # fixed whatever its separability: the amplitude was read off the
+    # spectrum (a free apex of its own) and is not the fit's to decide
+    pinned: bool = False
     lines: list = field(default_factory=list)
     # what the model was built from, so a view can build it again
     evidence: dict = field(default_factory=dict)
@@ -153,7 +202,7 @@ def _profile_apices_hz(prof) -> list:
 def component_from_evidence(met_id, ev, *, label, linewidth_ppm, nh,
                             owner=False, per_proton_hint=None,
                             shift_ppm=0.0, width_scale=1.0,
-                            per_proton_by_sample=None):
+                            per_proton_by_sample=None, pinned=False):
     """A component from a signal's evidence, as the adapter hands it to the
     engine: ``predicted_ppms`` (the lines annotation found, in ppm) with
     ``line_weights`` where the pattern gave them, a ``shape_fit`` for a
@@ -196,7 +245,7 @@ def component_from_evidence(met_id, ev, *, label, linewidth_ppm, nh,
                          per_proton_by_sample=dict(per_proton_by_sample or {}),
                          evidence=_shape_evidence(ev), linewidth_ppm=lw,
                          shift_ppm=float(shift_ppm),
-                         width_scale=float(width_scale))
+                         width_scale=float(width_scale), pinned=bool(pinned))
     ppms = [float(p) for p in (ev.get('predicted_ppms') or ()) if p is not None]
     if not ppms and ev.get('peak_ppm') is not None:
         ppms = [float(ev['peak_ppm'])]
@@ -230,7 +279,7 @@ def component_from_evidence(met_id, ev, *, label, linewidth_ppm, nh,
                          per_proton_by_sample=dict(per_proton_by_sample or {}),
                          evidence=_shape_evidence(ev), linewidth_ppm=lw,
                          shift_ppm=float(shift_ppm),
-                         width_scale=float(width_scale))
+                         width_scale=float(width_scale), pinned=bool(pinned))
     weights = (list(ev.get('line_weights') or ())
                if ev.get('line_weights') and len(ev['line_weights']) == len(ppms)
                else pascal_weights(len(ppms)))
@@ -247,7 +296,8 @@ def component_from_evidence(met_id, ev, *, label, linewidth_ppm, nh,
                      per_proton_hint=per_proton_hint,
                      per_proton_by_sample=dict(per_proton_by_sample or {}),
                      evidence=_shape_evidence(ev), linewidth_ppm=lw,
-                     shift_ppm=float(shift_ppm), width_scale=float(width_scale))
+                     shift_ppm=float(shift_ppm), width_scale=float(width_scale),
+                     pinned=bool(pinned))
 
 
 def _shape_evidence(ev) -> dict:
@@ -259,7 +309,7 @@ def _shape_evidence(ev) -> dict:
             if ev.get(k)}
 
 
-def refine_geometry(comps, x, trace, *, lb=None, ub=None):
+def refine_geometry(comps, x, trace, *, lb=None, ub=None, movable=None):
     """Slide each component and scale the width, on one trace, to where
     the non-negative fit leaves the least residual.
 
@@ -268,7 +318,9 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None):
     then every width scale in WIDTH_SCALES for all components at once;
     REFINE_ROUNDS times. The geometry found is written on the components
     (``shift_ppm``, ``width_scale``) and shared by every sample's fit.
-    Returns the final residual sum of squares.
+    ``movable`` restricts which components may move (the others keep the
+    geometry they have; the width scale then applies to the movable ones
+    only). Returns the final residual sum of squares.
     """
     comps = list(comps)
     n = len(comps)
@@ -284,9 +336,10 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None):
         r = t - A @ res.x
         return float(np.dot(r, r))
 
+    move = list(comps) if movable is None else [c for c in comps if c in movable]
     best = _rss()
     for _round in range(REFINE_ROUNDS):
-        for c in comps:
+        for c in move:
             reach = SHIFT_MAX_LINEWIDTHS * float(c.linewidth_ppm)
             if reach <= 0:
                 continue
@@ -297,14 +350,14 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None):
                 if v < best:
                     best, keep = v, float(sh)
             c.shift_ppm = keep
-        keep_scale = [c.width_scale for c in comps]
+        keep_scale = [c.width_scale for c in move]
         for sc in WIDTH_SCALES:
-            for c in comps:
+            for c in move:
                 c.width_scale = float(sc)
             v = _rss()
             if v < best:
-                best, keep_scale = v, [float(sc)] * n
-        for c, sc in zip(comps, keep_scale):
+                best, keep_scale = v, [float(sc)] * len(move)
+        for c, sc in zip(move, keep_scale):
             c.width_scale = sc
     return best
 
@@ -320,11 +373,14 @@ def component_from_record(rec, *, owner=None):
         per_proton_by_sample={int(k): float(v) for k, v in
                               (rec.get('per_proton_by_sample') or {}).items()},
         shift_ppm=float(rec.get('shift_ppm') or 0.0),
-        width_scale=float(rec.get('width_scale') or 1.0))
+        width_scale=float(rec.get('width_scale') or 1.0),
+        pinned=bool(rec.get('pinned')))
 
 
 def resolve_window(components, ppm, intensities, *, included=None,
-                   noise_sigma=None, refine=True) -> dict | None:
+                   noise_sigma=None, refine=True,
+                   allow_single=False, movable=None,
+                   remainder_window=None) -> dict | None:
     """Fit the components to every sample over the union of their windows.
 
     Returns ``{'window': (lo, hi), 'areas': {met_id: {sample: area}},
@@ -338,7 +394,7 @@ def resolve_window(components, ppm, intensities, *, included=None,
     None with fewer than two components or no trace.
     """
     comps = [c for c in components if c is not None]
-    if len(comps) < 2:
+    if len(comps) < (1 if allow_single else 2):
         return None
     p = np.asarray(ppm, dtype=float)
     arr = np.asarray(intensities, dtype=float)
@@ -361,7 +417,24 @@ def resolve_window(components, ppm, intensities, *, included=None,
     # noise to move a shape, and a resonance does not drift within a study
     # by a fraction of a linewidth from sample to sample.
     if refine:
-        refine_geometry(comps, x, arr[sel][:, idx].mean(axis=1))
+        refine_geometry(comps, x, arr[sel][:, idx].mean(axis=1),
+                        movable=movable)
+    # the remainder is read over the owner's window when one is named:
+    # a component that reaches past it must not bring new ground into
+    # the count
+    if remainder_window is not None:
+        r_lo, r_hi = min(remainder_window), max(remainder_window)
+        rsel = (x >= r_lo) & (x <= r_hi)
+        if rsel.sum() < 4:
+            rsel = np.ones(x.shape, dtype=bool)
+    else:
+        rsel = np.ones(x.shape, dtype=bool)
+    r_order = np.argsort(x[rsel])
+    # the remainder pure noise would leave over this range, per unit of the
+    # window's area: read below, once the total is known
+    _noise_left = (float(noise_sigma) / np.sqrt(2.0 * np.pi)
+                   * float(abs(x[rsel].max() - x[rsel].min()))
+                   if noise_sigma and rsel.sum() > 1 else 0.0)
     cols = []
     for c in comps:
         m = c.curve(x)
@@ -382,18 +455,20 @@ def resolve_window(components, ppm, intensities, *, included=None,
                    and c.separability < SEPARABLE_MIN]
     # An inseparable intruder with a clean measurement of its own takes
     # exactly what that measurement predicts; one without stays out.
-    fixed = [c for c in inseparable
-             if amplitude_ceiling(c.per_proton_hint, c.nh, c.shape_area,
-                                  factor=1.0) is not None]
+    fixed = [c for c in comps
+             if (c.pinned or c in inseparable)
+             and amplitude_ceiling(c.per_proton_hint, c.nh, c.shape_area,
+                                   factor=1.0) is not None]
     for c in fixed:
         c.fixed = True
         c.ceiling = amplitude_ceiling(c.per_proton_hint, c.nh,
                                       c.shape_area, factor=1.0)
     left_out = [c for c in inseparable if c not in fixed]
-    free_idx = [i for i, c in enumerate(comps) if c not in inseparable]
+    free_idx = [i for i, c in enumerate(comps)
+                if c not in inseparable and c not in fixed]
     fixed_idx = [i for i, c in enumerate(comps) if c in fixed]
     free = [comps[i] for i in free_idx]
-    if len(free) < 2 and not fixed:
+    if len(free) < 2 and not fixed and not allow_single:
         return {'refused': f"{', '.join(c.label for c in inseparable)} "
                            f"cannot be told by shape from this signal"}
     if not free:
@@ -422,6 +497,8 @@ def resolve_window(components, ppm, intensities, *, included=None,
     areas = {c.met_id: {} for c in comps}
     amps = {c.met_id: {} for c in comps}
     remainder = {}
+    floors = {}
+    overshoot = {}
     for s in idx:
         t = arr[sel, s]
         a_fixed = _fixed_amplitudes(s)
@@ -429,10 +506,16 @@ def resolve_window(components, ppm, intensities, *, included=None,
         res = lsq_linear(A_free, t - taken, bounds=(lb, ub), lsmr_tol='auto')
         a = np.asarray(res.x, dtype=float)
         fitted = A_free @ a + taken
-        total = float(np.trapezoid(np.clip(t[order], 0, None), x=x[order]))
-        left = float(np.trapezoid(np.clip((t - fitted)[order], 0, None),
-                                  x=x[order]))
+        _t, _r, _x = t[rsel], (t - fitted)[rsel], x[rsel]
+        total = float(np.trapezoid(np.clip(_t[r_order], 0, None),
+                                   x=_x[r_order]))
+        left = float(np.trapezoid(np.clip(_r[r_order], 0, None),
+                                  x=_x[r_order]))
         remainder[int(s)] = float(left / total) if total > 0 else 0.0
+        floors[int(s)] = float(_noise_left / total) if total > 0 else 0.0
+        over = float(np.trapezoid(np.clip(-_r[r_order], 0, None),
+                                  x=_x[r_order]))
+        overshoot[int(s)] = float(over / total) if total > 0 else 0.0
         for c, ai in zip(free, a):
             amps[c.met_id][int(s)] = float(ai)
             areas[c.met_id][int(s)] = float(ai) * c.shape_area
@@ -441,6 +524,8 @@ def resolve_window(components, ppm, intensities, *, included=None,
             areas[c.met_id][int(s)] = float(ai) * c.shape_area
     return {'window': (float(lo), float(hi)), 'areas': areas,
             'amplitudes': amps, 'remainder': remainder,
+            'remainder_floor': floors,
+            'overshoot': overshoot,
             'inseparable': [c.label for c in left_out],
             'fixed': [c.label for c in fixed],
             'components': [{'met_id': c.met_id, 'label': c.label,
@@ -455,6 +540,7 @@ def resolve_window(components, ppm, intensities, *, included=None,
                             'shift_ppm': c.shift_ppm,
                             'width_scale': c.width_scale,
                             'fixed': c.fixed,
+                            'pinned': c.pinned,
                             'per_proton_by_sample': dict(c.per_proton_by_sample),
                             'placed_at_expected': bool(
                                 c.evidence.get('placed_at_expected'))}
@@ -692,6 +778,358 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
                                    for s_i, a in rec['areas'].items()}
             results[m] = out
     return results
+
+
+def _placed_evidence(c, linewidth_ppm, owner_lines, lines_of):
+    """A pool candidate's evidence with its lines placed: detection's own
+    lines when they are its own, otherwise the annotation's line geometry
+    moved to where the study's drift puts the signal (``expected_ppm``)."""
+    ev = dict(c.evidence or {})
+    found = list(lines_of(c) or ())
+    lw = float(linewidth_ppm)
+    stolen = found and owner_lines and all(
+        any(abs(v - o) <= lw / 2.0 for o in owner_lines) for v in found)
+    exp = ev.get('expected_ppm')
+    if found and not stolen:
+        ev['predicted_ppms'] = found
+        if ev.get('line_weights') and len(ev['line_weights']) != len(found):
+            ev.pop('line_weights')
+        return ev
+    geom = [float(v) for v in (ev.get('predicted_ppms') or ()) if v is not None]
+    if not geom and ev.get('peak_ppm') is not None:
+        geom = [float(ev['peak_ppm'])]
+    if not geom:
+        return None
+    if exp is None:
+        return None
+    move = float(exp) - float(np.mean(geom))
+    ev['predicted_ppms'] = [v + move for v in geom]
+    ev['placed_at_expected'] = True
+    return ev
+
+
+def _lorentz_height(area_ppm, hwhm_ppm) -> float:
+    """The apex height of a Lorentzian line of this area and half-width."""
+    return float(area_ppm) / (np.pi * float(hwhm_ppm)) if hwhm_ppm > 0 else 0.0
+
+
+def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
+                      linewidth_ppm, drift_ppm=0.0, tolerance_ppm=0.02,
+                      skip_ppm=None, ratio=RESIDUAL_FINGERPRINT_RATIO,
+                      min_snr=FINGERPRINT_MIN_SNR) -> tuple[bool, list]:
+    """Whether the rest of an analyte's fingerprint can hold the amount a
+    window implies.
+
+    ``db_peaks`` are the reference's signals (``ppm_center``, ``type``,
+    ``protons``); ``per_proton_area`` the area per proton the window gave
+    (intensity x ppm); ``trace`` the mean spectrum the areas were read on.
+    For every listed signal but the one at ``skip_ppm`` (the window's
+    own) and the unresolved ('m') ones, the tallest line's height is
+    predicted -- protons times the line's share of a first-order
+    multiplet, as one Lorentzian of the study's width -- and the region
+    around the drifted position must hold, peak to trough, at least a
+    ``ratio``-th of it. Returns ``(holds, verdicts)``.
+    """
+    from processing.annotation_detectability import _line_share, proton_count
+    x = np.asarray(ppm, dtype=float)
+    y = np.asarray(trace, dtype=float)
+    hwhm = float(linewidth_ppm) / 2.0
+    out, holds = [], True
+    for dp in db_peaks or ():
+        mult = str(dp.get('type') or dp.get('multiplicity') or '').lower().strip()
+        if mult in ('m', 'multiplet', 'peak', '', 'm*'):
+            continue
+        centre = float(dp.get('ppm_center', dp.get('ppm', 0.0)))
+        if skip_ppm is not None and abs(centre - float(skip_ppm)) < 0.005:
+            continue
+        nh = proton_count(dp)
+        expected = _lorentz_height(float(per_proton_area) * nh * _line_share(mult),
+                                   hwhm)
+        exp_snr = expected / float(noise) if noise else float('inf')
+        if exp_snr < min_snr:
+            out.append((centre, mult, exp_snr, 'faint'))
+            continue
+        here = centre + float(drift_ppm)
+        m = (x >= here - tolerance_ppm) & (x <= here + tolerance_ppm)
+        if m.sum() < 3:
+            out.append((centre, mult, exp_snr, 'off the axis'))
+            continue
+        seg = y[m]
+        measured = (float(seg.max()) - float(seg.min())) / float(noise) if noise else float('inf')
+        if measured * float(ratio) < exp_snr:
+            holds = False
+            out.append((centre, mult, exp_snr, f'contradicted: region holds {measured:.0f}'))
+        else:
+            out.append((centre, mult, exp_snr, 'present'))
+    return holds, out
+
+
+def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
+                      linewidth_ppm, names=None, lines_of=None,
+                      per_proton_areas=None, noise_sigma=None,
+                      accept=RESIDUAL_ACCEPT, explained=RESIDUAL_EXPLAINED,
+                      note=REMAINDER_NOTE, fingerprint_of=None,
+                      drift_ppm=0.0, free_apex_of=None) -> dict:
+    """Offer each winner's window, where its accepted shapes leave a
+    remainder, the signals the election did not accept -- and take one in
+    only on the three conditions above.
+
+    ``measured`` is the engine's per-winner record after
+    ``resolve_shared_windows`` (a ``deconv`` record where a window was
+    resolved); ``pool`` the candidates the election did not accept, with the
+    evidence the adapter built (``expected_ppm``, ``pattern_profile``,
+    ``protons``). The taken signal's analyte gets what its shape accounts
+    for in that window; the owner's areas are replaced. Returns
+    ``{taken_met_id: {'owner': mid, 'areas': {...}, 'nh': nh, 'window':
+    (lo, hi), 'remainder_before': f, 'remainder_after': f, 'signal': c}}``.
+    Every window tried, taken or not, is recorded on the owner's record as
+    ``residual_trials`` so the row can say what was offered and refused.
+
+    ``fingerprint_of(candidate)`` returns the reference's signals for the
+    candidate's analyte (``db_peaks``); with it, the fourth condition is
+    asked (``fingerprint_holds``): the amount the remainder implies must
+    be one the rest of the fingerprint can carry, on the mean of the
+    measured samples, at the study's ``drift_ppm``.
+
+    ``free_apex_of(candidate)`` returns the ppm of the candidate's detected
+    lines that no accepted analyte holds. A candidate without one is not
+    offered: a shape with no apex of its own is a shoulder, and a shoulder
+    identifies nobody. The amplitude is read off the tallest free apex in
+    every sample and pinned.
+    """
+    names = names or {}
+    where = lines_of or (lambda c: [])
+    lw = float(linewidth_ppm)
+    taken: dict = {}
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    _idx = [i for i in (range(arr.shape[1]) if included is None else included)
+            if 0 <= i < arr.shape[1]]
+    mean_trace = arr[:, _idx].mean(axis=1) if _idx else arr.mean(axis=1)
+    winners = {mid: rec for mid, rec in measured.items()
+               if rec.get('window') and not rec.get('shape')}
+    own_ids = set(winners)
+    for mid, rec in winners.items():
+        d = rec.get('deconv')
+        if d:
+            base = [component_from_record(c) for c in d['components']]
+            base = [c for c in base if c is not None]
+            again = resolve_window(base, ppm, intensities, included=included,
+                                   noise_sigma=noise_sigma, refine=False,
+                                   allow_single=True,
+                                   remainder_window=rec['window'])
+            if not again or again.get('refused'):
+                continue
+            before = float(np.median(list(again['remainder'].values())))
+            floor = float(np.median(list(again['remainder_floor'].values())))
+            over_base = float(np.median(list(again['overshoot'].values())))
+        else:
+            ev = dict(rec['signal'].evidence or {})
+            found = list(where(rec['signal']) or ())
+            if found and not ev.get('shape_fit'):
+                ev['predicted_ppms'] = found
+                if ev.get('line_weights') and len(ev['line_weights']) != len(found):
+                    ev.pop('line_weights')
+            owner = component_from_evidence(
+                mid, ev, label=f"{names.get(mid, mid)} "
+                               f"{str(ev.get('multiplicity') or '')}",
+                linewidth_ppm=lw, nh=float(rec['nh']), owner=True)
+            if owner is None:
+                continue
+            base = [owner]
+            alone = resolve_window(base, ppm, intensities, included=included,
+                                   noise_sigma=noise_sigma, allow_single=True,
+                                   remainder_window=rec['window'])
+            if not alone or alone.get('refused'):
+                continue
+            before = float(np.median(list(alone['remainder'].values())))
+            floor = float(np.median(list(alone['remainder_floor'].values())))
+            over_base = float(np.median(list(alone['overshoot'].values())))
+        if before < max(note, RESIDUAL_FLOOR_MULTIPLE * floor):
+            continue
+        lo, hi = rec['window']
+        owner_lines = [v for c in base if c.owner for v in c.lines]
+        trials = []
+        best = None
+        taken_here = []          # (cm, c, comp, out, crec, after)
+        current = before
+        for c in pool or ():
+            cm = str(c.met_id)
+            if cm in own_ids or cm in taken:
+                continue
+            ev = _placed_evidence(c, lw, owner_lines, where)
+            if ev is None:
+                continue
+            lines = [float(v) for v in (ev.get('predicted_ppms') or ())]
+            if not lines or not any(lo <= v <= hi for v in lines):
+                continue
+            nh = ev.get('protons')
+            try:
+                nh = float(nh) if nh else None
+            except (TypeError, ValueError):
+                nh = None
+            if not nh:
+                continue
+            label = f"{names.get(cm, cm)} {str(ev.get('multiplicity') or '')}"
+            free_apex = list(free_apex_of(c) or ()) if free_apex_of else []
+            if free_apex_of is not None and not free_apex:
+                trials.append({'label': label, 'verdict': 'refused',
+                               'why': 'no apex of its own'})
+                continue
+            comp = component_from_evidence(cm, ev, label=label, linewidth_ppm=lw,
+                                           nh=nh, owner=False,
+                                           pinned=bool(free_apex))
+            if comp is None:
+                continue
+            if free_apex:
+                # amplitude off the free apex, per sample: the curve at
+                # the apex is what one unit of amplitude puts there
+                xs = np.asarray(ppm, dtype=float)
+                csel = (xs >= comp.lo) & (xs <= comp.hi)
+                cx = xs[csel]
+                if cx.size < 4:
+                    continue
+                curve = comp.curve(cx)
+                c_order = np.argsort(cx)
+                s_area = float(np.trapezoid(curve[c_order], x=cx[c_order]))
+                apex = max(free_apex, key=lambda v: float(np.interp(v, cx[c_order], curve[c_order])))
+                at = float(np.interp(apex, cx[c_order], curve[c_order]))
+                if at <= 0.05 or s_area <= 0:
+                    trials.append({'label': label, 'verdict': 'refused',
+                                   'why': 'its free apex is not where its shape peaks'})
+                    continue
+                i_ap = int(np.argmin(np.abs(xs - apex)))
+                by_sample = {}
+                for s_i in _idx:
+                    h = max(float(arr[i_ap, s_i]), 0.0)
+                    by_sample[int(s_i)] = (h / at) * s_area / nh
+                comp.per_proton_by_sample = by_sample
+                comp.per_proton_hint = float(np.median(list(by_sample.values()))) if by_sample else None
+            # the shapes already in the window keep their geometry; the
+            # candidate is refined into what they leave
+            trial_comps = ([component_from_record(cr) for cr in
+                            [_record(b) for b in base]]
+                           + [component_from_record(_record(t[2]))
+                              for t in taken_here] + [comp])
+            # the shapes already in the window keep their geometry and only
+            # the candidate is refined: letting the owner move again with a
+            # pinned shape beside it took in a real quartet at twice its
+            # amount and a wrong one with it (mixture bench, p90 18 -> 55%)
+            out = resolve_window(trial_comps, ppm, intensities,
+                                 included=included, noise_sigma=noise_sigma,
+                                 allow_single=True,
+                                 movable=[trial_comps[-1]],
+                                 remainder_window=rec['window'])
+            if not out or out.get('refused'):
+                trials.append({'label': label, 'verdict': 'refused',
+                               'why': (out or {}).get('refused')})
+                continue
+            crec = next((x for x in out['components'] if x['met_id'] == cm),
+                        None)
+            if crec is None or (crec.get('fixed') and not crec.get('pinned')):
+                trials.append({'label': label, 'verdict': 'refused',
+                               'why': 'left out'})
+                continue
+            after = float(np.median(list(out['remainder'].values())))
+            over = float(np.median(list(out['overshoot'].values())))
+            sep = crec.get('separability')
+            above = current - floor
+            drop = (current - after) / above if above > 0 else 0.0
+            if crec.get('pinned'):
+                # not fitted: it took what its own apex says, and the
+                # window says whether that still fits under the trace --
+                # the least squares already overshoot as much as they
+                # leave, so the test is against the base, not zero --
+                # and accounts for a part of what was left
+                ok = (over <= over_base + RESIDUAL_FLOOR_MULTIPLE * floor
+                      and drop >= RESIDUAL_MIN_SHARE)
+            else:
+                ok = (sep is not None and sep >= SEPARABLE_MIN
+                      and after <= max(accept, RESIDUAL_FLOOR_MULTIPLE * floor)
+                      and drop >= explained)
+            fp_verdicts = None
+            if ok and fingerprint_of is not None and noise_sigma:
+                areas_c = out['areas'].get(cm) or {}
+                med_area = (float(np.median(list(areas_c.values())))
+                            if areas_c else 0.0)
+                held, fp_verdicts = fingerprint_holds(
+                    fingerprint_of(c) or (), med_area / nh, ppm, mean_trace,
+                    noise=noise_sigma, linewidth_ppm=lw, drift_ppm=drift_ppm,
+                    skip_ppm=ev.get('db_ppm'))
+                if not held:
+                    ok = False
+            trials.append({'label': label, 'remainder_before': current,
+                           'remainder_after': after, 'remainder_floor': floor,
+                           'overshoot': over, 'overshoot_base': over_base,
+                           'separability': sep,
+                           'explained': drop, 'pinned': bool(crec.get('pinned')),
+                           'fingerprint': fp_verdicts,
+                           'verdict': ('taken' if ok else
+                                       'fingerprint contradicted'
+                                       if fp_verdicts is not None
+                                       and not ok
+                                       else 'not enough')})
+            if ok and crec.get('pinned'):
+                # taken now, and subtracted before the next is tried
+                crec['by_residual'] = True
+                taken_here.append((cm, c, comp, out, crec, after))
+                current = after
+                over_base = over
+                taken[cm] = None      # reserved; filled below
+            elif ok and (best is None or after < best[0]):
+                best = (after, cm, c, comp, out, crec)
+        rec['residual_trials'] = trials
+        if not taken_here and best is None:
+            continue
+        if taken_here:
+            cm, c, comp, out, crec, after = taken_here[-1]
+        else:
+            after, cm, c, comp, out, crec = best
+            crec['by_residual'] = True
+        rec['areas'] = dict(out['areas'][mid])
+        rec['area_median'] = (float(np.median(list(rec['areas'].values())))
+                              if rec['areas'] else float('nan'))
+        rec['captured'] = None
+        rec['shared_with'] = sorted(set(list(rec.get('shared_with') or ())
+                                        + [x['met_id'] for x in out['components']
+                                           if x['met_id'] != mid]))
+        got = taken_here or [(cm, c, comp, out, crec, after)]
+        rec['deconv'] = {'window': out['window'],
+                         'remainder': out['remainder'],
+                         'components': out['components'],
+                         'amplitudes': out['amplitudes'],
+                         'skipped': list(out.get('inseparable') or ()),
+                         'fixed': [f for f in (out.get('fixed') or ())
+                                   if f not in {g[4]['label'] for g in got}],
+                         'residual': [g[4]['label'] for g in got]}
+        for x in rec['deconv']['components']:
+            if x['met_id'] in {g[0] for g in got}:
+                x['by_residual'] = True
+        if per_proton_areas is not None:
+            per_proton_areas[mid] = {s_i: a / rec['nh']
+                                     for s_i, a in rec['areas'].items()}
+        for g_cm, g_c, g_comp, _o, g_crec, g_after in got:
+            taken[g_cm] = {'owner': mid, 'signal': g_c, 'nh': g_comp.nh,
+                           'areas': dict(out['areas'].get(g_cm) or {}),
+                           'window': out['window'],
+                           'remainder_before': before,
+                           'remainder_after': after,
+                           'separability': g_crec.get('separability'),
+                           'deconv': rec['deconv']}
+    return {k: v for k, v in taken.items() if v is not None}
+
+
+def _record(c) -> dict:
+    """A component as ``resolve_window`` records it, for building it again."""
+    return {'met_id': c.met_id, 'label': c.label, 'owner': c.owner, 'nh': c.nh,
+            'lines': list(c.lines), 'ceiling': c.ceiling,
+            'separability': c.separability, 'shape_area': c.shape_area,
+            'per_proton_hint': c.per_proton_hint, 'evidence': c.evidence,
+            'linewidth_ppm': c.linewidth_ppm, 'shift_ppm': c.shift_ppm,
+            'width_scale': c.width_scale, 'fixed': c.fixed,
+            'pinned': c.pinned,
+            'per_proton_by_sample': dict(c.per_proton_by_sample)}
 
 
 def refit_record(deconv, ppm, intensities, *, exclude=(), included=None,

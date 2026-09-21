@@ -33,7 +33,7 @@ from processing.sample_selection import included_sample_indices
 
 
 def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
-                     eligible_ids=None):
+                     eligible_ids=None, pool=None):
     """One Candidate per annotated signal that is not marked Bad.
 
     The evidence handed over is exactly what ``candidate_key`` reads, so the
@@ -42,6 +42,14 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
     its line counts and its intensity agreement were settled by the annotation
     search, and asking again would be asking a second time and risking a second
     answer.
+
+    ``pool``, a list when given, receives the signals that do NOT become
+    candidates -- marked Bad by the annotation, or of an analyte outside
+    ``eligible_ids`` -- except those the analyst marked Bad and those of an
+    analyte the fingerprint contradicted. They are what the remainder of a
+    resolved window is offered (quant_shared.resolve_residuals): a shape the
+    election could not verify line by line may still be the one thing that
+    explains what the accepted shapes leave.
     """
     qm = quality_marks or {}
     annotate_drift_spread(metabolites)
@@ -54,12 +62,16 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
         mid = str(met.get('id', met.get('name', '')))
         if not mid:
             continue
-        if eligible_ids is not None and mid not in eligible_ids:
-            continue
+        _eligible = eligible_ids is None or mid in eligible_ids
+        _contradicted = bool(met.get('_fingerprint_contradictions'))
         for mp in met.get('matched_peaks', []) or ():
-            if mp.get('annotation_quality') == 'bad':
-                continue
             rank = mp.get('peak_rank')
+            _manual_bad = ((qm.get((mid, rank)) or qm.get((met.get('id'), rank)))
+                           == 'bad')
+            _to_pool = (not _eligible) or mp.get('annotation_quality') == 'bad'
+            if _to_pool and (pool is None or _manual_bad or _contradicted):
+                continue
+            _target = pool if _to_pool else out
             lines = multiplet_line_peaks(mp, peaks_by_rank)
             # A multiplet judged as a shape (ADR-013) claims no peak: its
             # lines were never found one by one. It carries the fit instead,
@@ -87,7 +99,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                 }
             if _shape is not None:
                 rank, lines = None, []
-            out.append(Candidate(
+            _target.append(Candidate(
                 met_id=mid,
                 peak_rank=rank,
                 line_ranks=frozenset(p['rank'] for p in lines
@@ -148,6 +160,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'profile_fwhm_hz': mp.get('profile_fwhm_hz'),
                     'pattern_field_mhz': mp.get('pattern_field_mhz'),
                     'db_ppm': mp.get('db_ppm'),
+                    'study_drift_ppm': _common,
                     'expected_ppm': (float(mp['db_ppm']) + float(_common)
                                      if _common is not None
                                      and mp.get('db_ppm') is not None
@@ -447,10 +460,14 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             ppm, arr, lo, hi, noise_level([ref_peak], ppm, arr),
             included=included))
 
+    _pool: list = []
+    _cands = build_candidates(metabolites, peaks_by_rank,
+                              quality_marks=quality_marks,
+                              eligible_ids=eligible,
+                              pool=_pool if resolve_shared else None)
     return _for_display(_rows_indexed_by_sample(quantify(
-        candidates=build_candidates(metabolites, peaks_by_rank,
-                                    quality_marks=quality_marks,
-                                    eligible_ids=eligible),
+        candidates=_cands,
+        residual_pool=_pool,
         peaks_by_rank=peaks_by_rank,
         ppm=ppm,
         intensities=arr,

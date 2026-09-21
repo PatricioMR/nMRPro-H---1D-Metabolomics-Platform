@@ -240,7 +240,8 @@ class DeconvolutionWindow:
             self._include[m] = tk.BooleanVar(value=m not in excluded)
             self._ctree.insert('', tk.END, iid=m, values=(
                 '☑' if m not in excluded else '☐',
-                c.get('label', m) + ('  (this analyte)' if m == mid else ''),
+                c.get('label', m) + ('  (this analyte)' if m == mid else '')
+                + ('  (by remainder)' if c.get('by_residual') else ''),
                 f"{float(c.get('nh') or 0):g}",
                 f'{a:.3g}' if a is not None else '—',
                 f'{100 * area / total:.0f}%' if total > 0 else '—',

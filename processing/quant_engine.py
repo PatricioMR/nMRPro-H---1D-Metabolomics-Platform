@@ -41,7 +41,9 @@ from processing.quant_integration import (
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
-from processing.quant_shared import REMAINDER_NOTE, resolve_shared_windows
+from processing.quant_shared import (
+    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, resolve_residuals,
+    resolve_shared_windows)
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
@@ -652,7 +654,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              noise_sigma=None, linewidth_ppm=0.008,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
              quantify_shapes=True, resolve_shared=False,
-             shared_overrides=None, diagnostics=None) -> list[dict]:
+             shared_overrides=None, diagnostics=None,
+             residual_pool=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
@@ -685,6 +688,13 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     what the analyst decided per owner in the review window (see
     ``quant_shared.resolve_shared_windows``).
 
+    ``residual_pool`` (with ``resolve_shared``) is the signals the election
+    did not accept. A winner's window whose accepted shapes leave a
+    remainder is offered them, and one is taken in on three measured
+    conditions (processing.quant_shared.resolve_residuals): its analyte is
+    then quantified from that window, marked as identified by the
+    remainder, at the lowest confidence.
+
     ``diagnostics``, when a dict is passed, is filled with what the run did
     that no row can show — how many windows were shared, and why the ones that
     resolved nothing resolved nothing. A step that silently does nothing is
@@ -703,6 +713,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             diagnostics['shapes'] = {'off': True, 'left_out': len(shapes_off)}
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                     ambiguous_ranks=ambiguous_ranks)
+    residual_ids: set = set()
 
     # ── Integrate every winner, per sample ───────────────────────────────────
     # A winner whose lines bound no window is recorded as such rather than
@@ -865,6 +876,54 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                 'windows': len(_resolved),
                 'remainder_median': {m: float(np.median(list(
                     r['remainder'].values()))) for m, r in _resolved.items()}}
+        # ── The remainder as evidence ───────────────────────────────────
+        _claimed_ranks = set()
+        for _w in election.winners.values():
+            _claimed_ranks |= set(_w.line_ranks)
+            if _w.peak_rank is not None:
+                _claimed_ranks.add(_w.peak_rank)
+        _taken = resolve_residuals(
+            measured, list(residual_pool or ()), ppm, intensities,
+            included=included, linewidth_ppm=linewidth_ppm,
+            names=_shared_names,
+            lines_of=lambda c: _found_lines(c, peaks_by_rank),
+            per_proton_areas=per_proton_areas, noise_sigma=noise_sigma,
+            fingerprint_of=lambda c: ((c.payload or {}).get('met') or {}).get(
+                'db_peaks') if isinstance(c.payload, dict) else None,
+            free_apex_of=lambda c: [
+                float(peaks_by_rank[r]['ppm']) for r in _found_ranks(c)
+                if r in peaks_by_rank and r not in _claimed_ranks],
+            drift_ppm=float((residual_pool or [None])[0].evidence.get(
+                'study_drift_ppm') or 0.0) if residual_pool
+            and getattr(residual_pool[0], 'evidence', None) else 0.0)
+        for _cm, _t in _taken.items():
+            _nh = float(_t['nh'])
+            measured[_cm] = {
+                'signal': _t['signal'], 'nh': _nh, 'areas': dict(_t['areas']),
+                'window': _t['window'], 'segments': [],
+                'captured': None, 'lines': [], 'weights': [],
+                'shared_with': [_t['owner']],
+                'by_residual': _t['owner'],
+                'residual_before': _t['remainder_before'],
+                'residual_after': _t['remainder_after'],
+                'deconv': _t['deconv'],
+                'noise_sigma': noise_sigma,
+                'area_median': (float(np.median(list(_t['areas'].values())))
+                                if _t['areas'] else float('nan')),
+                # no limit of its own: the window is the owner's, and the
+                # identification is the weakest the table gives
+                'lod_area': float('nan'), 'loq_area': float('nan'),
+                'snr': {},
+                'strength': 1,
+            }
+            per_proton_areas[_cm] = {s_i: a / _nh
+                                     for s_i, a in _t['areas'].items()}
+            residual_ids.add(_cm)
+        if diagnostics is not None:
+            diagnostics['residual'] = {
+                'taken': {m: t['owner'] for m, t in _taken.items()},
+                'trials': {m: r.get('residual_trials') for m, r in
+                           measured.items() if r.get('residual_trials')}}
 
     # ── Two analytes on one peak ───────────────────────────────────────
     # The election gives a contested peak to one owner, which is right -- two
@@ -968,7 +1027,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                     f'were expected at '
                     f'{", ".join("%.4f" % v for v in missing)} ppm.')))
     for mid, reason in election.rejected.items():
-        if mid in recovered:
+        if mid in recovered or mid in residual_ids:
             continue
         rows.append(_rejected_row(mid, reason, shared_reasons.get(mid),
                                   beaten=election.beaten.get(mid),
@@ -1244,6 +1303,8 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                        if info.get('shape') else None),
         '_shape_explained': info.get('shape_explained'),
         '_deconv': info.get('deconv'),
+        '_by_residual': info.get('by_residual'),
+        '_residual_trials': info.get('residual_trials'),
         '_noise_sigma': info.get('noise_sigma'),
         '_not_quantified': not good,
         '_peak': None,
@@ -1293,8 +1354,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
         '_unshared_reason': info.get('unshared_reason'),
-        '_status_reasons': ((_deconv_reason(info) if info.get('deconv')
-                             else _shared_reason(info))
+        '_status_reasons': (_residual_reason(info)
+                            + (_deconv_reason(info) if info.get('deconv')
+                               else _shared_reason(info))
                             + _pattern_reason(info)
                             + _segments_reason(info)
                             + _baseline_reason(info)
@@ -1324,6 +1386,34 @@ def _found_lines(cand, peaks_by_rank) -> list:
     none."""
     return [float(peaks_by_rank[r].get('ppm', 0.0))
             for r in _found_ranks(cand) if r in peaks_by_rank]
+
+
+def _residual_reason(info) -> list:
+    """Said of an analyte identified by what another analyte's window left
+    unexplained, and of a window that took such a signal in."""
+    owner = info.get('by_residual')
+    if owner:
+        return [f"Identified by the remainder of {owner}'s window: the "
+                f"accepted shapes left {100 * float(info.get('residual_before') or 0):.0f}% "
+                f"of it unexplained, this analyte's reference shape accounts "
+                f"for it (remainder {100 * float(info.get('residual_after') or 0):.0f}% "
+                f"with it), and its shape can be told from theirs. Its "
+                f"lines were not confirmed one by one: a weak identification, "
+                f"to be checked."]
+    d = info.get('deconv') or {}
+    if d.get('residual'):
+        return [f"{', '.join(d['residual'])} was taken into this window on "
+                f"the remainder the accepted shapes left; its share is what "
+                f"its reference shape accounts for."]
+    trials = info.get('residual_trials') or []
+    refused = [t['label'] for t in trials if t.get('verdict') != 'taken']
+    if refused and not d.get('residual'):
+        return [f"The remainder was offered to {', '.join(refused)}; none "
+                f"met the three conditions (remainder under "
+                f"{100 * RESIDUAL_ACCEPT:.0f}%, at least "
+                f"{100 * RESIDUAL_EXPLAINED:.0f}% of it explained, shape "
+                f"separable)."]
+    return []
 
 
 def _deconv_reason(info) -> list:
