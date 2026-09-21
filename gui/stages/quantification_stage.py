@@ -320,7 +320,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                        'before integration (skipped if already corrected in Visualization).\n'
                        'Local baseline: inferior linear fallback — ignored when arPLS is active.\n'
                        'JG-Deconv: applies fractional areas from Overlap Resolving Method.\n'
-                       'Run JG-Deconv (step 4) and click "✓ Apply" before enabling.',
+                       'Run JG-Deconv and click "✓ Apply" before enabling.',
                   font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))

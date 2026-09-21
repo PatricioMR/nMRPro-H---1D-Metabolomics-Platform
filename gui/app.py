@@ -131,7 +131,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
         self.plot_manager   = None
         self._peak_list_win = None
-        self._deconv_win    = None
         self._annot_win     = None
         self.btn_import     = None
         self.file_label     = None
@@ -395,8 +394,10 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         )
         self.btn_annotation.pack(side=tk.LEFT, padx=2)
 
+        # Parked (app_paths.DECONVOLUTION_ENABLED); unnumbered so the five
+        # stages that ship read 1-5.
         self.btn_mcr_analysis = ttk.Button(
-            stage_frame, text="4. 🔀 JG-Deconv",
+            stage_frame, text="🔀 JG-Deconv",
             command=lambda: self.switch_stage('j_resolve'),
             style='Stage.TButton'
         )
@@ -404,14 +405,14 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self.btn_mcr_analysis.pack(side=tk.LEFT, padx=2)
 
         self.btn_quantification = ttk.Button(
-            stage_frame, text="5. ⚗ Quantification",
+            stage_frame, text="4. ⚗ Quantification",
             command=lambda: self.switch_stage('quantification'),
             style='Stage.TButton'
         )
         self.btn_quantification.pack(side=tk.LEFT, padx=2)
 
         self.btn_statistics = ttk.Button(
-            stage_frame, text="6. 📊 Statistics",
+            stage_frame, text="5. 📊 Statistics",
             command=lambda: self.switch_stage('statistics'),
             style='Stage.TButton'
         )
@@ -597,15 +598,17 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             command=self.open_peak_list, state="disabled")
         self.btn_peak_list.pack(side=tk.LEFT, padx=4)
 
-        self.btn_deconv_shortcut = ttk.Button(
-            _btn_bar, text="🔀 MCR Deconvolution",
-            command=self.open_deconv_shortcut, state="disabled")
-        self.btn_deconv_shortcut.pack(side=tk.LEFT, padx=4)
-
         self.btn_annot_shortcut = ttk.Button(
             _btn_bar, text="🔬 Annotation Results",
             command=self.open_annot_shortcut, state="disabled")
         self.btn_annot_shortcut.pack(side=tk.LEFT, padx=4)
+
+        # Enabled by refresh_deconv_button once a quantification resolved a
+        # window by shape (ADR-015); opens the review of what was decided.
+        self.btn_deconv_shortcut = ttk.Button(
+            _btn_bar, text="🔀 Deconvolution",
+            command=self.open_deconv_shortcut, state="disabled")
+        self.btn_deconv_shortcut.pack(side=tk.LEFT, padx=4)
 
         # Create canvas first
         self.canvas = FigureCanvasTkAgg(self.figure, master=self.right_panel)
@@ -1528,60 +1531,42 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             lambda: (self._peak_list_win.win.destroy(),
                      setattr(self, '_peak_list_win', None)))
 
+    def quant_has_deconvolution(self):
+        """True when the last quantification resolved at least one window by
+        shape, or the analyst recorded a decision on one."""
+        qs = self.stages.get('quantification')
+        if qs is None:
+            return False
+        rows = getattr(qs, '_quant_results', None) or []
+        if any(r.get('_deconv') for r in rows):
+            return True
+        return bool(getattr(qs, '_deconv_overrides', None))
+
+    def refresh_deconv_button(self):
+        """The Deconvolution button follows the quantification: there is
+        nothing to review until a run resolved a window by shape."""
+        try:
+            self.btn_deconv_shortcut.config(
+                state='normal' if self.quant_has_deconvolution()
+                else 'disabled')
+        except Exception:
+            pass
+
     def open_deconv_shortcut(self):
-        """Open the unified MCR Deconvolution window (singleton).
-
-        Gathers every peak/region that already has 'mcr_annotation' data
-        (full-spectrum MCR regions take priority, then annotation-stage
-        peaks) and opens MCRWindow. The generic Lorentzian/Gaussian/Onion
-        Deconvolution Tool no longer lives behind this button — it is
-        still reachable from the Peak List's right-click
-        "View in Deconvolution Tool".
-        """
-        ann_stage  = self.stages.get('annotation')
-        pk_stage   = self.stages.get('peak_detection')
-        fs_stage   = self.stages.get('fullspectrum_mcr')
-
-        # Priority 1: Full-spectrum MCR results
-        _fs_regions = getattr(fs_stage, '_mcr_regions', [])
-        # Priority 2: annotation-stage MCR peaks
-        _peaks   = pk_stage.peaks if pk_stage else []
-        _ann_mcr = [p for p in _peaks if p.get('mcr_annotation')]
-
-        if _fs_regions:
-            _source_peaks = _fs_regions
-            _source_stage = fs_stage
-        elif _ann_mcr:
-            _source_peaks = _ann_mcr
-            _source_stage = ann_stage
-        else:
-            _source_peaks = None
-            _source_stage = None
-
-        if not _source_peaks:
+        """Open the review of the windows the quantification resolved by
+        shape (gui.widgets.deconvolution_window), so the analyst can see what
+        was deconvolved and what was decided. The MCR window is still
+        reachable from the Annotation Results and the Signal List."""
+        qs = self.stages.get('quantification')
+        if qs is None or not self.quant_has_deconvolution():
             from tkinter import messagebox
             messagebox.showinfo(
-                'MCR Deconvolution',
-                'No MCR deconvolution available yet.\n\n'
-                'Run Annotation or Full-Spectrum MCR first, or use the '
-                'Signal List → right-click → "View in Deconvolution Tool" '
-                'for manual signal-fitting.')
+                'Deconvolution',
+                'No window was resolved by shape yet.\n\n'
+                'In Quantification, switch on "Deconvolve windows two '
+                'accepted analytes share (by shape)" and run it.')
             return
-
-        # Singleton MCR window
-        if self._deconv_win is not None:
-            try:
-                w = self._deconv_win.win
-                if w.winfo_exists():
-                    w.deiconify(); w.lift(); w.focus_force()
-                    return
-            except Exception:
-                pass
-        from gui.widgets.mcr_window import MCRWindow
-        items = [{'kind': 'region', 'met': None, 'mp': None, 'peak': p}
-                 for p in _source_peaks]
-        self._deconv_win = MCRWindow(
-            self.root, items, self, ann_stage=_source_stage)
+        qs._open_deconvolution_window()
 
     def open_annot_shortcut(self):
         """Open Annotation Results — singleton.

@@ -638,6 +638,7 @@ class _QuantCompMixin:
         _norm_f = norm_mode
 
         def _finish_ui():
+            self.app.refresh_deconv_button()
             self._prog_apply(93, 'Computing VIP scores…')
             try:
                 self._compute_vip_scores()

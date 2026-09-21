@@ -432,9 +432,6 @@ class ProjectManager:
                         text=f'✅ {len(pd.peaks)} signals detected', foreground='green')
                     try: app.btn_peak_list.config(state='normal')
                     except Exception: pass
-                if pd._overlaps:
-                    try: app.btn_deconv_shortcut.config(state='normal')
-                    except Exception: pass
             except Exception as _e:
                 print(f'  pd UI restore: {_e}')
 
@@ -576,6 +573,8 @@ class ProjectManager:
                 qnt._deconv_overrides = {
                     str(k): dict(v) for k, v in
                     (qnt_state.get('deconv_overrides', {}) or {}).items()}
+                # Rows and overrides both restored: the button reads them.
+                app.refresh_deconv_button()
                 _integ_loaded = qnt_state.get('integ')
                 if _integ_loaded == 'Lorentz':
                     _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed
@@ -678,11 +677,6 @@ class ProjectManager:
                             text=(f'{len(fs._mcr_regions)} region(s) — {n_k1} single, '
                                   f'{n_k2} overlapping.'),
                             foreground='black')
-                    except Exception:
-                        pass
-                    try:
-                        if n_k2 > 0:
-                            app.btn_deconv_shortcut.config(state='normal')
                     except Exception:
                         pass
             except Exception as _e:

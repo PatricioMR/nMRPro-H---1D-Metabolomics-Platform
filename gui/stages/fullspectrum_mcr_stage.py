@@ -706,11 +706,6 @@ class FullSpectrumMCRStage(BaseStage):
             self.app.btn_peak_list.config(state='normal')
         except Exception:
             pass
-        try:
-            if n_k2 > 0:
-                self.app.btn_deconv_shortcut.config(state='normal')
-        except Exception:
-            pass
 
     def _push_k1_to_peak_list(self, regions):
         """Convert K=1 MCR regions into normal peak dicts and inject into peak_stage.peaks."""

@@ -514,7 +514,6 @@ class _QuantVisMixin:
             ppm_s = '?'
         ax1.set_title(f'{name}  {ppm_s} ppm  [{integ_mode}]',
                       fontsize=9, fontweight='bold')
-        ax1.legend(fontsize=7, loc='upper right', framealpha=0.7)
         ax1.tick_params(labelsize=7)
         ax1.grid(True, alpha=0.2, ls=':')
         self._cv_spec.draw()

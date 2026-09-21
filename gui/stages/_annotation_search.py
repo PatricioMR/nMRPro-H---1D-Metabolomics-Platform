@@ -2215,10 +2215,6 @@ class _AnnotationSearchMixin:
             self.app.btn_annot_shortcut.config(state='normal')
         except Exception:
             pass
-        try:
-            self.app.btn_deconv_shortcut.config(state='normal')
-        except Exception:
-            pass
 
         # Destroy any previous results window — this is a fresh search run.
         _existing = getattr(self.app, '_annot_win', None)

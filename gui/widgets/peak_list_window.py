@@ -578,10 +578,6 @@ class PeakListWindow:
         # Enable the menu deconvolution shortcut so the user can reopen the
         # aggregate window after resolving peaks.
         stage._overlaps = list(ctrl.regions)  # now reflects the added peak
-        try:
-            self.app.btn_deconv_shortcut.config(state='normal')
-        except Exception:
-            pass
 
     def _dequeue_deconv(self, peak):
         """Remove a peak's region from the deconv queue when marked Good."""
@@ -768,10 +764,8 @@ class PeakListWindow:
         p['overlapping']         = True
         region_idx, child_idx = ctrl.add_peak(p, target_ppm=peak['ppm'])
 
-        # Enable the menu deconvolution shortcut
         try:
             stage._overlaps = list(ctrl.regions)
-            self.app.btn_deconv_shortcut.config(state='normal')
         except Exception:
             pass
 
