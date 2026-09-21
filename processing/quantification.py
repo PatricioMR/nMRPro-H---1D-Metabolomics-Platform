@@ -53,10 +53,9 @@ REJECTION_TEXT = {
         'Not quantified: no eligible signal — every one was marked Bad or has '
         'no detected peak.',
     SHAPES_OFF:
-        'Not quantified: complex multiplet (m*) — its lines were never found '
-        'one by one, so it holds no peak to integrate, and shape fitting is '
-        'off in Quantification. Tick "Quantify complex multiplets by shape '
-        'fit" to measure it from its fitted shape.',
+        'Not quantified: complex multiplet (m*) — a method still being '
+        'built, off in Quantification. Tick "Quantify complex multiplets '
+        '(m*)" to let it compete and be measured from its fitted shape.',
     PARTIAL_MULTIPLET:
         'Not quantified: partial multiplet — detection placed too few of the '
         'pattern\'s lines for the area to be scaled to the whole signal; a '

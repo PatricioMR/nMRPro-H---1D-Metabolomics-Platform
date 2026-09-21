@@ -134,3 +134,16 @@ def test_a_letter_with_lines_missing_is_unconfirmed_never_a_singlet():
     assert candidate_tier('t', None, 1, 3) == TIER_UNCONFIRMED_MULTIPLET
     assert candidate_tier('d', None, 1, 2) == TIER_UNCONFIRMED_MULTIPLET
     assert candidate_tier('t', None, 1, 1) != TIER_SINGLET
+
+
+def test_a_pattern_reduced_to_two_lines_is_not_a_verified_multiplet():
+    """Two apices are a spacing, not a shape: the residual of two found lines
+    against two predicted ones is small by construction, and on the mixture
+    bench such "2/2" patterns beat real triplets on delta-J."""
+    from processing.annotation_scoring import (
+        PATTERN_MULT, TIER_CONFIRMED_MULTIPLET, TIER_UNCONFIRMED_MULTIPLET,
+        TIER_SINGLET, candidate_tier)
+    assert candidate_tier(PATTERN_MULT, 0.05, 2, 2) == TIER_UNCONFIRMED_MULTIPLET
+    assert candidate_tier(PATTERN_MULT, 0.05, 3, 3) == TIER_CONFIRMED_MULTIPLET
+    assert candidate_tier(PATTERN_MULT, None, 1, 1) == TIER_SINGLET
+    assert candidate_tier('d', 0.05, 2, 2) == TIER_CONFIRMED_MULTIPLET

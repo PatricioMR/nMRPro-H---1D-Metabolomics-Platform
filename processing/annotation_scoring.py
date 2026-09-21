@@ -1152,6 +1152,14 @@ TIER_CONFIRMED_MULTIPLET = 0   # every expected line found, J measured
 TIER_UNCONFIRMED_MULTIPLET = 1 # multiplet with missing lines or unmeasured J
 TIER_SINGLET = 2               # no J evidence by construction
 
+# A measured pattern is confirmed only when this many of its lines resolve
+# at the study's width. Two apices are a doublet of whatever spacing they
+# have: the residual of two points against two predicted lines is small by
+# construction, and on the mixture bench nine of twelve wrong multiplets
+# were patterns reduced to two lines -- raffinose's "2/2" beat glutamine's
+# real triplet on delta-J. Three lines are a shape; two are a spacing.
+PATTERN_MIN_RESOLVED_LINES = 3
+
 _BIG_BAND = 10 ** 6
 
 
@@ -1326,6 +1334,10 @@ def candidate_tier(mult, delta_j_hz, n_found=None, n_expected=None,
     """
     if is_singlet_like(mult):
         return TIER_SINGLET
+    if (normalize_mult(mult) == PATTERN_MULT and n_expected is not None
+            and 2 <= int(n_expected) < PATTERN_MIN_RESOLVED_LINES):
+        # Two resolved lines do not verify a pattern (see the constant).
+        return TIER_UNCONFIRMED_MULTIPLET
     if (normalize_mult(mult) == PATTERN_MULT and n_expected is not None
             and int(n_expected) < 2):
         # a measured shape (ADR-013) that shows one apex at this width is a

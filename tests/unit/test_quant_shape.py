@@ -168,7 +168,7 @@ class TestTheShapeSwitch:
         assert not on['S']['_not_quantified']
         assert off['S']['_not_quantified']
         assert off['S']['_rejection'] == SHAPES_OFF
-        assert 'shape fit' in off['S']['_status_reasons'][0]
+        assert 'Quantify complex multiplets' in off['S']['_status_reasons'][0]
         assert off['D']['_areas_per_sample'] == on['D']['_areas_per_sample']
         assert diag['shapes'] == {'off': True, 'left_out': 1}
 
@@ -183,3 +183,35 @@ class TestTheShapeSwitch:
                         quantify_shapes=False)
         row = next(r for r in rows if r['hmdb_id'] == 'S')
         assert row['_integ_mode'] == 'Multiplet'
+
+
+class TestTheSwitchCoversEveryComplexMultiplet:
+    """Off means no m* competes -- not only the ones fitted to the trace. A
+    pattern matched on the peak list carries no shape_fit but is a complex
+    multiplet all the same, and with the switch off it took peaks from real
+    triplets on the mixture bench."""
+
+    def test_a_peak_list_pattern_is_left_out_with_the_switch_off(self):
+        from processing.quantification import SHAPES_OFF
+        peaks = {1: {'rank': 1, 'ppm': 3.30, 'start_ppm': 3.294, 'end_ppm': 3.306},
+                 2: {'rank': 2, 'ppm': 3.31, 'start_ppm': 3.304, 'end_ppm': 3.316}}
+        pattern = Candidate(met_id='P', peak_rank=1, line_ranks=frozenset({1, 2}),
+                            evidence={'multiplicity': 'm*', 'delta_j_hz': 0.02,
+                                      'ppm_diff': 0.001, 'n_found': 3,
+                                      'n_expected': 3, 'protons': 1.0})
+        triplet = Candidate(met_id='T', peak_rank=1, line_ranks=frozenset({1, 2}),
+                            evidence={'multiplicity': 't', 'delta_j_hz': 0.10,
+                                      'ppm_diff': 0.002, 'n_found': 3,
+                                      'n_expected': 3, 'protons': 1.0})
+        X = _study([100.0, 200.0, 400.0])
+        kw = dict(peaks_by_rank=peaks, ppm=PPM, intensities=X,
+                  samples_info=[], included=[0, 1, 2], groups={'G': [0, 1, 2]},
+                  dj_gold_hz=0.2, noise_sigma=SIGMA, deconvolve=False)
+        on = {r['hmdb_id']: r for r in quantify(candidates=[pattern, triplet], **kw)}
+        off = {r['hmdb_id']: r for r in quantify(candidates=[pattern, triplet],
+                                                  quantify_shapes=False, **kw)}
+        # on: the pattern wins the contested peak on delta-J
+        assert not on['P']['_not_quantified'] and on['T']['_not_quantified']
+        # off: the pattern is out and the triplet has its peak
+        assert off['P']['_rejection'] == SHAPES_OFF
+        assert not off['T']['_not_quantified']

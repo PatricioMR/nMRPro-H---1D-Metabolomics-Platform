@@ -26,7 +26,15 @@ Lorentzians). What this cannot test is the database's fidelity to a real
 sample -- the shapes are the database's own -- only what the pipeline does
 with shapes it should recognise.
 
-    python -m validation.mixture_bench [--db PATH] [--seed N] [--no-shapes]
+    python -m validation.mixture_bench [--db PATH] [--seed N] [--patterns]
+                                        [--no-shapes] [--shared]
+
+Measured patterns (``m*``, ADR-013) are a method still being built and are
+left out by default, as an unresolved 'm' is: a signal the reference DB
+measured as a pattern is skipped unless ``--patterns`` puts it in. The
+numbers the bench reports by default are the letter-multiplet and singlet
+pipeline's alone. ``--no-shapes`` (patterns matched on the peak list, not
+fitted to the trace) only means something with ``--patterns``.
 """
 from __future__ import annotations
 
@@ -80,7 +88,7 @@ OUT_DIR = os.path.join(REPO, 'validation', 'out')
 # ── the study ────────────────────────────────────────────────────────────────
 MHZ = 500.0                        # the field most of the reference spectra are at
 PPM = np.linspace(-0.5, 10.0, 70001)     # 0.15 mHz, 0.075 Hz per point
-LINEWIDTH_HZ = 2.6                 # the skin study's, at 600 MHz; kept in Hz
+LINEWIDTH_HZ = 2.6                 # the skin study's; kept in Hz (the bench runs at MHZ)
 STANDARD_PPM, STANDARD_NH, STANDARD_MM = 0.0, 9, 0.5
 AREA_UNIT = 1.0e4                  # intensity x ppm per proton per mM
 DRIFT_PPM = 0.008                  # every analyte, the study's median
@@ -202,7 +210,7 @@ def build_study(db_path, *, seed=0):
 
 # ── the decisions, in the application's order ────────────────────────────────
 
-def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
+def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
     params = dict(SCORING_DEFAULTS)
     params['dppm_gold'] = TOLERANCE
     tol = TOLERANCE
@@ -260,6 +268,8 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
                 e['j_coupling'] = f'{j_hz:.2f}'
             is_pat = bool(e.get('pattern_lines')) and pattern_governs(
                 mult, e.get('pattern_lines'))
+            if is_pat and not patterns:
+                continue          # a future method; out with the 'm's
             if is_pat:
                 mult = PATTERN_MULT
                 e['type'] = PATTERN_MULT
@@ -399,7 +409,7 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True):
     return mets, params, stats
 
 
-def run(db_path, *, seed=0, shapes=True, shared=False):
+def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
@@ -407,7 +417,7 @@ def run(db_path, *, seed=0, shapes=True, shared=False):
                          per_sample_detection=True, detect_shoulders=False,
                          min_group_presence=3, excluded_regions=WATER)
     mets, params, fp_stats = annotate(PPM, X, peaks, sigma, db_path,
-                                      shapes=shapes)
+                                      shapes=shapes, patterns=patterns)
     eligible = eligible_metabolite_ids(mets)
     # a peak whose candidates tie on every criterion has no winner, as the
     # results window decides before quantification
@@ -513,18 +523,24 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--db', default=DB_DEFAULT)
     ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--no-shapes', action='store_true')
+    ap.add_argument('--patterns', action='store_true',
+                    help='annotate measured patterns (m*) -- a method in '
+                         'progress, off by default')
+    ap.add_argument('--no-shapes', action='store_true',
+                    help='with --patterns: match on the peak list, no '
+                         'trace fit')
     ap.add_argument('--shared', action='store_true',
                     help='resolve shared windows by shape')
     args = ap.parse_args()
     t0 = time.time()
     rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
-              shared=args.shared)
-    print_report(rep, label=f"{os.path.basename(args.db)}  shapes="
-                            f"{not args.no_shapes}  shared={args.shared}  "
-                            f"seed={args.seed}")
+              shared=args.shared, patterns=args.patterns)
+    print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
+                            f"{args.patterns}  shapes={not args.no_shapes}  "
+                            f"shared={args.shared}  seed={args.seed}")
     os.makedirs(OUT_DIR, exist_ok=True)
-    tag = ('shapes' if not args.no_shapes else 'noshapes') + (
+    tag = (('patterns_' + ('shapes' if not args.no_shapes else 'noshapes'))
+           if args.patterns else 'letters') + (
         '_shared' if args.shared else '')
     with open(os.path.join(OUT_DIR, f'bench_{tag}_seed{args.seed}.json'),
               'w', encoding='utf-8') as f:
