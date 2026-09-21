@@ -244,7 +244,8 @@ class DeconvolutionWindow:
                 f"{float(c.get('nh') or 0):g}",
                 f'{a:.3g}' if a is not None else '—',
                 f'{100 * area / total:.0f}%' if total > 0 else '—',
-                ('free' if ceil is None else
+                ('fixed' if c.get('fixed') else
+                 'free' if ceil is None else
                  'at ceiling' if at_ceiling else f'{float(ceil):.3g}'),
                 ('—' if sep is None else
                  f'{float(sep):.2f}' + ('' if sep >= SEPARABLE_MIN else ' ✗'))))

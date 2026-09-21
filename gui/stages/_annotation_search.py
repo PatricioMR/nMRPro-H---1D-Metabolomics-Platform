@@ -1974,7 +1974,10 @@ class _AnnotationSearchMixin:
                     r['pattern_merge_hz'] = _merge_hz if _pattern else None
                     r['pattern_floor'] = (_floor_hz or None) if _pattern else None
                     r['pattern_sigma'] = (_noise_sr or None) if _pattern else None
-                    r['pattern_field_mhz'] = mhz if _pattern else None
+                    # The field every signal's profile is placed at, not
+                    # only a pattern's: a shared window fits a letter by
+                    # the reference's profile too (quant_shared).
+                    r['pattern_field_mhz'] = mhz
                     r['pattern_tolerance_ppm'] = tolerance if _pattern else None
                     r['pattern_fit'] = (
                         {'snr': _meas_sr.pattern_snr,

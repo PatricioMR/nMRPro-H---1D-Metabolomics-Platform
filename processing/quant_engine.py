@@ -1339,6 +1339,16 @@ def _deconv_reason(info) -> list:
     med = float(np.median(list(rem.values()))) if rem else 0.0
     out = [f"Shared window resolved by shape with {', '.join(others)}: this "
            f"area is what this analyte's own shape accounts for."]
+    if d.get('fixed'):
+        out.append(f"{', '.join(d['fixed'])}: a shape this signal's own "
+                   f"shape makes, so its share was not fitted but fixed at "
+                   f"what its own clean signal predicts, and subtracted.")
+    placed = [c['label'] for c in d.get('components', ())
+              if c.get('placed_at_expected')]
+    if placed:
+        out.append(f"{', '.join(placed)} was placed where annotation "
+                   f"expects it: detection had given it this signal's own "
+                   f"line.")
     if d.get('skipped'):
         out.append(f"{', '.join(d['skipped'])} is listed here too but "
                    f"took no share: not placed by detection, a shape this "

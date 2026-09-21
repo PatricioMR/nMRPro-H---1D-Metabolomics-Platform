@@ -18,7 +18,7 @@ import json
 import numpy as np
 
 from processing.annotation_scoring import (
-    DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread)
+    DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, study_drift)
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
 from processing.quant_integration import (
@@ -45,6 +45,10 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
     """
     qm = quality_marks or {}
     annotate_drift_spread(metabolites)
+    # where a signal is expected in this study: the database position at
+    # the study's common drift (quant_shared places an intruder there when
+    # detection gave it the owner's line instead of one of its own)
+    _common = study_drift(metabolites)
     out = []
     for met in metabolites or ():
         mid = str(met.get('id', met.get('name', '')))
@@ -136,6 +140,18 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                                       or ([mp.get('ppm')]
                                           if mp.get('ppm') is not None else []),
                     'shape_fit': _shape,
+                    # The shape the reference measured for this signal,
+                    # letter or singlet, for a shared window's fit
+                    # (quant_shared): the pure compound's profile placed on
+                    # the found lines.
+                    'pattern_profile': mp.get('pattern_profile'),
+                    'profile_fwhm_hz': mp.get('profile_fwhm_hz'),
+                    'pattern_field_mhz': mp.get('pattern_field_mhz'),
+                    'db_ppm': mp.get('db_ppm'),
+                    'expected_ppm': (float(mp['db_ppm']) + float(_common)
+                                     if _common is not None
+                                     and mp.get('db_ppm') is not None
+                                     else None),
                     # The reference's lines at the found centre, for the
                     # plots: never integrated, never placed by them.
                     'reference_ppms': [float(l['ppm']) for l
