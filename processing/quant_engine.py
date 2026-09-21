@@ -648,9 +648,13 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
 
 # A singlet is quantified on its own only above this signal-to-noise:
 # position is its whole evidence, and a peak of four sigma at a position
-# is noise at a position. Measured on the mixture bench: the wrong
-# singlets stood at 1-17 sigma, the right ones at 34-202.
-SINGLET_MIN_SNR = 10.0
+# is noise at a position. Ten, set with the mixture bench in view (wrong
+# singlets at 1-17 sigma, right ones at 34-202), took creatinine, glycine,
+# formate and sarcosine out of an organoid study whose singlets mostly
+# stand at 5-10; five is the bar a signal had to clear to be checkable
+# at all (quant_shared.FINGERPRINT_SUPPORT_SNR), and under detection's
+# own floor.
+SINGLET_MIN_SNR = 5.0
 # The election is repeated without a winner whose amount its fingerprint
 # contradicts, at most this many times: the peak goes to the next.
 AMOUNT_ROUNDS = 3
@@ -674,8 +678,13 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
              quantify_shapes=True, resolve_shared=False,
              shared_overrides=None, diagnostics=None,
-             residual_pool=None) -> list[dict]:
+             residual_pool=None, singlet_min_snr=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
+
+    ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
+    reach to be quantified (SINGLET_MIN_SNR when None): the analyst's
+    choice per study, since no one number separates a faint real singlet
+    from a peak of noise at a position.
 
     Runs the election and the measurement (``_quantify_once``), then asks
     of every winner whether the amount its signal implies is one the rest
@@ -704,7 +713,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         excluded_regions=excluded_regions, deconvolve=deconvolve,
         quantify_shapes=quantify_shapes, resolve_shared=resolve_shared,
         shared_overrides=shared_overrides, diagnostics=diagnostics,
-        residual_pool=residual_pool)
+        residual_pool=residual_pool, singlet_min_snr=singlet_min_snr)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -737,7 +746,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    drift_ppm=0.0, excluded_regions=(), deconvolve=True,
                    quantify_shapes=True, resolve_shared=False,
                    shared_overrides=None, diagnostics=None,
-                   residual_pool=None, withdrawn=None):
+                   residual_pool=None, withdrawn=None, singlet_min_snr=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1179,7 +1188,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 checkable = [v for v in verdicts
                              if v[3] == 'present' or v[3].startswith('contradicted')]
                 seen = any(v[3] == 'present' for v in checkable)
-                if (np.isfinite(snr_rep) and snr_rep < SINGLET_MIN_SNR) or (
+                _min_snr = float(SINGLET_MIN_SNR if singlet_min_snr is None
+                                 else singlet_min_snr)
+                if (np.isfinite(snr_rep) and snr_rep < _min_snr) or (
                         checkable and not seen):
                     bad[mid] = (SINGLET_UNSUPPORTED,
                                 _fingerprint_detail(verdicts, snr=snr_rep))

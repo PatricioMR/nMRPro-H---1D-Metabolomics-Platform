@@ -77,7 +77,7 @@ class TestTheSingletGate:
         assert rows['A']['_rejection'] == AMOUNT_CONTRADICTED
 
     def test_a_singlet_of_noise_height_is_not(self):
-        X = _study([(2.0, 3.0, ((0.0, 1.0),))])
+        X = _study([(2.0, 1.0, ((0.0, 1.0),))])
         c = _cand('A', 1, 2.0, 's', 3, [{'ppm_center': 2.0, 'type': 's', 'protons': 3}])
         rows = _run([c], {1: _peak(1, 2.0)}, X)
         assert rows['A']['_rejection'] == SINGLET_UNSUPPORTED
@@ -99,7 +99,7 @@ class TestTheSingletGate:
         assert not rows['A']['_not_quantified']
 
     def test_a_manual_good_mark_overrides_the_gate(self):
-        X = _study([(2.0, 3.0, ((0.0, 1.0),))])
+        X = _study([(2.0, 1.0, ((0.0, 1.0),))])
         c = _cand('A', 1, 2.0, 's', 3, [{'ppm_center': 2.0, 'type': 's', 'protons': 3}],
                   manual_quality='good')
         rows = _run([c], {1: _peak(1, 2.0)}, X)
@@ -126,3 +126,13 @@ class TestTheAmountAgainstTheFingerprint:
         assert rows['F']['_rejection'] == AMOUNT_CONTRADICTED
         assert '3.50 ppm' in rows['F']['_status_reasons'][0]
         assert not rows['S']['_not_quantified']
+
+
+def test_the_singlet_bar_is_the_studys_to_set():
+    """The same faint singlet passes at a bar of 2 and fails at 10."""
+    X = _study([(2.0, 6.0, ((0.0, 1.0),))])
+    c = _cand('A', 1, 2.0, 's', 3, [{'ppm_center': 2.0, 'type': 's', 'protons': 3}])
+    low = _run([c], {1: _peak(1, 2.0)}, X, singlet_min_snr=2.0)
+    high = _run([c], {1: _peak(1, 2.0)}, X, singlet_min_snr=50.0)
+    assert not low['A']['_not_quantified']
+    assert high['A']['_rejection'] == SINGLET_UNSUPPORTED

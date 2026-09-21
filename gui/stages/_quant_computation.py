@@ -564,6 +564,11 @@ class _QuantCompMixin:
         _shapes = bool(_sv.get()) if _sv is not None else False
         _rv = getattr(self, 'shared_var', None)
         _shared = bool(_rv.get()) if _rv is not None else False
+        _ssv = getattr(self, 'singlet_snr_var', None)
+        try:
+            _singlet_snr = float(_ssv.get()) if _ssv is not None else None
+        except (tk.TclError, ValueError):
+            _singlet_snr = None
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -593,6 +598,7 @@ class _QuantCompMixin:
             resolve_shared=_shared,
             shared_overrides=dict(self._deconv_overrides or {}),
             diagnostics=_diag,
+            singlet_min_snr=_singlet_snr,
         )
 
         self._prog_apply(70, 'Building results…')

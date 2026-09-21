@@ -314,6 +314,20 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         ttk.Label(mf4, text='off: a window is its owner\'s whole',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        # A singlet on its own: position is its whole evidence, and the
+        # signal-to-noise it must reach is the study's call (ADR-025): ten
+        # suited a synthetic bench, five an organoid study whose real
+        # singlets stood at 5-10.
+        mf5 = ttk.Frame(s2); mf5.pack(fill=tk.X, pady=1)
+        ttk.Label(mf5, text='  Min SNR for a lone singlet:', font=('Arial', 8),
+                  width=26).pack(side=tk.LEFT)
+        self.singlet_snr_var = tk.DoubleVar(value=5.0)
+        ttk.Spinbox(mf5, from_=0.0, to=50.0, increment=1.0, width=6,
+                    textvariable=self.singlet_snr_var).pack(side=tk.LEFT)
+        ttk.Label(mf5, text='below it a singlet with no other signal seen is '
+                            'not quantified (Good mark overrides)',
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         ttk.Button(s2, text='Review deconvolution…',
                    command=lambda: self._open_deconvolution_window()).pack(
                        anchor=tk.W, padx=4, pady=(1, 3))
