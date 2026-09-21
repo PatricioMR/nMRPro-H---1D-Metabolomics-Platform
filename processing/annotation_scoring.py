@@ -1626,6 +1626,19 @@ def pascal_band(agreement, tie: float = PASCAL_TIE) -> int:
     return int((1.0 - float(agreement)) / float(tie))
 
 
+def support_band(consistent, checked) -> int:
+    """Fingerprint support as a rank band: 0 when at least half of the
+    checkable signals were seen, or when nothing could be checked (no test
+    is not evidence against); 1 otherwise."""
+    try:
+        n_c, n_k = int(consistent or 0), int(checked or 0)
+    except (TypeError, ValueError):
+        return 0
+    if n_k <= 0:
+        return 0
+    return 0 if n_c * 2 >= n_k else 1
+
+
 def is_competitor(cand) -> bool:
     """True when this candidate may compete for a peak at all.
 
@@ -1661,6 +1674,8 @@ class CandidateKey(NamedTuple):
     dj: int
     ppm: int
     quality: int
+    fingerprint: int
+    support: int
     intensity: int
     corroboration: int
     drift: int
@@ -1686,6 +1701,29 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     3. ΔJ band, then Δppm band — see the module notes on why this order.
     4. annotation quality — a candidate the annotation pipeline did not accept
        as Good must not beat one it did on a similarity tie-break.
+    4b. fingerprint contradictions — how many of the analyte's OTHER listed
+       signals, at the amount THIS peak implies (its height, its protons,
+       its multiplicity's line share against the database's), fall short
+       of their region threefold (``fp_contradicted``, from
+       quant_shared.fingerprint_counts). The database says how intense a
+       metabolite's signals are relative to one another; a candidate whose
+       claim on a peak would put a signal where the spectrum holds nothing
+       like it is contradicted by its own listing. A tie-break, not a
+       gate, and below the direct evidence: placed above the tier it let
+       a singlet with nothing checkable (every other signal too faint to
+       look for) beat a confirmed triplet with one contradiction, and a
+       peak's height is read with whatever sits under it.
+    4c. fingerprint support — whether at least half of the analyte's
+       other listed signals that could be checked ARE seen where the
+       amount puts them (``fp_consistent`` of ``fp_checked``). Weak on its
+       own: in a crowded region a neighbour stands in for the signal
+       looked for. But on a study whose signals all stand under twenty
+       sigma nothing can be contradicted, and this is what is left. A
+       fraction, banded, and neutral with nothing to check: a raw count
+       handed every tie to whoever listed the most signals in the crowded
+       regions -- formate's lone singlet lost to quinolinic acid's three
+       aromatics, one of them "seen" under somebody else. Below the
+       contradictions, above the line heights.
     5. line intensities — a triplet is 1:2:1 by the binomial theorem, so three
        apices of equal height argue against the claim however well their
        spacing fits. Position gave ΔJ and Δppm; this is the one thing height
@@ -1738,6 +1776,9 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
                      if cand.get('ppm_off_drift') is not None
                      else cand.get('ppm_diff'), band_ppm),
         quality=0 if quality == 'good' else 1,
+        fingerprint=int(cand.get('fp_contradicted') or 0),
+        support=support_band(cand.get('fp_consistent'),
+                             cand.get('fp_checked')),
         intensity=pascal_band(cand.get('intensity_agreement')),
         corroboration=corroboration_band(cand.get('stocsy_partners')),
         drift=drift_band(cand.get('drift_spread_ppm')),
@@ -1774,8 +1815,8 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
     # declare a contest ambiguous that the ranking had in fact settled, and an
     # ambiguous contest has no winner at all -- so the two analytes the new
     # criterion exists to separate would both end with nothing.
-    _banded = ('manual', 'tier', 'dj', 'ppm', 'quality', 'intensity',
-               'corroboration', 'drift')
+    _banded = ('manual', 'tier', 'dj', 'ppm', 'quality', 'fingerprint',
+               'support', 'intensity', 'corroboration', 'drift')
     tied = all(getattr(k0, f) == getattr(k1, f) for f in _banded)
     # The score cannot settle two singlets: a singlet's score is its
     # position again, and a contest settled by its third decimal reports a

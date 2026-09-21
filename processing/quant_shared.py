@@ -934,6 +934,91 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
     return holds, out
 
 
+def fingerprint_counts(db_peaks, *, own_ppm, own_mult, own_nh, ppm, trace,
+                       noise, linewidth_ppm, drift_ppm=0.0, skip_ppm=None,
+                       excluded_regions=(), ratio=3.0,
+                       min_snr=FINGERPRINT_MIN_SNR, own_share=None) -> dict:
+    """What the rest of an analyte's fingerprint says about a candidate
+    peak, read from that peak's own height: the amount the peak implies,
+    the height every other listed signal would then have (protons times
+    the tallest line's share), and whether its region holds it.
+
+    Returns ``{'contradicted': n, 'consistent': n, 'checked': n,
+    'verdicts': [...]}`` -- the counts the election ranks on. A region
+    holding under a ``ratio``-th of the predicted height contradicts; one
+    holding at least half of it is consistent; the rest (faint, excluded,
+    off the axis) are neither. Consistency is weak evidence in a crowded
+    region, where a neighbour stands in; contradiction is strong. The
+    ratio is three, as the amount check's (quant_engine.AMOUNT_RATIO): the
+    peak's height is read with whatever sits under it -- taurine's centre
+    line with betaine's singlet on it implied 2.0x taurine's other
+    triplet -- and twice is overlap, not absence.
+    """
+    from processing.annotation_detectability import _line_share
+    x = np.asarray(ppm, dtype=float)
+    y = np.asarray(trace, dtype=float)
+    hwhm = float(linewidth_ppm) / 2.0
+    empty = {'contradicted': 0, 'consistent': 0, 'checked': 0, 'verdicts': []}
+    if not own_nh or hwhm <= 0 or not noise:
+        return empty
+    m = (x >= own_ppm - hwhm) & (x <= own_ppm + hwhm)
+    if m.sum() < 1:
+        return empty
+    own_h = max(float(y[m].max()), 0.0)
+    mult = str(own_mult or '').lower().strip()
+    share = (float(own_share) if own_share else
+             _line_share(mult) if mult not in ('m', 'm*', 'multiplet') else 0.5)
+    if own_h <= 0 or share <= 0:
+        return empty
+    per_proton_area = own_h * np.pi * hwhm / (float(own_nh) * share)
+    held, verdicts = fingerprint_holds(
+        db_peaks, per_proton_area, ppm, trace, noise=noise,
+        linewidth_ppm=linewidth_ppm, drift_ppm=drift_ppm, skip_ppm=skip_ppm,
+        excluded_regions=excluded_regions, ratio=ratio, min_snr=min_snr)
+    n_c = sum(1 for v in verdicts if v[3].startswith('contradicted'))
+    n_p = sum(1 for v in verdicts if v[3] == 'present')
+    return {'contradicted': n_c, 'consistent': n_p, 'checked': n_c + n_p,
+            'verdicts': verdicts}
+
+
+def annotate_fingerprint_counts(metabolites, ppm, trace, *, noise,
+                                linewidth_ppm, drift_ppm=0.0,
+                                excluded_regions=()) -> int:
+    """Write ``fp_contradicted`` / ``fp_consistent`` on every matched peak
+    of every metabolite, from the peak's own height (``fingerprint_counts``),
+    so the election can rank on them. Returns how many were written."""
+    from processing.annotation_scoring import pattern_offsets_hz
+    n = 0
+    for met in metabolites or ():
+        db_peaks = met.get('db_peaks') or ()
+        for mp in met.get('matched_peaks') or ():
+            if mp.get('peak_ppm') is None:
+                continue
+            own_share = None
+            pat = pattern_offsets_hz(mp)
+            if pat:
+                own_share = max(r for _o, r in pat) / sum(r for _o, r in pat)
+            nh = mp.get('protons')
+            try:
+                nh = float(nh) if nh else None
+            except (TypeError, ValueError):
+                nh = None
+            if not nh:
+                continue
+            out = fingerprint_counts(
+                db_peaks, own_ppm=float(mp['peak_ppm']),
+                own_mult=mp.get('type') or mp.get('multiplicity'), own_nh=nh,
+                ppm=ppm, trace=trace, noise=noise, linewidth_ppm=linewidth_ppm,
+                drift_ppm=drift_ppm, skip_ppm=mp.get('db_ppm'),
+                excluded_regions=excluded_regions, own_share=own_share)
+            mp['fp_contradicted'] = out['contradicted']
+            mp['fp_consistent'] = out['consistent']
+            mp['fp_checked'] = out['checked']
+            mp['fp_verdicts'] = out['verdicts']
+            n += 1
+    return n
+
+
 def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
                       linewidth_ppm, names=None, lines_of=None,
                       per_proton_areas=None, noise_sigma=None,

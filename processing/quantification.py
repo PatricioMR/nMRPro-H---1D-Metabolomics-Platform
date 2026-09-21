@@ -116,6 +116,11 @@ class Candidate:
 # The criteria of ``candidate_key``, in the words the analyst reads.
 _CRITERION_TEXT = {
     'manual': 'a manual Good mark',
+    'fingerprint': 'fingerprint contradictions at the amount the peak implies '
+                   '(fewer)',
+    'support': 'fingerprint support: at least half of the other signals '
+               'that could be checked are seen at the amount the peak '
+               'implies',
     'tier': 'evidence tier (confirmed multiplet > unconfirmed > singlet)',
     'dj': 'delta-J',
     'ppm': 'delta-ppm',

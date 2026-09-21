@@ -21,6 +21,7 @@ from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, study_drift)
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
+from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
     integrate_sample, lorentzian_captured_fraction)
 from processing.quant_concentration import standard_per_proton
@@ -133,6 +134,9 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     # decided on different evidence.
                     'stocsy_partners': mp.get('stocsy_partners'),
                     'cosine': mp.get('_s_cosine'),
+                    'fp_contradicted': mp.get('fp_contradicted'),
+                    'fp_consistent': mp.get('fp_consistent'),
+                    'fp_checked': mp.get('fp_checked'),
                     'quality': mp.get('annotation_quality'),
                     'manual_quality': (qm.get((mid, rank))
                                        or qm.get((met.get('id'), rank))),
@@ -469,6 +473,16 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             ppm, arr, lo, hi, noise_level([ref_peak], ppm, arr),
             included=included))
 
+    # What the rest of each analyte's fingerprint says about each of its
+    # candidate peaks, at the amount that peak implies -- the election's
+    # second key after the manual mark (annotation_scoring.candidate_key).
+    # Read on the mean of the measured samples with the study's drift.
+    if noise_sigma and included:
+        _mean = arr[:, [i for i in included if 0 <= i < arr.shape[1]]].mean(axis=1)
+        annotate_fingerprint_counts(
+            metabolites, ppm, _mean, noise=noise_sigma, linewidth_ppm=_lw,
+            drift_ppm=float(study_drift(metabolites) or 0.0),
+            excluded_regions=excluded_regions)
     _pool: list = []
     _cands = build_candidates(metabolites, peaks_by_rank,
                               quality_marks=quality_marks,
