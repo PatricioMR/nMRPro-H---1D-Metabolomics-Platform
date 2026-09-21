@@ -290,15 +290,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             self._j_resolve_cb.pack(side=tk.LEFT)
             self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
         # Complex multiplets (m*, ADR-013) are a method still being built.
-        # Off, no m* signal competes for a peak or is measured; on, they
-        # compete and are measured from the reference's shape fitted to
-        # each sample.
+        # A shape never competes for a peak. On, with the shape resolution
+        # below, an m* is offered to the spectrum's remainders and
+        # identified only where a free apex, its own amount and its whole
+        # shape agree (ADR-024); off, it is left out and says so.
         mf3 = ttk.Frame(s2); mf3.pack(fill=tk.X, pady=1)
         self.shape_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             mf3, text='Quantify complex multiplets (m*)',
             variable=self.shape_var).pack(side=tk.LEFT)
-        ttk.Label(mf3, text='off: no m* signal competes or is quantified',
+        ttk.Label(mf3, text='on: identified on a free apex by its shape, '
+                            'with the deconvolution below; never competes '
+                            'for a peak',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
         # A window holding another accepted analyte's signal, resolved by

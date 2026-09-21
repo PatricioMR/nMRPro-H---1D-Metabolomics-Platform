@@ -42,13 +42,13 @@ from processing.quant_integration import (
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
 from processing.quant_shared import (
-    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, resolve_residuals,
-    resolve_shared_windows)
+    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, resolve_free_apices,
+    resolve_residuals, resolve_shared_windows)
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
     LOST_COMPETITION, NO_MEASURABLE_WINDOW, PARTIAL_MULTIPLET, REJECTION_TEXT,
-    SHAPES_OFF, elect, is_competitor)
+    SHAPE_UNIDENTIFIED, SHAPES_OFF, elect, is_competitor)
 from processing.annotation_scoring import PATTERN_MULT, normalize_mult
 
 # The status dots the results table shows. Confidence is about how much of the
@@ -701,6 +701,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     indistinguishable from a step that is not there.
     """
     candidates = list(candidates or ())
+    residual_pool = list(residual_pool or ())
     shapes_off: dict = {}
     if not quantify_shapes:
         kept = [c for c in candidates if not _is_complex(c)]
@@ -709,8 +710,26 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             if _is_complex(c) and c.met_id not in with_peaks:
                 shapes_off[c.met_id] = SHAPES_OFF
         candidates = kept
+        # off means off: not offered to the remainders either
+        residual_pool = [c for c in residual_pool if not _is_complex(c)]
         if diagnostics is not None:
             diagnostics['shapes'] = {'off': True, 'left_out': len(shapes_off)}
+    else:
+        # On, a complex multiplet still never competes for a peak: it is
+        # offered to the remainders (resolve_residuals, resolve_free_apices)
+        # and identified only where a free apex, its own amount and its
+        # whole shape agree. Fitted alone and elected unopposed it was
+        # worth 41 false positives on the mixture bench.
+        _complex = [c for c in candidates if _is_complex(c)]
+        candidates = [c for c in candidates if not _is_complex(c)]
+        _pooled = {id(c) for c in residual_pool}
+        residual_pool += [c for c in _complex if id(c) not in _pooled]
+        # an analyte whose every signal is a shape has a row either way:
+        # one that vanishes from the table cannot be questioned
+        _with_peaks = {c.met_id for c in candidates}
+        for c in _complex:
+            if c.met_id not in _with_peaks:
+                shapes_off[c.met_id] = SHAPE_UNIDENTIFIED
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                     ambiguous_ranks=ambiguous_ranks)
     residual_ids: set = set()
@@ -893,9 +912,31 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             free_apex_of=lambda c: [
                 float(peaks_by_rank[r]['ppm']) for r in _found_ranks(c)
                 if r in peaks_by_rank and r not in _claimed_ranks],
+            offer_if=lambda rec: _structural_evidence(rec['signal']) >= 2,
             drift_ppm=float((residual_pool or [None])[0].evidence.get(
                 'study_drift_ppm') or 0.0) if residual_pool
             and getattr(residual_pool[0], 'evidence', None) else 0.0)
+        # ── A free apex nobody holds: the spectrum's own remainder ──────
+        _claimed_ranks |= {r for _t in _taken.values()
+                           for r in _found_ranks(_t['signal'])}
+        _free_peaks = {r: p for r, p in peaks_by_rank.items()
+                       if r not in _claimed_ranks}
+        _alone = resolve_free_apices(
+            measured, residual_pool, _free_peaks, ppm, intensities,
+            included=included, linewidth_ppm=linewidth_ppm,
+            names=_shared_names,
+            lines_of=lambda c: _found_lines(c, peaks_by_rank),
+            ranks_of=_found_ranks,
+            noise_sigma=noise_sigma,
+            fingerprint_of=lambda c: ((c.payload or {}).get('met') or {}).get(
+                'db_peaks') if isinstance(c.payload, dict) else None,
+            drift_ppm=float((residual_pool or [None])[0].evidence.get(
+                'study_drift_ppm') or 0.0) if residual_pool
+            and getattr(residual_pool[0], 'evidence', None) else 0.0,
+            skip=set(_taken),
+            trials_out=(diagnostics.setdefault('free_apex_trials', {})
+                        if diagnostics is not None else None))
+        _taken.update(_alone)
         for _cm, _t in _taken.items():
             _nh = float(_t['nh'])
             measured[_cm] = {
@@ -1018,6 +1059,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     names = {c.met_id: ((c.payload or {}).get('name') if isinstance(
         c.payload, dict) else None) or c.met_id for c in (candidates or ())}
     for mid, reason in shapes_off.items():
+        if mid in residual_ids or mid in measured:
+            continue
         rows.append(_rejected_row(mid, reason))
     for mid, (n_found, n_all, share, missing) in partial.items():
         rows.append(_rejected_row(
@@ -1392,6 +1435,15 @@ def _residual_reason(info) -> list:
     """Said of an analyte identified by what another analyte's window left
     unexplained, and of a window that took such a signal in."""
     owner = info.get('by_residual')
+    if owner == 'spectrum':
+        return [f"Identified on a free apex: a detected peak no accepted "
+                f"analyte holds, at which this analyte's reference shape, "
+                f"scaled to the apex, fits under the trace over its whole "
+                f"width and accounts for "
+                f"{100 * (1 - float(info.get('residual_after') or 0)):.0f}% "
+                f"of its region, with the rest of its fingerprint able to "
+                f"carry the amount. Its lines were not confirmed one by "
+                f"one: a weak identification, to be checked."]
     if owner:
         return [f"Identified by the remainder of {owner}'s window: the "
                 f"accepted shapes left {100 * float(info.get('residual_before') or 0):.0f}% "

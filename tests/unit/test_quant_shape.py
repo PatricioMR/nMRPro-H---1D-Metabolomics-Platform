@@ -109,7 +109,12 @@ class TestTheShapeInTheEngine:
         assert 'S' in e.winners and 'D' in e.winners
         assert not e.claimed_peaks & {None}
 
-    def test_the_row_is_quantified_from_the_shape(self):
+    def test_a_shape_with_no_apex_of_its_own_is_not_quantified_and_says_so(self):
+        """A shape competes for no peak and is not fitted alone: elected
+        unopposed on a fit that any shape passes, it was worth 41 false
+        positives on the mixture bench. Without a free apex it has a row
+        that says what it would take."""
+        from processing.quantification import SHAPE_UNIDENTIFIED
         shape = Candidate(met_id='S', peak_rank=None, line_ranks=frozenset(),
                           evidence=_shape_ev(explained=0.95))
         X = _study([100.0, 200.0, 400.0])
@@ -118,23 +123,40 @@ class TestTheShapeInTheEngine:
                         groups={'G': [0, 1, 2]}, dj_gold_hz=0.2,
                         noise_sigma=SIGMA, deconvolve=False)
         row = next(r for r in rows if r['hmdb_id'] == 'S')
-        assert not row['_not_quantified']
-        assert row['_integ_mode'] == 'Shape'
-        assert row['_peak_rank'] is None
-        a = row['_areas_per_sample']
-        assert a[2] / a[0] == pytest.approx(4.0, rel=0.1)
-        assert any('fitted shape' in r for r in row['_status_reasons'])
+        assert row['_not_quantified']
+        assert row['_rejection'] == SHAPE_UNIDENTIFIED
+        assert 'apex' in row['_status_reasons'][0]
 
-    def test_a_shared_region_is_reported_as_an_upper_bound(self):
-        shape = Candidate(met_id='S', peak_rank=None, line_ranks=frozenset(),
-                          evidence=_shape_ev(explained=0.5))
+    def test_a_shape_on_a_free_apex_is_quantified_at_the_apex_s_amount(self):
+        """With the resolution on, a detected apex nobody holds, at which the
+        shape scaled to it fits under the trace over its whole width,
+        identifies the analyte; its amount follows the apex, sample by
+        sample."""
+        # a second signal of the analyte, a singlet at 3.35, is in the
+        # study at the same amount: alone on one apex the analyte must
+        # have another signal seen at the amount this one implies
+        second = lines_model(PPM, [(0.0, 1.0)], 3.35, FWHM, FIELD)
         X = _study([100.0, 200.0, 400.0])
-        rows = quantify(candidates=[shape], peaks_by_rank={}, ppm=PPM,
+        X = X + np.column_stack([a * second for a in (100.0, 200.0, 400.0)])
+        shape = Candidate(met_id='S', peak_rank=7, line_ranks=frozenset({7}),
+                          evidence={**_shape_ev(explained=0.95),
+                                    'db_ppm': ORIGIN, 'expected_ppm': ORIGIN,
+                                    'predicted_ppms': [3.185, 3.2, 3.213]},
+                          payload={'met': {'db_peaks': [
+                              {'ppm_center': 3.35, 'type': 's', 'protons': 1}]}})
+        peaks = {7: {'rank': 7, 'ppm': 3.2, 'height': float(X[:, 2].max())}}
+        rows = quantify(candidates=[shape], peaks_by_rank=peaks, ppm=PPM,
                         intensities=X, samples_info=[], included=[0, 1, 2],
                         groups={'G': [0, 1, 2]}, dj_gold_hz=0.2,
-                        noise_sigma=SIGMA, deconvolve=False)
+                        noise_sigma=SIGMA, deconvolve=False,
+                        resolve_shared=True, linewidth_ppm=FWHM / FIELD)
         row = next(r for r in rows if r['hmdb_id'] == 'S')
-        assert any('Upper bound' in r for r in row['_status_reasons'])
+        assert not row['_not_quantified']
+        assert row['_by_residual'] == 'spectrum'
+        assert row['_confidence'] == 1
+        a = row['_areas_per_sample']
+        assert a[2] / a[0] == pytest.approx(4.0, rel=0.15)
+        assert any('free apex' in r for r in row['_status_reasons'])
 
 
 class TestTheShapeSwitch:
@@ -165,7 +187,11 @@ class TestTheShapeSwitch:
         off = {r['hmdb_id']: r for r in quantify(candidates=[shape, other],
                                                   quantify_shapes=False,
                                                   diagnostics=diag, **kw)}
-        assert not on['S']['_not_quantified']
+        # on: not quantified either (no free apex, resolution off), but the
+        # row names what it would take; off: the switch is named
+        from processing.quantification import SHAPE_UNIDENTIFIED
+        assert on['S']['_not_quantified']
+        assert on['S']['_rejection'] == SHAPE_UNIDENTIFIED
         assert off['S']['_not_quantified']
         assert off['S']['_rejection'] == SHAPES_OFF
         assert 'Quantify complex multiplets' in off['S']['_status_reasons'][0]
@@ -210,8 +236,10 @@ class TestTheSwitchCoversEveryComplexMultiplet:
         on = {r['hmdb_id']: r for r in quantify(candidates=[pattern, triplet], **kw)}
         off = {r['hmdb_id']: r for r in quantify(candidates=[pattern, triplet],
                                                   quantify_shapes=False, **kw)}
-        # on: the pattern wins the contested peak on delta-J
-        assert not on['P']['_not_quantified'] and on['T']['_not_quantified']
-        # off: the pattern is out and the triplet has its peak
+        # on or off, a pattern never competes for a peak: the triplet has
+        # its peak both ways, and the pattern's row says why it has none
+        from processing.quantification import SHAPE_UNIDENTIFIED
+        assert on['P']['_rejection'] == SHAPE_UNIDENTIFIED
+        assert not on['T']['_not_quantified']
         assert off['P']['_rejection'] == SHAPES_OFF
         assert not off['T']['_not_quantified']

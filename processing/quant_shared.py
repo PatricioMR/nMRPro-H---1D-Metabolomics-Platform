@@ -117,6 +117,15 @@ RESIDUAL_FLOOR_MULTIPLE = 1.5
 # the next is tried; a window with two intruders' tails in it is the case
 # that made "explains half of the remainder" the wrong question.
 RESIDUAL_MIN_SHARE = 0.2
+# On a free apex with no owner (resolve_free_apices) the shape has the
+# whole region to account for: it must explain at least this share of the
+# area over its own lines' reach. A shape that leaves a quarter of its own
+# region is sharing the apex with somebody, and an apex shared is not an
+# apex of its own. Set with the mixture bench in view: glutamate's pattern
+# explained 0.77-0.79 of its region, the wrong claimants on other free
+# apices (a sugar's doublet on myo-inositol's triplet, GABA's triplet on
+# glutamate's) 0.60-0.68.
+STANDALONE_MIN_EXPLAINED = 0.75
 
 # The fourth condition: the amount the remainder implies must be consistent
 # with the rest of the analyte's fingerprint (ADR-012, "a measurable
@@ -129,6 +138,12 @@ RESIDUAL_MIN_SHARE = 0.2
 # nothing stood at its aromatic lines.
 RESIDUAL_FINGERPRINT_RATIO = 2.0
 FINGERPRINT_MIN_SNR = 20.0
+# A signal predicted under FINGERPRINT_MIN_SNR is not asked to contradict;
+# one predicted over this is still asked whether it is there, as support.
+# Glutamate's other patterns, at the amount its 2.34 ppm pattern implied
+# on the mixture bench, were predicted at 8-9 sigma: too faint to refute,
+# tall enough to look for.
+FINGERPRINT_SUPPORT_SNR = 5.0
 
 # The geometry refinement: a component may slide this far, in linewidths,
 # from where annotation placed it (an apex pulled by a neighbour moves a
@@ -165,8 +180,13 @@ class Component:
     # clean signal predicts, and subtracted, rather than fitted
     fixed: bool = False
     # fixed whatever its separability: the amplitude was read off the
-    # spectrum (a free apex of its own) and is not the fit's to decide
+    # spectrum (a free apex of its own) and is not the fit's to decide.
+    # ``pin_apex_ppm`` is that apex and ``pin_heights`` the trace there in
+    # every sample; the amplitude is what puts the shape's curve, at its
+    # final geometry, through that height.
     pinned: bool = False
+    pin_apex_ppm: float | None = None
+    pin_heights: dict = field(default_factory=dict)
     lines: list = field(default_factory=list)
     # what the model was built from, so a view can build it again
     evidence: dict = field(default_factory=dict)
@@ -341,7 +361,11 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None, movable=None):
     for _round in range(REFINE_ROUNDS):
         for c in move:
             reach = SHIFT_MAX_LINEWIDTHS * float(c.linewidth_ppm)
-            if reach <= 0:
+            # a shape pinned on an apex stays on it: slid off, its curve
+            # at the pin falls and the amplitude that passes through the
+            # pin's height rises, and the shape overshoots where its own
+            # apex went
+            if reach <= 0 or c.pin_apex_ppm is not None:
                 continue
             keep = c.shift_ppm
             for sh in np.linspace(-reach, reach, SHIFT_STEPS):
@@ -365,7 +389,7 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None, movable=None):
 def component_from_record(rec, *, owner=None):
     """The component a ``resolve_window`` result recorded, built again --
     for a view that draws the fit or edits it."""
-    return component_from_evidence(
+    c = component_from_evidence(
         rec['met_id'], rec.get('evidence') or {}, label=rec.get('label', ''),
         linewidth_ppm=rec['linewidth_ppm'], nh=rec.get('nh') or 1.0,
         owner=rec.get('owner') if owner is None else owner,
@@ -375,6 +399,11 @@ def component_from_record(rec, *, owner=None):
         shift_ppm=float(rec.get('shift_ppm') or 0.0),
         width_scale=float(rec.get('width_scale') or 1.0),
         pinned=bool(rec.get('pinned')))
+    if c is not None and rec.get('pin_apex_ppm') is not None:
+        c.pin_apex_ppm = float(rec['pin_apex_ppm'])
+        c.pin_heights = {int(k): float(v) for k, v in
+                         (rec.get('pin_heights') or {}).items()}
+    return c
 
 
 def resolve_window(components, ppm, intensities, *, included=None,
@@ -456,9 +485,10 @@ def resolve_window(components, ppm, intensities, *, included=None,
     # An inseparable intruder with a clean measurement of its own takes
     # exactly what that measurement predicts; one without stays out.
     fixed = [c for c in comps
-             if (c.pinned or c in inseparable)
-             and amplitude_ceiling(c.per_proton_hint, c.nh, c.shape_area,
-                                   factor=1.0) is not None]
+             if (c.pinned and c.pin_apex_ppm is not None and c.pin_heights)
+             or ((c.pinned or c in inseparable)
+                 and amplitude_ceiling(c.per_proton_hint, c.nh, c.shape_area,
+                                       factor=1.0) is not None)]
     for c in fixed:
         c.fixed = True
         c.ceiling = amplitude_ceiling(c.per_proton_hint, c.nh,
@@ -471,7 +501,7 @@ def resolve_window(components, ppm, intensities, *, included=None,
     if len(free) < 2 and not fixed and not allow_single:
         return {'refused': f"{', '.join(c.label for c in inseparable)} "
                            f"cannot be told by shape from this signal"}
-    if not free:
+    if not free and not allow_single:
         return {'refused': 'nothing here can be fitted: every shape is '
                            'fixed by its own clean signal'}
     A_free = A[:, free_idx]
@@ -479,10 +509,19 @@ def resolve_window(components, ppm, intensities, *, included=None,
 
     def _fixed_amplitudes(s):
         # what the intruder's own clean signal read in THIS sample; the
-        # median over samples only where that sample gave nothing
+        # median over samples only where that sample gave nothing -- or,
+        # for a shape pinned on its own apex, what puts its curve (at the
+        # geometry the refinement settled) through the trace at that apex
         out = []
         for i in fixed_idx:
             c = comps[i]
+            if c.pin_apex_ppm is not None and c.pin_heights:
+                at = float(np.interp(c.pin_apex_ppm, x[order],
+                                     A[:, i][order]))
+                h = c.pin_heights.get(int(s))
+                out.append(max(float(h), 0.0) / at
+                           if at > 0.05 and h is not None else 0.0)
+                continue
             v = amplitude_ceiling(
                 c.per_proton_by_sample.get(int(s), c.per_proton_hint),
                 c.nh, c.shape_area, factor=1.0)
@@ -503,9 +542,14 @@ def resolve_window(components, ppm, intensities, *, included=None,
         t = arr[sel, s]
         a_fixed = _fixed_amplitudes(s)
         taken = A_fixed @ a_fixed if A_fixed is not None else 0.0
-        res = lsq_linear(A_free, t - taken, bounds=(lb, ub), lsmr_tol='auto')
-        a = np.asarray(res.x, dtype=float)
-        fitted = A_free @ a + taken
+        if free:
+            res = lsq_linear(A_free, t - taken, bounds=(lb, ub),
+                             lsmr_tol='auto')
+            a = np.asarray(res.x, dtype=float)
+            fitted = A_free @ a + taken
+        else:
+            a = np.zeros(0)
+            fitted = taken
         _t, _r, _x = t[rsel], (t - fitted)[rsel], x[rsel]
         total = float(np.trapezoid(np.clip(_t[r_order], 0, None),
                                    x=_x[r_order]))
@@ -541,6 +585,8 @@ def resolve_window(components, ppm, intensities, *, included=None,
                             'width_scale': c.width_scale,
                             'fixed': c.fixed,
                             'pinned': c.pinned,
+                            'pin_apex_ppm': c.pin_apex_ppm,
+                            'pin_heights': dict(c.pin_heights),
                             'per_proton_by_sample': dict(c.per_proton_by_sample),
                             'placed_at_expected': bool(
                                 c.evidence.get('placed_at_expected'))}
@@ -831,22 +877,30 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
     ``ratio``-th of it. Returns ``(holds, verdicts)``.
     """
     from processing.annotation_detectability import _line_share, proton_count
+    from processing.annotation_scoring import pattern_offsets_hz
     x = np.asarray(ppm, dtype=float)
     y = np.asarray(trace, dtype=float)
     hwhm = float(linewidth_ppm) / 2.0
     out, holds = [], True
     for dp in db_peaks or ():
         mult = str(dp.get('type') or dp.get('multiplicity') or '').lower().strip()
-        if mult in ('m', 'multiplet', 'peak', '', 'm*'):
+        # an unresolved 'm' the reference measured as a pattern is checkable
+        # by that pattern; one it did not is not
+        pat = pattern_offsets_hz(dp) if mult in ('m', 'm*', 'multiplet') else []
+        if (mult in ('peak', '') or (mult in ('m', 'm*', 'multiplet')
+                                      and not pat)):
             continue
         centre = float(dp.get('ppm_center', dp.get('ppm', 0.0)))
         if skip_ppm is not None and abs(centre - float(skip_ppm)) < 0.005:
             continue
         nh = proton_count(dp)
-        expected = _lorentz_height(float(per_proton_area) * nh * _line_share(mult),
-                                   hwhm)
+        # a measured pattern's tallest line carries its share of the
+        # pattern's height, as the reference measured it
+        share = (max(r for _o, r in pat) / sum(r for _o, r in pat)
+                 if pat else _line_share(mult))
+        expected = _lorentz_height(float(per_proton_area) * nh * share, hwhm)
         exp_snr = expected / float(noise) if noise else float('inf')
-        if exp_snr < min_snr:
+        if exp_snr < FINGERPRINT_SUPPORT_SNR:
             out.append((centre, mult, exp_snr, 'faint'))
             continue
         here = centre + float(drift_ppm)
@@ -857,8 +911,12 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
         seg = y[m]
         measured = (float(seg.max()) - float(seg.min())) / float(noise) if noise else float('inf')
         if measured * float(ratio) < exp_snr:
-            holds = False
-            out.append((centre, mult, exp_snr, f'contradicted: region holds {measured:.0f}'))
+            if exp_snr >= min_snr:
+                holds = False
+                out.append((centre, mult, exp_snr,
+                            f'contradicted: region holds {measured:.0f}'))
+            else:
+                out.append((centre, mult, exp_snr, 'faint'))
         else:
             out.append((centre, mult, exp_snr, 'present'))
     return holds, out
@@ -869,7 +927,8 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
                       per_proton_areas=None, noise_sigma=None,
                       accept=RESIDUAL_ACCEPT, explained=RESIDUAL_EXPLAINED,
                       note=REMAINDER_NOTE, fingerprint_of=None,
-                      drift_ppm=0.0, free_apex_of=None) -> dict:
+                      drift_ppm=0.0, free_apex_of=None,
+                      offer_if=None) -> dict:
     """Offer each winner's window, where its accepted shapes leave a
     remainder, the signals the election did not accept -- and take one in
     only on the three conditions above.
@@ -896,6 +955,13 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
     offered: a shape with no apex of its own is a shoulder, and a shoulder
     identifies nobody. The amplitude is read off the tallest free apex in
     every sample and pinned.
+
+    ``offer_if(record)`` says whether a winner's window is offered at all.
+    A singlet's window with a remainder is more often the singlet being
+    wrong than an intruder being right: on the mixture bench three false
+    singlets' windows took in three more analytes, one of them right by
+    accident. The engine offers only the windows of owners whose own
+    structure was confirmed.
     """
     names = names or {}
     where = lines_of or (lambda c: [])
@@ -911,6 +977,8 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
                if rec.get('window') and not rec.get('shape')}
     own_ids = set(winners)
     for mid, rec in winners.items():
+        if offer_if is not None and not offer_if(rec):
+            continue
         d = rec.get('deconv')
         if d:
             base = [component_from_record(c) for c in d['components']]
@@ -983,8 +1051,9 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
             if comp is None:
                 continue
             if free_apex:
-                # amplitude off the free apex, per sample: the curve at
-                # the apex is what one unit of amplitude puts there
+                # pinned on its tallest free apex: the trace there, in
+                # every sample, is what the shape must pass through at
+                # whatever geometry the refinement settles on
                 xs = np.asarray(ppm, dtype=float)
                 csel = (xs >= comp.lo) & (xs <= comp.hi)
                 cx = xs[csel]
@@ -992,20 +1061,16 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
                     continue
                 curve = comp.curve(cx)
                 c_order = np.argsort(cx)
-                s_area = float(np.trapezoid(curve[c_order], x=cx[c_order]))
-                apex = max(free_apex, key=lambda v: float(np.interp(v, cx[c_order], curve[c_order])))
-                at = float(np.interp(apex, cx[c_order], curve[c_order]))
-                if at <= 0.05 or s_area <= 0:
+                apex = max(free_apex, key=lambda v: float(
+                    np.interp(v, cx[c_order], curve[c_order])))
+                if float(np.interp(apex, cx[c_order], curve[c_order])) <= 0.3:
                     trials.append({'label': label, 'verdict': 'refused',
                                    'why': 'its free apex is not where its shape peaks'})
                     continue
                 i_ap = int(np.argmin(np.abs(xs - apex)))
-                by_sample = {}
-                for s_i in _idx:
-                    h = max(float(arr[i_ap, s_i]), 0.0)
-                    by_sample[int(s_i)] = (h / at) * s_area / nh
-                comp.per_proton_by_sample = by_sample
-                comp.per_proton_hint = float(np.median(list(by_sample.values()))) if by_sample else None
+                comp.pin_apex_ppm = float(apex)
+                comp.pin_heights = {int(s_i): max(float(arr[i_ap, s_i]), 0.0)
+                                    for s_i in _idx}
             # the shapes already in the window keep their geometry; the
             # candidate is refined into what they leave
             trial_comps = ([component_from_record(cr) for cr in
@@ -1120,6 +1185,148 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
     return {k: v for k, v in taken.items() if v is not None}
 
 
+def resolve_free_apices(measured, pool, free_peaks, ppm, intensities, *,
+                        included=None, linewidth_ppm, names=None,
+                        lines_of=None, ranks_of=None, noise_sigma=None,
+                        fingerprint_of=None, drift_ppm=0.0, skip=(),
+                        trials_out=None) -> dict:
+    """The spectrum's own remainder: a detected apex no accepted analyte
+    holds. Each refused signal with such an apex is tried alone on it --
+    its amount read off the apex and pinned, its whole shape required to
+    fit under the trace, to account for STANDALONE_MIN_EXPLAINED of the
+    area over its lines' reach, and the rest of its fingerprint to carry
+    the amount. One signal per apex, the one that explains most; an apex
+    a taken signal used is not offered again.
+
+    This is how a complex multiplet (``m*``) is identified when the shapes
+    switch is on: not by fitting its shape alone under the trace, which
+    any shape does, but on the same terms a refused letter enters a
+    winner's window. Returns ``{met_id: {...}}`` as ``resolve_residuals``
+    does, with ``'owner': 'spectrum'``.
+    """
+    names = names or {}
+    where = lines_of or (lambda c: [])
+    ranks = ranks_of or (lambda c: [])
+    lw = float(linewidth_ppm)
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    _idx = [i for i in (range(arr.shape[1]) if included is None else included)
+            if 0 <= i < arr.shape[1]]
+    mean_trace = arr[:, _idx].mean(axis=1) if _idx else arr.mean(axis=1)
+    xs = np.asarray(ppm, dtype=float)
+    free = dict(free_peaks or {})
+    taken: dict = {}
+    seen_mid = set(skip or ()) | set(measured)
+    # tallest apex first: the strongest evidence gets the first claim
+    order = sorted(free, key=lambda r: -float(free[r].get('height', 0.0) or 0.0))
+    for r in order:
+        if r not in free:
+            continue
+        apex_ppm = float(free[r].get('ppm', 0.0))
+        best = None
+        trials = []
+        for c in pool or ():
+            cm = str(c.met_id)
+            if cm in seen_mid:
+                continue
+            if r not in set(ranks(c) or ()):
+                continue
+            ev = _placed_evidence(c, lw, [], where)
+            if ev is None:
+                continue
+            nh = ev.get('protons')
+            try:
+                nh = float(nh) if nh else None
+            except (TypeError, ValueError):
+                nh = None
+            if not nh:
+                continue
+            label = f"{names.get(cm, cm)} {str(ev.get('multiplicity') or '')}"
+            comp = component_from_evidence(cm, ev, label=label, linewidth_ppm=lw,
+                                           nh=nh, owner=True, pinned=True)
+            if comp is None:
+                continue
+            csel = (xs >= comp.lo) & (xs <= comp.hi)
+            cx = xs[csel]
+            if cx.size < 4:
+                continue
+            curve = comp.curve(cx)
+            c_order = np.argsort(cx)
+            if float(np.interp(apex_ppm, cx[c_order], curve[c_order])) <= 0.3:
+                trials.append({'label': label, 'verdict': 'refused',
+                               'why': 'the apex is not one of its lines'})
+                continue
+            i_ap = int(np.argmin(np.abs(xs - apex_ppm)))
+            comp.pin_apex_ppm = float(apex_ppm)
+            comp.pin_heights = {int(s_i): max(float(arr[i_ap, s_i]), 0.0)
+                                for s_i in _idx}
+            out = resolve_window([comp], ppm, intensities, included=included,
+                                 noise_sigma=noise_sigma, allow_single=True,
+                                 refine=True, movable=[comp])
+            if not out or out.get('refused'):
+                trials.append({'label': label, 'verdict': 'refused',
+                               'why': (out or {}).get('refused')})
+                continue
+            after = float(np.median(list(out['remainder'].values())))
+            over = float(np.median(list(out['overshoot'].values())))
+            floor = float(np.median(list(out['remainder_floor'].values())))
+            ok = (over <= RESIDUAL_FLOOR_MULTIPLE * floor
+                  and (1.0 - after) >= STANDALONE_MIN_EXPLAINED)
+            fp_verdicts = None
+            if ok and fingerprint_of is not None and noise_sigma:
+                areas_c = out['areas'].get(cm) or {}
+                med_area = (float(np.median(list(areas_c.values())))
+                            if areas_c else 0.0)
+                held, fp_verdicts = fingerprint_holds(
+                    fingerprint_of(c) or (), med_area / nh, ppm, mean_trace,
+                    noise=noise_sigma, linewidth_ppm=lw, drift_ppm=drift_ppm,
+                    skip_ppm=ev.get('db_ppm'))
+                # alone on one apex, the analyte needs a second signal seen
+                # at the amount this one implies; "nothing contradicts it"
+                # is not identification when nothing could be checked
+                seen = any(v[3] == 'present' for v in fp_verdicts)
+                if not held or not seen:
+                    ok = False
+            elif ok and fingerprint_of is not None:
+                ok = False
+            trials.append({'label': label, 'remainder_after': after,
+                           'remainder_floor': floor, 'overshoot': over,
+                           'explained': 1.0 - after, 'pinned': True,
+                           'fingerprint': fp_verdicts,
+                           'verdict': ('taken' if ok else
+                                       'fingerprint contradicted'
+                                       if fp_verdicts is not None else
+                                       'not enough')})
+            if ok and (best is None or after < best[0]):
+                best = (after, cm, c, comp, out)
+        if trials and trials_out is not None:
+            trials_out[int(r) if isinstance(r, (int, np.integer)) else r] = {
+                'apex_ppm': apex_ppm, 'trials': trials}
+        if best is None:
+            continue
+        after, cm, c, comp, out = best
+        crec = out['components'][0]
+        crec['by_residual'] = True
+        for t in trials:
+            if t['verdict'] == 'taken' and t['label'] != crec['label']:
+                t['verdict'] = 'not the best'
+        deconv = {'window': out['window'], 'remainder': out['remainder'],
+                  'components': out['components'],
+                  'amplitudes': out['amplitudes'], 'skipped': [], 'fixed': [],
+                  'residual': [crec['label']]}
+        taken[cm] = {'owner': 'spectrum', 'signal': c, 'nh': comp.nh,
+                     'areas': dict(out['areas'].get(cm) or {}),
+                     'window': out['window'],
+                     'remainder_before': 1.0, 'remainder_after': after,
+                     'separability': None, 'deconv': deconv,
+                     'apex_rank': r}
+        seen_mid.add(cm)
+        for rr in ranks(c) or ():
+            free.pop(rr, None)
+    return taken
+
+
 def _record(c) -> dict:
     """A component as ``resolve_window`` records it, for building it again."""
     return {'met_id': c.met_id, 'label': c.label, 'owner': c.owner, 'nh': c.nh,
@@ -1128,7 +1335,8 @@ def _record(c) -> dict:
             'per_proton_hint': c.per_proton_hint, 'evidence': c.evidence,
             'linewidth_ppm': c.linewidth_ppm, 'shift_ppm': c.shift_ppm,
             'width_scale': c.width_scale, 'fixed': c.fixed,
-            'pinned': c.pinned,
+            'pinned': c.pinned, 'pin_apex_ppm': c.pin_apex_ppm,
+            'pin_heights': dict(c.pin_heights),
             'per_proton_by_sample': dict(c.per_proton_by_sample)}
 
 

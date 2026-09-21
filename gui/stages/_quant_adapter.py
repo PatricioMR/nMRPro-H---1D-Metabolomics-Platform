@@ -68,7 +68,15 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
             rank = mp.get('peak_rank')
             _manual_bad = ((qm.get((mid, rank)) or qm.get((met.get('id'), rank)))
                            == 'bad')
-            _to_pool = (not _eligible) or mp.get('annotation_quality') == 'bad'
+            _is_pattern = (str(mp.get('type') or mp.get('multiplicity') or '')
+                           .lower().strip() == 'm*')
+            # A complex multiplet never competes for a peak (it holds none
+            # it found line by line); with the shapes switch on it is
+            # offered to the spectrum's remainders like any refused signal
+            # (quant_shared.resolve_residuals), and identified only where a
+            # free apex, its own amount and its whole shape agree.
+            _to_pool = ((not _eligible) or mp.get('annotation_quality') == 'bad'
+                        or _is_pattern)
             if _to_pool and (pool is None or _manual_bad or _contradicted):
                 continue
             _target = pool if _to_pool else out
@@ -97,7 +105,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'apex_rel': [l.get('rel_intensity', 1.0) for l
                                  in (mp.get('predicted_lines') or ())],
                 }
-            if _shape is not None:
+            if _shape is not None and _target is out:
                 rank, lines = None, []
             _target.append(Candidate(
                 met_id=mid,

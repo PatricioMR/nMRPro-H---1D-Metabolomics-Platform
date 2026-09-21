@@ -37,6 +37,7 @@ NO_ELIGIBLE_SIGNAL = 'no_eligible_signal'
 NO_MEASURABLE_WINDOW = 'no_measurable_window'
 NOT_DETECTED = 'not_detected'
 SHAPES_OFF = 'shapes_off'
+SHAPE_UNIDENTIFIED = 'shape_unidentified'
 PARTIAL_MULTIPLET = 'partial_multiplet'
 
 REJECTION_TEXT = {
@@ -55,7 +56,13 @@ REJECTION_TEXT = {
     SHAPES_OFF:
         'Not quantified: complex multiplet (m*) — a method still being '
         'built, off in Quantification. Tick "Quantify complex multiplets '
-        '(m*)" to let it compete and be measured from its fitted shape.',
+        '(m*)" to offer it to the spectrum\'s remainders.',
+    SHAPE_UNIDENTIFIED:
+        'Not quantified: complex multiplet (m*) — a shape competes for no '
+        'peak; it is identified only where a detected apex nobody holds, '
+        'its own amount and its whole shape agree, and the rest of its '
+        'fingerprint carries the amount (with "Deconvolve windows … by '
+        'shape" on). No such apex was found for it.',
     PARTIAL_MULTIPLET:
         'Not quantified: partial multiplet — detection placed too few of the '
         'pattern\'s lines for the area to be scaled to the whole signal; a '
