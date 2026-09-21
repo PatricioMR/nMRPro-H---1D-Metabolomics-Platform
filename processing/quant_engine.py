@@ -1172,10 +1172,15 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 snr_rep = (info['group_evidence'][info['best_group']]['snr']
                            if info.get('best_group') else
                            representative_snr(info.get('snr')))
-                others = [v for v in verdicts]
-                seen = any(v[3] == 'present' for v in others)
+                # only what could be checked counts: a signal predicted
+                # too faint to look for is not a signal not seen, and an
+                # analyte whose every other signal is faint at this
+                # amount is asked the signal-to-noise alone
+                checkable = [v for v in verdicts
+                             if v[3] == 'present' or v[3].startswith('contradicted')]
+                seen = any(v[3] == 'present' for v in checkable)
                 if (np.isfinite(snr_rep) and snr_rep < SINGLET_MIN_SNR) or (
-                        others and not seen):
+                        checkable and not seen):
                     bad[mid] = (SINGLET_UNSUPPORTED,
                                 _fingerprint_detail(verdicts, snr=snr_rep))
     for mid in bad:

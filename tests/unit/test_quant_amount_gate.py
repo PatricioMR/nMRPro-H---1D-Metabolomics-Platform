@@ -82,6 +82,16 @@ class TestTheSingletGate:
         rows = _run([c], {1: _peak(1, 2.0)}, X)
         assert rows['A']['_rejection'] == SINGLET_UNSUPPORTED
 
+    def test_a_singlet_whose_other_signals_are_too_faint_to_check_passes_on_snr(self):
+        """At 0.05 of the amount, the listed second singlet would stand under
+        the noise: nothing could be checked, and 'not checked' is not
+        'not seen'."""
+        X = _study([(2.0, 30.0, ((0.0, 1.0),))])
+        c = _cand('A', 1, 2.0, 's', 30, [{'ppm_center': 2.0, 'type': 's', 'protons': 30},
+                                         {'ppm_center': 3.0, 'type': 's', 'protons': 1}])
+        rows = _run([c], {1: _peak(1, 2.0)}, X)
+        assert not rows['A']['_not_quantified']
+
     def test_a_lone_listed_singlet_needs_only_its_signal_to_noise(self):
         X = _study([(2.0, 100.0, ((0.0, 1.0),))])
         c = _cand('A', 1, 2.0, 's', 3, [{'ppm_center': 2.0, 'type': 's', 'protons': 3}])
