@@ -151,7 +151,8 @@ from processing.annotation_quality import promote_singlets, quality_verdict
 from processing.annotation_quality import (
     metabolite_has_anchor, metabolite_tier)
 from processing.annotation_scoring import (
-    analyte_score, apply_mcr_dj, apply_per_sample_consensus, coverage_fraction,
+    MANUAL_REGION_KEY, analyte_score, apply_mcr_dj, apply_per_sample_consensus,
+    coverage_fraction, manual_region,
     resolve_dj, score_signal,
     SCORING_DEFAULTS as _SCORING_DEFAULTS,
     migrate_params as _migrate_params,
@@ -1419,7 +1420,8 @@ class AnnotationResultsWindow:
             font=("Arial", 8), foreground="gray")
         self.match_info.pack(anchor=tk.W, padx=4)
         ttk.Label(frame_b,
-                  text="Tip: right-drag on zoom view to select signal region",
+                  text="Tip: right-drag on zoom view to tell the software where "
+                       "this signal is; it re-measures the lines inside",
                   font=("Arial", 7), foreground="#999").pack(anchor=tk.W, padx=4)
 
         self.fig = plt.Figure(figsize=(6, 4), dpi=100)
@@ -1511,6 +1513,9 @@ class AnnotationResultsWindow:
         self._current_det_pk_mcr = None  # last det_pk with MCR
 
         # ── Right-click drag state (region selection in zoom view) ────────────
+        # The drag records the analyst's region on the matched peak
+        # (``manual_region_ppm``, processing.annotation_scoring); the
+        # measurement is redone inside it by the scoring pass.
         self._rc_drag_start   = None   # xdata where right-drag started
         self._rc_span_patch   = None   # axvspan shown during drag
         self._current_dp      = None   # db_peak currently shown in zoom
@@ -1724,7 +1729,7 @@ class AnnotationResultsWindow:
         except ValueError:
             return None
         return abs(j_obs - j_db)
-    def _compute_scores(self):
+    def _compute_scores(self, mets=None):
         """
         Compute composite_score for each matched_peak with a hierarchical model
         that mirrors manual spectrum reading (Δppm gate → multiplicity/ΔJ):
@@ -1759,6 +1764,10 @@ class AnnotationResultsWindow:
           score > 0.8 → Good (green)
           0.5–0.8     → Average (yellow)
           < 0.5       → Poor / Bad (red)
+
+        ``mets`` restricts the pass to those analytes. A pass over all of
+        them re-fits every measured pattern's shape (seconds on a study
+        with hundreds); an edit to one signal changes one analyte.
         """
         try:
             ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
@@ -1768,7 +1777,7 @@ class AnnotationResultsWindow:
         _sigma_ppm = _tol / 2.0
         _field_sc  = self._get_field_mhz()
 
-        for met in self.metabolites:
+        for met in (self.metabolites if mets is None else mets):
             s_found = coverage_fraction(
                 met, dj_bad_hz=self._params['dj_bad_hz'])
 
@@ -1785,7 +1794,8 @@ class AnnotationResultsWindow:
                     mp, met, self.peaks, mult=mult_sc, params=self._params,
                     field_mhz=_field_sc, tolerance=_tol,
                     remeasure=bool(getattr(self, '_lines_dirty', False)),
-                    trace=self._mean_trace())
+                    trace=self._mean_trace(),
+                    sigma=getattr(self, '_noise_level', None))
 
                 # What the samples measured outranks what the mean spectrum
                 # did; MCR still has the last word inside an overlap, where the
@@ -1820,13 +1830,16 @@ class AnnotationResultsWindow:
             if met['matched_peaks']:
                 self._set_analyte_score(met)
 
-    def _enrich_scores(self):
+    def _enrich_scores(self, mets=None):
         """
         Segunda fase de scoring: aplica gate ΔJ para não-singlets.
 
         Gate Rule 0: não-singlet + ΔJ ≥ dj_bad_hz → score = 0 (Bad)
+
+        ``mets`` restricts the pass as in ``_compute_scores``.
         """
-        for met in self.metabolites:
+        _scope = self.metabolites if mets is None else mets
+        for met in _scope:
             for mp in met['matched_peaks']:
                 if is_singlet_like(mp.get('type') or mp.get('multiplicity') or 's'):
                     continue
@@ -1846,10 +1859,11 @@ class AnnotationResultsWindow:
                         mp['annotation_quality'] = 'bad'
 
         # Update metabolite-level score after enrichment
-        for met in self.metabolites:
+        for met in _scope:
             self._set_analyte_score(met)
-        # The stale-line flag has been consumed by this pass.
-        self._lines_dirty = False
+        # The stale-line flag has been consumed by a full pass.
+        if mets is None:
+            self._lines_dirty = False
 
     def _set_analyte_score(self, met):
         """Recompute the analyte-level score of *met* from its signals.
@@ -3965,12 +3979,23 @@ class AnnotationResultsWindow:
         # Individual sticks (highlight the multiplet lines). A shape has no
         # lines to point at: the curve is the whole of it.
         _db_scale = float(y_db.max()) if len(y_db) > 0 and y_db.max() > 0 else 1.0
+        # A line the measurement placed but found no apex under (the comb
+        # laid on an incomplete region) is drawn hollow and dotted: the
+        # fingerprint says where it should be, the spectrum has not said
+        # it is there.
+        _unmeasured = {round(float(l['ppm']), 5)
+                       for l in ((mp_ref or {}).get('predicted_lines') or [])
+                       if l.get('measured') is False}
         for st_ppm, st_rel in ([] if _is_pattern_dp else plot_sticks):
             _sh = st_rel * _db_scale * 0.95
+            _hollow = round(float(st_ppm), 5) in _unmeasured
             self.ax.plot([st_ppm, st_ppm], [0, _sh],
-                         color=db_color, linewidth=2.2, alpha=0.85, zorder=5)
+                         color=db_color, linewidth=2.2,
+                         alpha=0.45 if _hollow else 0.85,
+                         linestyle=':' if _hollow else '-', zorder=5)
             self.ax.scatter([st_ppm], [_sh],
-                            color=db_color, s=45, zorder=6)
+                            facecolors='none' if _hollow else db_color,
+                            edgecolors=db_color, s=45, zorder=6)
 
         # ── Highlight span around the multiplet ───────────────────────────────
         span_lo = min(s[0] for s in plot_sticks) - hwhm * 2.5
@@ -3978,6 +4003,15 @@ class AnnotationResultsWindow:
         span_color = '#00cc44' if is_matched else '#ffaa00'
         self.ax.axvspan(span_hi, span_lo,   # NMR inverted axis
                         alpha=0.07, color=span_color, zorder=0)
+        # The analyst's region, when one confines the measurement.
+        _region = manual_region(mp_ref) if mp_ref is not None else None
+        if _region is not None:
+            self.ax.axvspan(_region[1], _region[0], alpha=0.12,
+                            color='#ff9900', zorder=0,
+                            label='analyst region')
+            for _edge in _region:
+                self.ax.axvline(_edge, color='#ff9900', lw=0.8, ls=':',
+                                zorder=1)
 
         # ── Mark detected experimental peaks near DB sticks + J from them ───────
         # For each DB stick, find the closest detected peak within a tight radius
@@ -4345,11 +4379,9 @@ class AnnotationResultsWindow:
         else:
             self._set_q('mcr', '— not run', '#888888')
 
-        # Modified indicator — compare against the persistent algorithm original.
-        _algo_orig = mp_ref.get('_original_predicted_lines') if mp_ref is not None else None
-        is_modified = (_algo_orig is not None and
-                       mp_ref.get('predicted_lines') != _algo_orig)
-        self._show_reset_btn(is_modified)
+        # Modified indicator — the analyst's region confines this signal.
+        self._show_reset_btn(mp_ref is not None
+                             and manual_region(mp_ref) is not None)
 
         info_ovlp = f"  ⚠ overlap: {', '.join(ovlp_names[:2])}" if ovlp_names else ''
         self.match_info.config(
@@ -4999,7 +5031,8 @@ class AnnotationResultsWindow:
         """Update the 'modified' indicator next to the reset button."""
         try:
             if modified:
-                self._reset_modified_lbl.config(text='● signals modified by selection')
+                self._reset_modified_lbl.config(
+                    text='● measured inside the analyst\'s region')
             else:
                 self._reset_modified_lbl.config(text='')
         except Exception:
@@ -5007,12 +5040,6 @@ class AnnotationResultsWindow:
 
 
 
-
-    # Multiplicity → number of expected peaks
-    _MULT_N = {
-        's': 1, 'd': 2, 't': 3, 'q': 4, 'p': 5, 'h': 6,
-        'dd': 4, 'dt': 6, 'td': 6, 'ddd': 8,
-    }
 
     def _recompute_and_refresh(self):
         """Full scoring pipeline + UI refresh. Called after parameter changes."""
@@ -5031,23 +5058,36 @@ class AnnotationResultsWindow:
             pass
 
     def _rescore_after_edit(self, met):
-        """Re-run the full scoring pipeline after a manual predicted_lines edit.
+        """Re-score *met* after the analyst edited one of its signals.
         Updates mp_ref fields, annotation_quality, anchors, and refreshes tree rows.
-        Restores the treeview selection to the same DB peak so the view doesn't reset."""
+        Restores the treeview selection to the same DB peak so the view doesn't reset.
+
+        Only *met* is re-scored: the analyst's region changes one signal of
+        one analyte, and a pass over every analyte re-fits every pattern's
+        shape -- six seconds on a study of 260 analytes, per drag."""
         # Save current context before repopulation wipes the tree
         _saved_met_id  = met.get('id') if met else None
         _saved_dp      = self._current_dp
         _saved_dp_ppm  = (float(_saved_dp.get('ppm_center', _saved_dp.get('ppm', 0)))
                           if _saved_dp is not None else None)
         try:
-            self._compute_scores()
-            self._enrich_scores()
+            self._compute_scores([met])
+            self._enrich_scores([met])
             self._auto_mark_good()
             self._promote_singlets()
             self._nnls_spectral_validation()
             self._build_peak_assignments()
             self._populate()
-        except Exception:
+        except Exception as _e:
+            # The window's other passes swallow errors while building rows;
+            # a broken measurement here must reach the analyst, not vanish.
+            import traceback
+            traceback.print_exc()
+            try:
+                self.match_info.config(
+                    text=f'Re-scoring failed: {_e}', foreground='red')
+            except Exception:
+                pass
             return
 
         # Restore selection to the same child row (DB peak) without triggering
@@ -5081,141 +5121,79 @@ class AnnotationResultsWindow:
             self.tree.bind('<<TreeviewSelect>>', self._on_select)
 
     def _rc_select_region(self, lo_ppm, hi_ppm):
-        """Find N highest peaks in [lo_ppm, hi_ppm] and update predicted_lines."""
+        """Record the analyst's region on the signal and re-measure it there.
+
+        The window stores nothing but the interval: which peaks are the
+        lines, their spacing, the coupling, the position and the score all
+        come from the scoring pass (``resolve_dj`` → ``measure_in_region``),
+        the same path every other signal is judged by. A DB signal the search
+        never matched gains a matched peak here, so the analyst can point the
+        software at a signal it missed.
+        """
         dp     = self._current_dp
-        mp_ref = self._current_mp_ref
         met    = self._current_met_dp
+        mp_ref = self._current_mp_ref
         if dp is None or met is None:
             return
 
-        dp_type = (dp.get('type', 's') or 's').lower().strip()
-        n_peaks = self._MULT_N.get(dp_type, 1)
-
-        # Slice experimental spectrum
-        mask = (self.ppm >= lo_ppm) & (self.ppm <= hi_ppm)
-        if mask.sum() < 2:
-            return
-        x_reg = self.ppm[mask]
-        y_reg = self.mean_intensity[mask].copy()
-
-        # Try scipy find_peaks; fall back to top-N by intensity
-        try:
-            from scipy.signal import find_peaks as _fp
-            # distance: at least 3 points between peaks
-            peaks_idx, _ = _fp(y_reg, distance=max(1, len(y_reg) // (n_peaks * 4 + 1)))
-        except ImportError:
-            peaks_idx = np.array([])
-
-        if len(peaks_idx) == 0:
-            # Use top-N point indices by intensity
-            peaks_idx = np.argsort(y_reg)[::-1][:n_peaks * 3]
-
-        # Take N highest by intensity
-        if len(peaks_idx) > n_peaks:
-            top = sorted(peaks_idx, key=lambda i: y_reg[i], reverse=True)[:n_peaks]
-            peaks_idx = np.array(top)
-
-        if len(peaks_idx) == 0:
-            return
-
-        # Sort by ppm (ascending = high-field first as in NMR convention)
-        peaks_idx = sorted(peaks_idx, key=lambda i: x_reg[i])
-
-        # Build relative intensities from type
-        intensities = _relative_intensities_from_type(dp_type, len(peaks_idx))
-
-        new_pred_lines = []
-        for k, idx in enumerate(peaks_idx):
-            new_pred_lines.append({
-                'ppm':           float(x_reg[idx]),
-                'rel_intensity': intensities[k] if k < len(intensities) else 1.0,
-            })
-
-        # _orig_pred_lines is taken in _plot_db_peak_zoom on first display;
-        # no separate backup needed here.
-
-        # Update the matched_peak dict.
-        # If this was an unmatched DB peak (mp_ref is None), create a new entry
-        # so that the right-drag effectively turns it into a matched peak.
-        if mp_ref is None and new_pred_lines and self._current_dp is not None:
-            dp_ref = self._current_dp
-            dp_ppm_ref = float(dp_ref.get('ppm_center', dp_ref.get('ppm', 0)))
-            tot = sum(l['rel_intensity'] for l in new_pred_lines)
-            obs_c = (sum(l['ppm'] * l['rel_intensity'] for l in new_pred_lines) / tot
-                     if tot > 0
-                     else sum(l['ppm'] for l in new_pred_lines) / len(new_pred_lines))
+        if mp_ref is None:
+            dp_ppm = float(dp.get('ppm_center', dp.get('ppm', 0)))
             mp_ref = {
-                'db_ppm':          dp_ppm_ref,
-                'peak_ppm':        obs_c,
-                'ppm_diff':        abs(obs_c - dp_ppm_ref),
+                'db_ppm':          dp_ppm,
+                'peak_ppm':        dp_ppm,
+                'ppm_diff':        0.0,
                 'peak_rank':       None,
-                'predicted_lines': new_pred_lines,
+                'type':            dp.get('type', 's'),
+                'protons':         dp.get('protons', ''),
+                'j_coupling':      dp.get('j_coupling', ''),
+                'predicted_lines': [],
                 'annotation_quality': None,
+                # What the reference measured about a pattern travels with
+                # the signal; resolve_dj matches the shape from these.
+                **{k: dp.get(k) for k in (
+                    'pattern_lines', 'pattern_profile', 'profile_fwhm_hz',
+                    'profile_nh') if dp.get(k) is not None},
             }
             met.setdefault('matched_peaks', []).append(mp_ref)
             self._current_mp_ref = mp_ref
-            # For newly-created mp_ref the first selection IS the original.
-            mp_ref['_original_predicted_lines'] = list(new_pred_lines)
-            self._orig_pred_lines = list(new_pred_lines)
+        if '_original_predicted_lines' not in mp_ref:
+            mp_ref['_original_predicted_lines'] = list(
+                mp_ref.get('predicted_lines') or [])
+        if '_original_position' not in mp_ref:
+            mp_ref['_original_position'] = [mp_ref.get('peak_ppm'),
+                                            mp_ref.get('ppm_diff')]
 
-        if mp_ref is not None:
-            mp_ref['predicted_lines'] = new_pred_lines
-            # Recompute ppm_diff using intensity-weighted centre
-            if new_pred_lines:
-                tot = sum(l['rel_intensity'] for l in new_pred_lines)
-                if tot > 0:
-                    obs_c = sum(l['ppm'] * l['rel_intensity']
-                                for l in new_pred_lines) / tot
-                else:
-                    obs_c = (new_pred_lines[0]['ppm'] + new_pred_lines[-1]['ppm']) / 2
-                mp_ref['ppm_diff'] = abs(obs_c - mp_ref.get('db_ppm', obs_c))
-                mp_ref['peak_ppm'] = obs_c
-
-            # Recompute J observed (spacing in Hz)
-            ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-            mhz = 600.0
-            try:
-                if ann_stage and hasattr(ann_stage, 'spectrometer_var'):
-                    mhz = float(ann_stage.spectrometer_var.get())
-            except Exception:
-                pass
-            if len(new_pred_lines) >= 2:
-                sorted_pl = sorted(new_pred_lines, key=lambda l: l['ppm'])
-                seps_ppm  = [abs(sorted_pl[i+1]['ppm'] - sorted_pl[i]['ppm'])
-                             for i in range(len(sorted_pl) - 1)]
-                j_obs_hz  = [s * mhz for s in seps_ppm]
-                mp_ref['j_obs_hz']  = j_obs_hz
-                mp_ref['j_obs_ppm'] = seps_ppm
-
+        mp_ref[MANUAL_REGION_KEY] = [float(lo_ppm), float(hi_ppm)]
         self._show_reset_btn(True)
-        # Redraw the zoom view, then re-run scoring so quality/anchors update
-        self._plot_db_peak_zoom(met, dp)
         self._rescore_after_edit(met)
+        self._plot_db_peak_zoom(met, dp)
 
     def _rc_reset(self):
-        """Restore predicted_lines to the algorithm-original state."""
-        if self._current_dp is None:
+        """Lift the analyst's region: the signal goes back to the algorithm's
+        own lines and is measured again from them."""
+        mp_ref = self._current_mp_ref
+        if self._current_dp is None or mp_ref is None:
             return
-        if self._current_mp_ref is None:
+        if manual_region(mp_ref) is None:
             return
-        original = self._current_mp_ref.get('_original_predicted_lines')
-        if not original:
-            return
-        restored = list(original)  # keep backup intact
-        self._current_mp_ref['predicted_lines'] = restored
-        # Restore ppm_diff / peak_ppm
-        if restored:
-            tot = sum(l['rel_intensity'] for l in restored)
-            if tot > 0:
-                obs_c = sum(l['ppm'] * l['rel_intensity'] for l in restored) / tot
-            else:
-                obs_c = (restored[0]['ppm'] + restored[-1]['ppm']) / 2
-            db_ppm = self._current_mp_ref.get('db_ppm', obs_c)
-            self._current_mp_ref['ppm_diff'] = abs(obs_c - db_ppm)
-            self._current_mp_ref['peak_ppm'] = obs_c
-        # Keep _orig_pred_lines intact so repeated resets always go to the same state.
-        self._plot_db_peak_zoom(self._current_met_dp, self._current_dp)
+        del mp_ref[MANUAL_REGION_KEY]
+        original = mp_ref.get('_original_predicted_lines')
+        if original:
+            mp_ref['predicted_lines'] = list(original)
+            _pos = mp_ref.get('_original_position') or [None, None]
+            if _pos[0] is not None:
+                mp_ref['peak_ppm'], mp_ref['ppm_diff'] = _pos
+        elif mp_ref.get('peak_rank') is None:
+            # Born of a region on a signal the search never matched: without
+            # the region there is no evidence for it at all.
+            self._current_met_dp['matched_peaks'].remove(mp_ref)
+            self._current_mp_ref = None
+        # The cached measurement describes the region's lines, not these.
+        for _k in ('_n_found_lines', '_n_exp_lines'):
+            mp_ref.pop(_k, None)
+        self._show_reset_btn(False)
         self._rescore_after_edit(self._current_met_dp)
+        self._plot_db_peak_zoom(self._current_met_dp, self._current_dp)
 
     # ── Zoom / pan ────────────────────────────────────────────────────────────
 

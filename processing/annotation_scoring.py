@@ -767,7 +767,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
                            anchor_ppm=None, merge_hz=None,
                            fwhm_hz=None, floor=None, trace=None,
                            sigma=None, tolerance_ppm=None,
-                           shape_good=None, shape_min=None) -> LineMeasurement:
+                           shape_good=None, shape_min=None,
+                           centre_ppm=None) -> LineMeasurement:
     """The one way a measured pattern is matched, wherever it is asked.
 
     The search asks it when a candidate is built; ``resolve_dj`` asks it
@@ -797,6 +798,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
     thresholds, is not consulted. The fit's signal-to-noise, the fraction
     of the trace it explains and its position ride on the measurement.
     Without a trace the pattern is matched on the peak list as before.
+    ``centre_ppm`` is where the shape search is centred when it is not the
+    reference position (the analyst's region).
     """
     pat = resolvable_pattern(pattern_offsets_hz(mp),
                              merge_hz if merge_hz is not None
@@ -820,7 +823,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
             mp, pat, trace, field_mhz=float(field_mhz),
             dj_gold_hz=dj_gold_hz, fwhm_hz=float(_fwhm),
             sigma=float(_sigma), tolerance_ppm=float(_tol), floor=_floor,
-            shape_good=shape_good, shape_min=shape_min)
+            shape_good=shape_good, shape_min=shape_min,
+            centre_ppm=centre_ppm)
         if shaped is not None:
             return shaped
     _anchor_h = None
@@ -862,7 +866,8 @@ def measure_pattern_signal(mp, peaks, *, field_mhz, dj_gold_hz,
 def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
                            fwhm_hz, sigma, tolerance_ppm,
                            floor=None, shape_good=None,
-                           shape_min=None) -> LineMeasurement | None:
+                           shape_min=None,
+                           centre_ppm=None) -> LineMeasurement | None:
     """The multiplet judged as a shape and nothing else.
 
     The reference's profile (``pattern_profile``, with its own width
@@ -878,10 +883,15 @@ def _measure_pattern_shape(mp, pat, trace, *, field_mhz, dj_gold_hz,
     for delta-J on its gates -- resolved reads as a perfect coupling, shared
     runs from the gold band to the bad one, not confirmed is not found.
 
+    ``centre_ppm`` moves the search interval off the reference position --
+    the analyst's region (see ``measure_in_region``) says where to look;
+    the drift is still read against the reference by the caller.
+
     None when the trace does not cover the region.
     """
     from processing.pattern_shape import fit_shape, parse_profile
-    db_ppm = mp.get('db_ppm') or mp.get('ppm_center') or mp.get('ppm')
+    db_ppm = (centre_ppm if centre_ppm is not None
+              else mp.get('db_ppm') or mp.get('ppm_center') or mp.get('ppm'))
     if db_ppm is None:
         return None
     ppm_axis, y_axis = trace
@@ -2091,9 +2101,247 @@ def expected_lines_for(mp, met, *, mult) -> int:
                len(db_lines))
 
 
+# ── The analyst's region ─────────────────────────────────────────────────────
+# A right-drag on the zoom view answers "where is this signal?" with a ppm
+# interval. The measurement is then confined to it: the lines are looked for
+# there and nowhere else, and what was read elsewhere before the region was
+# drawn -- the samples' consensus, the deconvolved component -- does not
+# overrule it. The interval rides on the matched peak as ``manual_region_ppm``
+# so it survives save/load, and lifting it returns the signal to the
+# algorithm's own measurement.
+
+MANUAL_REGION_KEY = 'manual_region_ppm'
+
+# An apex the trace shows inside the region counts when it stands this many
+# noise levels high and this many over the dip beside it. Three was not
+# enough: on 800 points of pure noise, three-sigma prominences turn up by
+# the handful.
+REGION_APEX_SNR = 5.0
+
+
+def manual_region(mp) -> tuple[float, float] | None:
+    """``(lo, hi)`` in ppm when the analyst drew a region on *mp*, else None."""
+    reg = mp.get(MANUAL_REGION_KEY) if isinstance(mp, dict) else None
+    try:
+        lo, hi = float(reg[0]), float(reg[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return None
+    return lo, hi
+
+
+def _peak_height(pk, trace) -> float:
+    h = pk.get('height')
+    if h is not None:
+        return float(h)
+    if trace is None or pk.get('ppm') is None:
+        return 0.0
+    ppm_axis, y_axis = trace
+    i = int(np.argmin(np.abs(np.asarray(ppm_axis, dtype=float)
+                             - float(pk['ppm']))))
+    return float(np.asarray(y_axis, dtype=float)[i])
+
+
+def region_peaks(peaks, region, *, trace=None, sigma=None) -> list[dict]:
+    """The detected peaks inside *region*, plus the apices the trace shows
+    there that detection did not list.
+
+    Detection merges and splits at its own thresholds; the analyst drawing
+    a region has said the lines are here, so the trace is asked again inside
+    it. An apex counts when it stands ``REGION_APEX_SNR`` noise levels over
+    its surroundings (scipy's prominence); without a noise level only the
+    detector's list is used. A re-found apex carries its ``height`` from the
+    trace and a rank of its own, so snapping treats it as one more peak.
+    """
+    lo, hi = region
+    inside = [p for p in (peaks or [])
+              if p.get('ppm') is not None and lo <= float(p['ppm']) <= hi]
+    if trace is None or not sigma or float(sigma) <= 0:
+        return sorted(inside, key=lambda p: float(p['ppm']))
+    ppm_axis = np.asarray(trace[0], dtype=float)
+    y_axis = np.asarray(trace[1], dtype=float)
+    mask = (ppm_axis >= lo) & (ppm_axis <= hi)
+    if mask.sum() < 3:
+        return sorted(inside, key=lambda p: float(p['ppm']))
+    from scipy.signal import find_peaks
+    x, y = ppm_axis[mask], y_axis[mask]
+    bar = REGION_APEX_SNR * float(sigma)
+    idx, _ = find_peaks(y, height=bar, prominence=bar)
+    known = [float(p['ppm']) for p in inside]
+    out = list(inside)
+    for k, i in enumerate(idx):
+        p = float(x[i])
+        if any(abs(p - q) < COINCIDENT_LINE_PPM for q in known):
+            continue
+        out.append({'ppm': p, 'height': float(y[i]), 'rank': f'region:{k}',
+                    'from_trace': True})
+        known.append(p)
+    return sorted(out, key=lambda p: float(p['ppm']))
+
+
+def _line_weights(mp, met, n: int) -> list[float]:
+    """Relative heights for *n* lines: the DB fingerprint entry's when it
+    lists that many, else the binomial row."""
+    db_entry = next(
+        (p for p in (met.get('db_peaks') or [])
+         if round(float(p.get('ppm_center', p.get('ppm', 0))), 3)
+         == round(float(mp.get('db_ppm', 0)), 3)), None)
+    db_lines = (db_entry.get('predicted_lines') or []) if db_entry else []
+    if n <= 0:
+        return []
+    if len(db_lines) == n:
+        w = [float(l.get('rel_intensity', 1.0) or 1.0)
+             for l in sorted(db_lines, key=lambda l: float(l.get('ppm', 0)))]
+    else:
+        w = pascal_weights(n)
+    top = max(w) or 1.0
+    return [v / top for v in w]
+
+
+def place_comb(found_ppms, cands, *, j_hz: float, n_lines: int,
+               field_mhz: float, region, trace=None,
+               tol_hz: float = J_SPACING_TOL_HZ) -> tuple[list[float], list[bool]]:
+    """Lay the reference comb (``n_lines`` spaced ``j_hz``) where the region
+    supports it best, and say which of its lines stand on a peak.
+
+    Every alignment that puts one comb line on one found peak is tried; the
+    one whose other lines land on the most candidate peaks (within
+    ``tol_hz``) wins, ties going to the alignment under which the trace is
+    tallest. With nothing found the comb is centred on the region. Returns
+    ``(line_ppms, measured_flags)`` in ascending ppm.
+
+    This is what the analyst asked for when the region holds fewer apices
+    than the letter needs: the fingerprint placed on the signals that are
+    there, so what is missing can be seen where it should have been.
+    """
+    lo, hi = region
+    j_ppm = float(j_hz) / float(field_mhz) if j_hz and field_mhz > 0 else 0.0
+    n = max(int(n_lines), 1)
+    cand_ppms = [float(p['ppm']) for p in (cands or [])]
+    tol = float(tol_hz) / float(field_mhz) if field_mhz > 0 else 0.0
+
+    def _hits(lines):
+        return [any(abs(c - l) <= tol for c in cand_ppms) for l in lines]
+
+    def _support(lines):
+        if trace is None:
+            return 0.0
+        ppm_axis = np.asarray(trace[0], dtype=float)
+        y_axis = np.asarray(trace[1], dtype=float)
+        return float(sum(y_axis[int(np.argmin(np.abs(ppm_axis - l)))]
+                         for l in lines))
+
+    if not found_ppms or j_ppm <= 0 or n < 2:
+        if found_ppms and n < 2:
+            lines = [float(found_ppms[0])]
+        else:
+            centre = (float(np.mean(found_ppms)) if found_ppms
+                      else (lo + hi) / 2.0)
+            lines = [centre + (k - (n - 1) / 2.0) * j_ppm for k in range(n)]
+        return lines, _hits(lines)
+
+    best = None
+    for anchor in found_ppms:
+        for k in range(n):
+            lines = [float(anchor) + (i - k) * j_ppm for i in range(n)]
+            hits = _hits(lines)
+            key = (sum(hits), _support(lines))
+            if best is None or key > best[0]:
+                best = (key, lines, hits)
+    return best[1], best[2]
+
+
+def measure_in_region(mp, met, peaks, region, *, mult, n_expected: int,
+                      field_mhz: float, dj_gold_hz: float, trace=None,
+                      sigma=None, linewidth_hz=None, shape_good=None,
+                      shape_min=None) -> LineMeasurement:
+    """Measure the signal where the analyst said it is.
+
+    Singlet-like: the tallest peak in the region is the signal; with none,
+    the line sits at the region's centre, unmeasured.
+    Pattern (``m*``): the reference shape is fitted with the region as its
+    search interval (``measure_pattern_signal`` centred on it).
+    Letter multiplet: the ``n_expected`` tallest peaks in the region are its
+    lines, and ``measure_multiplet`` judges them as it judges any other set
+    -- spacing, coupling, the odd line out. Fewer peaks than lines is
+    reported incomplete, never filled in: the region narrows where the
+    software looks, it does not lower what a multiplet must show. The
+    fingerprint is still placed (``place_comb``) so the analyst sees the
+    reference comb on the region's peaks and where its missing lines fall;
+    ``centre_ppm`` is the comb's, so the position follows the region even
+    when the coupling could not be measured.
+    """
+    lo, hi = region
+    cands = region_peaks(peaks, region, trace=trace, sigma=sigma)
+    if is_singlet_like(mult):
+        best = max(cands, key=lambda p: _peak_height(p, trace), default=None)
+        if best is None:
+            mid = (lo + hi) / 2.0
+            return LineMeasurement(
+                n_expected=1, n_found=0, centre_ppm=mid,
+                predicted_lines=[{'ppm': mid, 'rel_intensity': 1.0,
+                                  'measured': False}],
+                measured=True)
+        p = float(best['ppm'])
+        return LineMeasurement(
+            n_expected=1, n_found=1, found_ppms=[p], centre_ppm=p,
+            predicted_lines=[{'ppm': p, 'rel_intensity': 1.0,
+                              'measured': True}],
+            measured=True)
+    if normalize_mult(mult) == PATTERN_MULT:
+        tallest = max(cands, key=lambda p: _peak_height(p, trace),
+                      default=None)
+        anchor = float(tallest['ppm']) if tallest else (lo + hi) / 2.0
+        return measure_pattern_signal(
+            mp, cands, field_mhz=field_mhz, dj_gold_hz=dj_gold_hz,
+            anchor_ppm=anchor, tolerance_ppm=(hi - lo) / 2.0,
+            centre_ppm=(lo + hi) / 2.0, trace=trace,
+            shape_good=shape_good, shape_min=shape_min)
+    n_expected = max(int(n_expected), 2)
+    lines = sorted(
+        sorted(cands, key=lambda p: _peak_height(p, trace),
+               reverse=True)[:n_expected],
+        key=lambda p: float(p['ppm']))
+    weights = _line_weights(mp, met, len(lines))
+    pred = [{'ppm': float(p['ppm']), 'rel_intensity': w}
+            for p, w in zip(lines, weights)]
+    m = measure_multiplet(
+        pred, lines, mult=mult, j_coupling=mp.get('j_coupling'),
+        db_ppm=float(mp.get('db_ppm') or 0), centre_hint=(lo + hi) / 2.0,
+        n_expected=n_expected, tolerance=hi - lo, field_mhz=field_mhz,
+        linewidth_hz=linewidth_hz)
+    if m.measured and m.complete:
+        return m
+    # Fewer lines than the letter needs: place the reference comb on what
+    # is there. The DB J is the spacing (as it appears at this width); the
+    # heights are the letter's.
+    j_db = parse_first_j(mp.get('j_coupling'))
+    j_ref = j_db
+    if j_db is not None and linewidth_hz and field_mhz > 0:
+        j_ref = apparent_spacing_hz(j_db, linewidth_hz, n_expected) or j_db
+    comb, hits = place_comb(list(m.found_ppms), cands, j_hz=j_ref or 0.0,
+                            n_lines=n_expected, field_mhz=field_mhz,
+                            region=region, trace=trace)
+    if not comb:
+        return m
+    weights = _line_weights(mp, met, len(comb))
+    m.n_expected = n_expected
+    m.n_found = sum(1 for h in hits if h)
+    m.found_ppms = [l for l, h in zip(comb, hits) if h]
+    m.predicted_lines = [{'ppm': float(l), 'rel_intensity': w,
+                          'measured': bool(h)}
+                         for l, w, h in zip(comb, weights, hits)]
+    m.centre_ppm = float(np.mean(comb))
+    m.measured = True
+    m.observed_j_hz = None
+    m.delta_j_hz = None
+    return m
+
+
 def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
                tolerance: float, remeasure: bool,
-               trace=None) -> tuple[float, float]:
+               trace=None, sigma=None) -> tuple[float, float]:
     """Settle this signal's ΔJ and return ``(s_dj, dj_confidence)``.
 
     Writes the measurement back onto *mp* — line counts, observed J, ΔJ, and
@@ -2108,15 +2356,43 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
     An incomplete multiplet yields no ΔJ — a coupling measured from a subset
     describes a different set of peaks — and scores on the fraction of lines it
     did find, capped below the singlet boundary.
+
+    A signal carrying the analyst's region (``manual_region_ppm``) is always
+    measured afresh, inside it (``measure_in_region``); ``sigma`` is the
+    trace's noise, which lets the trace be asked for apices there.
     """
-    if is_singlet_like(mult):
+    region = manual_region(mp)
+    if region is None and is_singlet_like(mult):
         return 1.0, 1.0                       # no J to validate
 
     n_expected = expected_lines_for(mp, met, mult=mult)
     stored_lines = mp.get('predicted_lines') or []
 
     _lw_hz = mp.get('study_linewidth_hz')
-    if normalize_mult(mult) == PATTERN_MULT:
+    if region is not None:
+        meas = measure_in_region(
+            mp, met, peaks, region, mult=mult, n_expected=n_expected,
+            field_mhz=field_mhz, dj_gold_hz=params['dj_gold_hz'],
+            trace=trace, sigma=sigma, linewidth_hz=_lw_hz,
+            shape_good=params.get('shape_good'),
+            shape_min=params.get('shape_min'))
+        if meas.pattern_snr is not None:
+            mp['pattern_residual_hz'] = meas.pattern_residual_hz
+            mp['pattern_fit'] = {'snr': meas.pattern_snr,
+                                 'explained': meas.pattern_explained,
+                                 'r2': meas.pattern_r2,
+                                 'amplitude': meas.pattern_amplitude}
+            mp['intensity_agreement'] = meas.pattern_intensity_agreement
+        # The position is the region's whatever the line count: the
+        # fingerprint is drawn where the analyst put it, complete or not.
+        _db_r = float(mp.get('db_ppm') or 0)
+        if meas.centre_ppm is not None:
+            _at = (meas.origin_ppm if meas.origin_ppm is not None
+                   else meas.centre_ppm)
+            mp['peak_ppm'] = float(meas.centre_ppm)
+            if _db_r != 0:
+                mp['ppm_diff'] = float(abs(_at - _db_r))
+    elif normalize_mult(mult) == PATTERN_MULT:
         meas = measure_pattern_signal(mp, peaks, field_mhz=field_mhz,
                                       dj_gold_hz=params['dj_gold_hz'],
                                       trace=trace,
@@ -2158,7 +2434,9 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
 
     mp['_n_found_lines'] = meas.n_found
     mp['_n_exp_lines'] = meas.n_expected
-    if meas.found_ppms:
+    if meas.found_ppms or region is not None:
+        # Inside the analyst's region an empty result is the result: the
+        # lines the algorithm had found elsewhere are not this signal.
         mp['predicted_lines'] = meas.predicted_lines
 
     if not meas.complete:
@@ -2181,8 +2459,10 @@ def resolve_dj(mp, met, peaks, *, mult, params, field_mhz: float,
         if meas.origin_ppm is not None:
             mp['pattern_centre_offset_ppm'] = float(meas.centre_ppm
                                                     - meas.origin_ppm)
-    # Every line found but J still not computable (the DB gave none): the term
-    # is excluded rather than scored as a disagreement.
+    if is_singlet_like(mult):
+        return 1.0, 1.0                       # placed in the region; no J
+    # Every line found but J still not computable (the DB gave none): the
+    # term is excluded rather than scored as a disagreement.
     return _score(meas.delta_j_hz), (0.0 if meas.delta_j_hz is None else 1.0)
 
 
@@ -2201,8 +2481,11 @@ def apply_per_sample_consensus(mp, *, params):
     that a later, better measurement replaces the master one.
 
     Nothing is invented when the samples said nothing: a consensus over zero
-    samples leaves the stored value alone.
+    samples leaves the stored value alone. A consensus read before the analyst
+    drew a region was read somewhere else, and yields to the region.
     """
+    if manual_region(mp) is not None:
+        return None
     con = mp.get('per_sample_consensus') or {}
     if con.get('ppm_diff') is not None and con.get('ppm_centre') is not None:
         mp['ppm_diff'] = float(con['ppm_diff'])
@@ -2233,8 +2516,12 @@ def apply_mcr_dj(mp, *, params):
     The ΔJ measured from lines snapped on the merged spectrum is unreliable by
     construction inside an overlap — the lines belong to more than one analyte.
     MCR measures J on the isolated component instead. Position is untouched:
-    deconvolution resolves shape and coupling, not chemical shift.
+    deconvolution resolves shape and coupling, not chemical shift. A component
+    deconvolved before the analyst drew a region was taken somewhere else,
+    and yields to the region.
     """
+    if manual_region(mp) is not None:
+        return None
     mcr_dj = mp.get('mcr_delta_j_hz')
     if mcr_dj is None:
         return None

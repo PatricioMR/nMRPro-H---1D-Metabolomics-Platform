@@ -337,3 +337,90 @@ def test_the_consensus_reaches_the_scoring_path():
     reader = inspect.getsource(apply_per_sample_consensus)
     assert "mp.get('per_sample_consensus')" in reader
     assert "'per_sample_consensus'" in inspect.getsource(ARW)
+
+
+def test_the_right_drag_records_a_region_and_measures_nothing_itself():
+    """The drag used to pick the N tallest points of the mean trace inside
+    the selection and write them as predicted_lines. resolve_dj then reused
+    the cached line count and ΔJ, so the selection changed the arrows on the
+    plot and nothing the score saw. The window now records only the interval
+    (``manual_region_ppm``) and the scoring pass measures inside it."""
+    src = inspect.getsource(ARW._rc_select_region)
+    assert 'MANUAL_REGION_KEY' in src
+    for own_measurement in ('find_peaks', 'argsort', 'j_obs_hz',
+                            '_relative_intensities_from_type'):
+        assert own_measurement not in src, own_measurement
+    assert '_rescore_after_edit' in src
+    assert not hasattr(ARW, '_MULT_N'), 'line counts live in LINE_COUNTS'
+
+
+def test_the_reset_lifts_the_region_and_remeasures():
+    src = inspect.getsource(ARW._rc_reset)
+    assert 'del mp_ref[MANUAL_REGION_KEY]' in src
+    assert "'_n_found_lines'" in src, 'the cached measurement must be dropped'
+    assert '_rescore_after_edit' in src
+
+
+def test_the_scoring_pass_hands_the_noise_level_to_resolve_dj():
+    """region_peaks asks the trace for apices detection missed; without the
+    noise level it can only use the detector's list."""
+    src = inspect.getsource(ARW._compute_scores)
+    assert 'sigma=' in src and '_noise_level' in src
+
+
+def _bare_window(met, dp, mp_ref):
+    """The window without Tk: only what the drag handlers touch."""
+    w = object.__new__(ARW)
+    w._current_dp, w._current_met_dp, w._current_mp_ref = dp, met, mp_ref
+    w.calls = []
+    w._rescore_after_edit = lambda m: w.calls.append('rescore')
+    w._plot_db_peak_zoom = lambda m, d: w.calls.append('zoom')
+    w._show_reset_btn = lambda flag: w.calls.append(('reset_btn', flag))
+    return w
+
+
+def test_a_drag_on_an_unmatched_db_signal_creates_its_matched_peak():
+    from processing.annotation_scoring import MANUAL_REGION_KEY
+    dp = {'ppm_center': 1.30, 'type': 'd', 'j_coupling': '6.00',
+          'protons': 3, 'pattern_lines': None}
+    met = {'id': 'X', 'db_peaks': [dp], 'matched_peaks': []}
+    w = _bare_window(met, dp, None)
+    w._rc_select_region(1.29, 1.31)
+    (mp,) = met['matched_peaks']
+    assert mp['db_ppm'] == 1.30 and mp['type'] == 'd'
+    assert mp['j_coupling'] == '6.00'
+    assert 'pattern_lines' not in mp
+    assert mp[MANUAL_REGION_KEY] == [1.29, 1.31]
+    assert mp['_original_predicted_lines'] == []
+    assert w.calls == [('reset_btn', True), 'rescore', 'zoom']
+
+
+def test_reset_restores_the_algorithm_lines_and_drops_the_cache():
+    from processing.annotation_scoring import MANUAL_REGION_KEY
+    lines = [{'ppm': 1.295}, {'ppm': 1.305}]
+    dp = {'ppm_center': 1.30, 'type': 'd'}
+    mp = {'db_ppm': 1.30, 'peak_ppm': 1.30, 'ppm_diff': 0.0, 'peak_rank': 4,
+          'type': 'd', 'predicted_lines': list(lines)}
+    met = {'id': 'X', 'db_peaks': [dp], 'matched_peaks': [mp]}
+    w = _bare_window(met, dp, mp)
+    w._rc_select_region(1.39, 1.41)
+    # pretend the scoring pass measured inside the region
+    mp['predicted_lines'] = [{'ppm': 1.395}, {'ppm': 1.405}]
+    mp['peak_ppm'], mp['ppm_diff'] = 1.40, 0.10
+    mp['_n_found_lines'] = mp['_n_exp_lines'] = 2
+    w._rc_reset()
+    assert MANUAL_REGION_KEY not in mp
+    assert mp['predicted_lines'] == lines
+    assert (mp['peak_ppm'], mp['ppm_diff']) == (1.30, 0.0)
+    assert '_n_found_lines' not in mp
+    assert met['matched_peaks'] == [mp]
+
+
+def test_reset_on_a_region_born_signal_removes_it():
+    dp = {'ppm_center': 1.30, 'type': 'd'}
+    met = {'id': 'X', 'db_peaks': [dp], 'matched_peaks': []}
+    w = _bare_window(met, dp, None)
+    w._rc_select_region(1.29, 1.31)
+    w._rc_reset()
+    assert met['matched_peaks'] == []
+    assert w._current_mp_ref is None
