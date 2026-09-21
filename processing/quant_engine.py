@@ -43,13 +43,14 @@ from processing.quant_integration import (
 from processing.quant_shape import measure_shape
 from processing.quant_shared import (
     REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, fingerprint_holds,
-    resolve_free_apices, resolve_residuals, resolve_shared_windows)
+    resolve_free_apices, resolve_listed_intruders, resolve_residuals,
+    resolve_shared_windows)
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
     AMOUNT_CONTRADICTED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
     PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED, SHAPES_OFF,
-    SINGLET_UNSUPPORTED, elect, is_competitor)
+    SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
     PATTERN_MULT, is_singlet_like, normalize_mult)
 
@@ -818,6 +819,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                     ambiguous_ranks=ambiguous_ranks)
     residual_ids: set = set()
+    taken_over: dict = {}
 
     # ── Integrate every winner, per sample ───────────────────────────────────
     # A winner whose lines bound no window is recorded as such rather than
@@ -1045,6 +1047,20 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             per_proton_areas[_cm] = {s_i: a / _nh
                                      for s_i, a in _t['areas'].items()}
             residual_ids.add(_cm)
+        # ── What the quantified analytes list inside other windows ─────
+        _listed = resolve_listed_intruders(
+            measured, ppm, intensities, included=included,
+            linewidth_ppm=linewidth_ppm, names=_shared_names,
+            lines_of=lambda c: _found_lines(c, peaks_by_rank),
+            per_proton_areas=per_proton_areas, noise_sigma=noise_sigma)
+        if diagnostics is not None:
+            diagnostics['listed_intruders'] = _listed
+        for _m in [m for m, r in measured.items() if r.get('taken_over')]:
+            _labels = measured[_m]['taken_over']
+            taken_over[_m] = (WINDOW_TAKEN, ' ' + ', '.join(_labels) + '.')
+            measured.pop(_m, None)
+            per_proton_areas.pop(_m, None)
+            residual_ids.discard(_m)
         if diagnostics is not None:
             diagnostics['residual'] = {
                 'taken': {m: t['owner'] for m, t in _taken.items()},
@@ -1228,6 +1244,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             excluded_regions=excluded_regions))
 
     for mid, (reason, detail) in (withdrawn or {}).items():
+        rows.append(_rejected_row(mid, reason, detail=detail))
+    for mid, (reason, detail) in taken_over.items():
         rows.append(_rejected_row(mid, reason, detail=detail))
     for mid, (reason, detail) in bad.items():
         rows.append(_rejected_row(mid, reason, detail=detail))
@@ -1638,10 +1656,16 @@ def _deconv_reason(info) -> list:
     med = float(np.median(list(rem.values()))) if rem else 0.0
     out = [f"Shared window resolved by shape with {', '.join(others)}: this "
            f"area is what this analyte's own shape accounts for."]
-    if d.get('fixed'):
-        out.append(f"{', '.join(d['fixed'])}: a shape this signal's own "
-                   f"shape makes, so its share was not fitted but fixed at "
-                   f"what its own clean signal predicts, and subtracted.")
+    if d.get('listed'):
+        out.append(f"{', '.join(d['listed'])}: the reference lists it "
+                   f"inside this window; its analyte is quantified elsewhere, "
+                   f"and its share here is what that measurement predicts, "
+                   f"subtracted (kept only because it fits under the trace).")
+    if [f for f in (d.get('fixed') or ()) if f not in (d.get('listed') or ())]:
+        out.append(f"{', '.join(f for f in d['fixed'] if f not in (d.get('listed') or ()))}: "
+                   f"a shape this signal's own shape makes, so its share "
+                   f"was not fitted but fixed at what its own clean signal "
+                   f"predicts, and subtracted.")
     placed = [c['label'] for c in d.get('components', ())
               if c.get('placed_at_expected')]
     if placed:

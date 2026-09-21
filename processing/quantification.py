@@ -41,6 +41,7 @@ SHAPE_UNIDENTIFIED = 'shape_unidentified'
 PARTIAL_MULTIPLET = 'partial_multiplet'
 AMOUNT_CONTRADICTED = 'amount_contradicted'
 SINGLET_UNSUPPORTED = 'singlet_unsupported'
+WINDOW_TAKEN = 'window_taken'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -65,6 +66,10 @@ REJECTION_TEXT = {
         'its own amount and its whole shape agree, and the rest of its '
         'fingerprint carries the amount (with "Deconvolve windows … by '
         'shape" on). No such apex was found for it.',
+    WINDOW_TAKEN:
+        'Not quantified: the signals other quantified analytes list inside '
+        'this window, at the amounts they were measured at, account for the '
+        'whole of it. Nothing is left that would be this analyte' "'s.",
     AMOUNT_CONTRADICTED:
         'Not quantified: the amount this signal implies is contradicted by '
         'the rest of the fingerprint — another signal of the analyte, at '

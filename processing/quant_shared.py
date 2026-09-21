@@ -117,6 +117,10 @@ RESIDUAL_FLOOR_MULTIPLE = 1.5
 # the next is tried; a window with two intruders' tails in it is the case
 # that made "explains half of the remainder" the wrong question.
 RESIDUAL_MIN_SHARE = 0.2
+# An owner left with under this share of its window's area, once the
+# signals other quantified analytes list inside it are subtracted, had no
+# window: what was measured was theirs.
+OWNER_MIN_SHARE = 0.05
 # On a free apex with no owner (resolve_free_apices) the shape has the
 # whole region to account for: it must explain at least this share of the
 # area over its own lines' reach. A shape that leaves a quarter of its own
@@ -1333,6 +1337,201 @@ def resolve_free_apices(measured, pool, free_peaks, ppm, intensities, *,
         for rr in ranks(c) or ():
             free.pop(rr, None)
     return taken
+
+
+def listed_signal_evidence(dp, *, centre_ppm, field_mhz) -> dict | None:
+    """The evidence a component is built from for a signal the reference
+    lists but annotation never matched: its lines laid at ``centre_ppm``
+    (the listed position at the study's drift) -- the measured pattern's
+    offsets and heights where the reference has them, a first-order comb
+    from the listed coupling otherwise, one line for a singlet -- with the
+    reference's profile when there is one. None when nothing places it."""
+    from processing.annotation_scoring import (
+        expected_line_count, is_singlet_like, parse_first_j,
+        pattern_offsets_hz, synthetic_lines)
+    mult = str(dp.get('type') or dp.get('multiplicity') or '').lower().strip()
+    f = float(field_mhz)
+    pat = pattern_offsets_hz(dp)
+    ev = {'multiplicity': mult, 'protons': dp.get('protons'),
+          'db_ppm': dp.get('ppm_center', dp.get('ppm')),
+          'pattern_profile': dp.get('pattern_profile'),
+          'profile_fwhm_hz': dp.get('profile_fwhm_hz'),
+          'pattern_field_mhz': f, 'listed': True}
+    if pat:
+        offs = [o for o, _r in pat]
+        mean_off = float(np.mean(offs))
+        ev['predicted_ppms'] = [centre_ppm + (o - mean_off) / f for o in offs]
+        ev['line_weights'] = [float(r) for _o, r in pat]
+        return ev
+    if is_singlet_like(mult) or mult in ('m', 'multiplet'):
+        if mult in ('m', 'multiplet'):
+            return None                # nothing says what shape it has
+        ev['predicted_ppms'] = [float(centre_ppm)]
+        ev['peak_ppm'] = float(centre_ppm)
+        return ev
+    j = parse_first_j(dp.get('j_coupling'))
+    n = expected_line_count(mult, fallback=2)
+    if not j or n < 2:
+        return None
+    ev['predicted_ppms'] = [l['ppm'] for l in
+                            synthetic_lines(float(centre_ppm), j, n, f)]
+    return ev
+
+
+def resolve_listed_intruders(measured, ppm, intensities, *, included=None,
+                             linewidth_ppm, names=None, lines_of=None,
+                             per_proton_areas, noise_sigma=None,
+                             field_mhz=None) -> dict:
+    """The signals of analytes already quantified, wherever the reference
+    lists them inside another winner's window, subtracted at the amount
+    that analyte was measured at.
+
+    ADR-015 kept out a signal the listing places and detection did not: a
+    listing is not a measurement. Once the ANALYTE is measured, its other
+    signals are: the amount is known from its own clean signal, the shape
+    is the reference's, and only the position is the listing's -- at the
+    study's drift, refined within half a linewidth. Each such signal is a
+    fixed component (ADR-022); it is kept only if, at that amount, it fits
+    under the trace (the window's overshoot does not rise beyond the noise
+    over what it was without it), else the listing was wrong here and the
+    window stands. Glutamine's triplet on the mixture bench read twice its
+    amount with glutamate's alpha-H inside it -- glutamate measured on its
+    own pattern, its alpha-H never a candidate.
+
+    Returns ``{owner_met_id: [labels taken in]}``; the owners' areas are
+    replaced in ``measured`` and ``per_proton_areas``.
+    """
+    names = names or {}
+    where = lines_of or (lambda c: [])
+    lw = float(linewidth_ppm)
+    out: dict = {}
+    winners = {mid: rec for mid, rec in measured.items()
+               if rec.get('window') and not rec.get('shape')}
+    # what every quantified analyte lists, and what it is measured at
+    listed: list = []
+    for mid, rec in winners.items():
+        sig = rec['signal']
+        met = (sig.payload or {}).get('met') if isinstance(sig.payload, dict) else None
+        pp = per_proton_areas.get(mid) or {}
+        vals = {int(k): float(v) for k, v in pp.items()
+                if v is not None and np.isfinite(v) and v > 0}
+        if not met or not vals:
+            continue
+        ev = sig.evidence or {}
+        f = field_mhz or ev.get('pattern_field_mhz')
+        if not f:
+            continue
+        drift = float(ev.get('study_drift_ppm') or 0.0)
+        own = round(float(ev.get('db_ppm') or 0.0), 3)
+        for dp in met.get('db_peaks') or ():
+            c0 = dp.get('ppm_center', dp.get('ppm'))
+            if c0 is None or round(float(c0), 3) == own:
+                continue
+            e2 = listed_signal_evidence(dp, centre_ppm=float(c0) + drift,
+                                        field_mhz=float(f))
+            if e2 is None:
+                continue
+            nh = dp.get('protons')
+            try:
+                nh = float(nh) if nh else None
+            except (TypeError, ValueError):
+                nh = None
+            if not nh:
+                continue
+            listed.append((mid, e2, nh, vals, float(np.median(list(vals.values())))))
+    if not listed:
+        return out
+    for mid, rec in winners.items():
+        lo, hi = rec['window']
+        d = rec.get('deconv')
+        already = {c['met_id'] for c in (d or {}).get('components', ())}
+        extra = []
+        for om, e2, nh, vals, hint in listed:
+            if om == mid or om in already:
+                continue
+            lines = [float(v) for v in e2.get('predicted_ppms') or ()]
+            if not lines or not any(lo <= v <= hi for v in lines):
+                continue
+            label = f"{names.get(om, om)} {e2.get('multiplicity') or ''} (listed)"
+            comp = component_from_evidence(om, e2, label=label, linewidth_ppm=lw,
+                                           nh=nh, owner=False,
+                                           per_proton_hint=hint,
+                                           per_proton_by_sample=vals,
+                                           pinned=True)
+            if comp is not None:
+                extra.append(comp)
+        if not extra:
+            continue
+        if d:
+            base = [component_from_record(c) for c in d['components']]
+            base = [c for c in base if c is not None]
+        else:
+            ev = dict(rec['signal'].evidence or {})
+            found = list(where(rec['signal']) or ())
+            if found and not ev.get('shape_fit'):
+                ev['predicted_ppms'] = found
+                if ev.get('line_weights') and len(ev['line_weights']) != len(found):
+                    ev.pop('line_weights')
+            owner = component_from_evidence(
+                mid, ev, label=f"{names.get(mid, mid)} "
+                               f"{str(ev.get('multiplicity') or '')}",
+                linewidth_ppm=lw, nh=float(rec['nh']), owner=True)
+            if owner is None:
+                continue
+            base = [owner]
+        before = resolve_window(base, ppm, intensities, included=included,
+                                noise_sigma=noise_sigma, allow_single=True,
+                                refine=not d, remainder_window=rec['window'])
+        if not before or before.get('refused'):
+            continue
+        over0 = float(np.median(list(before['overshoot'].values())))
+        floor = float(np.median(list(before['remainder_floor'].values())))
+        kept = []
+        for comp in extra:
+            trial = [component_from_record(_record(b)) for b in base] + \
+                    [component_from_record(_record(k)) for k in kept] + [comp]
+            # every shape refines again with the listed one present: the
+            # owner refined alone had widened onto the intruder, and a
+            # fixed intruder cannot be taken from, so the owner may move
+            res = resolve_window(trial, ppm, intensities, included=included,
+                                 noise_sigma=noise_sigma, allow_single=True,
+                                 remainder_window=rec['window'])
+            if not res or res.get('refused'):
+                continue
+            over = float(np.median(list(res['overshoot'].values())))
+            if over > over0 + RESIDUAL_FLOOR_MULTIPLE * floor:
+                continue               # the listing put it where it is not
+            kept.append(comp)
+            over0 = over
+            final = res
+        if not kept:
+            continue
+        # the owner's share of what the window holds, after the others
+        own = float(np.median(list(final['areas'][mid].values())))
+        total = sum(float(np.median(list(final['areas'][m].values())))
+                    for m in final['areas'])
+        if total > 0 and own / total < OWNER_MIN_SHARE:
+            rec['taken_over'] = [c.label for c in kept]
+            out[mid] = [c.label for c in kept]
+            continue
+        rec['areas'] = dict(final['areas'][mid])
+        rec['area_median'] = (float(np.median(list(rec['areas'].values())))
+                              if rec['areas'] else float('nan'))
+        rec['captured'] = None
+        rec['shared_with'] = sorted(set(list(rec.get('shared_with') or ())
+                                        + [c.met_id for c in kept]))
+        rec['deconv'] = {'window': final['window'],
+                         'remainder': final['remainder'],
+                         'components': final['components'],
+                         'amplitudes': final['amplitudes'],
+                         'skipped': list(final.get('inseparable') or ()),
+                         'fixed': list(final.get('fixed') or ()),
+                         'residual': list((d or {}).get('residual') or ()),
+                         'listed': [c.label for c in kept]}
+        per_proton_areas[mid] = {s_i: a / rec['nh']
+                                 for s_i, a in rec['areas'].items()}
+        out[mid] = [c.label for c in kept]
+    return out
 
 
 def _record(c) -> dict:

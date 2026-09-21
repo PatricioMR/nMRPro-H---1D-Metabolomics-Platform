@@ -395,7 +395,10 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
                      'db_peaks': [{'ppm_center': float(s['ppm_center']),
                                    'type': s.get('type'),
                                    'protons': s.get('protons'),
-                                   'pattern_lines': s.get('pattern_lines')}
+                                   'pattern_lines': s.get('pattern_lines'),
+                                   'j_coupling': s.get('j_coupling'),
+                                   'pattern_profile': s.get('pattern_profile'),
+                                   'profile_fwhm_hz': s.get('profile_fwhm_hz')}
                                   for s in met['signals']]})
     promote_singlets(mets, peaks, params=params)
     annotate_drift_spread(mets)
