@@ -42,14 +42,16 @@ from processing.quant_integration import (
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
 from processing.quant_shared import (
-    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, resolve_free_apices,
-    resolve_residuals, resolve_shared_windows)
+    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, fingerprint_holds,
+    resolve_free_apices, resolve_residuals, resolve_shared_windows)
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    LOST_COMPETITION, NO_MEASURABLE_WINDOW, PARTIAL_MULTIPLET, REJECTION_TEXT,
-    SHAPE_UNIDENTIFIED, SHAPES_OFF, elect, is_competitor)
-from processing.annotation_scoring import PATTERN_MULT, normalize_mult
+    AMOUNT_CONTRADICTED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
+    PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED, SHAPES_OFF,
+    SINGLET_UNSUPPORTED, elect, is_competitor)
+from processing.annotation_scoring import (
+    PATTERN_MULT, is_singlet_like, normalize_mult)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -643,6 +645,22 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
 
 
 
+# A singlet is quantified on its own only above this signal-to-noise:
+# position is its whole evidence, and a peak of four sigma at a position
+# is noise at a position. Measured on the mixture bench: the wrong
+# singlets stood at 1-17 sigma, the right ones at 34-202.
+SINGLET_MIN_SNR = 10.0
+# The election is repeated without a winner whose amount its fingerprint
+# contradicts, at most this many times: the peak goes to the next.
+AMOUNT_ROUNDS = 3
+# A measured amount can be twice the truth through overlap alone --
+# glutamine's triplet read at 2x with glutamate's line inside it -- so a
+# winner is withdrawn only when another of its signals falls short by
+# this factor: twice is overlap, three times is absence. (Lysine on the
+# same peak fell short eightfold.)
+AMOUNT_RATIO = 3.0
+
+
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              included, groups, dj_gold_hz, ambiguous_ranks=(),
              standard_areas=None, standard_nh=1.0, standard_conc=0.0,
@@ -657,6 +675,73 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              shared_overrides=None, diagnostics=None,
              residual_pool=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
+
+    Runs the election and the measurement (``_quantify_once``), then asks
+    of every winner whether the amount its signal implies is one the rest
+    of its fingerprint can carry (``fingerprint_holds``, ADR-012 at the
+    measured amount): a winner it contradicts is withdrawn, its row says
+    so, and the election is run again without it so the peak goes to the
+    next candidate -- lysine at 1.9 mM, on glutamine's triplet, would have
+    CH2 multiplets the spectrum does not hold. A singlet is held to more:
+    SINGLET_MIN_SNR, and at least one other listed signal seen at the
+    amount it implies (an analyte listed with one signal is asked only
+    the first). Up to AMOUNT_ROUNDS rounds. See ``_quantify_once`` for
+    the rest.
+    """
+    kw = dict(
+        peaks_by_rank=peaks_by_rank, ppm=ppm, intensities=intensities,
+        samples_info=samples_info, included=included, groups=groups,
+        dj_gold_hz=dj_gold_hz, ambiguous_ranks=ambiguous_ranks,
+        standard_areas=standard_areas, standard_nh=standard_nh,
+        standard_conc=standard_conc, standard_name=standard_name,
+        standard_ppm=standard_ppm, standard_snr=standard_snr,
+        external_standard_samples=external_standard_samples,
+        dilution=dilution, correction=correction, use_pqn=use_pqn,
+        local_baseline=local_baseline, proton_correction=proton_correction,
+        align=align, blank_indices=blank_indices, noise_sigma=noise_sigma,
+        linewidth_ppm=linewidth_ppm, drift_ppm=drift_ppm,
+        excluded_regions=excluded_regions, deconvolve=deconvolve,
+        quantify_shapes=quantify_shapes, resolve_shared=resolve_shared,
+        shared_overrides=shared_overrides, diagnostics=diagnostics,
+        residual_pool=residual_pool)
+    cands = list(candidates or ())
+    withdrawn: dict = {}
+    rows: list = []
+    for _round in range(AMOUNT_ROUNDS):
+        rows, bad = _quantify_once(candidates=cands, withdrawn=withdrawn, **kw)
+        if not bad:
+            break
+        withdrawn.update(bad)
+        cands = [c for c in cands if c.met_id not in withdrawn]
+        pool = kw.get('residual_pool')
+        if pool:
+            kw['residual_pool'] = [c for c in pool if c.met_id not in withdrawn]
+    diag = kw.get('diagnostics')
+    if diag is not None:
+        diag['amount_withdrawn'] = {m: r for m, (r, _d) in withdrawn.items()}
+    return rows
+
+
+def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
+                   samples_info, included, groups, dj_gold_hz,
+                   ambiguous_ranks=(),
+                   standard_areas=None, standard_nh=1.0, standard_conc=0.0,
+                   standard_name='Internal standard', standard_ppm=0.0,
+                   standard_snr=None,
+                   external_standard_samples=None, dilution=None,
+                   correction=None,
+                   use_pqn=True, local_baseline=True, proton_correction=True,
+                   align=False, blank_indices=None,
+                   noise_sigma=None, linewidth_ppm=0.008,
+                   drift_ppm=0.0, excluded_regions=(), deconvolve=True,
+                   quantify_shapes=True, resolve_shared=False,
+                   shared_overrides=None, diagnostics=None,
+                   residual_pool=None, withdrawn=None):
+    """One election and measurement. Returns ``(rows, withdrawn)``: the
+    rows, and the winners whose measured amount the fingerprint
+    contradicts (``{met_id: (reason, detail)}``) -- empty when the table
+    stands. ``withdrawn`` (in) are the analytes earlier rounds took out;
+    they get their rows here.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
     analyte that vanishes from the table cannot be questioned, and the reason
@@ -1028,6 +1113,60 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             standard_areas, standard_nh,
             external_samples=external_standard_samples)
 
+    # ── The amount a winner implies, against the rest of its fingerprint ──
+    _mean = None
+    _arr_all = np.asarray(intensities, dtype=float)
+    if _arr_all.ndim == 1:
+        _arr_all = _arr_all.reshape(-1, 1)
+    _cols = [i for i in (included if included is not None
+                         else range(_arr_all.shape[1]))
+             if 0 <= i < _arr_all.shape[1]]
+    if _cols:
+        _mean = _arr_all[:, _cols].mean(axis=1)
+    bad: dict = {}
+    if _mean is not None and noise_sigma and linewidth_ppm:
+        for mid, info in list(measured.items()):
+            if info.get('by_residual'):
+                continue                  # checked when it was taken in
+            sig = info['signal']
+            ev = sig.evidence or {}
+            met = (sig.payload or {}).get('met') if isinstance(sig.payload, dict) else None
+            db_peaks = (met or {}).get('db_peaks') or ()
+            pp = per_proton_areas.get(mid) or {}
+            vals = [v for v in pp.values() if v is not None and np.isfinite(v) and v > 0]
+            if not vals:
+                continue
+            held, verdicts = fingerprint_holds(
+                db_peaks, float(np.median(vals)), ppm, _mean,
+                noise=noise_sigma, linewidth_ppm=linewidth_ppm,
+                drift_ppm=float(ev.get('study_drift_ppm') or 0.0),
+                skip_ppm=ev.get('db_ppm'), excluded_regions=excluded_regions,
+                ratio=AMOUNT_RATIO)
+            info['fingerprint_at_amount'] = verdicts
+            if not held:
+                bad[mid] = (AMOUNT_CONTRADICTED, _fingerprint_detail(verdicts))
+                continue
+            # a singlet on its own: position is all it has
+            if _structural_evidence(sig) <= 1 and is_singlet_like(
+                    ev.get('multiplicity') or ev.get('type') or 's'):
+                if ev.get('manual_quality') == 'good':
+                    continue
+                # the SNR the table shows: the signal's on the group the
+                # figure draws, not the per-sample window estimate
+                snr_rep = (info['group_evidence'][info['best_group']]['snr']
+                           if info.get('best_group') else
+                           representative_snr(info.get('snr')))
+                others = [v for v in verdicts]
+                seen = any(v[3] == 'present' for v in others)
+                if (np.isfinite(snr_rep) and snr_rep < SINGLET_MIN_SNR) or (
+                        others and not seen):
+                    bad[mid] = (SINGLET_UNSUPPORTED,
+                                _fingerprint_detail(verdicts, snr=snr_rep))
+    for mid in bad:
+        measured.pop(mid, None)
+        per_proton_areas.pop(mid, None)
+        residual_ids.discard(mid)
+
     rows = []
     for mid, info in measured.items():
         nh = info['nh']
@@ -1088,12 +1227,30 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             dilution=dilution, correction=correction,
             excluded_regions=excluded_regions))
 
+    for mid, (reason, detail) in (withdrawn or {}).items():
+        rows.append(_rejected_row(mid, reason, detail=detail))
+    for mid, (reason, detail) in bad.items():
+        rows.append(_rejected_row(mid, reason, detail=detail))
+
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
                                   standard_name, standard_ppm, standard_snr,
                                   groups, standard,
                                   external_samples=external_standard_samples))
-    return rows
+    return rows, bad
+
+
+def _fingerprint_detail(verdicts, snr=None) -> str:
+    """What the fingerprint check saw, for the row."""
+    bits = []
+    if snr is not None and np.isfinite(snr):
+        bits.append(f'SNR {snr:.0f}')
+    for c, mu, e, v in verdicts or ():
+        if v.startswith('contradicted'):
+            bits.append(f'{c:.2f} ppm {mu} expected SNR {e:.0f}, {v}')
+        elif v == 'present':
+            bits.append(f'{c:.2f} ppm {mu} present')
+    return (' ' + '; '.join(bits) + '.') if bits else ''
 
 
 def _censored_row(cand, ppm, intensities, *, included, standard,

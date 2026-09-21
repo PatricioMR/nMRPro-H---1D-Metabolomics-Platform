@@ -862,7 +862,8 @@ def _lorentz_height(area_ppm, hwhm_ppm) -> float:
 def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
                       linewidth_ppm, drift_ppm=0.0, tolerance_ppm=0.02,
                       skip_ppm=None, ratio=RESIDUAL_FINGERPRINT_RATIO,
-                      min_snr=FINGERPRINT_MIN_SNR) -> tuple[bool, list]:
+                      min_snr=FINGERPRINT_MIN_SNR,
+                      excluded_regions=()) -> tuple[bool, list]:
     """Whether the rest of an analyte's fingerprint can hold the amount a
     window implies.
 
@@ -904,6 +905,13 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
             out.append((centre, mult, exp_snr, 'faint'))
             continue
         here = centre + float(drift_ppm)
+        if excluded_regions:
+            from processing.spectral_regions import in_excluded_region
+            if (in_excluded_region(here - tolerance_ppm, excluded_regions)
+                    or in_excluded_region(here + tolerance_ppm,
+                                          excluded_regions)):
+                out.append((centre, mult, exp_snr, 'excluded'))
+                continue
         m = (x >= here - tolerance_ppm) & (x <= here + tolerance_ppm)
         if m.sum() < 3:
             out.append((centre, mult, exp_snr, 'off the axis'))

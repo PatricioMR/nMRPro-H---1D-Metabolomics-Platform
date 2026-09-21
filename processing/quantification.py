@@ -39,6 +39,8 @@ NOT_DETECTED = 'not_detected'
 SHAPES_OFF = 'shapes_off'
 SHAPE_UNIDENTIFIED = 'shape_unidentified'
 PARTIAL_MULTIPLET = 'partial_multiplet'
+AMOUNT_CONTRADICTED = 'amount_contradicted'
+SINGLET_UNSUPPORTED = 'singlet_unsupported'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -63,6 +65,17 @@ REJECTION_TEXT = {
         'its own amount and its whole shape agree, and the rest of its '
         'fingerprint carries the amount (with "Deconvolve windows … by '
         'shape" on). No such apex was found for it.',
+    AMOUNT_CONTRADICTED:
+        'Not quantified: the amount this signal implies is contradicted by '
+        'the rest of the fingerprint — another signal of the analyte, at '
+        'that amount, would stand where the spectrum holds nothing like it. '
+        'The peak was given to the next candidate.',
+    SINGLET_UNSUPPORTED:
+        'Not quantified: a singlet on its own — position is its only '
+        'evidence, and at the amount it implies no other signal of the '
+        'analyte was seen where it should be (or the peak is under the '
+        'signal-to-noise a singlet needs). Mark it Good to quantify it '
+        'anyway.',
     PARTIAL_MULTIPLET:
         'Not quantified: partial multiplet — detection placed too few of the '
         'pattern\'s lines for the area to be scaled to the whole signal; a '
