@@ -21,6 +21,8 @@ import matplotlib.ticker as ticker
 
 from scipy.optimize import curve_fit
 
+from processing.quant_integration import baseline_and_signal
+
 import os
 from pathlib import Path
 from reportlab.lib               import colors
@@ -408,21 +410,21 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
             ax.axvline(_rl, color='#9e9e9e', lw=0.8, ls='--', alpha=0.9,
                        zorder=3)
         # The area the number came from: between the trace and the local
-        # baseline the integration subtracted (the line joining the window's
-        # two ends, clipped at zero -- processing.quant_integration
-        # .integrate_sample), on the pieces it summed. Down to zero only
-        # when no local baseline was used.
+        # baseline the integration subtracted, only where the trace stands
+        # above it (processing.quant_integration.integrate_sample), on the
+        # pieces it summed.
         _order_f = np.argsort(xf)
-        if result.get('_local_baseline', True) and xf.size >= 2:
-            _y0 = max(float(yf[_order_f][0]), 0.0)
-            _y1 = max(float(yf[_order_f][-1]), 0.0)
-            _base = np.empty_like(yf)
-            _base[_order_f] = np.linspace(_y0, _y1, xf.size)
+        _use_bl = result.get('_local_baseline', True)
+        _base = np.empty_like(yf)
+        _base[_order_f], _ = baseline_and_signal(yf[_order_f],
+                                                 local_baseline=_use_bl)
+        if _use_bl and xf.size >= 2:
             ax.plot(xf, _base, color='#ff6666', lw=0.8, ls='--', alpha=0.7,
                     zorder=3, label='baseline')
-        else:
-            _base = np.zeros_like(yf)
-        ax.fill_between(xf, _base, yf, where=_in_seg,
+        _above = yf >= _base
+        ax.fill_between(xf, _base, yf,
+                        where=(_above if _in_seg is None
+                               else (np.asarray(_in_seg) & _above)),
                         alpha=0.35, color=_fill_col, linewidth=0, zorder=2)
 
     # Média global para Lorentz overlay

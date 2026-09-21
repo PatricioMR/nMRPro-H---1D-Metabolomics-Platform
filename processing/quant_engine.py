@@ -47,6 +47,7 @@ from processing.quant_snr import (
 from processing.quantification import (
     LOST_COMPETITION, NO_MEASURABLE_WINDOW, PARTIAL_MULTIPLET, REJECTION_TEXT,
     SHAPES_OFF, elect, is_competitor)
+from processing.annotation_scoring import PATTERN_MULT, normalize_mult
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -667,11 +668,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     That is what the engine did before the balance existed, and it is the
     setting to compare against when a number moves.
 
-    ``quantify_shapes`` off leaves every complex multiplet (a candidate that
-    carries a ``shape_fit``, ADR-013) out of the election and out of the
-    table's numbers: they hold no peak, so nothing else moves, and each is
-    reported as not quantified with the switch named. The rest of the run
-    is then the plain peak-integration engine.
+    ``quantify_shapes`` off leaves every complex multiplet (``m*``, ADR-013
+    -- fitted to the trace or matched on the peak list) out of the election
+    and out of the table's numbers, each reported as not quantified with
+    the switch named. The rest of the run is then the letter-multiplet and
+    singlet engine. It used to leave out only the trace-fitted ones; a
+    pattern matched on two apices still competed, and on the mixture bench
+    nine such "2/2" patterns won peaks that belonged to the panel's real
+    triplets (raffinose took glutamine's) with the switch off.
 
     ``resolve_shared`` on resolves, by their shapes, the winners' windows
     that hold another accepted analyte's signal (processing.quant_shared):
@@ -689,12 +693,10 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     candidates = list(candidates or ())
     shapes_off: dict = {}
     if not quantify_shapes:
-        kept = [c for c in candidates
-                if not (c.evidence or {}).get('shape_fit')]
+        kept = [c for c in candidates if not _is_complex(c)]
         with_peaks = {c.met_id for c in kept}
         for c in candidates:
-            if (c.evidence or {}).get('shape_fit') \
-                    and c.met_id not in with_peaks:
+            if _is_complex(c) and c.met_id not in with_peaks:
                 shapes_off[c.met_id] = SHAPES_OFF
         candidates = kept
         if diagnostics is not None:
@@ -1043,8 +1045,11 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         here = {}
         for s_i in idx:
             if 0 <= s_i < arr.shape[1]:
+                # Signed: the limit is built from noise that goes both
+                # ways, and the quantified area's clip at the baseline
+                # would put every noise window above it.
                 a = integrate_sample(ppm, arr[:, s_i], lo + off, hi + off,
-                                     local_baseline=True)
+                                     local_baseline=True, clip=False)
                 if a is not None:
                     here[int(s_i)] = float(a)
         if not here:
@@ -1252,6 +1257,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             for a, b in (info.get('segments') or ())],
         '_foreign_inside': [float(v) for v in (info.get('foreign_inside')
                                                or ())],
+        # How much of the window the trace ran under the baseline: what the
+        # integration counted as nothing (quant_integration.integrate_sample).
+        '_below_baseline_share': info.get('below_baseline_share'),
         # Where the signal's own lines are, so a plot can mark who is who --
         # and where the pattern's missing lines were expected, so a signal
         # scaled from part of its multiplet shows which part.
@@ -1289,6 +1297,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                              else _shared_reason(info))
                             + _pattern_reason(info)
                             + _segments_reason(info)
+                            + _baseline_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -1355,6 +1364,33 @@ def _pattern_reason(info) -> list:
             f'{", ".join("%.4f" % v for v in missing)} ppm. The area is the '
             f'placed lines scaled by the pattern to the whole multiplet, '
             f'so it assumes the missing lines are there, under something.']
+
+
+# Above this share of the window under the baseline, the row says so: a
+# window on a signal has a few noise points under its baseline, not a
+# quarter of its length.
+BASELINE_SILENCED_SHARE = 0.25
+
+
+def _baseline_reason(info) -> list:
+    """Said of a signal whose window ran under its local baseline over a
+    good part of its length: that part counted nothing, and a window
+    standing that much under its own baseline is a window on a flank or a
+    dip, not on the signal."""
+    share = info.get('below_baseline_share')
+    if share is None or float(share) < BASELINE_SILENCED_SHARE:
+        return []
+    return ['the trace runs under the local baseline on %d%% of the window; '
+            'that part counted nothing (only area above the baseline is '
+            'integrated)' % round(100 * float(share))]
+
+
+def _is_complex(cand) -> bool:
+    """A complex multiplet: judged as a measured pattern (``m*``), with or
+    without a shape fitted to the trace."""
+    ev = cand.evidence or {}
+    return bool(ev.get('shape_fit')) or normalize_mult(
+        ev.get('multiplicity')) == PATTERN_MULT
 
 
 def _segments_reason(info) -> list:

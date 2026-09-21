@@ -82,6 +82,43 @@ def _bound_by_neighbours(apex, lo, hi, other_ppms, lw):
     return lo, hi
 
 
+def _valley(ppm, y, inner, outer):
+    """The ppm where the trace is lowest between ``inner`` and ``outer``,
+    or ``outer`` when the stretch holds no points."""
+    ppm = np.asarray(ppm, dtype=float)
+    lo, hi = (inner, outer) if inner <= outer else (outer, inner)
+    m = (ppm >= lo) & (ppm <= hi)
+    if m.sum() < 1:
+        return float(outer)
+    idx = np.flatnonzero(m)
+    return float(ppm[idx[int(np.argmin(np.asarray(y, dtype=float)[idx]))]])
+
+
+def foot_at_valley(apex, lo, hi, free_lo, free_hi, lw, trace):
+    """A foot a neighbour pulled in moves to the valley between the two
+    signals: the lowest point of ``trace`` between half a linewidth from
+    the apex (as near as a bound ever comes) and where the neighbour's bound
+    put it.
+
+    The bound is the midpoint less half a linewidth, and against a large
+    neighbour that is on the neighbour's flank. A local baseline drawn
+    through two flanks runs above the signal between them, and a weak
+    signal between two strong ones was integrated negative that way (the
+    fill in the quantification stage showed the whole window below the
+    baseline). The valley is where each signal contributes least, and the
+    baseline through the valleys is the floor the signal stands on. A foot
+    nobody pulled in stands where it was; a trace is needed to find a valley.
+    """
+    if trace is None or lw <= 0:
+        return lo, hi
+    ppm, y = trace
+    if lo > free_lo:
+        lo = _valley(ppm, y, apex - lw / 2.0, lo)
+    if hi < free_hi:
+        hi = _valley(ppm, y, apex + lw / 2.0, hi)
+    return lo, hi
+
+
 def _foreign_ppms(line_peaks, other_peaks):
     own = {id(p) for p in line_peaks}
     own_ranks = {p.get('rank') for p in line_peaks if p.get('rank') is not None}
@@ -90,7 +127,8 @@ def _foreign_ppms(line_peaks, other_peaks):
                                          and q.get('rank') in own_ranks)]
 
 
-def signal_segments(line_peaks, *, linewidth_ppm, other_peaks=()):
+def signal_segments(line_peaks, *, linewidth_ppm, other_peaks=(),
+                    trace=None):
     """One window per line of the signal, merged where they touch.
 
     A line's window is its own feet let out to WINDOW_REACH_LINEWIDTHS past
@@ -99,6 +137,10 @@ def signal_segments(line_peaks, *, linewidth_ppm, other_peaks=()):
     linewidth, never nearer than half a linewidth to the apex. Windows that
     overlap are one segment. A foreign peak between two lines bounds them
     both, and where the bounds leave a gap the gap is out.
+
+    Given ``trace`` (``(ppm, y)``, the spectrum the areas are read on), a
+    foot a neighbour bounded moves to the valley between the two signals
+    (``foot_at_valley``).
 
     Returns ``[(lo, hi), ...]`` in ascending ppm, or an empty list without
     lines. Without a linewidth the feet stand and the segments are the
@@ -116,7 +158,9 @@ def signal_segments(line_peaks, *, linewidth_ppm, other_peaks=()):
         if lw > 0:
             lo = min(lo, apex - WINDOW_REACH_LINEWIDTHS * lw)
             hi = max(hi, apex + WINDOW_REACH_LINEWIDTHS * lw)
+            free_lo, free_hi = lo, hi
             lo, hi = _bound_by_neighbours(apex, lo, hi, foreign, lw)
+            lo, hi = foot_at_valley(apex, lo, hi, free_lo, free_hi, lw, trace)
         wins.append((float(lo), float(hi)))
     wins.sort()
     merged: list = []
@@ -139,13 +183,13 @@ def foreign_between_lines(line_peaks, other_peaks) -> list:
                   if lo < q < hi)
 
 
-def signal_window(line_peaks, *, linewidth_ppm, other_peaks=()):
+def signal_window(line_peaks, *, linewidth_ppm, other_peaks=(), trace=None):
     """The span of ``signal_segments``: foot to foot over the signal's
     lines, let out to WINDOW_REACH_LINEWIDTHS past the outer lines, and
     never into a neighbour. Returns ``(lo, hi)`` or None without lines.
     """
     segs = signal_segments(line_peaks, linewidth_ppm=linewidth_ppm,
-                           other_peaks=other_peaks)
+                           other_peaks=other_peaks, trace=trace)
     if not segs:
         return None
     return float(segs[0][0]), float(segs[-1][1])
@@ -158,7 +202,56 @@ def _window_mask(ppm, lo, hi):
     return (ppm >= lo) & (ppm <= hi)
 
 
-def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None):
+def local_baseline_line(seg):
+    """The local baseline of a window: the straight line joining its two
+    ends, each clipped at zero so a negative foot cannot tilt it up into the
+    signal. ``seg`` is the trace inside the window in ascending ppm."""
+    seg = np.asarray(seg, dtype=float)
+    if seg.size < 2:
+        return np.zeros_like(seg)
+    return np.linspace(max(float(seg[0]), 0.0), max(float(seg[-1]), 0.0),
+                       seg.size)
+
+
+def baseline_and_signal(seg, *, local_baseline=True, clip=True):
+    """``(baseline, signal)`` for a window's trace: the baseline the
+    integration subtracts (the local line, or zero) and what is left above
+    it, clipped at zero -- the part that is area. ``clip=False`` keeps the
+    signed difference, for the one reader that needs noise to stay
+    symmetric (the detection limit)."""
+    seg = np.asarray(seg, dtype=float)
+    base = local_baseline_line(seg) if local_baseline else np.zeros_like(seg)
+    diff = seg - base
+    return base, (np.maximum(diff, 0.0) if clip else diff)
+
+
+def below_baseline_share(ppm, y, lo, hi, *, local_baseline=True,
+                         segments=None) -> float | None:
+    """The fraction of the integrated points where the trace lies under the
+    baseline -- what the clip in ``integrate_sample`` set to zero. Near zero
+    for a window on a signal; large for a window whose feet stand on
+    somebody else's flanks. None when the window holds too few points."""
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    m = _window_mask(ppm, lo, hi)
+    if m.sum() < 2:
+        return None
+    x, seg = ppm[m], y[m]
+    order = np.argsort(x)
+    x, seg = x[order], seg[order]
+    base, _ = baseline_and_signal(seg, local_baseline=local_baseline)
+    pieces = ([(min(a, b), max(a, b)) for a, b in segments]
+              if segments else [(min(lo, hi), max(lo, hi))])
+    k = np.zeros(x.shape, dtype=bool)
+    for a, b in pieces:
+        k |= (x >= a) & (x <= b)
+    if k.sum() < 2:
+        return None
+    return float(np.mean(seg[k] < base[k]))
+
+
+def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None,
+                     clip=True):
     """Area of one sample between ``lo`` and ``hi`` ppm.
 
     ``local_baseline`` subtracts the straight line joining the window's two
@@ -174,10 +267,18 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None):
     area negative. The window's feet are where the signal is not; the cut is
     where somebody else is.
 
-    A negative area is returned as it comes out. A window over noise integrates
-    to something near zero and sometimes below it, and that is the honest
-    reading: clipping it to zero would report an absent analyte as merely very
-    dilute.
+    Only what stands ABOVE the baseline is area: where the trace runs
+    below it -- a foot on a neighbour's flank, a dip between two signals,
+    noise going negative -- the point counts zero (``baseline_and_signal``).
+    The analyst's rule, stated after a weak signal between two strong ones
+    came out negative with the window shaded wholly under the baseline:
+    nothing above the spectrum is signal. The cost is known: a window over
+    pure noise integrates to a small positive number (about 0.4 sigma per
+    point) instead of about zero, and ``below_baseline_share`` says how
+    much of the window that rule silenced, so the row can show it. That
+    cost is why the detection limit reads the signed integral
+    (``clip=False``): Currie's limits are built from noise that goes both
+    ways, and a clipped noise window would stand above them every time.
 
     Returns None when the window holds too few points to integrate.
     """
@@ -189,10 +290,8 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None):
     x, seg = ppm[m], y[m]
     order = np.argsort(x)
     x, seg = x[order], seg[order]
-    if local_baseline and seg.size >= 2:
-        base = np.linspace(max(float(seg[0]), 0.0), max(float(seg[-1]), 0.0),
-                           seg.size)
-        seg = seg - base
+    _base, seg = baseline_and_signal(seg, local_baseline=local_baseline,
+                                     clip=clip)
     pieces = ([(min(a, b), max(a, b)) for a, b in segments]
               if segments else [(min(lo, hi), max(lo, hi))])
     total, any_piece = 0.0, False
@@ -318,6 +417,17 @@ def window_width_ppm(lo, hi) -> float:
     return abs(float(hi) - float(lo))
 
 
+def _mean_trace(ppm, intensities, included):
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    cols = (list(range(arr.shape[1])) if included is None
+            else [i for i in included if 0 <= i < arr.shape[1]])
+    if not cols:
+        return None
+    return np.asarray(ppm, dtype=float), arr[:, cols].mean(axis=1)
+
+
 def integrate_signal(line_peaks, ppm, intensities, *, included=None,
                      local_baseline=True, align=False, blank_indices=None,
                      linewidth_ppm=None, other_peaks=()):
@@ -325,7 +435,8 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
 
     Returns ``{'window': (lo, hi), 'segments': [(lo, hi), ...],
     'width_ppm': w, 'areas': {sample: area}, 'shifts': {sample: delta},
-    'blank_area': mean, 'foreign_inside': [ppm, ...]}``, or None when the
+    'blank_area': mean, 'foreign_inside': [ppm, ...],
+    'below_baseline_share': f}``, or None when the
     signal has no lines to bound a window with. The window and the shifts
     travel with the areas so the report can show which region produced the
     number — a concentration whose window nobody can see is not auditable.
@@ -341,10 +452,16 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
     correction on windows whose contents it knows. ``foreign_inside`` names
     the neighbours found between the signal's own lines: the ones that kept
     the segments apart. ``window`` is the segments' span.
+    ``below_baseline_share`` is the fraction of the window (on the mean of
+    the measured samples) where the trace ran under the baseline and
+    counted nothing.
     """
+    mean_trace = _mean_trace(ppm, intensities, included)
     if linewidth_ppm:
+        # The feet are placed on the spectrum the areas are read on: the
+        # mean of the samples measured, blanks and excluded outside it.
         segs = signal_segments(line_peaks, linewidth_ppm=linewidth_ppm,
-                               other_peaks=other_peaks)
+                               other_peaks=other_peaks, trace=mean_trace)
         geometry = 'lines'
         foreign = foreign_between_lines(line_peaks, other_peaks)
     else:
@@ -378,6 +495,10 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
         'blank_area': blank_area,
         'geometry': geometry,
         'foreign_inside': foreign,
+        'below_baseline_share': (
+            below_baseline_share(mean_trace[0], mean_trace[1], lo, hi,
+                                 local_baseline=local_baseline, segments=segs)
+            if mean_trace is not None else None),
     }
 
 

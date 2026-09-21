@@ -214,7 +214,7 @@ def standard_areas_from_peak(ref_peak, ppm, intensities, *,
         a = integrate_sample(ppm, arr[:, s], lo, hi,
                              local_baseline=local_baseline)
         if a is not None:
-            out[s] = abs(float(a)) / captured
+            out[s] = float(a) / captured
     return out
 
 

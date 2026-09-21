@@ -62,12 +62,22 @@ class TestOneSample:
         assert integrate_sample(x, y, 1.45, 1.49,
                                 local_baseline=False) > 0.15
 
-    def test_a_negative_area_is_reported_as_it_comes(self):
-        """A window over noise sometimes integrates below zero. Clipping would
-        report an absent analyte as merely very dilute."""
+    def test_nothing_above_the_spectrum_is_area(self):
+        """The analyst's rule: only what stands between the baseline and the
+        trace, above the baseline, is area. A trace running under its
+        baseline counts nothing, not a negative number."""
         x = np.linspace(1.40, 1.55, 3000)
         y = -_gauss(x, 1.47, 1.0)
-        assert integrate_sample(x, y, 1.45, 1.49, local_baseline=False) < 0
+        assert integrate_sample(x, y, 1.45, 1.49, local_baseline=False) == 0.0
+
+    def test_the_signed_integral_is_kept_for_the_detection_limit(self):
+        """Currie's limits are built from noise that goes both ways; the
+        comparison reads the signed integral or every noise window would
+        stand above them."""
+        x = np.linspace(1.40, 1.55, 3000)
+        y = -_gauss(x, 1.47, 1.0)
+        assert integrate_sample(x, y, 1.45, 1.49, local_baseline=False,
+                                clip=False) < 0
 
     def test_a_descending_axis_gives_the_same_area(self):
         x, y = self._spectrum()

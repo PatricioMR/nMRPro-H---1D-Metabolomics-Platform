@@ -10,6 +10,8 @@ import tkinter as tk
 import numpy as np
 import matplotlib.pyplot as plt
 
+from processing.quant_integration import baseline_and_signal
+
 from ._quant_helpers import (
     _fit_lorentz_mean, _fit_lorentz_mean_with_bl, _fit_lorentz_sample,
     _lorentz_amplitude, _lorentz_shape,
@@ -400,8 +402,10 @@ class _QuantVisMixin:
                 for _a, _b in _segs:
                     _in_seg |= (x_reg >= min(_a, _b)) & (x_reg <= max(_a, _b))
             # The area the number came from: between the trace and the local
-            # baseline the integration subtracted (the line joining the
-            # window's ends, clipped at zero), as the PDF draws it.
+            # baseline the integration subtracted, and only where the trace
+            # stands above it -- what runs under the baseline counted
+            # nothing (quant_integration.integrate_sample), as the PDF
+            # draws it.
             _use_bl = r.get('_local_baseline', True)
             _ord_r = np.argsort(x_reg)
             for g, idxs in groups.items():
@@ -410,15 +414,22 @@ class _QuantVisMixin:
                     y_g = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
                     if _show_deconv:
                         y_g = y_g * _jr_frac
-                    if _use_bl and x_reg.size >= 2:
-                        _b = np.empty_like(y_g)
-                        _b[_ord_r] = np.linspace(max(float(y_g[_ord_r][0]), 0.0),
-                                                 max(float(y_g[_ord_r][-1]), 0.0),
-                                                 x_reg.size)
-                    else:
-                        _b = np.zeros_like(y_g)
-                    ax1.fill_between(x_reg, _b, y_g, where=_in_seg,
+                    _b = np.empty_like(y_g)
+                    _b[_ord_r], _ = baseline_and_signal(
+                        y_g[_ord_r], local_baseline=_use_bl)
+                    _above = y_g >= _b
+                    ax1.fill_between(x_reg, _b, y_g,
+                                     where=(_above if _in_seg is None
+                                            else (_in_seg & _above)),
                                      alpha=0.14, color=g_colors.get(g, '#888'))
+            _bbs = r.get('_below_baseline_share')
+            if _bbs is not None and float(_bbs) >= 0.25:
+                ax1.text(0.98, 0.93,
+                         f'trace under baseline on {100 * float(_bbs):.0f}% '
+                         f'of the window: counted nothing',
+                         transform=ax1.transAxes, fontsize=7, ha='right',
+                         va='top', color='#b71c1c',
+                         bbox=dict(fc='white', alpha=0.75, lw=0))
 
             if _show_deconv:
                 ax1.text(0.02, 0.93,

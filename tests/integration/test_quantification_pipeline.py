@@ -15,7 +15,7 @@ import pytest
 from gui.stages._quant_adapter import quantify_project
 
 MHZ = 600.0
-PPM = np.linspace(0.0, 10.0, 20001)
+PPM = np.linspace(-0.5, 10.0, 21001)   # the standard at 0.0 needs both feet
 
 
 def _lorentz(centre, height, hwhm=0.002):
