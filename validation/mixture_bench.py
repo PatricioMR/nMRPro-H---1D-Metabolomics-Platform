@@ -415,15 +415,26 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
 
 
 def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
-        cascade=False, ppm_band=None):
+        cascade=False, ppm_band=None, real_annotation=False):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
                          global_align=False, samples_info=SAMPLES,
                          per_sample_detection=True, detect_shoulders=False,
                          min_group_presence=3, excluded_regions=WATER)
-    mets, params, fp_stats = annotate(PPM, X, peaks, sigma, db_path,
-                                      shapes=shapes, patterns=patterns)
+    if real_annotation:
+        # The application's own path: its search, its grouping, its eleven
+        # passes. Slower, and the only version of these numbers that is a
+        # statement about the software rather than about this file.
+        from validation.app_annotation import annotate as app_annotate
+        mets, params = app_annotate(
+            peaks, PPM, X, SAMPLES, db_path=db_path, field_mhz=MHZ,
+            tolerance_ppm=TOLERANCE, noise_std=sigma, min_snr=6.0,
+            min_distance_ppm=0.003)
+        fp_stats = {}
+    else:
+        mets, params, fp_stats = annotate(PPM, X, peaks, sigma, db_path,
+                                          shapes=shapes, patterns=patterns)
     eligible = eligible_metabolite_ids(mets)
     # a peak whose candidates tie on every criterion has no winner, as the
     # results window decides before quantification
@@ -541,6 +552,9 @@ def main():
                     help='resolve shared windows by shape')
     ap.add_argument('--cascade', action='store_true',
                     help='add what the cascade finds on the residual (ADR-028)')
+    ap.add_argument('--real-annotation', action='store_true',
+                    help="annotate with the application's own search and "
+                         "passes instead of this file's own (ADR-030/032)")
     ap.add_argument('--ppm-band', type=float, default=None,
                     help='width the election buckets delta-ppm by, measured '
                          'from the study drift (default: PPM_BAND_PPM)')
@@ -548,10 +562,11 @@ def main():
     t0 = time.time()
     rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
               shared=args.shared, patterns=args.patterns, cascade=args.cascade,
-              ppm_band=args.ppm_band)
+              ppm_band=args.ppm_band, real_annotation=args.real_annotation)
     print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
                             f"{args.patterns}  shapes={not args.no_shapes}  "
                             f"shared={args.shared}  cascade={args.cascade}  "
+                            f"real_annotation={args.real_annotation}  "
                             f"seed={args.seed}")
     os.makedirs(OUT_DIR, exist_ok=True)
     tag = (('patterns_' + ('shapes' if not args.no_shapes else 'noshapes'))

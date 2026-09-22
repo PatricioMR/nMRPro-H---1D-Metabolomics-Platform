@@ -48,3 +48,39 @@ def test_the_outcome_carries_what_it_had_to_work_with():
     out = SearchOutcome(results=[1, 2], peaks_annotatable=10, peaks_matched=7,
                         elapsed_s=1.5)
     assert (len(out.results), out.peaks_annotatable, out.peaks_matched) == (2, 10, 7)
+
+
+class TestTheApplicationPathRunsHeadless:
+    """The bench annotates with the application's own search and passes,
+    so its numbers are a statement about the software (ADR-030/032)."""
+
+    def test_the_whole_path_is_reachable_without_a_window(self):
+        from validation.app_annotation import annotate, PASSES
+        import inspect
+        sig = inspect.signature(annotate)
+        for name in ('peaks', 'ppm', 'intensities', 'samples_info',
+                     'db_path', 'field_mhz', 'tolerance_ppm'):
+            assert name in sig.parameters, name
+        # the passes the results window runs after the search, in its order
+        assert PASSES[0] == '_fetch_fingerprints'
+        for needed in ('_compute_scores', '_auto_mark_good',
+                       '_promote_singlets', '_apply_fingerprint_gate',
+                       '_nnls_spectral_validation'):
+            assert needed in PASSES, needed
+
+    def test_the_bench_can_be_told_to_use_it(self):
+        import inspect
+        from validation import mixture_bench
+        assert 'real_annotation' in inspect.signature(mixture_bench.run).parameters
+
+    def test_nothing_of_the_window_is_needed_to_run_them(self):
+        """Every pass reads data and writes bookkeeping; if one starts
+        touching a widget, this says so before the bench does."""
+        import inspect
+        from gui.widgets.annotation_results_window import AnnotationResultsWindow
+        from validation.app_annotation import PASSES
+        for name in PASSES:
+            src = inspect.getsource(getattr(AnnotationResultsWindow, name))
+            for forbidden in ('self.win', 'self.tree', 'messagebox',
+                              'ttk.', 'tk.Toplevel'):
+                assert forbidden not in src, f'{name} touches {forbidden}'
