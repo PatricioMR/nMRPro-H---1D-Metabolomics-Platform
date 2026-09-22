@@ -416,11 +416,11 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
 
 def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         cascade=False, ppm_band=None, real_annotation=False,
-        claim_signals=True, max_disagreement=None):
+        claim_signals=True, max_disagreement=None, align=False):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
-                         global_align=False, samples_info=SAMPLES,
+                         global_align=align, samples_info=SAMPLES,
                          per_sample_detection=True, detect_shoulders=False,
                          min_group_presence=3, excluded_regions=WATER)
     if real_annotation:
@@ -557,6 +557,9 @@ def main():
                     help='resolve shared windows by shape')
     ap.add_argument('--cascade', action='store_true',
                     help='add what the cascade finds on the residual (ADR-028)')
+    ap.add_argument('--align', action='store_true',
+                    help="run detection's alignment, as the application "
+                         'does by default')
     ap.add_argument('--max-disagreement', type=float, default=None,
                     help='how far a cascade analyte may have its own '
                          'signals disagree and still be given a number')
@@ -575,7 +578,7 @@ def main():
               shared=args.shared, patterns=args.patterns, cascade=args.cascade,
               ppm_band=args.ppm_band, real_annotation=args.real_annotation,
               claim_signals=not args.no_claim,
-              max_disagreement=args.max_disagreement)
+              max_disagreement=args.max_disagreement, align=args.align)
     print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
                             f"{args.patterns}  shapes={not args.no_shapes}  "
                             f"shared={args.shared}  cascade={args.cascade}  "
