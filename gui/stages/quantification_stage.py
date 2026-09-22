@@ -328,6 +328,20 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             'not quantified (Good mark overrides)',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        # The cascade (ADR-028): after the election, every quantified
+        # analyte is subtracted at its measured amount and the analytes
+        # whose whole listing best explains what is left are added, one
+        # amount for all their signals. A second opinion that only adds.
+        mf6 = ttk.Frame(s2); mf6.pack(fill=tk.X, pady=1)
+        self.cascade_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            mf6, text='Cascade: add analytes the election missed',
+            variable=self.cascade_var).pack(side=tk.LEFT)
+        ttk.Label(mf6, text='on: the quantified analytes are subtracted and '
+                            'the residual is explained jointly, one amount '
+                            'per analyte; adds only, one dot',
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         ttk.Button(s2, text='Review deconvolution…',
                    command=lambda: self._open_deconvolution_window()).pack(
                        anchor=tk.W, padx=4, pady=(1, 3))
@@ -760,7 +774,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             vip_s = f'{vip:.2f}' if np.isfinite(vip) else '—'
             _mw_r = r.get('_multiplet_window')
             _im_r = r.get('_integ_mode', '')
-            if _im_r == 'Multiplet' and _mw_r and _mw_r[0] is not None:
+            if _im_r in ('Multiplet', 'Cascade') and _mw_r and _mw_r[0] is not None:
                 _ppm_str = (f"{min(float(_mw_r[0]), float(_mw_r[1])):.4f}"
                             f"–{max(float(_mw_r[0]), float(_mw_r[1])):.4f}")
             else:

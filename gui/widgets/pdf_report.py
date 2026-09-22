@@ -214,7 +214,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
 
     # Multiplet mode: use the actual integration window and re-centre the crop on it.
     _mw = result.get('_multiplet_window')
-    _windowed = result.get('_integ_mode', '') in ('Multiplet', 'Shape')
+    _windowed = result.get('_integ_mode', '') in ('Multiplet', 'Shape', 'Cascade')
     if _mw and _windowed:
         ppm_lo, ppm_hi = min(_mw), max(_mw)
         ppm_ctr = (ppm_lo + ppm_hi) / 2.0   # centre on multiplet, not anchor peak

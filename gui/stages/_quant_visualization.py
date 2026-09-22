@@ -193,9 +193,19 @@ class _QuantVisMixin:
         g_colors = {g: (_app_colors.get(g) or cmap(i))
                     for i, g in enumerate(groups)}
 
-        lipid_regions = r.get('_lipid_regions') or []
-        lipid_window = r.get('_lipid_window')
-        if lipid_window:
+        # A row drawn over a region rather than around a detected peak:
+        # a lipid window, or a cascade row, which has no peak of its own --
+        # it was identified on the shape of its whole listing (ADR-028) and
+        # is shown over the window of its tallest signal, with every signal
+        # of it that falls inside marked.
+        region_marks = r.get('_lipid_regions') or []
+        region_window = r.get('_lipid_window')
+        if region_window is None and r.get('_by_cascade'):
+            _cw = r.get('_multiplet_window')
+            if _cw and _cw[0] is not None:
+                region_window = (float(_cw[0]), float(_cw[1]))
+                region_marks = [region_window]
+        if region_window:
             p = None
         else:
             p = r.get('_peak') or self._find_peak(r.get('ppm', 0), tol=0.05)
@@ -481,9 +491,9 @@ class _QuantVisMixin:
                 _y_top = float(np.max(_y_in_win))
                 ax1.set_ylim(bottom=0, top=max(_y_top * 1.25, 1e-3))
 
-        elif ppm_arr is not None and all_int is not None and lipid_window:
-            lo_ppm = float(min(lipid_window[0], lipid_window[1]))
-            hi_ppm = float(max(lipid_window[0], lipid_window[1]))
+        elif ppm_arr is not None and all_int is not None and region_window:
+            lo_ppm = float(min(region_window[0], region_window[1]))
+            hi_ppm = float(max(region_window[0], region_window[1]))
             span = max(hi_ppm - lo_ppm, 1e-3)
             pad = max(span * 0.60, 0.03)
             view_lo = lo_ppm - pad
@@ -500,12 +510,16 @@ class _QuantVisMixin:
                         gm = np.mean(ys, axis=0)
                         ax1.plot(x_view, gm, color=col, lw=1.8, alpha=0.95, label=g)
 
-                for lo_rg, hi_rg in lipid_regions:
-                    lo_rg = float(min(lo_rg, hi_rg))
-                    hi_rg = float(max(lo_rg, hi_rg))
+                for lo_rg, hi_rg in region_marks:
+                    lo_rg, hi_rg = float(min(lo_rg, hi_rg)), float(max(lo_rg, hi_rg))
                     ax1.axvspan(lo_rg, hi_rg, color='#1565C0', alpha=0.13, zorder=0)
                     ax1.axvline(lo_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
                     ax1.axvline(hi_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
+                # the analyte's own lines, as the peak view marks them
+                for _lp in r.get('_line_ppms') or ():
+                    if view_lo <= float(_lp) <= view_hi:
+                        ax1.axvline(float(_lp), color='#e63946', lw=0.9,
+                                    ls=':', alpha=0.7)
 
                 ax1.set_xlim(float(x_view.max()), float(x_view.min()))
 
@@ -513,14 +527,15 @@ class _QuantVisMixin:
         ax1.set_ylabel('Intensity', fontsize=8)
         name  = r['metabolite']
         _mw_t = r.get('_multiplet_window')
-        if integ_mode == 'Multiplet' and _mw_t and _mw_t[0] is not None:
+        if (integ_mode in ('Multiplet', 'Cascade') and _mw_t
+                and _mw_t[0] is not None):
             _t_lo = min(float(_mw_t[0]), float(_mw_t[1]))
             _t_hi = max(float(_mw_t[0]), float(_mw_t[1]))
             ppm_s = f"{_t_lo:.4f}–{_t_hi:.4f}"
         elif p:
             ppm_s = f"{p['ppm']:.4f}"
-        elif lipid_window:
-            ppm_s = f"{min(lipid_window):.4f}-{max(lipid_window):.4f}"
+        elif region_window:
+            ppm_s = f"{min(region_window):.4f}-{max(region_window):.4f}"
         else:
             ppm_s = '?'
         ax1.set_title(f'{name}  {ppm_s} ppm  [{integ_mode}]',

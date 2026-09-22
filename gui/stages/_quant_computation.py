@@ -569,6 +569,8 @@ class _QuantCompMixin:
             _singlet_snr = float(_ssv.get()) if _ssv is not None else None
         except (tk.TclError, ValueError):
             _singlet_snr = None
+        _cv = getattr(self, 'cascade_var', None)
+        _cascade = bool(_cv.get()) if _cv is not None else False
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -599,6 +601,7 @@ class _QuantCompMixin:
             shared_overrides=dict(self._deconv_overrides or {}),
             diagnostics=_diag,
             singlet_min_snr=_singlet_snr,
+            cascade=_cascade,
         )
 
         self._prog_apply(70, 'Building results…')

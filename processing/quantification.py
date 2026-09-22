@@ -38,6 +38,7 @@ NO_MEASURABLE_WINDOW = 'no_measurable_window'
 NOT_DETECTED = 'not_detected'
 SHAPES_OFF = 'shapes_off'
 SHAPE_UNIDENTIFIED = 'shape_unidentified'
+CASCADE_CROWDED = 'cascade_crowded'
 PARTIAL_MULTIPLET = 'partial_multiplet'
 AMOUNT_CONTRADICTED = 'amount_contradicted'
 SINGLET_UNSUPPORTED = 'singlet_unsupported'
@@ -66,6 +67,13 @@ REJECTION_TEXT = {
         'its own amount and its whole shape agree, and the rest of its '
         'fingerprint carries the amount (with "Deconvolve windows … by '
         'shape" on). No such apex was found for it.',
+    CASCADE_CROWDED:
+        'Identified by the cascade but not quantified: either most of the '
+        'signal of this analyte lies where analytes already quantified '
+        'account for the trace, or its own signals do not agree on one '
+        'amount when each is measured separately. On the reference study an '
+        'amount in that state missed by a third and moved the difference '
+        'between groups by as much, so no number is given.',
     WINDOW_TAKEN:
         'Not quantified: the signals other quantified analytes list inside '
         'this window, at the amounts they were measured at, account for the '

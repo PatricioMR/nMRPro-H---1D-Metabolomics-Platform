@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from processing.quant_cascade import (
+    MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, cascade_missed)
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
@@ -48,11 +50,12 @@ from processing.quant_shared import (
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    AMOUNT_CONTRADICTED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
+    AMOUNT_CONTRADICTED, CASCADE_CROWDED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
     PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED, SHAPES_OFF,
     SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
-    PATTERN_MULT, is_singlet_like, normalize_mult)
+    DJ_GOLD_HZ_DEFAULT, PATTERN_MULT, dj_band, is_singlet_like,
+    normalize_mult, study_drift)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -89,47 +92,149 @@ def _cv_percent(values):
 _DOTS = {3: STATUS_STRONG, 2: STATUS_FAIR, 1: STATUS_WEAK}
 
 
-def _structural_evidence(signal) -> int:
+def _structural_evidence(signal, dj_gold_hz=None) -> int:
     """How much of the expected evidence this signal's SHAPE carried.
 
     Three: the multiplet was complete and its coupling agreed. Two: complete,
     coupling off but inside the gate. One: everything else that still produced
     a number — a singlet, which has no coupling to agree with, among them.
+
+    "Agreed" is the study's own band (``dj_band``), the one the election and
+    the annotation use, widened where the reference measured its coupling
+    with an uncertainty of its own. It used to be a literal fifth of a
+    hertz here, so the engine disagreed with the annotation about the same
+    signal: inosine, matched at 0.25 Hz against a reference whose own J
+    carries 0.19 Hz of uncertainty, was Good in the window and second-rate
+    in the table. A reference known to a fifth of a hertz cannot judge a
+    match to a fifth of one.
     """
     ev = signal.evidence or {}
     n_f, n_e = ev.get('n_found'), ev.get('n_expected')
     complete = (n_f is not None and n_e is not None and n_f >= n_e)
     dj = ev.get('delta_j_hz')
-    if complete and dj is not None and abs(float(dj)) <= 0.20:
-        return 3
-    if complete and dj is not None:
-        return 2
-    return 1
+    if not complete or dj is None:
+        return 1
+    gold = float(dj_gold_hz if dj_gold_hz else DJ_GOLD_HZ_DEFAULT)
+    return 3 if dj_band(dj, gold, ref_sigma_hz=ev.get('j_sigma_hz')) == 0 else 2
 
 
-def _confidence(signal, strength=None, shared=False) -> tuple[int, str]:
-    """What the result is worth: the worse of its shape and its size.
+def _identity_of(info) -> dict:
+    """The identity evidence of a measured analyte, from what the run
+    already holds: the signals annotation confirmed (its Good mark is the
+    complete multiplet with the coupling inside the gate), how much of
+    the reference's listing was matched at all, and what the rest of that
+    listing does at the amount just measured."""
+    sig = info['signal']
+    payload = sig.payload if isinstance(sig.payload, dict) else {}
+    met = payload.get('met') or {}
+    listed = len(met.get('db_peaks') or ()) or 1
+    by_db: dict = {}
+    for mp in met.get('matched_peaks') or ():
+        if mp.get('db_ppm') is None:
+            continue
+        by_db.setdefault(round(float(mp['db_ppm']), 3), []).append(mp)
+    confirmed = sum(1 for group in by_db.values()
+                    if any(mp.get('annotation_quality') == 'good' for mp in group))
+    # The signal this number was measured on counts for itself when its own
+    # multiplet was complete and its coupling agreed, whether or not the
+    # annotation window was ever opened to mark it: the engine must be able
+    # to say what it knows without depending on a mark made elsewhere.
+    own = sig.evidence or {}
+    if _structural_evidence(sig) == 3 and not any(
+            mp.get('annotation_quality') == 'good'
+            and own.get('db_ppm') is not None
+            and abs(float(mp.get('db_ppm', 0.0)) - float(own['db_ppm'])) < 0.005
+            for group in by_db.values() for mp in group):
+        confirmed += 1
+    verdicts = info.get('fingerprint_at_amount') or ()
+    present = sum(1 for v in verdicts if v[3] == 'present')
+    contradicted = sum(1 for v in verdicts if str(v[3]).startswith('contradicted'))
+    covered = len(by_db) / listed >= COVERAGE_CORROBORATES
+    return {'confirmed': confirmed, 'contradicted': contradicted,
+            'corroborated': bool(covered and present), 'listed': listed}
 
-    Two independent things can spoil a number and neither can make up for the
-    other. A textbook multiplet measured at the quantification limit is a
-    confident identity and an imprecise quantity; a towering singlet with a
-    rival on its peak is the reverse. Averaging them would let either hide the
-    other, so the lower one stands.
 
-    ``shared`` says the window is not this analyte's alone -- either the area
-    was resolved out of one held with others, or it is a window that could not
-    be split and so still holds somebody else's signal. Two dots either way,
-    whatever the multiplet's shape: in the first case the number rests on
-    another analyte's concentration being right, and in the second it is an
-    upper bound wearing a concentration's clothes.
+def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
+                       listed=1, cascade=None) -> tuple[int, str]:
+    """How much the study itself says this is the analyte it says it is.
 
-    ``strength`` is the band from ``strength_band`` — 3 when the area clears
-    the quantification limit by the agreed factor, 2 otherwise. It never
-    reaches 1: an analyte whose peak was identified and whose contest it won is
-    not made doubtful by being scarce, and being under the limit says the
-    quantity is small, not that the assignment was wrong.
+    Measured on the reference bench, over every analyte the run quantified,
+    against what was actually put in it:
+
+    * a signal **confirmed** -- its multiplet complete and its coupling
+      inside the gate, which is what annotation marks Good -- and nothing
+      of the rest of its listing missing at the measured amount: 7 of 7
+      were real, 0 false. Nothing else reached it: every one of the eight
+      false positives had no confirmed signal at all.
+    * covered but unconfirmed -- three quarters of its listed signals
+      matched and the rest standing where this amount says they must: 3
+      of 4 real.
+    * anything else: 5 of 12 real, which is what one dot has to mean.
+
+    A signal of its own listing missing at the measured amount puts it at
+    one dot whatever else it has: the amount says the signal should be
+    there, and it is not.
+
+    An analyte the cascade brought in is never more than two: its lines
+    were never confirmed one by one. Two when its own signals agree on
+    the amount to within CASCADE_AGREEMENT_GOOD, one otherwise.
     """
-    level = _structural_evidence(signal)
+    if cascade is not None:
+        dis = float(cascade.get('disagreement') or float('nan'))
+        if np.isfinite(dis) and dis <= CASCADE_AGREEMENT_GOOD:
+            return 2, f'the cascade placed it and its own signals agree to {100 * dis:.0f}%'
+        return 1, 'the cascade placed it and no second signal could check the amount'
+    if contradicted:
+        return 1, (f'{contradicted} signal(s) of its own listing are missing '
+                   f'at this amount')
+    if confirmed:
+        return 3, (f'{confirmed} of its signals confirmed: the multiplet '
+                   f'complete and the coupling inside the gate')
+    if listed <= 1:
+        return 1, 'the reference lists one signal for it: nothing corroborates it'
+    if corroborated:
+        return 2, ('no signal of it was confirmed, but its listing is covered '
+                   'and stands at this amount')
+    return 1, 'no signal of it was confirmed'
+
+
+def _confidence(signal, strength=None, shared=False, *, identity=None,
+                dj_gold_hz=None) -> tuple[int, str]:
+    """What the result is worth: the worst of its identity, its shape and
+    its size.
+
+    Three independent things can spoil a number and none makes up for
+    another. A textbook multiplet measured at the quantification limit is
+    a confident identity and an imprecise quantity; a towering singlet
+    with a rival on its peak is the reverse. Averaging them would let
+    either hide the other, so the lowest stands.
+
+    ``identity`` is ``_identity_evidence`` -- what the rest of the
+    analyte's own listing says about the assignment. Without it the shape
+    of the one signal measured is all that speaks, which is how eight
+    false positives came to sit at the same dot count as eight real
+    analytes on the reference bench.
+
+    ``shared`` says the window is not this analyte's alone -- either the
+    area was resolved out of one held with others, or it is a window that
+    could not be split and so still holds somebody else's signal. Two
+    dots either way, whatever the multiplet's shape: in the first case
+    the number rests on another analyte's concentration being right, and
+    in the second it is an upper bound wearing a concentration's clothes.
+    This is about the amount, not the identity: an analyte whose identity
+    is confirmed and whose window is shared keeps its identity level,
+    which the row carries separately (``_identity_why``).
+
+    ``strength`` is the band from ``strength_band`` -- 3 when the area
+    clears the quantification limit by the agreed factor, 2 otherwise. It
+    never reaches 1: an analyte whose peak was identified and whose
+    contest it won is not made doubtful by being scarce, and being under
+    the limit says the quantity is small, not that the assignment was
+    wrong.
+    """
+    level = _structural_evidence(signal, dj_gold_hz)
+    if identity is not None:
+        level = min(level, int(identity))
     if strength is not None:
         level = min(level, int(strength))
     if shared:
@@ -142,6 +247,18 @@ def _confidence(signal, strength=None, shared=False) -> tuple[int, str]:
 # another analyte's concentration, and on the assumption that the claimants
 # listed are all of them. Two dots, never three.
 SHARED_MAX_CONFIDENCE = 2
+
+
+
+# An amount the analyte's own signals agree on this closely was, on the
+# reference bench, within 8% of the truth; the ones that disagreed by
+# more than MAX_SIGNAL_DISAGREEMENT get no number at all.
+CASCADE_AGREEMENT_GOOD = 0.10
+
+# The share of an analyte's listed signals that must have been matched
+# before the rest of the listing standing at the measured amount counts
+# as corroboration rather than as a crowded region obliging.
+COVERAGE_CORROBORATES = 0.75
 
 # Below this, the window holds less of an analyte's signal than it leaves
 # outside, and dividing the share by it multiplies the error faster than it
@@ -678,13 +795,29 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              drift_ppm=0.0, excluded_regions=(), deconvolve=True,
              quantify_shapes=True, resolve_shared=False,
              shared_overrides=None, diagnostics=None,
-             residual_pool=None, singlet_min_snr=None) -> list[dict]:
+             residual_pool=None, singlet_min_snr=None,
+             cascade=False, metabolites=None, field_mhz=None,
+             ppm_band_ppm=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
     reach to be quantified (SINGLET_MIN_SNR when None): the analyst's
     choice per study, since no one number separates a faint real singlet
     from a peak of noise at a position.
+
+    ``ppm_band_ppm`` is the width the election buckets Δppm by, measured
+    from the study's own drift (``annotation_scoring.PPM_BAND_PPM`` when
+    None). The band is deliberately coarse -- ordering two candidates by a
+    Δppm difference smaller than the study's drift is ordering noise -- but
+    a fixed width cannot know how much a given study drifts, so a study
+    that measured its own can say so here.
+
+    ``cascade`` runs the cascade afterwards (quant_cascade, ADR-028) over
+    ``metabolites`` -- every annotated analyte with its listed signals --
+    on what the quantified analytes leave of the spectrum, and turns what
+    it takes in into rows. It only adds: an analyte the election
+    quantified is subtracted at its measured amount and never offered.
+    Needs ``field_mhz`` to lay the listed patterns.
 
     Runs the election and the measurement (``_quantify_once``), then asks
     of every winner whether the amount its signal implies is one the rest
@@ -713,7 +846,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         excluded_regions=excluded_regions, deconvolve=deconvolve,
         quantify_shapes=quantify_shapes, resolve_shared=resolve_shared,
         shared_overrides=shared_overrides, diagnostics=diagnostics,
-        residual_pool=residual_pool, singlet_min_snr=singlet_min_snr)
+        residual_pool=residual_pool, singlet_min_snr=singlet_min_snr,
+        ppm_band_ppm=ppm_band_ppm)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -729,7 +863,192 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     diag = kw.get('diagnostics')
     if diag is not None:
         diag['amount_withdrawn'] = {m: r for m, (r, _d) in withdrawn.items()}
+    if cascade and metabolites:
+        rows = _cascade_rows(
+            rows, metabolites, ppm=ppm, intensities=intensities,
+            included=included, groups=groups, noise_sigma=noise_sigma,
+            linewidth_ppm=linewidth_ppm,
+            # the study's drift as annotation measured it (the median
+            # shift of the matched signals), not the detection limits'
+            # search half-width that ``drift_ppm`` carries
+            drift_ppm=float(study_drift(metabolites) or 0.0),
+            field_mhz=field_mhz, excluded_regions=excluded_regions,
+            standard_areas=standard_areas, standard_nh=standard_nh,
+            standard_conc=standard_conc,
+            external_standard_samples=external_standard_samples,
+            dilution=dilution, correction=correction,
+            proton_correction=proton_correction, diagnostics=diag)
     return rows
+
+
+def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
+                  noise_sigma, linewidth_ppm, drift_ppm, field_mhz,
+                  excluded_regions, standard_areas, standard_nh,
+                  standard_conc, external_standard_samples, dilution,
+                  correction, proton_correction, diagnostics=None) -> list:
+    """The rows the cascade adds to a quantified study, in place of the
+    rejected rows of the analytes it takes in.
+
+    The quantified analytes are handed to the cascade at their area per
+    proton before normalisation -- the cascade works on the spectrum as
+    measured -- and what it finds is normalised by the same factors, so a
+    cascade row and an elected one are comparable numbers.
+    """
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    incl = [int(i) for i in (included if included is not None
+                             else range(arr.shape[1]))]
+    quantified = [r for r in rows if not r.get('_not_quantified') and not r.get('_is_is')]
+    pqn = {}
+    for r in quantified:
+        pqn.update(r.get('_pqn_factors') or {})
+    fixed = {}
+    for r in quantified:
+        nh = float(r.get('_nh') or 0.0)
+        if not nh or not np.isfinite(nh):
+            continue
+        fixed[r['hmdb_id']] = {
+            int(s): float(a) / nh * float(pqn.get(int(s), 1.0))
+            for s, a in (r.get('_areas_per_sample') or {}).items()
+            if a is not None and np.isfinite(a) and a > 0}
+    found = cascade_missed(
+        metabolites, ppm, arr, incl, fixed_per_proton=fixed,
+        noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
+        drift_ppm=drift_ppm, field_mhz=field_mhz,
+        excluded_regions=excluded_regions, diagnostics=diagnostics)
+    if not found:
+        return rows
+    standard = (standard_per_proton(standard_areas, standard_nh,
+                                    external_samples=external_standard_samples)
+                if standard_areas else None)
+    by_id = {r.get('hmdb_id'): r for r in rows}
+    out = list(rows)
+    for mid, res in found.items():
+        nh = float(res['nh'])
+        areas = {s: a / float(pqn.get(s, 1.0)) * nh
+                 for s, a in res['per_proton'].items() if a > 0}
+        conc = concentrations(areas, nh, standard=standard,
+                              standard_conc=standard_conc,
+                              external=bool(external_standard_samples),
+                              dilution=dilution, correction=correction,
+                              proton_correction=proton_correction)
+        by_group = {g: [conc[s] for s in idxs
+                        if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
+                    for g, idxs in (groups or {}).items()}
+        good = [v for v in conc.values() if np.isfinite(v) and v > 0]
+        if not good:
+            continue
+        former = by_id.get(mid)
+        _dis = float(res.get('disagreement') or float('nan'))
+        if (float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
+                or (np.isfinite(_dis) and _dis > MAX_SIGNAL_DISAGREEMENT)):
+            # identified, but the amount would come from the part of it
+            # nobody else accounts for; that number is not a measurement
+            row = _rejected_row(mid, CASCADE_CROWDED,
+                                detail=' ' + _cascade_reason(res))
+            row['metabolite'] = res.get('name', mid)
+            row['ppm'] = float((res.get('window') or (0.0, 0.0))[0])
+            row['_by_cascade'] = True
+            row['_cascade'] = {k: res[k] for k in
+                               ('apex_snr', 'shift_ppm', 'at_cap', 'signals',
+                                'step', 'nh', 'free_share', 'capped_share',
+                                'disagreement')}
+        else:
+            row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
+                               former=former)
+        if former is not None:
+            out[out.index(former)] = row
+        else:
+            out.append(row)
+    return out
+
+
+def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> dict:
+    """A row for an analyte the cascade took in. One dot: its identity
+    rests on its whole listing explaining the residual jointly, not on
+    lines confirmed one by one, and the election had rejected it."""
+    lo, hi = res.get('window') or (0.0, 0.0)
+    sig = sorted(res.get('signals') or (), key=lambda v: -v[3])
+    was = [t for t in ((former or {}).get('_status_reasons') or [])]
+    level, why = _identity_evidence(cascade=res)
+    return {
+        'hmdb_id': mid,
+        'metabolite': res.get('name', mid),
+        'ppm': float((lo + hi) / 2.0),
+        'n_peaks': len(sig),
+        'raw_area': float(np.mean(list(areas.values()))),
+        'corr_area': float(np.mean(list(areas.values()))),
+        'conc_mm': float(np.mean(good)),
+        'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
+        'snr': float(res.get('apex_snr') or 0.0),
+        'status': _DOTS[level],
+        'vip_score': float('nan'),
+        '_confidence': level,
+        '_identity_why': why,
+        '_identity_level': level,
+        '_integ_mode': 'Cascade',
+        '_not_quantified': False,
+        '_by_cascade': True,
+        '_cascade': {k: res[k] for k in ('apex_snr', 'shift_ppm', 'at_cap',
+                                         'signals', 'step', 'nh', 'free_share',
+                                         'capped_share', 'disagreement')},
+        '_peak': None,
+        '_peak_rank': None,
+        '_display_peak_rank': None,
+        '_multiplet_window': [float(lo), float(hi)],
+        '_line_ppms': [float(v[0]) for v in sig],
+        '_nh': float(res['nh']),
+        '_areas_per_sample': areas,
+        '_concs_per_sample': conc,
+        '_concs_by_group': by_group,
+        '_pqn_factors': dict(pqn),
+        '_snr_per_sample': {},
+        '_detected_per_sample': {},
+        '_peak_align_shifts': None,
+        '_blk_mean_area': float('nan'),
+        '_is_singlet': len(sig) == 1 and is_singlet_like(sig[0][1]),
+        '_multiplicity': sig[0][1] if sig else None,
+        '_ann_score': 0.0,
+        '_lod_mm': None,
+        '_loq_mm': None,
+        '_status_reasons': [_cascade_reason(res)] + (
+            ['Before the cascade: ' + ' '.join(was)] if was else []),
+        '_hits': [],
+        '_used_j_resolve': False,
+        '_j_resolve_frac': 1.0,
+        '_used_mcr': False,
+        '_mcr': None,
+        '_lorentz': None,
+        '_is_is': False,
+    }
+
+
+def _cascade_reason(res) -> str:
+    sig = sorted(res.get('signals') or (), key=lambda v: -v[3])
+    parts = ', '.join(f"{v[1] or '?'} {v[0]:.3f} ({v[3]:.0f} sigma)" for v in sig[:4])
+    more = f' and {len(sig) - 4} more' if len(sig) > 4 else ''
+    free = float(res.get('free_share') or 1.0)
+    capped = float(res.get('capped_share') or 0.0)
+    dis = float(res.get('disagreement') or float('nan'))
+    agree = (f" Measured again on each of its signals separately, they agree "
+             f"to {100 * dis:.0f}% of the amount."
+             if np.isfinite(dis) else
+             " It has no second signal bright enough to check the amount "
+             "against, so the amount has no error bar of its own.")
+    held = (f" It was held down in {100 * capped:.0f}% of the samples by the "
+            f"emptiest of its regions: the amount reads low."
+            if capped else '')
+    return (f"Added by the cascade (step {res.get('step')}): won no peak in the "
+            f"election, but with every quantified analyte subtracted at its "
+            f"measured amount, its whole listing -- {parts}{more} -- is what best "
+            f"explains the residual, at one amount for all its signals, and "
+            f"stands {float(res.get('apex_snr') or 0):.0f} sigma at its tallest. "
+            f"{100 * free:.0f}% of its signal lies where nothing else is "
+            f"accounted for; the amount was fitted beside the quantified "
+            f"analytes that reach into its regions, each free within a quarter "
+            f"of what it measured.{agree} Its lines were not confirmed one by "
+            f"one: a weak identification, to be checked.{held}")
 
 
 def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
@@ -746,7 +1065,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    drift_ppm=0.0, excluded_regions=(), deconvolve=True,
                    quantify_shapes=True, resolve_shared=False,
                    shared_overrides=None, diagnostics=None,
-                   residual_pool=None, withdrawn=None, singlet_min_snr=None):
+                   residual_pool=None, withdrawn=None, singlet_min_snr=None,
+                   ppm_band_ppm=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -826,7 +1146,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             if c.met_id not in _with_peaks:
                 shapes_off[c.met_id] = SHAPE_UNIDENTIFIED
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
-                    ambiguous_ranks=ambiguous_ranks)
+                     ambiguous_ranks=ambiguous_ranks,
+                     band_ppm=ppm_band_ppm)
     residual_ids: set = set()
     taken_over: dict = {}
 
@@ -1106,9 +1427,21 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         if mid in measured:
             # Its number came from a window it does not hold alone; what it
             # holds of that window is this.
+            # How much of the window the balance left it. A window with
+            # claimants the balance gives nothing to is shared in name
+            # only, and the number does not rest on their concentrations:
+            # on the reference bench every correct analyte sat in such a
+            # window, so the cap alone held all of them below the top band
+            # and nothing was ever marked confident.
+            _before = measured[mid].get('area_median')
+            _after = info.get('area_median')
+            _kept = (float(_after) / float(_before)
+                     if _before and _after is not None and float(_before) > 0
+                     else None)
             measured[mid] = {**measured[mid], 'areas': info['areas'],
                              'shared_with': info['shared_with'],
                              'strength': info['strength'],
+                             'share_kept': _kept,
                              'area_median': info['area_median']}
         elif election.rejected.get(mid) == LOST_COMPETITION:
             # Only this one. Losing a contested peak is a verdict about which
@@ -1212,10 +1545,23 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
+        ident, ident_why = _identity_evidence(**_identity_of(info))
+        # Sharing costs a dot when the others actually took something: a
+        # quantity this window could have quantified. Below its own limit
+        # of quantification what they took is not a quantity, so the
+        # number does not rest on their concentrations.
+        _given = info.get('share_given')
+        _loq = info.get('loq_area')
+        _material = (_given is None
+                     or _loq is None or not np.isfinite(_loq)
+                     or float(_given) >= float(_loq))
+        _really_shared = (info.get('unshared_reason') is not None
+                          or (bool(info.get('shared_with')) and _material))
         level, dots = _confidence(
             info['signal'], info.get('strength'),
-            shared=bool(info.get('shared_with')
-                        or info.get('unshared_reason')))
+            shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+        info['identity_level'] = ident
+        info['identity_why'] = ident_why
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
                          pqn_factors, standard, standard_conc,
                          bool(external_standard_samples), dilution,
@@ -1587,6 +1933,21 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_captured_fraction': info.get('captured'),
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
+        # Why the identity is worth what it is worth, in one sentence the
+        # table's tooltip shows beside the dots.
+        '_identity_why': info.get('identity_why'),
+        '_identity_level': info.get('identity_level'),
+        # How much of a shared window the split left this analyte: 1.0 when
+        # the other claimants took nothing, so the number rests on nobody.
+        '_share_kept': info.get('share_kept'),
+        # What the rest of this analyte's listing does at the amount just
+        # measured (fingerprint_holds, ADR-012 at the measured amount).
+        # The gate above computes it for every winner and used to keep it
+        # only when it failed; it is the strongest thing the run knows
+        # about an identity, and the confidence and the analyst both read
+        # it: 'present' is the analyte's other signals actually standing
+        # where this amount says they must.
+        '_fingerprint_at_amount': list(info.get('fingerprint_at_amount') or ()),
         '_unshared_reason': info.get('unshared_reason'),
         '_status_reasons': (_residual_reason(info)
                             + (_deconv_reason(info) if info.get('deconv')

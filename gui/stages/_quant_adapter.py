@@ -334,6 +334,17 @@ def dilution_and_correction(samples_info, group_dilution, n_samples):
     return dil, corr
 
 
+def project_field_mhz(metabolites):
+    """The spectrometer frequency annotation ran at, as it wrote on every
+    matched peak; None when nothing was matched."""
+    for m in metabolites or ():
+        for mp in m.get('matched_peaks') or ():
+            f = mp.get('pattern_field_mhz')
+            if f:
+                return float(f)
+    return None
+
+
 def anchor_metabolite_ids(anchor_lines):
     """``_anchor_lines`` is keyed ``(met_id, peak_rank)``; this is the ids."""
     return {str(k[0]) for k in (anchor_lines or {})}
@@ -423,7 +434,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      excluded_regions=(), deconvolve=True,
                      quantify_shapes=True, resolve_shared=False,
                      shared_overrides=None, diagnostics=None,
-                     singlet_min_snr=None):
+                     singlet_min_snr=None, cascade=False, ppm_band_ppm=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -437,6 +448,9 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
 
     ``diagnostics``, when a dict is passed, comes back holding what the run did
     that the rows cannot show -- see ``quant_engine.quantify``.
+
+    ``cascade`` adds, after the election, the analytes the cascade finds on
+    what the quantified ones leave (quant_engine.quantify).
     """
     peaks_by_rank = {p.get('rank'): p for p in (peaks or ())
                      if p.get('rank') is not None}
@@ -542,4 +556,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         shared_overrides=shared_overrides,
         diagnostics=diagnostics,
         singlet_min_snr=singlet_min_snr,
+        cascade=cascade,
+        ppm_band_ppm=ppm_band_ppm,
+        metabolites=metabolites,
+        field_mhz=project_field_mhz(metabolites),
     ), n_s), metabolites, peaks_by_rank)

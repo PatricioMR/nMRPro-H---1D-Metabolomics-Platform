@@ -288,7 +288,8 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
                   'pattern_sigma': noise, 'pattern_tolerance_ppm': tol,
                   'pattern_field_mhz': MHZ}
             if is_singlet_like(mult):
-                mp['predicted_lines'] = [{'ppm': float(anchor['ppm'])}]
+                mp['predicted_lines'] = [{'ppm': float(anchor['ppm']),
+                                          'rel_intensity': 1.0}]
             elif mult == PATTERN_MULT:
                 meas = measure_pattern_signal(
                     mp, peaks, field_mhz=MHZ, dj_gold_hz=params['dj_gold_hz'],
@@ -315,7 +316,8 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
                     mp['pattern_centre_offset_ppm'] = meas.centre_ppm - meas.origin_ppm
             else:
                 pred = synthetic_lines(float(anchor['ppm']), j_hz, n_exp, MHZ) \
-                    if j_hz else [{'ppm': float(anchor['ppm'])}]
+                    if j_hz else [{'ppm': float(anchor['ppm']),
+                                   'rel_intensity': 1.0}]
                 meas = measure_multiplet(
                     pred, peaks, mult=mult, j_coupling=(f'{j_hz}' if j_hz else None),
                     db_ppm=db_ppm, centre_hint=float(anchor['ppm']),
@@ -412,7 +414,8 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
     return mets, params, stats
 
 
-def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False):
+def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
+        cascade=False, ppm_band=None):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
@@ -437,6 +440,8 @@ def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False):
         # own doublet, the rest to eight false claimants of the window
         deconvolve=False,
         resolve_shared=shared,
+        cascade=cascade,
+        ppm_band_ppm=ppm_band,
         annotation_params=params)
     rep = report(rows, mets, truth, foreign, peaks, fp_stats)
     # the study itself, for anything that wants to look at a row
@@ -534,17 +539,24 @@ def main():
                          'trace fit')
     ap.add_argument('--shared', action='store_true',
                     help='resolve shared windows by shape')
+    ap.add_argument('--cascade', action='store_true',
+                    help='add what the cascade finds on the residual (ADR-028)')
+    ap.add_argument('--ppm-band', type=float, default=None,
+                    help='width the election buckets delta-ppm by, measured '
+                         'from the study drift (default: PPM_BAND_PPM)')
     args = ap.parse_args()
     t0 = time.time()
     rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
-              shared=args.shared, patterns=args.patterns)
+              shared=args.shared, patterns=args.patterns, cascade=args.cascade,
+              ppm_band=args.ppm_band)
     print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
                             f"{args.patterns}  shapes={not args.no_shapes}  "
-                            f"shared={args.shared}  seed={args.seed}")
+                            f"shared={args.shared}  cascade={args.cascade}  "
+                            f"seed={args.seed}")
     os.makedirs(OUT_DIR, exist_ok=True)
     tag = (('patterns_' + ('shapes' if not args.no_shapes else 'noshapes'))
            if args.patterns else 'letters') + (
-        '_shared' if args.shared else '')
+        '_shared' if args.shared else '') + ('_cascade' if args.cascade else '')
     with open(os.path.join(OUT_DIR, f'bench_{tag}_seed{args.seed}.json'),
               'w', encoding='utf-8') as f:
         json.dump({k: v for k, v in rep.items() if k not in ('fingerprint', 'rows', 'ppm', 'X', 'samples_info')}, f,

@@ -643,6 +643,24 @@ def _lines_of(ev) -> list:
     return out
 
 
+def _note_share_kept(rec, before) -> None:
+    """How much of its window an analyte kept after the split, and whether
+    what the others took is a quantity at all.
+
+    ``share_kept`` is the ratio; ``share_given`` is what the others took,
+    in the same area units as the window's own limit of quantification.
+    A window whose co-claimants come out of the balance with less than
+    that window can quantify is shared in name only: the number rests on
+    nobody else's concentration, whatever the length of the claimant
+    list, which on a crowded reference spectrum is every window there is.
+    """
+    after = rec.get('area_median')
+    ok = (before is not None and np.isfinite(before) and float(before) > 0
+          and after is not None and np.isfinite(after))
+    rec['share_kept'] = float(after) / float(before) if ok else None
+    rec['share_given'] = max(float(before) - float(after), 0.0) if ok else None
+
+
 def resolve_shared_windows(measured, candidates, ppm, intensities, *,
                            per_proton_areas, included=None, linewidth_ppm,
                            names=None, is_accepted=None, lines_of=None,
@@ -813,9 +831,11 @@ def resolve_shared_windows(measured, candidates, ppm, intensities, *,
         out['skipped'] = list(left_out or ()) + list(out['inseparable'])
         for m in members:
             rec = winners[m]
+            _before = rec.get('area_median')
             rec['areas'] = dict(out['areas'][m])
             rec['area_median'] = (float(np.median(list(rec['areas'].values())))
                                   if rec['areas'] else float('nan'))
+            _note_share_kept(rec, _before)
             rec['captured'] = None
             rec['shared_with'] = [c.met_id for c in comps if c.met_id != m]
             rec['deconv'] = {'window': out['window'],
@@ -1249,9 +1269,11 @@ def resolve_residuals(measured, pool, ppm, intensities, *, included=None,
         else:
             after, cm, c, comp, out, crec = best
             crec['by_residual'] = True
+        _before = rec.get('area_median')
         rec['areas'] = dict(out['areas'][mid])
         rec['area_median'] = (float(np.median(list(rec['areas'].values())))
                               if rec['areas'] else float('nan'))
+        _note_share_kept(rec, _before)
         rec['captured'] = None
         rec['shared_with'] = sorted(set(list(rec.get('shared_with') or ())
                                         + [x['met_id'] for x in out['components']
@@ -1599,9 +1621,11 @@ def resolve_listed_intruders(measured, ppm, intensities, *, included=None,
             rec['taken_over'] = [c.label for c in kept]
             out[mid] = [c.label for c in kept]
             continue
+        _before = rec.get('area_median')
         rec['areas'] = dict(final['areas'][mid])
         rec['area_median'] = (float(np.median(list(rec['areas'].values())))
                               if rec['areas'] else float('nan'))
+        _note_share_kept(rec, _before)
         rec['captured'] = None
         rec['shared_with'] = sorted(set(list(rec.get('shared_with') or ())
                                         + [c.met_id for c in kept]))
