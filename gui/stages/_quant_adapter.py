@@ -435,7 +435,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      quantify_shapes=True, resolve_shared=False,
                      shared_overrides=None, diagnostics=None,
                      singlet_min_snr=None, cascade=False, ppm_band_ppm=None,
-                     claim_signals=True, max_disagreement=None):
+                     claim_signals=True, max_disagreement=None,
+                     raw_intensities=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -561,6 +562,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         ppm_band_ppm=ppm_band_ppm,
         claim_signals=claim_signals,
         max_disagreement=max_disagreement,
+        raw_intensities=raw_intensities,
         metabolites=metabolites,
         field_mhz=project_field_mhz(metabolites),
     ), n_s), metabolites, peaks_by_rank)

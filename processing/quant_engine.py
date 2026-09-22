@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, cascade_missed)
 from processing.quant_concentration import (
@@ -248,6 +249,11 @@ def _confidence(signal, strength=None, shared=False, *, identity=None,
 # another analyte's concentration, and on the assumption that the claimants
 # listed are all of them. Two dots, never three.
 SHARED_MAX_CONFIDENCE = 2
+
+# The share of a window's raw area the baseline model may remove before
+# the row says so. A tenth is already enough to move a concentration by a
+# tenth when it is the internal standard's window.
+BROAD_REMOVED_NOTE = 0.10
 
 
 
@@ -799,7 +805,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              residual_pool=None, singlet_min_snr=None,
              cascade=False, metabolites=None, field_mhz=None,
              ppm_band_ppm=None, claim_signals=True,
-             max_disagreement=None) -> list[dict]:
+             max_disagreement=None, raw_intensities=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
@@ -813,6 +819,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     Δppm difference smaller than the study's drift is ordering noise -- but
     a fixed width cannot know how much a given study drifts, so a study
     that measured its own can say so here.
+
+    ``raw_intensities`` is the study before the project's baseline model,
+    when there is one. With it every window says what share of its area
+    the model removed (``broad_removed_fraction``), which is the audit
+    trail for subtracting real signal: a window the model took a third of
+    is reporting the model as much as the analyte, and a model that takes
+    a tenth of the internal standard moves every concentration in the
+    study by a tenth.
 
     ``max_disagreement`` is how far an analyte the cascade brought in may
     have its own signals disagree and still be given a number
@@ -859,7 +873,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         quantify_shapes=quantify_shapes, resolve_shared=resolve_shared,
         shared_overrides=shared_overrides, diagnostics=diagnostics,
         residual_pool=residual_pool, singlet_min_snr=singlet_min_snr,
-        ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals)
+        ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals,
+        raw_intensities=raw_intensities)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -1082,7 +1097,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    quantify_shapes=True, resolve_shared=False,
                    shared_overrides=None, diagnostics=None,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
-                   ppm_band_ppm=None, claim_signals=True):
+                   ppm_band_ppm=None, claim_signals=True,
+                   raw_intensities=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1478,6 +1494,31 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # the standard then says what the corrected signal is worth. Running it
     # after would divide the answer by a factor derived from the answer.
     pqn_factors = {}
+    # ── What the baseline model took out of each window ──────────────────
+    # The number a window reports is the analyte plus whatever the model
+    # left and minus whatever it removed. Where it removed a large share,
+    # the row says so: on the reference study a SNIP model with nothing to
+    # remove took a tenth of the internal standard and a quarter of
+    # glutathione's window, and moved them 9% and 32%.
+    if raw_intensities is not None:
+        _raw = np.asarray(raw_intensities, dtype=float)
+        if _raw.ndim == 1:
+            _raw = _raw.reshape(-1, 1)
+        _cur = np.asarray(intensities, dtype=float)
+        if _cur.ndim == 1:
+            _cur = _cur.reshape(-1, 1)
+        if _raw.shape == _cur.shape and not np.array_equal(_raw, _cur):
+            _p = np.asarray(ppm, dtype=float)
+            for mid, info in measured.items():
+                lo, hi = info.get('window') or (None, None)
+                if lo is None:
+                    continue
+                m = np.flatnonzero((_p >= min(lo, hi)) & (_p <= max(lo, hi)))
+                if m.size < 2:
+                    continue
+                f = broad_removed_fraction(_raw, _cur, _p, int(m[0]), int(m[-1]))
+                info['broad_removed'] = float(np.median(np.atleast_1d(f)))
+
     # ── Every signal of an analyte, not one ──────────────────────────────
     # A doublet that says ten millimolar says the same molecule's singlet
     # must say ten millimolar too. Each winner is measured again on every
@@ -1937,6 +1978,10 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # How much of the window the trace ran under the baseline: what the
         # integration counted as nothing (quant_integration.integrate_sample).
         '_below_baseline_share': info.get('below_baseline_share'),
+        # What share of this window's raw area the project's baseline model
+        # removed. Nothing to remove and it is zero; a third and the number
+        # is the model's as much as the analyte's.
+        '_broad_removed': info.get('broad_removed'),
         # Where the signal's own lines are, so a plot can mark who is who --
         # and where the pattern's missing lines were expected, so a signal
         # scaled from part of its multiplet shows which part.
@@ -1991,6 +2036,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _pattern_reason(info)
                             + _segments_reason(info)
                             + _baseline_reason(info)
+                            + _broad_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -2116,6 +2162,18 @@ def _pattern_reason(info) -> list:
 # window on a signal has a few noise points under its baseline, not a
 # quarter of its length.
 BASELINE_SILENCED_SHARE = 0.25
+
+
+def _broad_reason(info) -> list:
+    """Said of a window the baseline model took a large share of."""
+    f = info.get('broad_removed')
+    if f is None or not np.isfinite(f) or float(f) < BROAD_REMOVED_NOTE:
+        return []
+    return [f"The baseline model removed {100 * float(f):.0f}% of this "
+            f"window's area before it was integrated. What is reported is "
+            f"what the model left: check that there is a broad component "
+            f"here to remove, because on a flat baseline the model takes "
+            f"signal instead."]
 
 
 def _baseline_reason(info) -> list:

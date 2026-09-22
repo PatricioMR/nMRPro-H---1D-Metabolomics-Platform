@@ -608,6 +608,9 @@ class _QuantCompMixin:
             singlet_min_snr=_singlet_snr,
             cascade=_cascade,
             max_disagreement=_max_dis,
+            # the study before the project's baseline model, so every
+            # window can say what the model took out of it
+            raw_intensities=getattr(self.app, 'all_intensities', None),
         )
 
         self._prog_apply(70, 'Building results…')

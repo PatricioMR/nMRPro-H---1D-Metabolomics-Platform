@@ -42,10 +42,24 @@ def measured_noise(ppm, X) -> float:
     return float(np.asarray(X)[m].std()) if m.sum() > 100 else float('nan')
 
 
-def run(path, *, noise=None, field_mhz=None, tolerance=None, log=print):
+def run(path, *, noise=None, field_mhz=None, tolerance=None,
+        local_baseline=None, baseline=None, log=print):
     st = pickle.load(open(path, 'rb'))
     ppm = np.asarray(st['ppm'], dtype=float)
-    X = np.asarray(st['all_intensities'], dtype=float)
+    # The project's baseline model, applied as the application applies it.
+    # quantify_project wants the corrected matrix: handing it the raw one
+    # integrates the broad component the model was there to remove, and
+    # does it silently.
+    from processing.baseline_model import BaselineModel, BaselineCache
+    raw = np.asarray(st['all_intensities'], dtype=float)
+    _bl = st.get('baseline_model')
+    model = BaselineModel.from_dict(_bl) if _bl else None
+    if baseline is not None and model is not None:
+        model.enabled = bool(baseline)
+    X = BaselineCache().corrected(
+        ppm, raw, model,
+        already_corrected=bool(st.get('baseline_corrected', False)))
+    X = np.asarray(X, dtype=float)
     si = st['samples_info']
     pd = st.get('pd') or {}
     peaks = list(pd.get('peaks') or ())
@@ -58,10 +72,16 @@ def run(path, *, noise=None, field_mhz=None, tolerance=None, log=print):
     min_dist = float(pd.get('min_width_var') or 0.003)
     mhz = float(field_mhz or mb.MHZ)
     tol = float(tolerance or mb.TOLERANCE)
+    qnt = st.get('qnt') or {}
+    local_bl = (bool(qnt.get('local_baseline'))
+                if local_baseline is None else bool(local_baseline))
 
+    _moved = float(np.abs(X - raw).max())
     log(f'{len(peaks)} peaks, noise {noise_std:,.0f} '
         f'(the spectrum measures {measured_noise(ppm, X):,.0f}), '
         f'aligned={st.get("alignment_corrected")}, excluded {excl}')
+    log(f'  baseline model {"applied" if _moved > 0 else "does nothing"}'
+        f' (largest change {_moved:,.0f}), local baseline {local_bl}')
 
     with contextlib.redirect_stdout(io.StringIO()):
         mets, params = app_annotate(
@@ -74,9 +94,10 @@ def run(path, *, noise=None, field_mhz=None, tolerance=None, log=print):
             samples_info=si, ref_peak=ref, ref_nh=mb.STANDARD_NH,
             ref_conc=mb.STANDARD_MM, ref_name='DSS', noise_sigma=noise_std,
             ambiguous_ranks=ambiguous_peak_ranks(mets, manual_quality={}),
-            use_pqn=False, local_baseline=False, quantify_shapes=True,
+            use_pqn=False, local_baseline=local_bl, quantify_shapes=True,
             deconvolve=False, resolve_shared=True, cascade=True,
-            excluded_regions=excl, annotation_params=params)
+            excluded_regions=excl, annotation_params=params,
+            raw_intensities=raw)
     return st, mets, rows
 
 
@@ -108,9 +129,13 @@ def diagnose(rows, truth, log=print):
             f'bias {np.mean([e for e in errs]):+.0f}%')
     log(f'\n{"analyte":26s} {"A true":>7s} {"A got":>7s} {"err":>6s} '
         f'{"B true":>7s} {"B got":>7s} {"err":>6s}  id/conf  how')
+    broad = {r['metabolite']: float(r['_broad_removed'])
+             for r in rows if r.get('_broad_removed')}
     for n, ta, a, ea, tb, b, eb, idl, cf, mode in found:
         log(f'{n[:26]:26s} {ta:7.3f} {a:7.3f} {ea:+5.0f}% '
-            f'{tb:7.3f} {b:7.3f} {eb:+5.0f}%    {idl}/{cf}  {mode}')
+            f'{tb:7.3f} {b:7.3f} {eb:+5.0f}%    {idl}/{cf}  {mode}'
+            + (f'  baseline took {100 * broad[n]:.0f}%'
+               if broad.get(n, 0) >= 0.05 else ''))
     if missed:
         log(f'\nmissed: {", ".join(missed)}')
     if false:
@@ -135,10 +160,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('path', nargs='?', default=DEFAULT)
     ap.add_argument('--noise', type=float, default=None)
+    ap.add_argument('--baseline', dest='baseline', action='store_true',
+                    default=None,
+                    help="apply the project's baseline model even if it is "
+                         'off; --no-baseline to skip it even if it is on')
+    ap.add_argument('--no-baseline', dest='baseline', action='store_false')
+    ap.add_argument('--local-baseline', dest='local_baseline',
+                    action='store_true', default=None,
+                    help="subtract a line under each window, whatever the "
+                         'project says')
     a = ap.parse_args()
     with contextlib.redirect_stdout(io.StringIO()):
         _X, _s, truth, _f = mb.build_study(mb.DB_DEFAULT, seed=0)
-    _st, _mets, rows = run(a.path, noise=a.noise)
+    _st, _mets, rows = run(a.path, noise=a.noise,
+                           local_baseline=a.local_baseline,
+                           baseline=a.baseline)
     diagnose(rows, truth)
 
 
