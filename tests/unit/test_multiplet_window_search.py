@@ -122,6 +122,7 @@ def test_search_wires_the_recovery_into_the_annotation_pass():
     """
     import inspect
     import gui.stages._annotation_search as srch
-    src = inspect.getsource(srch)
+    import controllers.annotation_controller as core
+    src = inspect.getsource(srch) + inspect.getsource(core)
     assert 'search_multiplet_in_window(' in src
     assert 'not _meas_sr.complete' in src, 'recovery must trigger on incompleteness'

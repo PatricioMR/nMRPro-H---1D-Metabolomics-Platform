@@ -14,8 +14,13 @@ from processing.signal_quality import (
     normalize_tiers)
 
 import gui.stages._annotation_search as search_mod
+import controllers.annotation_controller as search_core
 
-SRC = inspect.getsource(search_mod)
+# The search itself moved to controllers.annotation_controller; the
+# stage keeps the dialogs and the rescue paths. Read both, so a test
+# about what the search does does not depend on which of the two
+# files the line ended up in.
+SRC = inspect.getsource(search_mod) + inspect.getsource(search_core)
 
 
 # ── the filter itself ─────────────────────────────────────────────────────────

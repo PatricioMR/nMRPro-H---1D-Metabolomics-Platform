@@ -150,7 +150,8 @@ class TestDppmGateFollowsTheTolerance:
 
     def test_search_passes_the_tolerance_as_the_gate(self):
         import gui.stages._annotation_search as srch
-        src = inspect.getsource(srch)
+        import controllers.annotation_controller as core
+        src = inspect.getsource(srch) + inspect.getsource(core)
         assert "_sc_params['dppm_gold'] = tolerance" in src
         assert "_resc_params['dppm_gold'] = relax_tol" in src
 

@@ -176,7 +176,8 @@ class TestTheWiring:
         import inspect
 
         from gui.stages import _annotation_search as a
-        src = inspect.getsource(a)
+        from controllers import annotation_controller as c
+        src = inspect.getsource(a) + inspect.getsource(c)
         assert "r['stocsy_partners'] = _stocsy_partner_count(" in src
 
     def test_the_whitelist_copies_it_to_matched_peaks(self):
