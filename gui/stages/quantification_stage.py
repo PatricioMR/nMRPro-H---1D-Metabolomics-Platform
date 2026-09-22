@@ -342,6 +342,21 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             'per analyte; adds only, one dot',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        # How far an analyte the cascade brought in may have its own
+        # signals disagree and still be given a number. The analyst's
+        # call, like the singlet's signal-to-noise: on the reference
+        # study myo-inositol's four signals agree to 26% and it measures
+        # to within 7%, while hydroxyproline's six disagree by 262%.
+        mf7 = ttk.Frame(s2); mf7.pack(fill=tk.X, pady=1)
+        ttk.Label(mf7, text='  Max disagreement (cascade):', font=('Arial', 8),
+                  width=26).pack(side=tk.LEFT)
+        self.max_disagreement_var = tk.DoubleVar(value=20.0)
+        ttk.Spinbox(mf7, from_=5.0, to=100.0, increment=5.0, width=6,
+                    textvariable=self.max_disagreement_var).pack(side=tk.LEFT)
+        ttk.Label(mf7, text="% between the analyte's own signals; above it "
+                            "the analyte is identified without a number",
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         ttk.Button(s2, text='Review deconvolution…',
                    command=lambda: self._open_deconvolution_window()).pack(
                        anchor=tk.W, padx=4, pady=(1, 3))

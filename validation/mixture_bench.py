@@ -416,7 +416,7 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
 
 def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         cascade=False, ppm_band=None, real_annotation=False,
-        claim_signals=True):
+        claim_signals=True, max_disagreement=None):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
@@ -455,6 +455,7 @@ def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         cascade=cascade,
         ppm_band_ppm=ppm_band,
         claim_signals=claim_signals,
+        max_disagreement=max_disagreement,
         annotation_params=params)
     rep = report(rows, mets, truth, foreign, peaks, fp_stats)
     # the study itself, for anything that wants to look at a row
@@ -556,6 +557,9 @@ def main():
                     help='resolve shared windows by shape')
     ap.add_argument('--cascade', action='store_true',
                     help='add what the cascade finds on the residual (ADR-028)')
+    ap.add_argument('--max-disagreement', type=float, default=None,
+                    help='how far a cascade analyte may have its own '
+                         'signals disagree and still be given a number')
     ap.add_argument('--no-claim', action='store_true',
                     help='do not let an analyte be measured on every signal '
                          'its own amount predicts')
@@ -570,7 +574,8 @@ def main():
     rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
               shared=args.shared, patterns=args.patterns, cascade=args.cascade,
               ppm_band=args.ppm_band, real_annotation=args.real_annotation,
-              claim_signals=not args.no_claim)
+              claim_signals=not args.no_claim,
+              max_disagreement=args.max_disagreement)
     print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
                             f"{args.patterns}  shapes={not args.no_shapes}  "
                             f"shared={args.shared}  cascade={args.cascade}  "

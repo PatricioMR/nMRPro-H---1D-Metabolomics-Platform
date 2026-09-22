@@ -798,7 +798,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              shared_overrides=None, diagnostics=None,
              residual_pool=None, singlet_min_snr=None,
              cascade=False, metabolites=None, field_mhz=None,
-             ppm_band_ppm=None, claim_signals=True) -> list[dict]:
+             ppm_band_ppm=None, claim_signals=True,
+             max_disagreement=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
@@ -812,6 +813,16 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     Δppm difference smaller than the study's drift is ordering noise -- but
     a fixed width cannot know how much a given study drifts, so a study
     that measured its own can say so here.
+
+    ``max_disagreement`` is how far an analyte the cascade brought in may
+    have its own signals disagree and still be given a number
+    (MAX_SIGNAL_DISAGREEMENT when None). The analyst's choice per study,
+    like the signal-to-noise a lone singlet must reach: measured
+    leave-one-out on the reference bench, an amount whose signals agree to
+    within a fifth came out to a median 8% and at worst 25%, and one that
+    did not to a median 30% with the ratio between two groups moving as
+    much. Raising it reports analytes that would otherwise be identified
+    without a number, each carrying its disagreement.
 
     ``cascade`` runs the cascade afterwards (quant_cascade, ADR-028) over
     ``metabolites`` -- every annotated analyte with its listed signals --
@@ -874,6 +885,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             # search half-width that ``drift_ppm`` carries
             drift_ppm=float(study_drift(metabolites) or 0.0),
             field_mhz=field_mhz, excluded_regions=excluded_regions,
+            max_disagreement=max_disagreement,
             standard_areas=standard_areas, standard_nh=standard_nh,
             standard_conc=standard_conc,
             external_standard_samples=external_standard_samples,
@@ -886,7 +898,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                   noise_sigma, linewidth_ppm, drift_ppm, field_mhz,
                   excluded_regions, standard_areas, standard_nh,
                   standard_conc, external_standard_samples, dilution,
-                  correction, proton_correction, diagnostics=None) -> list:
+                  correction, proton_correction, max_disagreement=None,
+                  diagnostics=None) -> list:
     """The rows the cascade adds to a quantified study, in place of the
     rejected rows of the analytes it takes in.
 
@@ -942,8 +955,10 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
             continue
         former = by_id.get(mid)
         _dis = float(res.get('disagreement') or float('nan'))
+        _bar = float(MAX_SIGNAL_DISAGREEMENT if max_disagreement is None
+                     else max_disagreement)
         if (float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
-                or (np.isfinite(_dis) and _dis > MAX_SIGNAL_DISAGREEMENT)):
+                or (np.isfinite(_dis) and _dis > _bar)):
             # identified, but the amount would come from the part of it
             # nobody else accounts for; that number is not a measurement
             row = _rejected_row(mid, CASCADE_CROWDED,

@@ -343,3 +343,20 @@ def test_one_signal_alone_has_no_error_bar_and_says_so():
                          noise_sigma=SIGMA, linewidth_ppm=LW, drift_ppm=0.0,
                          field_mhz=FIELD)
     assert np.isnan(out['missed']['disagreement'])
+
+
+def test_how_far_its_signals_may_disagree_is_the_study_s_call():
+    """Measured on the reference study: myo-inositol's four signals agree
+    to 26% and it measures to within 7%, while hydroxyproline's six
+    disagree by 262%. Where the line falls between them is a judgement
+    about the study, not about the engine."""
+    import inspect
+    from processing.quant_engine import quantify
+    from gui.stages._quant_adapter import quantify_project
+    for fn in (quantify, quantify_project):
+        assert 'max_disagreement' in inspect.signature(fn).parameters
+
+
+def test_the_default_bar_is_the_measured_one():
+    from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
+    assert MAX_SIGNAL_DISAGREEMENT == 0.20

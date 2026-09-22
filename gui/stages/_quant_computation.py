@@ -571,6 +571,11 @@ class _QuantCompMixin:
             _singlet_snr = None
         _cv = getattr(self, 'cascade_var', None)
         _cascade = bool(_cv.get()) if _cv is not None else False
+        _mdv = getattr(self, 'max_disagreement_var', None)
+        try:
+            _max_dis = float(_mdv.get()) / 100.0 if _mdv is not None else None
+        except (tk.TclError, ValueError):
+            _max_dis = None
         rows = quantify_project(
             metabolites=metabolites,
             peaks=self.peak_stage.peaks or [],
@@ -602,6 +607,7 @@ class _QuantCompMixin:
             diagnostics=_diag,
             singlet_min_snr=_singlet_snr,
             cascade=_cascade,
+            max_disagreement=_max_dis,
         )
 
         self._prog_apply(70, 'Building results…')
