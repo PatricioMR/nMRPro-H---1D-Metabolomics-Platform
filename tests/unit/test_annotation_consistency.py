@@ -1,5 +1,8 @@
 """A metabolite's signals stand in the proportion of their protons; the anchor
 of a signal is the nearest peak among those its proportions allow."""
+import numpy as np
+import pytest
+
 from processing.annotation_consistency import (
     consistent_peaks, reference_per_proton)
 
@@ -15,9 +18,26 @@ def _key(e):
     return e['hmdb_id']
 
 
-def test_the_reference_is_the_tallest_peak_per_proton_in_reach():
+def test_the_reference_is_what_the_analyte_s_signals_agree_on():
+    """The median over its signals, not the tallest of them: the tallest
+    is one number decided by one peak, and a foreign peak within reach of
+    any one signal would then speak for the whole molecule."""
     ref = reference_per_proton(CRE, PEAKS, tolerance=0.05, met_key=_key)
-    assert ref['CRE'] == max(189.0 / 2, 268.0 / 3)
+    assert ref['CRE'] == pytest.approx(np.median([189.0 / 2, 268.0 / 3]))
+
+
+def test_one_tall_stranger_does_not_set_the_whole_molecule():
+    """Hydroxyproline on the reference bench: six signals of one proton
+    at 24 to 78 sigma, and a seventh peak at 320 that is not its. The
+    maximum said 320 for all of them and five of its own signals read as
+    contradicted."""
+    sigs = [{'hmdb_id': 'HYP', 'ppm_center': c, 'protons': 1}
+            for c in (2.145, 2.422, 3.366, 3.466, 4.335, 4.656)]
+    pk = [{'ppm': 2.145, 'snr': 78.0}, {'ppm': 2.422, 'snr': 46.0},
+          {'ppm': 3.366, 'snr': 39.0}, {'ppm': 3.466, 'snr': 320.0},
+          {'ppm': 4.335, 'snr': 24.0}, {'ppm': 4.656, 'snr': 31.0}]
+    ref = reference_per_proton(sigs, pk, tolerance=0.01, met_key=_key)
+    assert ref['HYP'] == pytest.approx(42.5)     # not 320
 
 
 def test_the_noise_peak_is_not_the_methyl_singlet():

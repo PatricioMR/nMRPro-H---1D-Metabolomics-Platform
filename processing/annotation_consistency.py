@@ -22,6 +22,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
+import numpy as np
+
 # A peak under this fraction of the height the metabolite's tallest signal
 # predicts for it cannot be that signal. The same ratio the fingerprint
 # contradiction gate uses (annotation_detectability).
@@ -45,15 +47,34 @@ def _nh(entry) -> float | None:
 
 
 def reference_per_proton(entries, peaks, *, tolerance, met_key) -> dict:
-    """Per metabolite, the tallest peak per proton any of its signals could
-    anchor on: ``{met_id: snr_per_proton}``.
+    """Per metabolite, how tall a peak of one of its protons stands:
+    ``{met_id: snr_per_proton}``, the median over its signals.
 
     ``entries`` are database signals with ``ppm_center`` (or ``ppm``) and
     ``protons``; ``peaks`` are detected peaks with ``ppm`` and ``snr``;
-    ``met_key(entry)`` names the metabolite. Signals without a proton count
-    take no part.
+    ``met_key(entry)`` names the metabolite. Signals without a proton
+    count take no part.
+
+    The median, over the tallest peak each signal could anchor on, and
+    not the tallest of those: the tallest is one number decided by one
+    peak, and a single foreign peak that happens to lie within the
+    tolerance of any one signal then speaks for the whole molecule.
+    ``consistent_peaks`` reads this as the height a peak must reach to be
+    this analyte's, so a reference set too high makes the analyte prefer
+    tall peaks -- which is how it came to be set by one in the first
+    place.
+
+    Measured on the reference bench, annotated the application's own way:
+    hydroxyproline's six signals are one proton each and stand at 24, 31,
+    39, 46 and 78 sigma, with a sixth at 320 on a peak that is not its.
+    The maximum said 320 for all six, so five of its own signals read as
+    contradicted; the median says 42. Over the study: betaine's
+    concentration went from 111% high to 23%, taurine's from 37% low to
+    11%, the ninetieth percentile of the error over every analyte from
+    37% to 23% -- and isoleucine, which the maximum measured to within
+    8%, lost its peak to a rival and is no longer quantified.
     """
-    best: dict = defaultdict(float)
+    per: dict = defaultdict(list)
     pk = [(float(p.get('ppm', 0.0)), _snr(p)) for p in peaks or ()
           if p.get('ppm') is not None]
     for e in entries or ():
@@ -66,9 +87,8 @@ def reference_per_proton(entries, peaks, *, tolerance, met_key) -> dict:
                       default=None)
         if tallest is None:
             continue
-        mid = met_key(e)
-        best[mid] = max(best[mid], tallest / n)
-    return dict(best)
+        per[met_key(e)].append(tallest / n)
+    return {m: float(np.median(v)) for m, v in per.items() if v}
 
 
 def consistent_peaks(candidates, entry, reference_pp,
