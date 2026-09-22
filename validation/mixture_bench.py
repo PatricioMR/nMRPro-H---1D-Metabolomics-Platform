@@ -68,7 +68,8 @@ from processing.multiplet_line_fit import fit_across_samples  # noqa: E402
 from processing.multiplet_line_selector import multiplet_line_peaks  # noqa: E402
 from processing.pattern_shape import (  # noqa: E402
     lines_model, parse_profile, profile_model)
-from processing.peak_detection import detect_peaks  # noqa: E402
+from processing.peak_detection import (  # noqa: E402
+    detect_peaks, estimate_noise_minimum_segment)
 from processing.per_sample_signal import signal_across_samples  # noqa: E402
 from processing.quant_detection_limit import project_drift  # noqa: E402
 from processing.quantification import eligible_metabolite_ids  # noqa: E402
@@ -417,7 +418,19 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
 def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         cascade=False, ppm_band=None, real_annotation=False,
         claim_signals=True, max_disagreement=None, align=False):
-    X, sigma, truth, foreign = build_study(db_path, seed=seed)
+    X, sigma_sample, truth, foreign = build_study(db_path, seed=seed)
+    # The noise the application works with is the noise of the MEAN of the
+    # samples, because that is the trace it estimates it on
+    # (peak_detection.detect_peaks -> estimate_noise_minimum_segment over
+    # corrected_mean) and the trace every gate afterwards reads. This file
+    # used to pass the noise of ONE sample, which on twelve of them is the
+    # square root of twelve -- three and a half times -- too conservative,
+    # and every threshold tuned against it was tuned against that.
+    #
+    # Estimated with the application's own estimator rather than divided by
+    # the root of the count, so the two agree by construction.
+    _incl = [s['index'] for s in SAMPLES]
+    sigma = float(estimate_noise_minimum_segment(X[:, _incl].mean(axis=1)))
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
                          global_align=align, samples_info=SAMPLES,
@@ -461,7 +474,7 @@ def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
     # the study itself, for anything that wants to look at a row
     rep.update({'rows': rows, 'ppm': PPM, 'X': X, 'samples_info': SAMPLES,
                 'metabolites': mets, 'peaks': peaks, 'truth': truth,
-                'noise': sigma})
+                'noise': sigma, 'noise_per_sample': sigma_sample})
     return rep
 
 

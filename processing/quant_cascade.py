@@ -82,11 +82,22 @@ MIN_FREE_SHARE = 0.25       # of a column's weight, outside what is spoken for
 MIN_FREE_TO_QUANTIFY = 0.6
 FIXED_TOLERANCE = 0.25      # a quantified analyte's amplitude, in the joint fit
 # The widest disagreement between an analyte's own signals that still
-# leaves an amount worth printing. Measured leave-one-out on the bench:
-# below it, ten analytes came out to a median 8% (worst 25%); above it,
-# three to a median 30%. The standard error from the noise says nothing
-# here -- it is under 1% for every one of them.
-MAX_SIGNAL_DISAGREEMENT = 0.20
+# leaves an amount worth printing. The standard error from the noise says
+# nothing here -- it is under 1% for every analyte on the bench, including
+# those out by a third -- because what is uncertain is not the noise but
+# the division of an overlap.
+#
+# Measured two ways, which do not agree and are both kept in view. Leave
+# one analyte out of the study and ask the cascade for it alone, and the
+# statistic separates at a tenth: those inside come out to a median 7%
+# and at worst 14%, those outside to a median 21%. Run the whole study
+# and the analytes admitted between a tenth and three tenths come out
+# fine -- at three tenths the bench finds sixteen of its eighteen instead
+# of fourteen, with the same false positives and the same error at the
+# ninetieth percentile. An analyte measured with everything else in place
+# is not the analyte measured alone, and it is the first that a study
+# reports, so it is the first that sets this.
+MAX_SIGNAL_DISAGREEMENT = 0.30
 OWNED_SHARE = 0.7           # of a point's height explained: it is theirs
 SIGNAL_AGREEMENT_SNR = 5.0  # a signal quiet than this does not testify
 

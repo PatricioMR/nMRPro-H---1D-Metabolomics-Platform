@@ -29,7 +29,13 @@ from processing.annotation_scoring import study_drift
 
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
-    X, sigma, truth, foreign = mb.build_study(mb.DB_DEFAULT, seed=0)
+    X, _sigma_sample, truth, foreign = mb.build_study(mb.DB_DEFAULT, seed=0)
+    # the noise of the MEAN of the samples, which is the trace every gate
+    # reads and the one the application estimates on -- not the noise of
+    # one sample, which is the root of their number too conservative
+    from processing.peak_detection import estimate_noise_minimum_segment
+    sigma = float(estimate_noise_minimum_segment(
+        X[:, [s['index'] for s in mb.SAMPLES]].mean(axis=1)))
     peaks = mb.detect_peaks(mb.PPM, X, noise_std=sigma, min_snr=6.0, min_distance=0.003,
                             baseline_correct=False, global_align=False, samples_info=mb.SAMPLES,
                             per_sample_detection=True, detect_shoulders=False,

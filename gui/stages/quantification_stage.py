@@ -350,7 +350,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf7 = ttk.Frame(s2); mf7.pack(fill=tk.X, pady=1)
         ttk.Label(mf7, text='  Max disagreement (cascade):', font=('Arial', 8),
                   width=26).pack(side=tk.LEFT)
-        self.max_disagreement_var = tk.DoubleVar(value=20.0)
+        self.max_disagreement_var = tk.DoubleVar(value=30.0)
         ttk.Spinbox(mf7, from_=5.0, to=100.0, increment=5.0, width=6,
                     textvariable=self.max_disagreement_var).pack(side=tk.LEFT)
         ttk.Label(mf7, text="% between the analyte's own signals; above it "

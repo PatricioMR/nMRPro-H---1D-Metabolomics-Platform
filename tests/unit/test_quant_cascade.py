@@ -359,4 +359,4 @@ def test_how_far_its_signals_may_disagree_is_the_study_s_call():
 
 def test_the_default_bar_is_the_measured_one():
     from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
-    assert MAX_SIGNAL_DISAGREEMENT == 0.20
+    assert MAX_SIGNAL_DISAGREEMENT == 0.30
