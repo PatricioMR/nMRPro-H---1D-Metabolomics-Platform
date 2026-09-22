@@ -191,3 +191,65 @@ class TestTheSignalWindow:
         r = _run([_cand('A', 1, [1, 2])], _study([1.0] * 3))[0]
         assert r['_captured_fraction'] is not None
         assert 0.85 < r['_captured_fraction'] <= 1.0
+
+
+class TestIdentityEvidence:
+    """The identity axis, measured on the reference bench: an analyte with
+    a signal confirmed was real 7 times out of 7 there, and every one of
+    the eight false positives had none."""
+
+    def test_a_confirmed_signal_carries_the_identity(self):
+        r = _run([_cand('A', 1, [1, 2], dj=0.05)], _study([1.0] * 3))[0]
+        assert r['_identity_level'] == 3
+        assert 'confirmed' in r['_identity_why']
+
+    def test_a_signal_missing_at_the_measured_amount_puts_it_at_one(self):
+        """Its own listing says a second signal should stand here, and the
+        spectrum holds nothing like it."""
+        from processing.quant_engine import _identity_evidence
+        level, why = _identity_evidence(confirmed=2, contradicted=1, listed=3)
+        assert level == 1 and 'missing' in why
+
+    def test_one_listed_signal_cannot_corroborate_itself(self):
+        from processing.quant_engine import _identity_evidence
+        level, why = _identity_evidence(confirmed=0, listed=1)
+        assert level == 1 and 'one signal' in why
+
+    def test_a_covered_listing_that_stands_is_worth_two(self):
+        from processing.quant_engine import _identity_evidence
+        level, _why = _identity_evidence(confirmed=0, corroborated=True, listed=3)
+        assert level == 2
+
+    def test_the_cascade_never_reaches_three(self):
+        from processing.quant_engine import _identity_evidence
+        assert _identity_evidence(cascade={'disagreement': 0.01})[0] == 2
+        assert _identity_evidence(cascade={'disagreement': 0.5})[0] == 1
+        assert _identity_evidence(cascade={'disagreement': float('nan')})[0] == 1
+
+
+class TestWhatCostsADot:
+    """A dot is spent on evidence that is actually missing, not on the
+    length of a claimant list."""
+
+    def test_the_coupling_is_judged_by_the_study_gate_not_a_literal(self):
+        """A reference whose own J carries uncertainty cannot be judged to
+        a fifth of a hertz: inosine, matched at 0.25 Hz against a reference
+        measured to 0.19, was Good in the annotation window and second-rate
+        in the table."""
+        from processing.quant_engine import _structural_evidence
+
+        class _S:
+            evidence = {'n_found': 3, 'n_expected': 3, 'delta_j_hz': 0.25,
+                        'j_sigma_hz': 0.185}
+        assert _structural_evidence(_S(), 0.20) == 3
+        _S.evidence = {**_S.evidence, 'j_sigma_hz': None}
+        assert _structural_evidence(_S(), 0.20) == 2
+        assert _structural_evidence(_S(), 0.30) == 3
+
+    def test_a_coupling_far_outside_the_gate_stays_outside_it(self):
+        from processing.quant_engine import _structural_evidence
+
+        class _S:
+            evidence = {'n_found': 3, 'n_expected': 3, 'delta_j_hz': 1.8,
+                        'j_sigma_hz': 0.19}
+        assert _structural_evidence(_S(), 0.20) == 2

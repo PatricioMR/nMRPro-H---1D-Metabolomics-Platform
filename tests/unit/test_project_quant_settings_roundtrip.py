@@ -18,5 +18,6 @@ def test_saved_quant_variables_are_restored_by_the_same_key():
     restored.setdefault('integ', 'integ_var')
     missing = {k: v for k, v in saved.items() if restored.get(k) != v}
     assert not missing, f'saved but not restored to the same variable: {missing}'
-    for key in ('shape_fit', 'shared_deconv', 'j_resolve'):
+    for key in ('shape_fit', 'shared_deconv', 'j_resolve', 'singlet_min_snr',
+                'cascade'):
         assert key in saved and key in restored
