@@ -919,10 +919,12 @@ class AnnotationResultsWindow:
                                 if 'pattern_profile' in _fp_cols else '')
                     _fp_pat += (" profile_nh," if 'profile_nh' in _fp_cols
                                 else '')
+                    _fp_protons = ("s.protons" if 'protons' in _fp_cols
+                                   else "''")
                     cur.execute(
                         f"SELECT {_fp_meas['ppm']} AS ppm_center,"
                         f" {_fp_meas['ppm']} AS ppm_start,"
-                        f" {_fp_meas['ppm']} AS ppm_end, '' AS protons,"
+                        f" {_fp_meas['ppm']} AS ppm_end, {_fp_protons} AS protons,"
                         f" multiplicity AS type, {_fp_meas['j']} AS j_coupling,"
                         f" atom_name, {_fp_pat}"
                         " s.ppm AS ppm_listed"

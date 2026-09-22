@@ -206,17 +206,51 @@ def _line_share(mult) -> float:
     triplet's centre line carries half, a quartet's inner lines three eighths.
     Comparing a singlet's apex with a triplet's without this would expect the
     triplet twice as tall as it can be.
+
+    None for a multiplicity whose shape is not first-order and not given:
+    an unresolved multiplet spreads its protons over lines nobody here can
+    count, so how tall its tallest line should be is not known. Returning
+    one for it -- as this did -- says every proton stands in a single line,
+    which over-predicts the apex several-fold and then reads the spectrum's
+    honest answer as a contradiction.
     """
     from processing.annotation_scoring import normalize_mult
     m = normalize_mult(mult or 's')
+    if m in ('m', 'm*', 'multiplet'):
+        return None
     n = {'s': 1, 'd': 2, 't': 3, 'q': 4, 'quint': 5, 'p': 5, 'sext': 6,
-         'sept': 7, 'h': 6}.get(m, 1)
+         'sept': 7, 'h': 6}.get(m)
+    if n is None:
+        return None
     if n <= 1:
         return 1.0
     row = [1.0]
     for _ in range(n - 1):
         row = [a + b for a, b in zip([0.0] + row, row + [0.0])]
     return max(row) / sum(row)
+
+
+def tallest_line_share(entry) -> float | None:
+    """The share of a signal's height its tallest line carries.
+
+    From the pattern the reference measured where it measured one -- which
+    is the only thing that can speak for a complex multiplet -- and from
+    the multiplicity otherwise. None when neither can: the signal's apex
+    is then not predictable, and a prediction that cannot be made must not
+    become a contradiction.
+
+    The same rule quant_shared.fingerprint_holds applies at quantification
+    time; before this, the annotation gate and the quantification gate
+    disagreed about the same signal.
+    """
+    from processing.annotation_scoring import pattern_offsets_hz
+    pat = pattern_offsets_hz(entry) if isinstance(entry, dict) else None
+    if pat:
+        total = sum(r for _o, r in pat)
+        if total > 0:
+            return max(r for _o, r in pat) / total
+    return _line_share(entry.get('type') or entry.get('multiplicity')
+                       if isinstance(entry, dict) else entry)
 
 
 # How far a resonance may sit from where the database puts it, as a multiple
@@ -313,10 +347,10 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
         # The signal that sets the scale: the tallest per proton, per line.
         anchor = max(matched, key=_apex_snr)
         a_snr = _apex_snr(anchor)
-        a_per = (proton_count(anchor)
-                 * _line_share(anchor.get('type') or anchor.get('multiplicity')))
+        _a_share = tallest_line_share(anchor)
+        a_per = proton_count(anchor) * (_a_share or 0.0)
         if a_snr <= 0 or a_per <= 0:
-            continue
+            continue          # an anchor whose apex says nothing predicts nothing
 
         counts['metabolites'] += 1
         # A signal matched to a peak that cannot be it -- the anchor says
@@ -362,7 +396,14 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                 counts['unresolved'] += 1
                 continue
             centre = float(dp.get('ppm_center', dp.get('ppm', 0.0)))
-            expected = a_snr * (proton_count(dp) * _line_share(mult)) / a_per
+            _share = tallest_line_share(dp)
+            if _share is None:
+                # its shape is not known, so how tall it should stand is
+                # not either; it cannot contradict anything
+                counts['unpredictable'] = counts.get('unpredictable', 0) + 1
+                verdicts.append((centre, mult, float('nan'), 'unpredictable', None))
+                continue
+            expected = a_snr * (proton_count(dp) * _share) / a_per
             if round(centre, 3) in matched_at:
                 got = matched_at[round(centre, 3)]
                 if got * float(ratio) >= expected:

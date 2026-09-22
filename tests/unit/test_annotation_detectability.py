@@ -133,3 +133,34 @@ class TestOverlap:
         mets = [{'name': 'X', 'matched_peaks': [
             {'peak_rank': 1, 'predicted_lines': [{'ppm': 1.330}, {'ppm': 1.3301}]}]}]
         assert build_overlap_map(mets, peaks)[1] == ['X']
+
+
+class TestTallestLineShare:
+    """How tall a signal's tallest line should stand, which is what the
+    fingerprint gate predicts against."""
+
+    def test_a_first_order_multiplet_knows_its_own_share(self):
+        from processing.annotation_detectability import tallest_line_share
+        assert tallest_line_share({'type': 's'}) == 1.0
+        assert tallest_line_share({'type': 'd'}) == pytest.approx(0.5)
+        assert tallest_line_share({'type': 't'}) == pytest.approx(0.5)
+
+    def test_an_unresolved_multiplet_has_no_predictable_apex(self):
+        """It spreads its protons over lines nobody here can count. Saying
+        one -- as this did -- expects every proton in a single line, which
+        over-predicted inosine's 2H m* at 3.87 ppm by a factor of seven
+        (SNR 38 against the 5 the spectrum holds) and marked the whole
+        analyte contradicted."""
+        from processing.annotation_detectability import tallest_line_share
+        assert tallest_line_share({'type': 'm'}) is None
+        assert tallest_line_share({'type': 'm*'}) is None
+
+    def test_a_measured_pattern_speaks_for_itself(self):
+        """Where the reference measured the pattern, its tallest line's
+        share is a measurement, not a guess -- the same rule
+        quant_shared.fingerprint_holds applies at quantification time."""
+        from processing.annotation_detectability import tallest_line_share
+        share = tallest_line_share(
+            {'type': 'm*',
+             'pattern_lines': '[[-3.0, 0.5], [0.0, 1.0], [3.0, 0.5]]'})
+        assert share is not None and share == pytest.approx(0.5)
