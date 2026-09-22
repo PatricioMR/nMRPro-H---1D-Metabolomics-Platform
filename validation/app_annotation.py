@@ -123,13 +123,21 @@ class Window:
 
 def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
              tolerance_ppm, noise_std, min_snr, min_distance_ppm,
-             tiers=('Good', 'Average'), params=None, log=lambda *a: None):
+             excluded_regions=(), tiers=('Good', 'Average'), params=None,
+             log=lambda *a: None):
     """Annotate a study exactly as the application does: its search, its
     grouping, its passes, in its order -- and none of its window.
 
     Returns ``(metabolites, params)``, the same pair the bench's own
     ``annotate`` returns, so a caller can put one where the other was and
     compare what the engine then makes of it.
+
+    ``excluded_regions`` are what detection was told to ignore, and they
+    are not optional in practice: the fingerprint gate asks whether a
+    signal that should be visible is there, and a signal under the
+    suppressed water is absent for a reason that says nothing about the
+    analyte. Without them hydroxyproline was contradicted by its own
+    triplet at 4.66 ppm, which the water covers.
     """
     sc = dict(SCORING_DEFAULTS)
     sc['dppm_gold'] = float(tolerance_ppm)
@@ -147,7 +155,7 @@ def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
         f'({found.elapsed_s:.1f}s)')
     win = Window([], peaks, ppm, intensities, mhz=field_mhz, params=sc,
                  samples_info=samples_info, noise=noise_std,
-                 excluded=())
+                 excluded=excluded_regions)
     # the window's own grouping of matches into metabolites, which touches
     # nothing of itself
     win.metabolites = AnnotationResultsWindow._group_by_metabolite(

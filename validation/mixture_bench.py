@@ -430,7 +430,7 @@ def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         mets, params = app_annotate(
             peaks, PPM, X, SAMPLES, db_path=db_path, field_mhz=MHZ,
             tolerance_ppm=TOLERANCE, noise_std=sigma, min_snr=6.0,
-            min_distance_ppm=0.003)
+            min_distance_ppm=0.003, excluded_regions=WATER)
         fp_stats = {}
     else:
         mets, params, fp_stats = annotate(PPM, X, peaks, sigma, db_path,
