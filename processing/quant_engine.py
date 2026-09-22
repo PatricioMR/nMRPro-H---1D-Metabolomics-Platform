@@ -44,7 +44,8 @@ from processing.quant_integration import (
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
 from processing.quant_shared import (
-    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED, fingerprint_holds,
+    REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED,
+    claim_listed_signals, fingerprint_holds,
     resolve_free_apices, resolve_listed_intruders, resolve_residuals,
     resolve_shared_windows)
 from processing.quant_snr import (
@@ -797,7 +798,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              shared_overrides=None, diagnostics=None,
              residual_pool=None, singlet_min_snr=None,
              cascade=False, metabolites=None, field_mhz=None,
-             ppm_band_ppm=None) -> list[dict]:
+             ppm_band_ppm=None, claim_signals=True) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
@@ -847,7 +848,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         quantify_shapes=quantify_shapes, resolve_shared=resolve_shared,
         shared_overrides=shared_overrides, diagnostics=diagnostics,
         residual_pool=residual_pool, singlet_min_snr=singlet_min_snr,
-        ppm_band_ppm=ppm_band_ppm)
+        ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -1066,7 +1067,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    quantify_shapes=True, resolve_shared=False,
                    shared_overrides=None, diagnostics=None,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
-                   ppm_band_ppm=None):
+                   ppm_band_ppm=None, claim_signals=True):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1462,6 +1463,26 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # the standard then says what the corrected signal is worth. Running it
     # after would divide the answer by a factor derived from the answer.
     pqn_factors = {}
+    # ── Every signal of an analyte, not one ──────────────────────────────
+    # A doublet that says ten millimolar says the same molecule's singlet
+    # must say ten millimolar too. Each winner is measured again on every
+    # signal its reference lists that its own amount predicts should be
+    # visible, and the amount becomes the consensus of the ones that
+    # agreed (quant_shared.claim_listed_signals). Before the dilution
+    # correction and the standard, so both see the consensus.
+    _claimed: dict = {}
+    if claim_signals and linewidth_ppm:
+        _claimed = claim_listed_signals(
+            measured, per_proton_areas, ppm, intensities, included=included,
+            linewidth_ppm=linewidth_ppm, noise_sigma=noise_sigma,
+            excluded_regions=excluded_regions, local_baseline=local_baseline)
+        for mid, what in _claimed.items():
+            if mid in measured:
+                measured[mid]['claimed'] = what
+        if diagnostics is not None:
+            diagnostics['claimed_signals'] = {
+                m: w['used'] for m, w in _claimed.items() if w['used']}
+
     if use_pqn and len(per_proton_areas) >= 3:
         per_proton_areas, pqn_factors = apply_pqn(per_proton_areas)
 

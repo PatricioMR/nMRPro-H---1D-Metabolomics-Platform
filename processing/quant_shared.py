@@ -1485,6 +1485,156 @@ def listed_signal_evidence(dp, *, centre_ppm, field_mhz) -> dict | None:
     return ev
 
 
+
+# How far a second signal's amount may sit from the first's and still be
+# taken as the same analyte speaking twice.
+#
+# Measured on the reference bench, annotated the application's own way,
+# over the fourteen analytes it quantifies: at a factor of three -- the
+# one the amount gate uses against the fingerprint -- taurine's triplet
+# at 3.25 ppm was averaged in at 2.9 times its own amount, because
+# betaine's nine-proton singlet is there, and taurine went from 11% low
+# to 28% high. The ninetieth percentile of the error over the study, by
+# the factor allowed: 3.0 gave 29%, 2.0 gave 24%, 1.5 and 1.3 both gave
+# 14%, and 1.2 gave 23% by refusing signals that were the analyte's. A
+# second signal agreeing to within half is the analyte speaking twice;
+# one outside that is somebody else standing where it would have been.
+CLAIM_RATIO = 1.5
+
+# The predicted height a listed signal must reach before it is worth
+# integrating at all. Below it the region holds noise, and an area read
+# there would be noise divided by protons.
+CLAIM_MIN_SNR = 5.0
+
+
+def claim_listed_signals(measured, per_proton_areas, ppm, intensities, *,
+                         included=None, linewidth_ppm, noise_sigma=None,
+                         excluded_regions=(), local_baseline=True,
+                         ratio=CLAIM_RATIO, min_snr=CLAIM_MIN_SNR) -> dict:
+    """Let every analyte be measured on all of its signals, not one.
+
+    A doublet that says ten millimolar says something about the singlet
+    the reference lists for the same molecule: it must say ten
+    millimolar too, whatever its protons. This walks each winner's
+    listing, integrates every signal the amount it was measured at
+    predicts should be visible, and keeps those that agree with it to
+    within ``ratio``. The analyte's area per proton then becomes the
+    median over the signals that agreed, sample by sample -- the
+    consensus of the molecule instead of the reading of one window.
+
+    What it changes, and what it does not: the amount, and only the
+    amount. The window on the row, the lines drawn, the multiplicity and
+    the confidence stay those of the signal that won the election -- the
+    analyte is still identified by the peak it won, and this says how
+    much of it there is.
+
+    A signal whose region holds a different amount is left alone. It is
+    not evidence against the analyte -- the amount gate answers that
+    question, with the whole listing, and it has already run -- it is a
+    region somebody else is in, and averaging it in would carry that
+    somebody into the number.
+
+    Returns ``{met_id: {'signals': [(ppm, nh, per_proton)], 'used': n,
+    'rejected': [(ppm, ratio)]}}``, what each analyte was measured on.
+    """
+    from processing.annotation_detectability import (
+        proton_count, tallest_line_share)
+    from processing.quant_integration import integrate_sample
+    from processing.spectral_regions import in_excluded_region
+    x = np.asarray(ppm, dtype=float)
+    arr = np.asarray(intensities, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    cols = [int(i) for i in (included if included is not None
+                             else range(arr.shape[1]))
+            if 0 <= int(i) < arr.shape[1]]
+    if not cols or not linewidth_ppm:
+        return {}
+    mean = arr[:, cols].mean(axis=1)
+    hwhm = float(linewidth_ppm) / 2.0
+    out: dict = {}
+    for mid, info in (measured or {}).items():
+        own = per_proton_areas.get(mid) or {}
+        base = [v for v in own.values() if v is not None and np.isfinite(v) and v > 0]
+        if not base:
+            continue
+        own_pp = float(np.median(base))
+        sig = info.get('signal')
+        ev = (getattr(sig, 'evidence', None) or {}) if sig is not None else {}
+        met = ((getattr(sig, 'payload', None) or {}).get('met')
+               if isinstance(getattr(sig, 'payload', None), dict) else None) or {}
+        field = ev.get('pattern_field_mhz')
+        drift = float(ev.get('study_drift_ppm') or 0.0)
+        skip = ev.get('db_ppm')
+        if not field:
+            continue
+        kept, rejected = [], []
+        for dp in met.get('db_peaks') or ():
+            c0 = dp.get('ppm_center', dp.get('ppm'))
+            if c0 is None:
+                continue
+            if skip is not None and abs(float(c0) - float(skip)) < 0.005:
+                continue
+            here = float(c0) + drift
+            if excluded_regions and (
+                    in_excluded_region(here - hwhm, excluded_regions)
+                    or in_excluded_region(here + hwhm, excluded_regions)):
+                continue
+            e2 = listed_signal_evidence(dp, centre_ppm=here,
+                                        field_mhz=float(field))
+            if e2 is None:
+                continue
+            nh = proton_count(dp)
+            if not nh:
+                continue
+            lines = [float(v) for v in (e2.get('predicted_ppms') or ())] or [here]
+            lo, hi = min(lines) - PAD_LINEWIDTHS * hwhm, max(lines) + PAD_LINEWIDTHS * hwhm
+            if hi <= lo:
+                continue
+            # too faint to be worth reading: its area would be noise
+            if noise_sigma:
+                share = tallest_line_share(dp)
+                if share:
+                    predicted = _lorentz_height(own_pp * nh * float(share), hwhm)
+                    if predicted < float(min_snr) * float(noise_sigma):
+                        continue
+                m = (x >= lo) & (x <= hi)
+                if m.sum() < 3 or float(mean[m].max()) < float(min_snr) * float(noise_sigma):
+                    continue
+            per_sample = {}
+            for s_i in cols:
+                a = integrate_sample(x, arr[:, s_i], lo, hi,
+                                     local_baseline=local_baseline)
+                if a is not None and np.isfinite(a) and a > 0:
+                    per_sample[s_i] = float(a) / nh
+            good = [v for v in per_sample.values() if v > 0]
+            if not good:
+                continue
+            got = float(np.median(good))
+            r = got / own_pp if own_pp > 0 else float('inf')
+            if 1.0 / float(ratio) <= r <= float(ratio):
+                kept.append((float(c0), nh, per_sample))
+            else:
+                rejected.append((float(c0), r))
+        if not kept:
+            out[mid] = {'signals': [], 'used': 0, 'rejected': rejected}
+            continue
+        # the consensus, sample by sample: the analyte's own window and
+        # every signal that agreed with it
+        merged = {}
+        for s_i in cols:
+            vals = [own[s_i]] if s_i in own and own[s_i] and np.isfinite(own[s_i]) else []
+            vals += [ps[s_i] for _c, _n, ps in kept if s_i in ps]
+            if vals:
+                merged[s_i] = float(np.median(vals))
+        if merged:
+            per_proton_areas[mid] = merged
+        out[mid] = {'signals': [(c, n, float(np.median(list(ps.values()))))
+                                for c, n, ps in kept],
+                    'used': len(kept), 'rejected': rejected}
+    return out
+
+
 def resolve_listed_intruders(measured, ppm, intensities, *, included=None,
                              linewidth_ppm, names=None, lines_of=None,
                              per_proton_areas, noise_sigma=None,

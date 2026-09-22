@@ -415,7 +415,8 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
 
 
 def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
-        cascade=False, ppm_band=None, real_annotation=False):
+        cascade=False, ppm_band=None, real_annotation=False,
+        claim_signals=True):
     X, sigma, truth, foreign = build_study(db_path, seed=seed)
     peaks = detect_peaks(PPM, X, noise_std=sigma, min_snr=6.0,
                          min_distance=0.003, baseline_correct=False,
@@ -453,10 +454,13 @@ def run(db_path, *, seed=0, shapes=True, shared=False, patterns=False,
         resolve_shared=shared,
         cascade=cascade,
         ppm_band_ppm=ppm_band,
+        claim_signals=claim_signals,
         annotation_params=params)
     rep = report(rows, mets, truth, foreign, peaks, fp_stats)
     # the study itself, for anything that wants to look at a row
-    rep.update({'rows': rows, 'ppm': PPM, 'X': X, 'samples_info': SAMPLES})
+    rep.update({'rows': rows, 'ppm': PPM, 'X': X, 'samples_info': SAMPLES,
+                'metabolites': mets, 'peaks': peaks, 'truth': truth,
+                'noise': sigma})
     return rep
 
 
@@ -552,6 +556,9 @@ def main():
                     help='resolve shared windows by shape')
     ap.add_argument('--cascade', action='store_true',
                     help='add what the cascade finds on the residual (ADR-028)')
+    ap.add_argument('--no-claim', action='store_true',
+                    help='do not let an analyte be measured on every signal '
+                         'its own amount predicts')
     ap.add_argument('--real-annotation', action='store_true',
                     help="annotate with the application's own search and "
                          "passes instead of this file's own (ADR-030/032)")
@@ -562,7 +569,8 @@ def main():
     t0 = time.time()
     rep = run(args.db, seed=args.seed, shapes=not args.no_shapes,
               shared=args.shared, patterns=args.patterns, cascade=args.cascade,
-              ppm_band=args.ppm_band, real_annotation=args.real_annotation)
+              ppm_band=args.ppm_band, real_annotation=args.real_annotation,
+              claim_signals=not args.no_claim)
     print_report(rep, label=f"{os.path.basename(args.db)}  patterns="
                             f"{args.patterns}  shapes={not args.no_shapes}  "
                             f"shared={args.shared}  cascade={args.cascade}  "
