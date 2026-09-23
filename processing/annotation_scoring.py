@@ -1683,6 +1683,21 @@ class CandidateKey(NamedTuple):
     score: float
 
 
+def in_study(mp, band_ppm: float = None) -> bool:
+    """Whether a matched peak stands where this study puts things.
+
+    Inside one band of the study's common drift -- the same band the
+    election orders candidates by. The match tolerance (``dppm_gold``) is
+    wider than the band on purpose, so that a study which drifts can still
+    be matched; it is not a statement that everything inside it is the
+    same signal. No drift measured means nothing to check.
+    """
+    off = mp.get('ppm_off_drift')
+    if off is None:
+        return True
+    return ppm_band(abs(float(off)), band_ppm or PPM_BAND_PPM) == 0
+
+
 def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
     """Lexicographic ranking key for one candidate (lower = better).
 

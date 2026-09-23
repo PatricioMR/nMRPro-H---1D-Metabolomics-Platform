@@ -125,3 +125,78 @@ class TestAnUnreadableSignal:
         assert [v[3] for v in verdicts] == ['unreadable']
         # neither present nor contradicted: it says nothing either way
         assert held is True
+
+
+class TestSingletsCorroborateEachOther:
+    """Creatine, betaine, creatinine, glycine and acetate -- five of the
+    eighteen analytes of the reference study -- carry nothing but singlets,
+    because nothing in those molecules has a neighbour to couple to. No
+    signal of theirs can ever be confirmed the way a multiplet is. What
+    they do have is each other: two singlets of one molecule stand a fixed
+    distance apart and in the fixed ratio of their proton counts."""
+
+    @staticmethod
+    def _spectrum(peaks, width=0.005):
+        import numpy as np
+        ppm = np.linspace(2.5, 4.5, 20001)
+        y = np.zeros_like(ppm)
+        for centre, area in peaks:
+            hw = width / 2.0
+            y += (area / np.pi) * hw / ((ppm - centre) ** 2 + hw ** 2)
+        return ppm, y
+
+    @staticmethod
+    def _creatine(peak_a=3.928, peak_b=3.031):
+        """Its CH2 (2H, 3.920) and its N-CH3 (3H, 3.024)."""
+        return {
+            'db_peaks': [{'ppm': 3.920, 'type': 's', 'protons': 2},
+                         {'ppm': 3.024, 'type': 's', 'protons': 3}],
+            'matched_peaks': [
+                {'db_ppm': 3.920, 'type': 's', 'peak_ppm': peak_a,
+                 'ppm_off_drift': 0.001},
+                {'db_ppm': 3.024, 'type': 's', 'peak_ppm': peak_b,
+                 'ppm_off_drift': 0.001}]}
+
+    def test_two_singlets_in_the_listed_ratio_corroborate(self):
+        from processing.quant_shared import singlets_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
+        assert singlets_corroborate(self._creatine(), ppm, y,
+                                    linewidth_ppm=0.005)
+
+    def test_a_ratio_the_protons_do_not_explain_does_not(self):
+        """Same two positions, but the 3H singlet reads like 30H: whatever
+        stands there, the pair is not this molecule."""
+        from processing.quant_shared import singlets_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 30000.0)])
+        assert not singlets_corroborate(self._creatine(), ppm, y,
+                                        linewidth_ppm=0.005)
+
+    def test_a_single_singlet_has_nothing_to_link_to(self):
+        from processing.quant_shared import singlets_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0)])
+        met = self._creatine()
+        met['matched_peaks'] = met['matched_peaks'][:1]
+        assert not singlets_corroborate(met, ppm, y, linewidth_ppm=0.005)
+
+    def test_singlets_that_are_all_somebody_elses_do_not(self):
+        """Adenosine passed on inosine's evidence: purine analogues whose
+        aromatic singlets sit 3 mppm apart, same 0.118 ppm separation, same
+        1:1 ratio, and the one singlet that tells them apart is under the
+        suppressed water. At least one of the pair has to be the analyte's
+        own peak."""
+        from processing.quant_shared import singlets_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
+        assert not singlets_corroborate(
+            self._creatine(), ppm, y, linewidth_ppm=0.005,
+            taken_peaks=(3.928, 3.031))
+        # one of its own is enough
+        assert singlets_corroborate(
+            self._creatine(), ppm, y, linewidth_ppm=0.005,
+            taken_peaks=(3.031,))
+
+    def test_a_singlet_outside_the_study_is_not_counted(self):
+        from processing.quant_shared import singlets_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
+        met = self._creatine()
+        met['matched_peaks'][1]['ppm_off_drift'] = 0.043
+        assert not singlets_corroborate(met, ppm, y, linewidth_ppm=0.005)
