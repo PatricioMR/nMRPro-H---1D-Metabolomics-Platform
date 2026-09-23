@@ -173,11 +173,15 @@ def compound_trace(x, signals, conc, *, shift):
     return y
 
 
-def build_study(db_path, *, seed=0):
+def build_study(db_path, *, seed=0, panel=None):
+    """``(X, sigma, truth, foreign)`` for a study of ``panel`` (PANEL when
+    None). The noise is anchored to lactate's doublet whatever the panel,
+    so a larger panel is the same experiment with more in the tube -- not a
+    different spectrometer."""
     con = sqlite3.connect(db_path)
     rng = np.random.default_rng(seed)
     truth, comps = {}, []
-    for name, conc, factor in PANEL:
+    for name, conc, factor in (panel or PANEL):
         mid, sigs = _db_signals(con, name)
         comps.append((name, mid, sigs, conc, factor))
         truth[mid] = {'name': name, 'A': conc, 'B': conc * factor}
