@@ -94,12 +94,22 @@ def _cv_percent(values):
 _DOTS = {3: STATUS_STRONG, 2: STATUS_FAIR, 1: STATUS_WEAK}
 
 
-def _structural_evidence(signal, dj_gold_hz=None) -> int:
+def _structural_evidence(signal, dj_gold_hz=None):
     """How much of the expected evidence this signal's SHAPE carried.
 
-    Three: the multiplet was complete and its coupling agreed. Two: complete,
-    coupling off but inside the gate. One: everything else that still produced
-    a number — a singlet, which has no coupling to agree with, among them.
+    Three: the multiplet was complete and its coupling agreed. Two:
+    complete, coupling off but inside the gate. One: a multiplet whose
+    lines were not all found. None for a singlet, which has no coupling
+    to agree with and no lines to count.
+
+    None and not one. The confidence is the worst of its axes, so an axis
+    that cannot be measured must not be the worst: scoring a singlet one
+    here meant no singlet could ever pass one dot however well the rest of
+    its molecule agreed, and creatine -- whose other signal stands exactly
+    where its amount says it should -- read as poorly as a peak nobody
+    could account for. What a singlet is worth is decided by its identity
+    (``_identity_evidence``), which is where the evidence for it actually
+    is.
 
     "Agreed" is the study's own band (``dj_band``), the one the election and
     the annotation use, widened where the reference measured its coupling
@@ -111,6 +121,9 @@ def _structural_evidence(signal, dj_gold_hz=None) -> int:
     match to a fifth of one.
     """
     ev = signal.evidence or {}
+    _mult = ev.get('multiplicity') or ev.get('type')
+    if _mult and is_singlet_like(_mult):
+        return None
     n_f, n_e = ev.get('n_found'), ev.get('n_expected')
     complete = (n_f is not None and n_e is not None and n_f >= n_e)
     dj = ev.get('delta_j_hz')
@@ -153,11 +166,12 @@ def _identity_of(info) -> dict:
     contradicted = sum(1 for v in verdicts if str(v[3]).startswith('contradicted'))
     covered = len(by_db) / listed >= COVERAGE_CORROBORATES
     return {'confirmed': confirmed, 'contradicted': contradicted,
-            'corroborated': bool(covered and present), 'listed': listed}
+            'corroborated': bool(covered and present), 'listed': listed,
+            'residual': info.get('by_residual')}
 
 
 def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
-                       listed=1, cascade=None) -> tuple[int, str]:
+                       listed=1, cascade=None, residual=None) -> tuple[int, str]:
     """How much the study itself says this is the analyte it says it is.
 
     Measured on the reference bench, over every analyte the run quantified,
@@ -177,10 +191,18 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     one dot whatever else it has: the amount says the signal should be
     there, and it is not.
 
+    An analyte identified on a free apex by its shape alone is one: no
+    line of it was confirmed. One taken from the remainder of another
+    analyte's window is never more than two, whatever its own signals
+    say elsewhere -- the amount is what that window had left over.
+
     An analyte the cascade brought in is never more than two: its lines
     were never confirmed one by one. Two when its own signals agree on
     the amount to within CASCADE_AGREEMENT_GOOD, one otherwise.
     """
+    if residual == 'spectrum':
+        return 1, ('identified on a free apex by the shape of its signal '
+                   'alone: no line of it was confirmed')
     if cascade is not None:
         dis = float(cascade.get('disagreement') or float('nan'))
         if np.isfinite(dis) and dis <= CASCADE_AGREEMENT_GOOD:
@@ -190,6 +212,10 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
         return 1, (f'{contradicted} signal(s) of its own listing are missing '
                    f'at this amount')
     if confirmed:
+        if residual:
+            return 2, (f'{confirmed} of its signals confirmed, but its '
+                       f'amount came from what the window of {residual} '
+                       f'had left over')
         return 3, (f'{confirmed} of its signals confirmed: the multiplet '
                    f'complete and the coupling inside the gate')
     if listed <= 1:
@@ -235,6 +261,8 @@ def _confidence(signal, strength=None, shared=False, *, identity=None,
     wrong.
     """
     level = _structural_evidence(signal, dj_gold_hz)
+    if level is None:                 # a singlet: its shape says nothing
+        level = 3
     if identity is not None:
         level = min(level, int(identity))
     if strength is not None:
@@ -250,6 +278,12 @@ def _confidence(signal, strength=None, shared=False, *, identity=None,
 # listed are all of them. Two dots, never three.
 SHARED_MAX_CONFIDENCE = 2
 
+# The share of its own window an analyte has to keep for the split to
+# leave its number standing on its own. Above it, what the others took is
+# a rounding of the analyte: an error of half in the neighbour moves the
+# analyte by half of what it gave away.
+SHARE_KEPT_ALONE = 0.90
+
 # The share of a window's raw area the baseline model may remove before
 # the row says so. A tenth is already enough to move a concentration by a
 # tenth when it is the internal standard's window.
@@ -257,10 +291,21 @@ BROAD_REMOVED_NOTE = 0.10
 
 
 
-# An amount the analyte's own signals agree on this closely was, on the
-# reference bench, within 8% of the truth; the ones that disagreed by
-# more than MAX_SIGNAL_DISAGREEMENT get no number at all.
-CASCADE_AGREEMENT_GOOD = 0.10
+# How closely an analyte the cascade brought in must have its own signals
+# agree before the row is worth two dots rather than one.
+#
+# What distinguishes its true rows from its false ones on the reference
+# study is not how well they agree but whether they could be checked at
+# all. The four real ones agree to 3%, 6%, 11% and 17%; of the five
+# false, two agree to 2% and 6% and the other three have no second signal
+# to check against. A floor of two dots for everything the cascade finds
+# -- which is the same as not asking -- takes those three unchecked ones
+# up with the rest. At a fifth, inosine and leucine come up and nothing
+# false comes with them.
+#
+# Not the same number as MAX_SIGNAL_DISAGREEMENT, which decides whether
+# there is a number at all: one threshold should answer one question.
+CASCADE_AGREEMENT_GOOD = 0.20
 
 # The share of an analyte's listed signals that must have been matched
 # before the rest of the listing standing at the measured amount counts
@@ -1361,7 +1406,10 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             free_apex_of=lambda c: [
                 float(peaks_by_rank[r]['ppm']) for r in _found_ranks(c)
                 if r in peaks_by_rank and r not in _claimed_ranks],
-            offer_if=lambda rec: _structural_evidence(rec['signal']) >= 2,
+            # a singlet's shape says nothing (None), and a window it
+            # owns is not one whose remainder can be offered around
+            offer_if=lambda rec: (_structural_evidence(rec['signal'])
+                                  or 0) >= 2,
             drift_ppm=float((residual_pool or [None])[0].evidence.get(
                 'study_drift_ppm') or 0.0) if residual_pool
             and getattr(residual_pool[0], 'evidence', None) else 0.0)
@@ -1400,11 +1448,16 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 'noise_sigma': noise_sigma,
                 'area_median': (float(np.median(list(_t['areas'].values())))
                                 if _t['areas'] else float('nan')),
-                # no limit of its own: the window is the owner's, and the
-                # identification is the weakest the table gives
+                # No limit of its own: the window is the owner's. The
+                # strength axis is about the size of the area against that
+                # limit and ``strength_band`` gives only 2 or 3; writing 1
+                # here said "this identification is weak" on the axis that
+                # answers "this quantity is small", and pushed glutamate --
+                # three of its signals confirmed -- to one dot. What is
+                # weak about a remainder is the window, and the window is
+                # already somebody else's: the shared cap says so.
                 'lod_area': float('nan'), 'loq_area': float('nan'),
                 'snr': {},
-                'strength': 1,
             }
             per_proton_areas[_cm] = {s_i: a / _nh
                                      for s_i, a in _t['areas'].items()}
@@ -1581,8 +1634,11 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             if not held:
                 bad[mid] = (AMOUNT_CONTRADICTED, _fingerprint_detail(verdicts))
                 continue
-            # a singlet on its own: position is all it has
-            if _structural_evidence(sig) <= 1 and is_singlet_like(
+            # a singlet on its own: position is all it has. Its shape
+            # axis is None (nothing to confirm), which is exactly the
+            # case this gate is for.
+            _shape = _structural_evidence(sig)
+            if (_shape is None or _shape <= 1) and is_singlet_like(
                     ev.get('multiplicity') or ev.get('type') or 's'):
                 if ev.get('manual_quality') == 'good':
                     continue
@@ -1628,10 +1684,19 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         # of quantification what they took is not a quantity, so the
         # number does not rest on their concentrations.
         _given = info.get('share_given')
+        _kept = info.get('share_kept')
         _loq = info.get('loq_area')
+        # Two ways of being immaterial, and either is enough. What the
+        # others took is below what this window could have quantified, so
+        # it is not a quantity; or it is a small enough part of the
+        # analyte's own area that its number does not rest on theirs --
+        # lactate gave 6% of its window away, and a neighbour wrong by
+        # half would move it by 3%.
         _material = (_given is None
-                     or _loq is None or not np.isfinite(_loq)
-                     or float(_given) >= float(_loq))
+                     or ((_loq is None or not np.isfinite(_loq)
+                          or float(_given) >= float(_loq))
+                         and (_kept is None
+                              or float(_kept) < SHARE_KEPT_ALONE)))
         _really_shared = (info.get('unshared_reason') is not None
                           or (bool(info.get('shared_with')) and _material))
         level, dots = _confidence(
@@ -1639,6 +1704,13 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
         info['identity_level'] = ident
         info['identity_why'] = ident_why
+        info['confidence_axes'] = {
+            'identity': ident,
+            'shape': _structural_evidence(info['signal'], dj_gold_hz),
+            'strength': info.get('strength'),
+            'shared': _really_shared,
+            'share_kept': info.get('share_kept'),
+        }
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
                          pqn_factors, standard, standard_conc,
                          bool(external_standard_samples), dilution,
@@ -2018,6 +2090,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # table's tooltip shows beside the dots.
         '_identity_why': info.get('identity_why'),
         '_identity_level': info.get('identity_level'),
+        # Each axis of the confidence, so a row can say which one held it
+        # back: the shape of the signal measured, the identity the rest of
+        # the listing gives it, the size of the area against the
+        # quantification limit, and whether the window is its own.
+        '_confidence_axes': info.get('confidence_axes'),
         # How much of a shared window the split left this analyte: 1.0 when
         # the other claimants took nothing, so the number rests on nobody.
         '_share_kept': info.get('share_kept'),

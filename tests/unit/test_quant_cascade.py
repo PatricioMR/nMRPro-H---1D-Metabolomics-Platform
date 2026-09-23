@@ -360,3 +360,31 @@ def test_how_far_its_signals_may_disagree_is_the_study_s_call():
 def test_the_default_bar_is_the_measured_one():
     from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
     assert MAX_SIGNAL_DISAGREEMENT == 0.30
+
+
+class TestWhatACascadeRowIsWorth:
+    """Two dots when its own signals were measured one by one and agree;
+    one when there was no second signal to measure."""
+
+    def test_signals_that_agree_are_worth_two(self):
+        from processing.quant_engine import _identity_evidence
+        assert _identity_evidence(cascade={'disagreement': 0.17})[0] == 2
+
+    def test_signals_that_do_not_agree_are_worth_one(self):
+        from processing.quant_engine import _identity_evidence
+        assert _identity_evidence(cascade={'disagreement': 0.45})[0] == 1
+
+    def test_nothing_to_check_against_is_worth_one(self):
+        """The three false positives the cascade found on the reference
+        study that a flat floor of two would have promoted had exactly
+        this in common: no second signal, so nothing was ever checked."""
+        from processing.quant_engine import _identity_evidence
+        level, why = _identity_evidence(cascade={'disagreement': float('nan')})
+        assert level == 1 and 'no second signal' in why
+
+    def test_the_bar_is_not_the_one_that_decides_the_number(self):
+        """One threshold answers one question: whether there is a number
+        at all is MAX_SIGNAL_DISAGREEMENT's."""
+        from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
+        from processing.quant_engine import CASCADE_AGREEMENT_GOOD
+        assert CASCADE_AGREEMENT_GOOD < MAX_SIGNAL_DISAGREEMENT

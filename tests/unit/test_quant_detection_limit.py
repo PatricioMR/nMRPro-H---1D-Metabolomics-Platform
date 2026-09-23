@@ -500,10 +500,14 @@ class TestTheResultIsWorthTheWorseOfItsTwoEvidences:
         assert _confidence(self._sig(dj=0.05), strength=2)[0] == 2
 
     def test_a_big_singlet_is_not_strong_either(self):
-        """Its identity is what is doubtful, and size cannot answer that."""
+        """Its identity is what is doubtful, and size cannot answer that.
+
+        The shape of a singlet says nothing -- there is no coupling to
+        confirm -- so it is the identity that has to, and a singlet whose
+        molecule gives it nothing stands at one however big it is."""
         from processing.quant_engine import _confidence
         assert _confidence(self._sig(mult='s', n_found=1, n_expected=1,
-                                     dj=None), strength=3)[0] == 1
+                                     dj=None), strength=3, identity=1)[0] == 1
 
     def test_a_perfect_multiplet_well_above_the_limit_is_strong(self):
         from processing.quant_engine import _confidence

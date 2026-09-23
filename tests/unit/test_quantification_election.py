@@ -185,7 +185,11 @@ class TestEligibilityAsksWhetherSomethingWasSeen:
         singlet = Candidate(met_id='M1', peak_rank=7,
                             evidence={'multiplicity': 's', 'n_found': 1,
                                       'n_expected': 1, 'delta_j_hz': None})
-        assert _confidence(singlet)[0] == 1
+        # its shape says nothing either way -- there is no coupling to
+        # confirm -- so what it is worth is left to its identity, which
+        # this call does not give it
+        assert _confidence(singlet)[0] == 3
+        assert _confidence(singlet, identity=1)[0] == 1
 
 
 class TestWhatWasSeenComesFirst:
