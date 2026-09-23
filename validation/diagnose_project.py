@@ -43,7 +43,16 @@ def measured_noise(ppm, X) -> float:
 
 
 def run(path, *, noise=None, field_mhz=None, tolerance=None,
-        local_baseline=None, baseline=None, log=print):
+        local_baseline=None, baseline=None, db_path=None, log=print):
+    """Run the project through the application's own engines.
+
+    ``db_path`` is the reference the ANNOTATION searches, which need not be
+    the one the spectrum was built from. Pointing them at different
+    databases is the honest experiment: a real spectrum is not made out of
+    the listing used to annotate it, so a bench that searches the same
+    table it drew the peaks from is measuring the engine on the easy case.
+    The truth stays with whoever built the study.
+    """
     st = pickle.load(open(path, 'rb'))
     ppm = np.asarray(st['ppm'], dtype=float)
     # The project's baseline model, applied as the application applies it.
@@ -85,7 +94,7 @@ def run(path, *, noise=None, field_mhz=None, tolerance=None,
 
     with contextlib.redirect_stdout(io.StringIO()):
         mets, params = app_annotate(
-            peaks, ppm, X, si, db_path=mb.DB_DEFAULT, field_mhz=mhz,
+            peaks, ppm, X, si, db_path=db_path or mb.DB_DEFAULT, field_mhz=mhz,
             tolerance_ppm=tol, noise_std=noise_std, min_snr=min_snr,
             min_distance_ppm=min_dist, excluded_regions=excl)
         ref = min(peaks, key=lambda p: abs(float(p['ppm']) - mb.STANDARD_PPM))
@@ -169,12 +178,16 @@ def main():
                     action='store_true', default=None,
                     help="subtract a line under each window, whatever the "
                          'project says')
+    ap.add_argument('--db', default=None,
+                    help='the reference the annotation searches; the study '
+                         'was built from mixture_bench.DB_DEFAULT and the '
+                         'truth always comes from there')
     a = ap.parse_args()
     with contextlib.redirect_stdout(io.StringIO()):
         _X, _s, truth, _f = mb.build_study(mb.DB_DEFAULT, seed=0)
     _st, _mets, rows = run(a.path, noise=a.noise,
                            local_baseline=a.local_baseline,
-                           baseline=a.baseline)
+                           baseline=a.baseline, db_path=a.db)
     diagnose(rows, truth)
 
 

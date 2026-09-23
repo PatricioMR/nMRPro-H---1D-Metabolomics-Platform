@@ -218,8 +218,11 @@ def _line_share(mult) -> float:
     m = normalize_mult(mult or 's')
     if m in ('m', 'm*', 'multiplet'):
         return None
+    # 'hept' and 'sept' are the same seven lines under two spellings; HMDB
+    # writes the first, BMRB the second, and a table that knows only one of
+    # them reads a real heptet as a shape nobody can count.
     n = {'s': 1, 'd': 2, 't': 3, 'q': 4, 'quint': 5, 'p': 5, 'sext': 6,
-         'sept': 7, 'h': 6}.get(m)
+         'sept': 7, 'hept': 7, 'h': 6}.get(m)
     if n is None:
         return None
     if n <= 1:

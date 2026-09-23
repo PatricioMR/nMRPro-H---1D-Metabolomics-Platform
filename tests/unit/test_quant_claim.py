@@ -105,3 +105,23 @@ def test_the_analyte_s_own_signal_is_not_claimed_twice():
                                included=[0], linewidth_ppm=LW,
                                noise_sigma=SIGMA, local_baseline=False)
     assert out['A']['used'] == 0
+
+
+class TestAnUnreadableSignal:
+    """A reference may list a signal this cannot predict the height of: a
+    multiplicity whose lines it does not know how to count. Such a signal
+    can neither confirm nor contradict an amount, and it must not end
+    the run."""
+
+    def test_an_unknown_multiplicity_is_reported_not_raised(self):
+        import numpy as np
+        from processing.quant_shared import fingerprint_holds
+        ppm = np.linspace(0.0, 4.0, 4001)
+        trace = np.zeros_like(ppm)
+        held, verdicts = fingerprint_holds(
+            [{'ppm': 2.0, 'type': 'nonagonal-something', 'protons': 3}],
+            per_proton_area=1.0e4, ppm=ppm, trace=trace,
+            noise=100.0, linewidth_ppm=0.005)
+        assert [v[3] for v in verdicts] == ['unreadable']
+        # neither present nor contradicted: it says nothing either way
+        assert held is True

@@ -155,6 +155,18 @@ class TestTallestLineShare:
         assert tallest_line_share({'type': 'm'}) is None
         assert tallest_line_share({'type': 'm*'}) is None
 
+    def test_a_heptet_is_a_septet_under_another_spelling(self):
+        """Seven lines either way. HMDB writes 'hept' and BMRB 'sept', and
+        a table that knew only one of them read a real heptet as a shape
+        nobody could count -- which, before the guard in
+        quant_shared.fingerprint_holds, ended the run with a TypeError
+        the moment a study was annotated against HMDB."""
+        from processing.annotation_detectability import tallest_line_share
+        assert (tallest_line_share({'type': 'hept'})
+                == tallest_line_share({'type': 'sept'}))
+        # 1:6:15:20:15:6:1 -- the tallest of the seven carries 20 of 64
+        assert tallest_line_share({'type': 'hept'}) == pytest.approx(20 / 64)
+
     def test_a_measured_pattern_speaks_for_itself(self):
         """Where the reference measured the pattern, its tallest line's
         share is a measurement, not a guess -- the same rule

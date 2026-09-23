@@ -923,6 +923,18 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
         # pattern's height, as the reference measured it
         share = (max(r for _o, r in pat) / sum(r for _o, r in pat)
                  if pat else _line_share(mult))
+        if share is None:
+            # The reference gives a multiplicity whose lines this cannot
+            # count. How tall the signal should be is then unknown, and a
+            # signal whose expected height is unknown can neither confirm
+            # nor contradict the amount. Said out loud rather than
+            # dropped: it changes what the fingerprint covers, and a
+            # listing that is largely unreadable is a fact about the
+            # reference the analyst has to see. Assuming a share here is
+            # what over-predicted the apex and read the spectrum's honest
+            # answer as a contradiction.
+            out.append((centre, mult, float('nan'), 'unreadable'))
+            continue
         expected = _lorentz_height(float(per_proton_area) * nh * share, hwhm)
         exp_snr = expected / float(noise) if noise else float('inf')
         if exp_snr < FINGERPRINT_SUPPORT_SNR:
