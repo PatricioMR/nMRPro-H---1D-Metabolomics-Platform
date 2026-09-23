@@ -166,6 +166,10 @@ class ProjectManager:
                 'last_results_args':     getattr(ann, '_last_results_args', None),
                 'annotations':           dict(getattr(ann, 'annotations', {})),
                 'tolerance':             _safe_var(ann, 'tolerance_var'),
+                # The field every predicted J line is placed with. Not
+                # saving it reopened a 500 MHz study at 600 and moved every
+                # line a fifth of its splitting.
+                'spectrometer_mhz':      _safe_var(ann, 'spectrometer_var'),
                 'align':                 _safe_var(ann, 'align_var'),
                 'exclude_water':         _safe_var(ann, 'exclude_water_var'),
                 'water_lo':              _safe_var(ann, 'water_lo_var'),
@@ -467,6 +471,9 @@ class ProjectManager:
                     ann.annotations = ann_state['annotations']
 
                 _set_var(ann, 'tolerance_var', ann_state.get('tolerance'))
+                if ann_state.get('spectrometer_mhz'):
+                    _set_var(ann, 'spectrometer_var',
+                             ann_state.get('spectrometer_mhz'))
                 _set_var(ann, 'align_var',     ann_state.get('align'))
                 _set_var(ann, 'exclude_water_var', ann_state.get('exclude_water'))
                 _set_var(ann, 'water_lo_var',      ann_state.get('water_lo'))

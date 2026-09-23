@@ -851,6 +851,19 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                         procno=opts['procno'],
                     )
 
+                # The field the data was acquired at, from its own procs.
+                # Every predicted J line is placed with it; the interface's
+                # fallback is only right for 600 MHz data.
+                try:
+                    from data.bruker_loader import read_spectrometer_mhz
+                    _mhz = read_spectrometer_mhz(
+                        root_folder, expno=opts['expno'],
+                        procno=opts['procno'])
+                except ValueError as _fe:
+                    _mhz = None
+                    messagebox.showwarning('Spectrometer field', str(_fe))
+                self.set_spectrometer_mhz(_mhz)
+
                 self.samples_info = []
                 for i, (name, label) in enumerate(zip(sample_names, sample_labels)):
                     _type = 'BLK' if str(label).upper() in ('BLK', 'BLANK') else 'Sample'
@@ -903,6 +916,26 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
     # ---------- Plot Update ----------
     # ── Baseline ──────────────────────────────────────────────────────────────
+
+    def set_spectrometer_mhz(self, mhz):
+        """Record the field the data was acquired at and give it to the
+        annotation, which converts every predicted J from Hz to ppm with it.
+
+        ``None`` leaves the annotation's own value alone -- a CSV import
+        carries no field, and the analyst types it -- but says so in the
+        console, because the fallback is only right for 600 MHz data.
+        """
+        self.spectrometer_mhz = float(mhz) if mhz else None
+        ann = getattr(self, 'stages', {}).get('annotation')
+        var = getattr(ann, 'spectrometer_var', None) if ann else None
+        if self.spectrometer_mhz and var is not None:
+            var.set(f'{self.spectrometer_mhz:g}')
+            print(f'[Load] spectrometer field {self.spectrometer_mhz:g} MHz '
+                  f'(from the data)')
+        elif var is not None:
+            print(f'[Load] spectrometer field not in the data: annotation '
+                  f'uses {var.get()} MHz -- set it if that is not the '
+                  f'field this was acquired at')
 
     def corrected_intensities(self):
         """Intensities with the project's baseline model applied.

@@ -447,6 +447,42 @@ def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,
     return common_ppm, all_intensities, sample_names, sample_labels
 
 
+def read_spectrometer_mhz(root_folder, expno=1, procno=1):
+    """The spectrometer frequency (MHz) the dataset was acquired at.
+
+    Read from ``SF`` in each spectrum's ``procs`` -- the same value
+    ``_load_spectrum`` uses to build the ppm axis, which until now was
+    discarded after that. Every J-coupling the annotation predicts is
+    converted from Hz to ppm with this number, so a wrong one moves every
+    predicted line: annotating the 500 MHz reference study at the
+    interface's fallback of 600 MHz found 10 of 18 analytes instead of 16,
+    with 16 false positives instead of 10 and a p90 error of 222% instead
+    of 14%.
+
+    Returns the frequency when every spectrum agrees to 0.1 MHz, ``None``
+    when none could be read. Spectra acquired at different fields cannot
+    share one ppm-to-Hz conversion, and that is an error the analyst has to
+    see, not a value to average.
+    """
+    fields = []
+    for proc_dir in _find_experiments(root_folder, expno=expno, procno=procno):
+        try:
+            sf = _read_jcamp(os.path.join(proc_dir, 'procs')).get('SF')
+            if sf is not None and float(sf) > 0:
+                fields.append(float(sf))
+        except (OSError, ValueError, TypeError):
+            continue
+    if not fields:
+        return None
+    lo, hi = min(fields), max(fields)
+    if hi - lo > 0.1:
+        raise ValueError(
+            f"Os espectros foram adquiridos a campos diferentes "
+            f"({lo:.2f} a {hi:.2f} MHz): não partilham uma conversão "
+            f"ppm↔Hz e não podem ser anotados juntos.")
+    return float(np.median(fields))
+
+
 # ── Inferência de grupo a partir do nome ─────────────────────────────────────
 
 def _infer_label(name):

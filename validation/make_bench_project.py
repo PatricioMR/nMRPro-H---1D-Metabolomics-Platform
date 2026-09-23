@@ -64,6 +64,10 @@ def build(seed=0):
         'show_legend': True,
         'peak_list_filters': {},
         'eligible_overrides': {},
+        # The field the spectrum was built at. Without it the project opens
+        # at the interface's 600 MHz fallback and every predicted J line
+        # lands a fifth of its splitting away from where it is.
+        'ann': {'spectrometer_mhz': f'{mb.MHZ:g}'},
     }
     return state, truth, sigma, foreign
 
