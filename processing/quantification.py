@@ -43,6 +43,7 @@ PARTIAL_MULTIPLET = 'partial_multiplet'
 AMOUNT_CONTRADICTED = 'amount_contradicted'
 SINGLET_UNSUPPORTED = 'singlet_unsupported'
 WINDOW_TAKEN = 'window_taken'
+OFF_THE_STUDY = 'off_the_study'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -74,6 +75,15 @@ REJECTION_TEXT = {
         'amount when each is measured separately. On the reference study an '
         'amount in that state missed by a third and moved the difference '
         'between groups by as much, so no number is given.',
+    OFF_THE_STUDY:
+        'Not quantified: every signal of this analyte that matched a peak '
+        'matched one further from where this study puts things than the '
+        'study itself drifts. The match tolerance is wider than the drift '
+        'on purpose, so that a study which moves can still be matched; it '
+        'does not say that everything inside it is the same signal. An '
+        'analyte none of whose listed signals stands where the study '
+        'stands is being read off the table rather than off the spectrum. '
+        'Widen the Delta-ppm band if this study really drifts that far.',
     WINDOW_TAKEN:
         'Not quantified: the signals other quantified analytes list inside '
         'this window, at the amounts they were measured at, account for the '

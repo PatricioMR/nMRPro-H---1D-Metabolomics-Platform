@@ -53,8 +53,8 @@ from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
     AMOUNT_CONTRADICTED, CASCADE_CROWDED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
-    PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED, SHAPES_OFF,
-    SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
+    OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
+    SHAPES_OFF, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, PATTERN_MULT, PPM_BAND_PPM, dj_band, is_singlet_like,
     normalize_mult, ppm_band, study_drift)
@@ -171,6 +171,43 @@ def _in_study(mp, band_ppm=None) -> bool:
         return True
     return ppm_band(abs(float(off)),
                     band_ppm if band_ppm else PPM_BAND_PPM) == 0
+
+
+def stands_in_study(met, band_ppm=None) -> bool:
+    """Whether any signal this analyte matched stands where the study does.
+
+    The match tolerance (``dppm_gold``, 0.05 ppm) is wider than a study's
+    drift on purpose, so that a study which moves can still be matched. It
+    was read as though everything inside it were the same signal. Measured
+    on the reference study, over every quantified analyte, by the share of
+    its listed signals matched INSIDE one band of the common drift: the 16
+    really in the mixture ran 0.33 to 1.00, median 0.86, and not one was at
+    zero; of the 16 strangers, seven were at zero -- not a single listed
+    signal of theirs anywhere near where the study puts things, though all
+    of them had matched a peak.
+
+    An analyte that matched nothing at all is not judged here: this asks
+    where its matches landed, and no match is not an answer.
+    """
+    seen = False
+    for mp in (met or {}).get('matched_peaks') or ():
+        if mp.get('db_ppm') is None:
+            continue
+        seen = True
+        if _in_study(mp, band_ppm):
+            return True
+    return not seen
+
+
+def _off_study_detail(met) -> str:
+    """How far the analyte's matches landed, so the row can be checked."""
+    offs = [abs(float(mp['ppm_off_drift']))
+            for mp in (met or {}).get('matched_peaks') or ()
+            if mp.get('ppm_off_drift') is not None]
+    if not offs:
+        return ''
+    return (f' The nearest of its {len(offs)} matched signal(s) sits '
+            f'{1000 * min(offs):.0f} mppm from the drift this study measured.')
 
 
 def _identity_of(info, band_ppm=None) -> dict:
@@ -986,8 +1023,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     if diag is not None:
         diag['amount_withdrawn'] = {m: r for m, (r, _d) in withdrawn.items()}
     if cascade and metabolites:
+        # The cascade probes the spectrum with an analyte's whole listing,
+        # so it never asks whether that listing belongs to this study at
+        # all. One whose every matched signal landed further from the
+        # common drift than the band allows is not a candidate: it would
+        # be fitted on columns built at positions the study does not use.
+        _in = [m for m in metabolites if stands_in_study(m, ppm_band_ppm)]
         rows = _cascade_rows(
-            rows, metabolites, ppm=ppm, intensities=intensities,
+            rows, _in, ppm=ppm, intensities=intensities,
             included=included, groups=groups, noise_sigma=noise_sigma,
             linewidth_ppm=linewidth_ppm,
             # the study's drift as annotation measured it (the median
@@ -1662,6 +1705,17 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     if _cols:
         _mean = _arr_all[:, _cols].mean(axis=1)
     bad: dict = {}
+    # Withdrawn like ``bad``, but WITHOUT re-running the election. A row
+    # here is one the run refuses to report; it is not a peak handed to
+    # the runner-up. Freeing the peak would be the principled thing, and
+    # on the reference study it is the harmful one: the peak propionic
+    # acid took at 2.133 carries glutamine's quartet AND glutamate's and
+    # glutathione's unresolved multiplets, so the runner-up owns a window
+    # it did not fill and reads +38% where the cascade, splitting it,
+    # reads -7%. Re-electing here cost p90 13% -> 19%. Until a contested
+    # window can be shared rather than handed over (ADR-028's territory),
+    # withdrawal stops at not reporting.
+    withheld: dict = {}
     if _mean is not None and noise_sigma and linewidth_ppm:
         for mid, info in list(measured.items()):
             if info.get('by_residual'):
@@ -1683,6 +1737,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             info['fingerprint_at_amount'] = verdicts
             if not held:
                 bad[mid] = (AMOUNT_CONTRADICTED, _fingerprint_detail(verdicts))
+                continue
+            if not stands_in_study(met, ppm_band_ppm):
+                withheld[mid] = (OFF_THE_STUDY, _off_study_detail(met))
                 continue
             # a singlet on its own: position is all it has. Its shape
             # axis is None (nothing to confirm), which is exactly the
@@ -1710,7 +1767,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                         checkable and not seen):
                     bad[mid] = (SINGLET_UNSUPPORTED,
                                 _fingerprint_detail(verdicts, snr=snr_rep))
-    for mid in bad:
+    for mid in list(bad) + list(withheld):
         measured.pop(mid, None)
         per_proton_areas.pop(mid, None)
         residual_ids.discard(mid)
@@ -1809,6 +1866,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     for mid, (reason, detail) in taken_over.items():
         rows.append(_rejected_row(mid, reason, detail=detail))
     for mid, (reason, detail) in bad.items():
+        rows.append(_rejected_row(mid, reason, detail=detail))
+    for mid, (reason, detail) in withheld.items():
         rows.append(_rejected_row(mid, reason, detail=detail))
 
     if standard_areas:

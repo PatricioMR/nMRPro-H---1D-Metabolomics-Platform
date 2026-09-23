@@ -43,8 +43,13 @@ def measured_noise(ppm, X) -> float:
 
 
 def run(path, *, noise=None, field_mhz=None, tolerance=None,
-        local_baseline=None, baseline=None, db_path=None, log=print):
+        local_baseline=None, baseline=None, db_path=None, params=None,
+        singlet_min_snr=None, log=print):
     """Run the project through the application's own engines.
+
+    ``params`` overrides the scoring parameters the analyst would set in
+    the Annotation Parameters dialog, so a sweep can ask what a different
+    gate would have done to this study.
 
     ``db_path`` is the reference the ANNOTATION searches, which need not be
     the one the spectrum was built from. Pointing them at different
@@ -96,13 +101,15 @@ def run(path, *, noise=None, field_mhz=None, tolerance=None,
         mets, params = app_annotate(
             peaks, ppm, X, si, db_path=db_path or mb.DB_DEFAULT, field_mhz=mhz,
             tolerance_ppm=tol, noise_std=noise_std, min_snr=min_snr,
-            min_distance_ppm=min_dist, excluded_regions=excl)
+            min_distance_ppm=min_dist, excluded_regions=excl,
+            params=params)
         ref = min(peaks, key=lambda p: abs(float(p['ppm']) - mb.STANDARD_PPM))
         rows = quantify_project(
             metabolites=mets, peaks=peaks, ppm=ppm, intensities=X,
             samples_info=si, ref_peak=ref, ref_nh=mb.STANDARD_NH,
             ref_conc=mb.STANDARD_MM, ref_name='DSS', noise_sigma=noise_std,
             ambiguous_ranks=ambiguous_peak_ranks(mets, manual_quality={}),
+            singlet_min_snr=singlet_min_snr,
             use_pqn=False, local_baseline=local_bl, quantify_shapes=True,
             deconvolve=False, resolve_shared=True, cascade=True,
             excluded_regions=excl, annotation_params=params,

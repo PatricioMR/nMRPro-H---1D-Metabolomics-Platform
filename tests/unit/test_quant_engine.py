@@ -247,6 +247,36 @@ class TestIdentityEvidence:
         mp = {'annotation_quality': 'good', 'ppm_off_drift': 0.043}
         assert _confirms(mp, 0.060)
 
+    def test_an_analyte_none_of_whose_signals_is_in_the_study(self):
+        """It matched, but nowhere this study puts things.
+
+        Measured over every quantified analyte of the reference study, by
+        the share of its listed signals matched inside one band of the
+        common drift: the 16 really in the mixture ran 0.33 to 1.00,
+        median 0.86, none at zero; of the 16 strangers, seven were at
+        zero although every one of them had matched a peak.
+        """
+        from processing.quant_engine import stands_in_study
+        near = {'db_ppm': 1.0, 'ppm_off_drift': 0.002}
+        far = {'db_ppm': 1.0, 'ppm_off_drift': 0.043}
+        assert stands_in_study({'matched_peaks': [near, far]})
+        assert not stands_in_study({'matched_peaks': [far]})
+
+    def test_matching_nothing_is_not_an_answer(self):
+        """This asks where an analyte's matches landed. No match at all is
+        a different question, and not one to withdraw it on."""
+        from processing.quant_engine import stands_in_study
+        assert stands_in_study({'matched_peaks': []})
+        assert stands_in_study({})
+        # a match with no position is no answer either
+        assert stands_in_study({'matched_peaks': [{'db_ppm': None}]})
+
+    def test_the_band_is_the_studys_own_call(self):
+        from processing.quant_engine import stands_in_study
+        met = {'matched_peaks': [{'db_ppm': 1.0, 'ppm_off_drift': 0.043}]}
+        assert stands_in_study(met, 0.060)
+        assert not stands_in_study(met, 0.020)
+
     def test_the_cascade_never_reaches_three(self):
         from processing.quant_engine import _identity_evidence
         assert _identity_evidence(cascade={'disagreement': 0.01})[0] == 2
