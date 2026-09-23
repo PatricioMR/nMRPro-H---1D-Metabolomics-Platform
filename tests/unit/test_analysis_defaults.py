@@ -37,6 +37,8 @@ WIRED = [
     ('quantification_stage.py', 'local_baseline_var', 'QUANTIFICATION',
      'local_baseline'),
     ('quantification_stage.py', 'norm_var', 'QUANTIFICATION', 'normalisation'),
+    ('quantification_stage.py', 'bl_model_quant_var', 'QUANTIFICATION',
+     'baseline_model'),
 ]
 
 
@@ -71,9 +73,42 @@ def test_a_misspelt_override_is_an_error_not_a_silent_default():
 
 def test_the_measured_defaults():
     """What the reference study's results were measured with."""
-    assert DETECTION['baseline_model'] is False
+    # the model finds peaks, and areas are measured on the data
+    assert DETECTION['baseline_model'] is True
+    assert QUANTIFICATION['baseline_model'] is False
     assert QUANTIFICATION['quantify_shapes'] is True
     assert QUANTIFICATION['resolve_shared'] is True
     assert QUANTIFICATION['cascade'] is True
     assert QUANTIFICATION['max_disagreement_pct'] == 30.0
     assert ANNOTATION['tolerance_ppm'] == 0.05
+
+
+def test_detection_does_not_depend_on_how_often_it_is_pressed():
+    """The interface estimates sigma on the first Detect, stores it, and
+    passes it on the second. The same number found 81 peaks on the first
+    press and 90 on the second on the reference study."""
+    import contextlib
+    import io
+    import numpy as np
+    from validation import mixture_bench as mb
+    from processing.peak_detection import detect_peaks
+    with contextlib.redirect_stdout(io.StringIO()):
+        X, _s, _t, _f = mb.build_study(mb.DB_DEFAULT, seed=0)
+        kw = dict(min_snr=6.0, min_distance=0.004, baseline_correct=False,
+                  global_align=True, samples_info=mb.SAMPLES,
+                  return_details=True, per_sample_detection=True,
+                  min_group_presence=3, excluded_regions=[(4.5, 5.0)])
+        first = detect_peaks(mb.PPM, X, noise_std=None, **kw)
+        second = detect_peaks(mb.PPM, X, noise_std=float(first['noise_std']),
+                              **kw)
+    a = [round(float(p['ppm']), 5) for p in first['peaks']]
+    b = [round(float(p['ppm']), 5) for p in second['peaks']]
+    assert a == b
+    assert np.isclose(first['noise_std'], second['noise_std'])
+
+
+def test_the_project_keeps_where_areas_are_measured():
+    src = (STAGES.parent / 'project_manager.py').read_text(encoding='utf-8')
+    assert "'baseline_model_quant': _safe_var(qnt, 'bl_model_quant_var')" in src
+    assert re.search(r"_set_var\(qnt, 'bl_model_quant_var',\s*"
+                     r"qnt_state\.get\('baseline_model_quant'\)\)", src)

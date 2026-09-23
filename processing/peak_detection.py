@@ -951,10 +951,17 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         # noise_std (and per-peak SNR in STEP 10) stays mean-based.
         _n_det = len(_incl) if n_samples > 1 else 1
         _infl = float(np.sqrt(2.0 * np.log(_n_det))) if _n_det >= 2 else 1.0
-        if _noise_was_provided:
-            det_med, det_noise = 0.0, float(noise_std)
-        else:
-            det_med, det_noise = _quiet_segment_stats(detection_ref)
+        # The floor and spread of the trace the peaks are FOUND on, always.
+        # A provided noise_std is the mean trace's (what the SNR column and
+        # every limit downstream read) and says nothing about the per-sample
+        # maximum this gates. Using it here -- with the maximum's positive
+        # floor taken as zero -- was a second code path: the interface
+        # estimates sigma on the first Detect, stores it, and passes it on
+        # the second, so the same number found 81 peaks on the first press
+        # and 90 on the second on the reference study, with the feet 16,048
+        # counts up instead of 110,264. What detection finds cannot depend on
+        # how many times the button was pressed.
+        det_med, det_noise = _quiet_segment_stats(detection_ref)
         print(f"[INFO] Detection floor: baseline={det_med:.6f} sigma={det_noise:.6f} "
               f"inflation(N={_n_det})={_infl:.2f}")
 
@@ -1250,7 +1257,11 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         # few points off the visible mean peak (per-sample shifts), leaving the
         # overlay marker beside the top. Fall back to the detection apex when the
         # mean is flat there (single-sample analyte, no mean peak to land on).
-        _mean_gate = (det_med if not _noise_was_provided else 0.0) + det_noise * min_snr
+        # The first-press behaviour, whatever the press: the measured one.
+        # It holds a mean-trace apex to the maximum trace's floor, which is
+        # conservative -- an apex it does not move stays where detection put
+        # it -- and is kept because it is what was measured over three seeds.
+        _mean_gate = det_med + det_noise * min_snr
         for peak in separated_peaks:
             s, e = peak['start_idx'], peak['end_idx']
             if e > s:

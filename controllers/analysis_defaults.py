@@ -16,16 +16,15 @@ from __future__ import annotations
 from processing.spectral_regions import DEFAULT_EXCLUDED_REGIONS
 
 DETECTION = {
-    # The project-level baseline model (SNIP), applied before detection and
-    # carried into quantification as app.corrected_intensities(). Off: on
-    # the reference study -- whose baseline is flat -- SNIP took a tenth of
-    # the internal standard and a quarter of glutathione's window, and a new
-    # user's run found 11 of 18 with 22 false positives against 13 and 7
-    # without it. Measured on a synthetic baseline only: a real spectrum
-    # with a broad macromolecule envelope is the case to check before this
-    # is trusted everywhere, and _broad_removed on every row says what the
-    # model took wherever it is turned on.
-    'baseline_model': False,
+    # The project-level baseline model (SNIP), applied before DETECTION.
+    # Whether quantification integrates on it is QUANTIFICATION's
+    # 'baseline_model', and the two answers differ. Over three seeds of the
+    # reference study, with quantification on the unmodelled data: the
+    # model at detection took false positives from 11.3 to 5.7, p90 from
+    # 47% to 20% and F1 from 76% to 86%. At quantification it takes signal
+    # -- a tenth of the internal standard, a quarter of glutathione's
+    # window, on a baseline that is flat.
+    'baseline_model': True,
     'baseline_method': 'snip',
     'baseline_lam': 1e5,
     'baseline_niter': 40,
@@ -49,6 +48,12 @@ ANNOTATION = {
 }
 
 QUANTIFICATION = {
+    # Integrate on the baseline-model-corrected spectrum. Off: the model
+    # finds peaks better than it measures them -- see DETECTION. Measured on
+    # a flat synthetic baseline; a real spectrum with a broad envelope is the
+    # case to check, and _broad_removed on every row says what the model
+    # takes whenever this is on.
+    'baseline_model': False,
     'integration': 'Multiplet',
     'normalisation': 'IS',
     'proton_correction': True,

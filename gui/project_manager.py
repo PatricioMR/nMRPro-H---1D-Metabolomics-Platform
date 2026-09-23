@@ -236,6 +236,7 @@ class ProjectManager:
                 'mcr':              _safe_var(qnt, 'mcr_var'),
                 'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
                 'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
+                'baseline_model_quant': _safe_var(qnt, 'bl_model_quant_var'),
                 'shape_fit':        _safe_var(qnt, 'shape_var'),
                 'shared_deconv':    _safe_var(qnt, 'shared_var'),
                 'singlet_min_snr':  _safe_var(qnt, 'singlet_snr_var'),
@@ -595,6 +596,8 @@ class ProjectManager:
                 _set_var(qnt, 'blk_sub_var',     qnt_state.get('blk_sub'))
                 _set_var(qnt, 'ext_is_var',        qnt_state.get('ext_is'))
                 _set_var(qnt, 'local_baseline_var', qnt_state.get('local_baseline'))
+                _set_var(qnt, 'bl_model_quant_var',
+                         qnt_state.get('baseline_model_quant'))
                 _set_var(qnt, 'shape_var',        qnt_state.get('shape_fit'))
                 _set_var(qnt, 'shared_var',       qnt_state.get('shared_deconv'))
                 _set_var(qnt, 'singlet_snr_var',  qnt_state.get('singlet_min_snr'))

@@ -272,6 +272,14 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self.local_baseline_var = tk.BooleanVar(value=QUANTIFICATION['local_baseline'])
         ttk.Checkbutton(blf, text='Local baseline correction (linear, per window) — fallback only',
                         variable=self.local_baseline_var).pack(side=tk.LEFT)
+        bmf = ttk.Frame(s2); bmf.pack(fill=tk.X, pady=1)
+        # The project baseline model finds peaks; whether areas are measured
+        # on it too is a separate choice (see controllers.analysis_defaults).
+        self.bl_model_quant_var = tk.BooleanVar(
+            value=QUANTIFICATION['baseline_model'])
+        ttk.Checkbutton(bmf, text='Integrate on the baseline-model spectrum '
+                                  '(detection always uses it)',
+                        variable=self.bl_model_quant_var).pack(side=tk.LEFT)
 
         mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
         self._ext_is_indices = []

@@ -48,7 +48,9 @@ ALIGN_MAX_SHIFT_PPM = 0.030
 
 def defaults(overrides=None) -> dict:
     """Every default in one flat dict, with ``overrides`` applied."""
-    d = {**DETECTION, **ANNOTATION, **QUANTIFICATION}
+    d = {**DETECTION, **ANNOTATION,
+         **{k: v for k, v in QUANTIFICATION.items() if k != 'baseline_model'},
+         'quant_on_model': QUANTIFICATION['baseline_model']}
     unknown = set(overrides or {}) - set(d)
     if unknown:
         raise KeyError(f'not a default: {sorted(unknown)}')
@@ -154,7 +156,8 @@ def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
             n_samples_correlated=raw.shape[1] if raw.ndim == 2 else 1)
         ref = min(peaks, key=lambda p: abs(float(p['ppm']) - standard_ppm))
         rows = quantify_project(
-            metabolites=mets, peaks=peaks, ppm=ppm, intensities=corr,
+            metabolites=mets, peaks=peaks, ppm=ppm,
+            intensities=corr if d['quant_on_model'] else raw,
             samples_info=samples_info, ref_peak=ref, ref_nh=standard_nh,
             ref_conc=standard_conc, ref_name=standard_name,
             noise_sigma=noise_std,

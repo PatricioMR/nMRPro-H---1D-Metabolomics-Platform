@@ -448,10 +448,17 @@ class _QuantCompMixin:
             return
 
         ppm_arr = self.app.ppm
-        try:
-            all_int = self.app.corrected_intensities()
-        except Exception:
-            all_int = self.app.all_intensities
+        # The baseline model found the peaks; the areas are measured on the
+        # data unless the analyst asks for the model's spectrum here too.
+        _bmq = getattr(self, 'bl_model_quant_var', None)
+        _on_model = bool(_bmq.get()) if _bmq is not None else False
+        all_int = self.app.all_intensities
+        if _on_model:
+            try:
+                all_int = self.app.corrected_intensities()
+            except Exception as _bl_exc:
+                print(f'[Quant] baseline model unavailable, integrating the '
+                      f'data: {_bl_exc}')
         if ppm_arr is None or all_int is None or np.asarray(all_int).ndim < 2:
             messagebox.showinfo('Info', 'No spectral data loaded.')
             return
