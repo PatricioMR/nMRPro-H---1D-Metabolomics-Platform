@@ -56,8 +56,8 @@ from processing.quantification import (
     PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED, SHAPES_OFF,
     SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
-    DJ_GOLD_HZ_DEFAULT, PATTERN_MULT, dj_band, is_singlet_like,
-    normalize_mult, study_drift)
+    DJ_GOLD_HZ_DEFAULT, PATTERN_MULT, PPM_BAND_PPM, dj_band, is_singlet_like,
+    normalize_mult, ppm_band, study_drift)
 
 # The status dots the results table shows. Confidence is about how much of the
 # expected evidence this signal actually carried, not about how large the
@@ -133,11 +133,51 @@ def _structural_evidence(signal, dj_gold_hz=None):
     return 3 if dj_band(dj, gold, ref_sigma_hz=ev.get('j_sigma_hz')) == 0 else 2
 
 
-def _identity_of(info) -> dict:
+def _confirms(mp, band_ppm=None) -> bool:
+    """Whether a matched signal confirms the analyte it was matched to.
+
+    Annotation's Good mark says the multiplet is complete and its coupling
+    agrees. That is a statement about the SHAPE of the peak, and a shape
+    can agree with a reference standing far from it: the peak belongs to
+    something else and the reference is merely the nearest listing with
+    that shape. So a Good mark confirms only where the peak also stands
+    where this study puts things -- inside one band of the study's own
+    drift, the same band the election orders candidates by.
+
+    Measured on the reference bench, over every confirmed signal of every
+    quantified analyte: the 19 belonging to analytes really in the study
+    sat a median 1.3 mppm from the drift, the 6 belonging to the rest a
+    median 27.8. Propionic acid -- the one false positive the confidence
+    reached three dots on -- held the two worst of the twenty-five: its
+    quartet 43 mppm off, on the peak that is glutamine's quartet, and its
+    triplet 57 mppm off, in valine's region. Both are inside the 50 mppm
+    match tolerance, which is why they matched at all; neither is inside
+    the study, which drifted 8 mppm.
+    """
+    return (((mp.get('annotation_quality') or mp.get('quality')) == 'good')
+            and _in_study(mp, band_ppm))
+
+
+def _in_study(mp, band_ppm=None) -> bool:
+    """Whether a matched peak stands where this study puts things.
+
+    Inside one band of the study's common drift -- the same band the
+    election orders candidates by. The match tolerance is wider than the
+    band on purpose, so that a study which drifts can still be matched;
+    it is not a statement that everything inside it is the same signal.
+    """
+    off = mp.get('ppm_off_drift')
+    if off is None:            # no common drift measured: nothing to check
+        return True
+    return ppm_band(abs(float(off)),
+                    band_ppm if band_ppm else PPM_BAND_PPM) == 0
+
+
+def _identity_of(info, band_ppm=None) -> dict:
     """The identity evidence of a measured analyte, from what the run
-    already holds: the signals annotation confirmed (its Good mark is the
-    complete multiplet with the coupling inside the gate), how much of
-    the reference's listing was matched at all, and what the rest of that
+    already holds: the signals annotation confirmed (Good, and standing
+    where the study puts things -- see ``_confirms``), how much of the
+    reference's listing was matched at all, and what the rest of that
     listing does at the amount just measured."""
     sig = info['signal']
     payload = sig.payload if isinstance(sig.payload, dict) else {}
@@ -149,14 +189,17 @@ def _identity_of(info) -> dict:
             continue
         by_db.setdefault(round(float(mp['db_ppm']), 3), []).append(mp)
     confirmed = sum(1 for group in by_db.values()
-                    if any(mp.get('annotation_quality') == 'good' for mp in group))
+                    if any(_confirms(mp, band_ppm) for mp in group))
     # The signal this number was measured on counts for itself when its own
-    # multiplet was complete and its coupling agreed, whether or not the
-    # annotation window was ever opened to mark it: the engine must be able
-    # to say what it knows without depending on a mark made elsewhere.
+    # multiplet was complete, its coupling agreed and it stands where the
+    # study puts things, whether or not the annotation window was ever
+    # opened to mark it: the engine must be able to say what it knows
+    # without depending on a mark made elsewhere. Hence _in_study and not
+    # _confirms -- the shape half of the Good mark is _structural_evidence,
+    # measured here; only the drift half is left to check.
     own = sig.evidence or {}
-    if _structural_evidence(sig) == 3 and not any(
-            mp.get('annotation_quality') == 'good'
+    if _structural_evidence(sig) == 3 and _in_study(own, band_ppm) and not any(
+            _confirms(mp, band_ppm)
             and own.get('db_ppm') is not None
             and abs(float(mp.get('db_ppm', 0.0)) - float(own['db_ppm'])) < 0.005
             for group in by_db.values() for mp in group):
@@ -164,7 +207,14 @@ def _identity_of(info) -> dict:
     verdicts = info.get('fingerprint_at_amount') or ()
     present = sum(1 for v in verdicts if v[3] == 'present')
     contradicted = sum(1 for v in verdicts if str(v[3]).startswith('contradicted'))
-    covered = len(by_db) / listed >= COVERAGE_CORROBORATES
+    # Covered by the matches that landed inside the study. A listed signal
+    # whose only match sits further from the drift than the band was not
+    # found here: counting it made propionic acid -- both its signals
+    # matched, 43 and 57 mppm off, onto peaks belonging to glutamine and
+    # to the valine region -- read as a fully covered listing.
+    found = sum(1 for group in by_db.values()
+                if any(_in_study(mp, band_ppm) for mp in group))
+    covered = found / listed >= COVERAGE_CORROBORATES
     return {'confirmed': confirmed, 'contradicted': contradicted,
             'corroborated': bool(covered and present), 'listed': listed,
             'residual': info.get('by_residual')}
@@ -1678,7 +1728,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
-        ident, ident_why = _identity_evidence(**_identity_of(info))
+        ident, ident_why = _identity_evidence(**_identity_of(info, ppm_band_ppm))
         # Sharing costs a dot when the others actually took something: a
         # quantity this window could have quantified. Below its own limit
         # of quantification what they took is not a quantity, so the

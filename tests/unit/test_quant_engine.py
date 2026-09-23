@@ -220,6 +220,33 @@ class TestIdentityEvidence:
         level, _why = _identity_evidence(confirmed=0, corroborated=True, listed=3)
         assert level == 2
 
+    def test_a_good_mark_far_from_the_drift_does_not_confirm(self):
+        """The Good mark is about the SHAPE of the peak. A peak matched a
+        whole band away from where this study puts things is somebody
+        else's peak that happens to have the right shape -- propionic
+        acid's quartet took glutamine's, 43 mppm off a study that drifted
+        8, and read as a confirmed signal."""
+        from processing.quant_engine import _confirms, _in_study
+        near = {'annotation_quality': 'good', 'ppm_off_drift': 0.002}
+        far = {'annotation_quality': 'good', 'ppm_off_drift': 0.043}
+        assert _confirms(near) and not _confirms(far)
+        # the drift half on its own, which is what coverage counts
+        assert _in_study(near) and not _in_study(far)
+        # a sign says nothing about distance
+        assert not _confirms({'annotation_quality': 'good',
+                              'ppm_off_drift': -0.043})
+
+    def test_a_study_with_no_common_drift_is_not_judged_on_it(self):
+        """No drift measured, nothing to be off by: the mark stands."""
+        from processing.quant_engine import _confirms
+        assert _confirms({'annotation_quality': 'good'})
+
+    def test_a_wider_band_forgives_a_wider_study(self):
+        """The band is the study's own call, like the election's."""
+        from processing.quant_engine import _confirms
+        mp = {'annotation_quality': 'good', 'ppm_off_drift': 0.043}
+        assert _confirms(mp, 0.060)
+
     def test_the_cascade_never_reaches_three(self):
         from processing.quant_engine import _identity_evidence
         assert _identity_evidence(cascade={'disagreement': 0.01})[0] == 2
