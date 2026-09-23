@@ -297,6 +297,50 @@ class TestIdentityEvidence:
         assert _identity_evidence(signals_linked=True, contradicted=1,
                                   listed=3)[0] == 1
 
+    def test_a_singlet_on_the_studys_own_drift_reaches_two(self):
+        """It has no shape to confirm, but an analyte really in the mixture
+        moves WITH the study: the drift is pH, temperature and referencing
+        acting on every resonance at once. Over the analytes elected on a
+        singlet in the reference study, the five real ones sat 0.1 to 1.0
+        mppm from the common drift and the seven strangers 3.1 to 18.4."""
+        from processing.quant_engine import _identity_evidence
+        level, why = _identity_evidence(confirmed=0, listed=1, on_drift=True)
+        assert level == 2 and 'moved with the study' in why
+        # two and not three: position is not identity
+        assert _identity_evidence(confirmed=1, listed=2, on_drift=True)[0] == 3
+
+    def test_a_remainder_is_not_rescued_by_its_position(self):
+        from processing.quant_engine import _identity_evidence
+        assert _identity_evidence(listed=1, on_drift=True,
+                                  residual='taurine')[0] < 2
+
+    def test_a_missing_signal_still_beats_a_good_position(self):
+        from processing.quant_engine import _identity_evidence
+        assert _identity_evidence(listed=3, on_drift=True,
+                                  contradicted=1)[0] == 1
+
+    def test_the_residual_is_the_studys_own_and_measured_on_shape(self):
+        """Calibrated on signals annotation CONFIRMED -- complete multiplet,
+        coupling inside the gate. Shape evidence, which a singlet can never
+        have and a position cannot fake, so the bar is not calibrated on
+        the thing it is about to judge. The median, because two of the
+        twelve analytes contributing confirmed signals to the reference
+        study were strangers."""
+        from processing.quant_engine import study_drift_residual
+        good = [{'annotation_quality': 'good', 'ppm_off_drift': v}
+                for v in (0.001, 0.002, 0.003, 0.050)]
+        # the one at 50 mppm is outside the study and _confirms drops it,
+        # so the residual is the median of the three that are inside
+        assert study_drift_residual([{'matched_peaks': good}]) == 0.002
+        # a singlet of its own contributes nothing: no shape to confirm
+        singlets = [{'annotation_quality': None, 'ppm_off_drift': 0.001}] * 5
+        assert study_drift_residual([{'matched_peaks': singlets}]) is None
+
+    def test_a_study_with_too_little_confirmed_asks_nothing_of_position(self):
+        from processing.quant_engine import study_drift_residual
+        two = [{'annotation_quality': 'good', 'ppm_off_drift': 0.001}] * 2
+        assert study_drift_residual([{'matched_peaks': two}]) is None
+
     def test_the_cascade_never_reaches_three(self):
         from processing.quant_engine import _identity_evidence
         assert _identity_evidence(cascade={'disagreement': 0.01})[0] == 2

@@ -208,7 +208,35 @@ def _off_study_detail(met) -> str:
             f'{1000 * min(offs):.0f} mppm from the drift this study measured.')
 
 
-def _identity_of(info, band_ppm=None) -> dict:
+def study_drift_residual(metabolites, band_ppm=None) -> float | None:
+    """How far this study's CONFIRMED signals sit from their common drift.
+
+    The drift itself is subtracted already (``ppm_off_drift``); what is left
+    is how tightly the study holds together -- shimming, referencing, the
+    pH and temperature spread between samples. Measured only on signals
+    annotation confirmed: a complete multiplet whose coupling agrees is
+    evidence of SHAPE, which a singlet can never have and a position cannot
+    fake, so the bar is not calibrated on the thing it is about to judge.
+    The median, because two of the twelve analytes contributing confirmed
+    signals to the reference study were strangers and a median does not
+    care.
+
+    ``None`` where too few signals were confirmed to say anything, and the
+    caller then asks nothing of position.
+
+    On the reference study this comes out at 1.5 mppm over 20 signals.
+    """
+    offs = []
+    for met in metabolites or ():
+        for mp in (met or {}).get('matched_peaks') or ():
+            if _confirms(mp, band_ppm) and mp.get('ppm_off_drift') is not None:
+                offs.append(abs(float(mp['ppm_off_drift'])))
+    if len(offs) < DRIFT_RESIDUAL_MIN_SIGNALS:
+        return None
+    return float(np.median(offs))
+
+
+def _identity_of(info, band_ppm=None, drift_residual=None) -> dict:
     """The identity evidence of a measured analyte, from what the run
     already holds: the signals annotation confirmed (Good, and standing
     where the study puts things -- see ``_confirms``), how much of the
@@ -239,6 +267,19 @@ def _identity_of(info, band_ppm=None) -> dict:
             and abs(float(mp.get('db_ppm', 0.0)) - float(own['db_ppm'])) < 0.005
             for group in by_db.values() for mp in group):
         confirmed += 1
+    # A singlet has no shape to confirm. What it does have is a position,
+    # and an analyte really in the mixture moves WITH the study: the drift
+    # is pH, temperature and referencing acting on every resonance at once,
+    # while a stranger whose table position happens to fall near a peak
+    # sits a random distance from it. Measured over the analytes elected on
+    # a singlet: the five really in the reference study sat 0.1 to 1.0 mppm
+    # from the common drift, the seven strangers 3.1 to 18.4.
+    on_drift = False
+    if drift_residual is not None and is_singlet_like(
+            own.get('multiplicity') or own.get('type') or ''):
+        _off = own.get('ppm_off_drift')
+        on_drift = (_off is not None
+                    and abs(float(_off)) <= float(drift_residual))
     verdicts = info.get('fingerprint_at_amount') or ()
     present = sum(1 for v in verdicts if v[3] == 'present')
     contradicted = sum(1 for v in verdicts if str(v[3]).startswith('contradicted'))
@@ -252,6 +293,7 @@ def _identity_of(info, band_ppm=None) -> dict:
     covered = found / listed >= COVERAGE_CORROBORATES
     return {'confirmed': confirmed, 'contradicted': contradicted,
             'corroborated': bool(covered and present), 'listed': listed,
+            'on_drift': on_drift,
             # No analyte's signals are independent peaks: they stand at
             # the distances the reference lists and in the ratio of their
             # proton counts. Counted only on a listing otherwise covered.
@@ -261,7 +303,7 @@ def _identity_of(info, band_ppm=None) -> dict:
 
 def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
                        listed=1, cascade=None, residual=None,
-                       signals_linked=False) -> tuple[int, str]:
+                       signals_linked=False, on_drift=False) -> tuple[int, str]:
     """How much the study itself says this is the analyte it says it is.
 
     Measured on the reference bench, over every analyte the run quantified,
@@ -289,6 +331,18 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     An analyte the cascade brought in is never more than two: its lines
     were never confirmed one by one. Two when its own signals agree on
     the amount to within CASCADE_AGREEMENT_GOOD, one otherwise.
+
+    A singlet standing on the study's own drift is two. It has no shape to
+    confirm, but an analyte really in the mixture moves WITH the study --
+    the drift is pH, temperature and referencing acting on every resonance
+    at once -- while a stranger whose table position happens to fall near a
+    peak sits a random distance from it. Over the analytes elected on a
+    singlet in the reference study, the five real ones sat 0.1 to 1.0 mppm
+    from the common drift and the seven strangers 3.1 to 18.4; the bar,
+    which is the study's own residual over its confirmed signals, came out
+    at 1.5 and separated them completely. Two and not three: position is
+    not identity, and any compound listing a singlet there would look the
+    same.
 
     An analyte's own signals agreeing on one amount reaches three too.
     The integral of a multiplet is nH x (area per proton) whatever its
@@ -322,6 +376,10 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
         return 3, ('its own signals agree on one amount, standing where the '
                    'reference puts them and in the ratio of their protons, '
                    'on peaks nothing else quantified holds')
+    if on_drift and not residual:
+        return 2, ('a singlet, but standing no further from the drift this '
+                   'study measured than the signals it confirmed by their '
+                   'coupling: it moved with the study')
     if listed <= 1:
         return 1, 'the reference lists one signal for it: nothing corroborates it'
     if corroborated:
@@ -381,6 +439,10 @@ def _confidence(signal, strength=None, shared=False, *, identity=None,
 # another analyte's concentration, and on the assumption that the claimants
 # listed are all of them. Two dots, never three.
 SHARED_MAX_CONFIDENCE = 2
+
+# How many confirmed signals a study needs before its own drift residual
+# means anything. Three is the fewest a median is not an accident of.
+DRIFT_RESIDUAL_MIN_SIGNALS = 3
 
 # The share of its own window an analyte has to keep for the split to
 # leave its number standing on its own. Above it, what the others took is
@@ -1804,6 +1866,14 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         per_proton_areas.pop(mid, None)
         residual_ids.discard(mid)
 
+    # How tightly this study holds together, from the signals it confirmed
+    # by their coupling. A singlet has no shape to be judged on; this is
+    # what it is judged on instead.
+    _drift_residual = study_drift_residual(
+        [(info['signal'].payload or {}).get('met')
+         for info in measured.values()
+         if isinstance(info['signal'].payload, dict)], ppm_band_ppm)
+
     # Do an analyte's own signals agree with one another on one amount?
     # Asked of what survived, because one of them has to be a peak nobody
     # else quantified holds -- see quant_shared.signals_corroborate for
@@ -1837,7 +1907,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                         if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
                     for g, idxs in (groups or {}).items()}
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
-        ident, ident_why = _identity_evidence(**_identity_of(info, ppm_band_ppm))
+        ident, ident_why = _identity_evidence(
+            **_identity_of(info, ppm_band_ppm, _drift_residual))
         # Sharing costs a dot when the others actually took something: a
         # quantity this window could have quantified. Below its own limit
         # of quantification what they took is not a quantity, so the
