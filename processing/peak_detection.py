@@ -1386,3 +1386,62 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         traceback.print_exc()
         print("=" * 70)
         raise
+
+def as_app_peak(p) -> dict:
+    """One detected peak in the form the rest of the application reads.
+
+    The detection stage built this inline, which left anything that wanted
+    to replay an analysis without the interface -- the validation bench
+    first of all -- to copy the conversion and drift from it. One function,
+    read by both.
+    """
+    from processing.signal_quality import SIGNAL_AVERAGE
+    return {
+        'rank': p.get('rank', 0),
+        'ppm': p.get('ppm', 0),
+        'height': p.get('height', 0),
+        'snr': p.get('snr', 0),
+        'start_ppm': p.get('start_ppm', 0),
+        'end_ppm': p.get('end_ppm', 0),
+        'width_ppm': p.get('width_ppm', 0),
+        'start_idx': p.get('start_idx', 0),
+        'end_idx': p.get('end_idx', 0),
+        'index': p.get('index', 0),
+        'area': p.get('area', 0),
+        'area_per_sample': p.get('area_per_sample', np.array([])),
+        # Per-sample apex alignment (same analyte across samples)
+        'ppm_per_sample':       p.get('ppm_per_sample'),
+        'shift_ppm_per_sample': p.get('shift_ppm_per_sample'),
+        'aligned_per_sample':   p.get('aligned_per_sample'),
+        'overlapping': False,  # Will be set by overlap search
+        # Quality fields
+        'gaussian_r2':       p.get('gaussian_r2',      float('nan')),
+        'symmetry_score':    p.get('symmetry_score',    float('nan')),
+        'gaussian_quality':  p.get('gaussian_quality',  'unknown'),
+        # Automatic signal quality: Good / Average / Poor, plus the
+        # score and the per-component breakdown that justifies it.
+        'signal_quality':        p.get('signal_quality', SIGNAL_AVERAGE),
+        'signal_quality_score':  p.get('signal_quality_score', float('nan')),
+        'signal_quality_detail': p.get('signal_quality_detail', {}),
+        'fwhm_pts':              p.get('fwhm_pts', float('nan')),
+        # Fraction of this window's raw area that was broad
+        # component (macromolecule envelope) removed by the
+        # baseline model — real NMR signal, so its removal is
+        # recorded rather than assumed.
+        'broad_removed_frac':    p.get('broad_removed_frac', 0.0),
+        'broad_removed_frac_per_sample':
+            p.get('broad_removed_frac_per_sample', np.array([])),
+        # Manual annotation status starts unset — the user marks
+        # Good/Average/Poor; it is NOT derived from the signal quality.
+        'status': None,
+        'left_grounded':     p.get('left_grounded',     False),
+        'right_grounded':    p.get('right_grounded',    False),
+        'baseline_grounded': p.get('baseline_grounded', False),
+        # Cluster fields (used by annotation for multiplicity)
+        'n_cluster_peaks':  p.get('n_cluster_peaks',  1),
+        'cluster_rank':     p.get('cluster_rank',     0),
+        'cluster_lo':       p.get('cluster_lo',       p.get('start_idx', 0)),
+        'cluster_hi':       p.get('cluster_hi',       p.get('end_idx',   0)),
+        'cluster_lo_ppm':   p.get('cluster_lo_ppm',   p.get('start_ppm', 0.0)),
+        'cluster_hi_ppm':   p.get('cluster_hi_ppm',   p.get('end_ppm',   0.0)),
+    }

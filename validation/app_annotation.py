@@ -124,6 +124,7 @@ class Window:
 def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
              tolerance_ppm, noise_std, min_snr, min_distance_ppm,
              excluded_regions=(), tiers=('Good', 'Average'), params=None,
+             peak_correlation=None, n_samples_correlated=0,
              log=lambda *a: None):
     """Annotate a study exactly as the application does: its search, its
     grouping, its passes, in its order -- and none of its window.
@@ -138,6 +139,11 @@ def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
     suppressed water is absent for a reason that says nothing about the
     analyte. Without them hydroxyproline was contradicted by its own
     triplet at 4.66 ppm, which the water covers.
+
+    ``peak_correlation`` is the STOCSY matrix detection computes over the
+    peaks' per-sample areas, which the application hands the search and
+    the ranking reads as corroboration. Left out, the bench ranked every
+    contest without its sixth criterion.
     """
     sc = dict(SCORING_DEFAULTS)
     sc['dppm_gold'] = float(tolerance_ppm)
@@ -149,7 +155,9 @@ def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
         intensities=intensities, samples_info=samples_info,
         field_mhz=field_mhz, tolerance_ppm=tolerance_ppm, params=sc,
         noise_std=noise_std, min_snr=min_snr,
-        min_distance_ppm=min_distance_ppm)
+        min_distance_ppm=min_distance_ppm,
+        peak_correlation=peak_correlation or {},
+        n_samples_correlated=int(n_samples_correlated or 0))
     log(f'  search: {len(found.results)} matches on '
         f'{found.peaks_matched}/{found.peaks_annotatable} peaks '
         f'({found.elapsed_s:.1f}s)')

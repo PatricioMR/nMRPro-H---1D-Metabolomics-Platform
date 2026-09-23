@@ -29,6 +29,7 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+from controllers.analysis_defaults import QUANTIFICATION
 from .base_stage import BaseStage
 from ._quant_helpers import _STD_PRESETS
 from ._quant_visualization import _QuantVisMixin
@@ -257,18 +258,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # and the result rows carry the mode, and dropping it would rewrite
         # what an old project says it did.
         ttk.Label(mf, text='Signal: whole multiplet ÷ nH').pack(side=tk.LEFT)
-        self.integ_var = tk.StringVar(value='Multiplet')
+        self.integ_var = tk.StringVar(value=QUANTIFICATION['integration'])
         self._integ_rbs = {}
 
         pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
-        self.proton_corr_var = tk.BooleanVar(value=True)
+        self.proton_corr_var = tk.BooleanVar(value=QUANTIFICATION['proton_correction'])
         self._proton_corr_cb = ttk.Checkbutton(
             pf, text='Proton correction (÷ nH)',
             variable=self.proton_corr_var)
         self._proton_corr_cb.pack(side=tk.LEFT)
 
         blf = ttk.Frame(s2); blf.pack(fill=tk.X, pady=1)
-        self.local_baseline_var = tk.BooleanVar(value=False)
+        self.local_baseline_var = tk.BooleanVar(value=QUANTIFICATION['local_baseline'])
         ttk.Checkbutton(blf, text='Local baseline correction (linear, per window) — fallback only',
                         variable=self.local_baseline_var).pack(side=tk.LEFT)
 
@@ -295,7 +296,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # identified only where a free apex, its own amount and its whole
         # shape agree (ADR-024); off, it is left out and says so.
         mf3 = ttk.Frame(s2); mf3.pack(fill=tk.X, pady=1)
-        self.shape_var = tk.BooleanVar(value=False)
+        self.shape_var = tk.BooleanVar(value=QUANTIFICATION['quantify_shapes'])
         ttk.Checkbutton(
             mf3, text='Quantify complex multiplets (m*)',
             variable=self.shape_var).pack(side=tk.LEFT)
@@ -307,7 +308,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # A window holding another accepted analyte's signal, resolved by
         # the two shapes after each was measured on its own (ADR-015).
         mf4 = ttk.Frame(s2); mf4.pack(fill=tk.X, pady=1)
-        self.shared_var = tk.BooleanVar(value=False)
+        self.shared_var = tk.BooleanVar(value=QUANTIFICATION['resolve_shared'])
         ttk.Checkbutton(
             mf4, text='Deconvolve windows two accepted analytes share (by shape)',
             variable=self.shared_var).pack(side=tk.LEFT)
@@ -321,7 +322,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf5 = ttk.Frame(s2); mf5.pack(fill=tk.X, pady=1)
         ttk.Label(mf5, text='  Min SNR for a lone singlet:', font=('Arial', 8),
                   width=26).pack(side=tk.LEFT)
-        self.singlet_snr_var = tk.DoubleVar(value=5.0)
+        self.singlet_snr_var = tk.DoubleVar(value=QUANTIFICATION['singlet_min_snr'])
         ttk.Spinbox(mf5, from_=0.0, to=50.0, increment=1.0, width=6,
                     textvariable=self.singlet_snr_var).pack(side=tk.LEFT)
         ttk.Label(mf5, text='below it a singlet with no other signal seen is '
@@ -333,7 +334,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # whose whole listing best explains what is left are added, one
         # amount for all their signals. A second opinion that only adds.
         mf6 = ttk.Frame(s2); mf6.pack(fill=tk.X, pady=1)
-        self.cascade_var = tk.BooleanVar(value=True)
+        self.cascade_var = tk.BooleanVar(value=QUANTIFICATION['cascade'])
         ttk.Checkbutton(
             mf6, text='Cascade: add analytes the election missed',
             variable=self.cascade_var).pack(side=tk.LEFT)
@@ -350,7 +351,8 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf7 = ttk.Frame(s2); mf7.pack(fill=tk.X, pady=1)
         ttk.Label(mf7, text='  Max disagreement (cascade):', font=('Arial', 8),
                   width=26).pack(side=tk.LEFT)
-        self.max_disagreement_var = tk.DoubleVar(value=30.0)
+        self.max_disagreement_var = tk.DoubleVar(
+            value=QUANTIFICATION['max_disagreement_pct'])
         ttk.Spinbox(mf7, from_=5.0, to=100.0, increment=5.0, width=6,
                     textvariable=self.max_disagreement_var).pack(side=tk.LEFT)
         ttk.Label(mf7, text="% between the analyte's own signals; above it "
@@ -372,7 +374,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
         ic_row0 = ttk.Frame(s2); ic_row0.pack(fill=tk.X, pady=1)
-        self.icoshift_var = tk.BooleanVar(value=False)
+        self.icoshift_var = tk.BooleanVar(value=QUANTIFICATION['align'])
         ttk.Checkbutton(ic_row0, text='Pre-align with icoshift before quantification',
                         variable=self.icoshift_var).pack(side=tk.LEFT)
         ic_row1 = ttk.Frame(s2); ic_row1.pack(fill=tk.X, pady=1)
@@ -391,7 +393,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         s4 = ttk.LabelFrame(sf, text='3 · Normalisation', padding=6)
         s4.pack(fill=tk.X, padx=6, pady=4)
 
-        self.norm_var = tk.StringVar(value='IS')
+        self.norm_var = tk.StringVar(value=QUANTIFICATION['normalisation'])
         for lbl, val in [('Internal std (IS)',    'IS'),
                          ('IS + PQN',             'IS+PQN'),
                          ('PQN',                  'PQN'),
@@ -400,7 +402,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             ttk.Radiobutton(s4, text=lbl, variable=self.norm_var,
                             value=val).pack(anchor=tk.W)
         ttk.Separator(s4, orient='horizontal').pack(fill=tk.X, pady=4)
-        self.blk_sub_var = tk.BooleanVar(value=False)
+        self.blk_sub_var = tk.BooleanVar(value=QUANTIFICATION['subtract_blanks'])
         ttk.Checkbutton(s4, text='Subtract BLK mean (blank correction)',
                         variable=self.blk_sub_var).pack(anchor=tk.W)
         ttk.Label(s4, text='Removes mean BLK area from each\nsample before quantification.',

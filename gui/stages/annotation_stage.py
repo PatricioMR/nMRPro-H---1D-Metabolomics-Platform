@@ -26,6 +26,7 @@ if certifi is not None:
     os.environ['REQUESTS_CA_BUNDLE'] = certifi.where()
 
 from processing.signal_quality import SIGNAL_GOOD, normalize_tiers
+from controllers.analysis_defaults import ANNOTATION
 from .base_stage import BaseStage
 from ._annotation_search import _AnnotationSearchMixin
 
@@ -87,13 +88,14 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
 
         tf = ttk.Frame(s3); tf.pack(fill=tk.X, pady=2)
         ttk.Label(tf, text='Tolerance (ppm):', width=18).pack(side=tk.LEFT)
-        self.tolerance_var = tk.DoubleVar(value=0.05)
+        self.tolerance_var = tk.DoubleVar(value=ANNOTATION['tolerance_ppm'])
         self._tolerance_entry = ttk.Entry(tf, textvariable=self.tolerance_var, width=7)
         self._tolerance_entry.pack(side=tk.LEFT, padx=2)
 
         sf = ttk.Frame(s3); sf.pack(fill=tk.X, pady=2)
         ttk.Label(sf, text='Spectrometer (MHz):', width=18).pack(side=tk.LEFT)
-        self.spectrometer_var = tk.StringVar(value='600')
+        self.spectrometer_var = tk.StringVar(
+            value=f"{ANNOTATION['fallback_field_mhz']:g}")
         self._spectrometer_entry = ttk.Entry(sf, textvariable=self.spectrometer_var, width=7)
         self._spectrometer_entry.pack(side=tk.LEFT, padx=2)
         ttk.Label(sf, text='for J Hz→ppm',

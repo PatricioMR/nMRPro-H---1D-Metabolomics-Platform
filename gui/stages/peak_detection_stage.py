@@ -26,6 +26,8 @@ from processing.spectral_regions import (
     DEFAULT_EXCLUDED_REGIONS, format_regions, measure_linewidth_ppm,
     parse_regions, unresolvable_split_warning)
 from processing.signal_quality import SIGNAL_AVERAGE
+from controllers.analysis_defaults import DETECTION
+from processing.peak_detection import as_app_peak
 from .base_stage import BaseStage
 
 
@@ -130,7 +132,7 @@ class PeakDetectionStage(BaseStage):
         self.noise_std       = None
         self.noise_source    = None
         self.peaks           = []
-        self.default_noise_region = (12.0, 10.0)
+        self.default_noise_region = tuple(DETECTION['noise_region'])
         self._deconv_controller = None   # persists across tool opens
         self._overlaps = []              # last found overlap regions
         self._overlap_metrics = []       # baseline-edge validation per region
@@ -213,14 +215,14 @@ class PeakDetectionStage(BaseStage):
         # Row 1: Baseline Correction Toggle
         bf1 = ttk.Frame(s2)
         bf1.pack(fill=tk.X, pady=2)
-        self.baseline_correct_var = tk.BooleanVar(value=True)
+        self.baseline_correct_var = tk.BooleanVar(value=DETECTION['baseline_model'])
         self._baseline_chk = ttk.Checkbutton(bf1, text="Apply Baseline Correction",
                                               variable=self.baseline_correct_var)
         self._baseline_chk.pack(side=tk.LEFT, padx=2)
         # SNIP is the default: it preserves ~99% of a sharp apex against ~92%
         # for arPLS at λ=1e5, which eats the peak skirts and biases integrals
         # low by roughly 20% of the area.
-        self.baseline_method_var = tk.StringVar(value='snip')
+        self.baseline_method_var = tk.StringVar(value=DETECTION['baseline_method'])
         cb = ttk.Combobox(bf1, textvariable=self.baseline_method_var,
                           values=['snip', 'arPLS', 'rolling', 'constant'],
                           state='readonly', width=8)
@@ -230,8 +232,8 @@ class PeakDetectionStage(BaseStage):
         # One entry, retargeted per method. Each method's width cutoff has its
         # own parameter and its own units; a fixed "λ (arPLS)" box would sit
         # there doing nothing whenever another method is selected.
-        self.baseline_lam_var   = tk.DoubleVar(value=1e5)   # arPLS
-        self.baseline_niter_var = tk.IntVar(value=40)       # snip
+        self.baseline_lam_var   = tk.DoubleVar(value=DETECTION['baseline_lam'])   # arPLS
+        self.baseline_niter_var = tk.IntVar(value=DETECTION['baseline_niter'])       # snip
         self._bl_param_lbl = ttk.Label(bf1, text="", foreground='gray')
         self._bl_param_lbl.pack(side=tk.LEFT, padx=(8, 2))
         self._bl_param_entry = ttk.Entry(bf1, width=6)
@@ -249,15 +251,15 @@ class PeakDetectionStage(BaseStage):
         pf1 = ttk.Frame(s2)
         pf1.pack(fill=tk.X, pady=2)
         ttk.Label(pf1, text="Min SNR:").pack(side=tk.LEFT, padx=2)
-        self.min_snr_var = tk.DoubleVar(value=6.0)
+        self.min_snr_var = tk.DoubleVar(value=DETECTION['min_snr'])
         ttk.Entry(pf1, textvariable=self.min_snr_var,
                   width=6).pack(side=tk.LEFT, padx=2)
-        self.per_sample_var = tk.BooleanVar(value=True)
+        self.per_sample_var = tk.BooleanVar(value=DETECTION['per_sample'])
         ttk.Checkbutton(
             pf1, text="Detect per sample (union)",
             variable=self.per_sample_var).pack(side=tk.LEFT, padx=(10, 2))
         ttk.Label(pf1, text="Min samples/group:").pack(side=tk.LEFT, padx=(10, 2))
-        self.min_group_presence_var = tk.IntVar(value=3)
+        self.min_group_presence_var = tk.IntVar(value=DETECTION['min_group_presence'])
         ttk.Spinbox(pf1, from_=1, to=50, width=4,
                     textvariable=self.min_group_presence_var).pack(side=tk.LEFT)
         ttk.Label(pf1, text="(keep signal only if seen in ≥N samples of a group)",
@@ -269,7 +271,7 @@ class PeakDetectionStage(BaseStage):
         # carry more uncertainty than a resolved line; it is opt-in.
         pf1b = ttk.Frame(s2)
         pf1b.pack(fill=tk.X, pady=2)
-        self.detect_shoulders_var = tk.BooleanVar(value=False)
+        self.detect_shoulders_var = tk.BooleanVar(value=DETECTION['detect_shoulders'])
         ttk.Checkbutton(
             pf1b, text="Recover shoulders (2nd-deriv)",
             variable=self.detect_shoulders_var).pack(side=tk.LEFT, padx=2)
@@ -279,7 +281,7 @@ class PeakDetectionStage(BaseStage):
         pf1c = ttk.Frame(s2)
         pf1c.pack(fill=tk.X, pady=2)
         ttk.Label(pf1c, text="Sensitivity (k·σ):").pack(side=tk.LEFT, padx=2)
-        self.shoulder_k_var = tk.DoubleVar(value=3.0)
+        self.shoulder_k_var = tk.DoubleVar(value=DETECTION['shoulder_k'])
         ttk.Entry(pf1c, textvariable=self.shoulder_k_var,
                   width=5).pack(side=tk.LEFT, padx=2)
         ttk.Label(pf1c, text="(lower = more sensitive)",
@@ -297,7 +299,7 @@ class PeakDetectionStage(BaseStage):
         # 0.003 bought one more multiplet for 141 extra peaks, so the knee
         # is here. Despite the label this is find_peaks(distance=...) — the
         # minimum SEPARATION between apices, not a linewidth.
-        self.min_width_var = tk.DoubleVar(value=0.004)
+        self.min_width_var = tk.DoubleVar(value=DETECTION['min_distance_ppm'])
         ttk.Entry(pf2, textvariable=self.min_width_var,
                   width=6).pack(side=tk.LEFT, padx=2)
 
@@ -697,59 +699,7 @@ class PeakDetectionStage(BaseStage):
             self.processor.peaks = self.peaks
             self._store_baseline(details.get('baseline'))
 
-            # Convert new peak format to internal format
-            self.peaks = []
-            for p in raw:
-                peak_dict = {
-                    'rank': p.get('rank', 0),
-                    'ppm': p.get('ppm', 0),
-                    'height': p.get('height', 0),
-                    'snr': p.get('snr', 0),
-                    'start_ppm': p.get('start_ppm', 0),
-                    'end_ppm': p.get('end_ppm', 0),
-                    'width_ppm': p.get('width_ppm', 0),
-                    'start_idx': p.get('start_idx', 0),
-                    'end_idx': p.get('end_idx', 0),
-                    'index': p.get('index', 0),
-                    'area': p.get('area', 0),
-                    'area_per_sample': p.get('area_per_sample', np.array([])),
-                    # Per-sample apex alignment (same analyte across samples)
-                    'ppm_per_sample':       p.get('ppm_per_sample'),
-                    'shift_ppm_per_sample': p.get('shift_ppm_per_sample'),
-                    'aligned_per_sample':   p.get('aligned_per_sample'),
-                    'overlapping': False,  # Will be set by overlap search
-                    # Quality fields
-                    'gaussian_r2':       p.get('gaussian_r2',      float('nan')),
-                    'symmetry_score':    p.get('symmetry_score',    float('nan')),
-                    'gaussian_quality':  p.get('gaussian_quality',  'unknown'),
-                    # Automatic signal quality: Good / Average / Poor, plus the
-                    # score and the per-component breakdown that justifies it.
-                    'signal_quality':        p.get('signal_quality', SIGNAL_AVERAGE),
-                    'signal_quality_score':  p.get('signal_quality_score', float('nan')),
-                    'signal_quality_detail': p.get('signal_quality_detail', {}),
-                    'fwhm_pts':              p.get('fwhm_pts', float('nan')),
-                    # Fraction of this window's raw area that was broad
-                    # component (macromolecule envelope) removed by the
-                    # baseline model — real NMR signal, so its removal is
-                    # recorded rather than assumed.
-                    'broad_removed_frac':    p.get('broad_removed_frac', 0.0),
-                    'broad_removed_frac_per_sample':
-                        p.get('broad_removed_frac_per_sample', np.array([])),
-                    # Manual annotation status starts unset — the user marks
-                    # Good/Average/Poor; it is NOT derived from the signal quality.
-                    'status': None,
-                    'left_grounded':     p.get('left_grounded',     False),
-                    'right_grounded':    p.get('right_grounded',    False),
-                    'baseline_grounded': p.get('baseline_grounded', False),
-                    # Cluster fields (used by annotation for multiplicity)
-                    'n_cluster_peaks':  p.get('n_cluster_peaks',  1),
-                    'cluster_rank':     p.get('cluster_rank',     0),
-                    'cluster_lo':       p.get('cluster_lo',       p.get('start_idx', 0)),
-                    'cluster_hi':       p.get('cluster_hi',       p.get('end_idx',   0)),
-                    'cluster_lo_ppm':   p.get('cluster_lo_ppm',   p.get('start_ppm', 0.0)),
-                    'cluster_hi_ppm':   p.get('cluster_hi_ppm',   p.get('end_ppm',   0.0)),
-                }
-                self.peaks.append(peak_dict)
+            self.peaks = [as_app_peak(p) for p in raw]
 
             self.processor.peaks = self.peaks
 
