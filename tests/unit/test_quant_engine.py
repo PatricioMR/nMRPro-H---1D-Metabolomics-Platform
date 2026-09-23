@@ -277,24 +277,24 @@ class TestIdentityEvidence:
         assert stands_in_study(met, 0.060)
         assert not stands_in_study(met, 0.020)
 
-    def test_linked_singlets_reach_three_on_a_covered_listing(self):
+    def test_linked_signals_reach_three_on_a_covered_listing(self):
         """A molecule with no coupling anywhere cannot have a signal
         confirmed. Its own singlets, at the distance and in the ratio the
         reference gives, are the evidence it does have."""
         from processing.quant_engine import _identity_evidence
-        level, why = _identity_evidence(confirmed=0, singlets_linked=True,
+        level, why = _identity_evidence(confirmed=0, signals_linked=True,
                                         listed=2)
-        assert level == 3 and 'singlets' in why
+        assert level == 3 and 'its own signals agree' in why
 
-    def test_linked_singlets_do_not_rescue_a_remainder(self):
+    def test_linked_signals_do_not_rescue_a_remainder(self):
         """The amount still came from what another window had left over."""
         from processing.quant_engine import _identity_evidence
-        assert _identity_evidence(singlets_linked=True, listed=2,
+        assert _identity_evidence(signals_linked=True, listed=2,
                                   residual='taurine')[0] < 3
 
-    def test_a_missing_signal_still_wins_over_linked_singlets(self):
+    def test_a_missing_signal_still_wins_over_linked_signals(self):
         from processing.quant_engine import _identity_evidence
-        assert _identity_evidence(singlets_linked=True, contradicted=1,
+        assert _identity_evidence(signals_linked=True, contradicted=1,
                                   listed=3)[0] == 1
 
     def test_the_cascade_never_reaches_three(self):

@@ -883,86 +883,104 @@ def _lorentz_height(area_ppm, hwhm_ppm) -> float:
     return float(area_ppm) / (np.pi * float(hwhm_ppm)) if hwhm_ppm > 0 else 0.0
 
 
-SINGLET_LINK_RATIO = 3.0
+# How far an analyte's own signals may disagree on the amount and still
+# corroborate one another. Measured on the reference study, over the
+# analytes with two or more signals matched inside it: the eleven really
+# in the mixture ran 1.09 to 6.06, median 1.50; the five strangers ran
+# 2.17 to 20.08, median 7.77. Two separates them, and the gap between the
+# worst real inside it (glutamate, 1.91) and the best stranger outside
+# (pyridoxamine-5-phosphate, 2.17) is narrow -- this is a promotion, never
+# a gate, because alanine is real, reads three dots and disagrees by 3.76
+# (its quartet at 3.767 sits in a crowded region).
+SIGNAL_LINK_RATIO = 2.0
 
 
-def singlets_corroborate(met, ppm, trace, *, linewidth_ppm, taken_peaks=(),
-                         band_ppm=None, ratio=SINGLET_LINK_RATIO) -> bool:
-    """Whether an analyte's own singlets corroborate one another.
+def signals_corroborate(met, ppm, trace, *, linewidth_ppm, drift_ppm=0.0,
+                        field_mhz=None, taken_peaks=(), band_ppm=None,
+                        excluded_regions=(), ratio=SIGNAL_LINK_RATIO) -> bool:
+    """Whether an analyte's own signals agree with one another on one amount.
 
-    A singlet carries no coupling, so no singlet can ever be "confirmed"
-    the way a multiplet is -- complete lines, delta-J inside the gate. Five
-    of the eighteen analytes of the reference study have nothing but
+    The integral of a multiplet is nH x (area per proton) WHATEVER its
+    multiplicity -- line shares decide height, not area -- so area per
+    proton is directly comparable across a singlet, a doublet, a quartet
+    and an unresolved m*. An analyte's signals can therefore all be asked
+    the same question: how much of you is there?
+
+    Five of the eighteen analytes of the reference study carry nothing but
     singlets, because nothing in those molecules has a neighbour to couple
-    to: creatine, betaine, creatinine, glycine and acetate. Capping them at
-    two dots read a fact about the chemistry as a doubt about the analyte.
+    to, so no signal of theirs can ever be confirmed the way a multiplet
+    is. But no analyte's signals are independent peaks: they stand at the
+    distances the reference lists and in the ratio of their proton counts.
+    That is evidence of the same kind a multiplet's line spacing is, and
+    it is available to every analyte, not only the singlet-only ones.
 
-    But two singlets of one molecule are not two independent peaks. They
-    stand a FIXED distance apart -- creatine's 0.897 ppm, betaine's 0.642 --
-    and in a fixed ratio of areas, the ratio of their proton counts. Across
-    the 304-metabolite reference, one other metabolite carries a singlet
-    pair at creatine's separation, none at that separation AND that proton
-    ratio AND those positions. That is evidence of the same kind a
-    multiplet's line spacing is.
+    Required, all three (the caller adds the listing's coverage):
 
-    Required, all four:
+    * two or more listed signals matched, each standing inside the study's
+      drift (``in_study``) and outside the suppressed regions -- a signal
+      under the water reads an amount that is not the analyte's;
+    * at least one of them on a peak no other quantified analyte claims.
+      Without it adenosine passes on inosine's evidence: purine analogues
+      whose aromatic singlets sit 3 mppm apart with the same 0.118 ppm
+      separation and the same 1:1 ratio, and the one signal that tells
+      them apart is under the suppressed water;
+    * their areas per proton agreeing within ``ratio``.
 
-    * two or more listed singlets matched, each standing inside the
-      study's drift (``in_study``);
-    * at least one of them on a peak no other quantified analyte's singlet
-      also claims. Without this, adenosine passes on inosine's evidence:
-      the two are purine analogues whose aromatic singlets sit 3 mppm
-      apart with the same 0.118 ppm separation and the same 1:1 ratio, and
-      the one singlet that would tell them apart (4.785 against 4.758) is
-      under the suppressed water. Adenosine matched ONE singlet of its
-      own listing on this study, and it was inosine's peak;
-    * their areas per proton agreeing within ``ratio``;
-    * ``taken_peaks`` aside, the caller checks coverage: this asks only
-      about the singlets.
-
-    Measured on the reference study, over the analytes with two or more
-    matched singlets: with the coverage the caller adds, 2 of 2 promoted
-    were real and none of the strangers was -- pyridoxamine-5-phosphate
-    (coverage 0.50) and N-acetyl-mannosamine (0.29) pass on their singlets
-    alone and fail on their listings.
+    Measured on the reference study: 8 real analytes pass and no stranger
+    does. Asking it of the singlets alone reached 2.
     """
     from processing.annotation_scoring import in_study, normalize_mult
     from processing.annotation_detectability import proton_count
     from processing.quant_integration import integrate_sample
+    from processing.spectral_regions import in_excluded_region
 
-    nh_at = {}
+    listed = {}
     for dp in (met or {}).get('db_peaks') or ():
         c = dp.get('ppm_center', dp.get('ppm'))
         if c is not None:
-            nh_at[round(float(c), 3)] = proton_count(dp)
-    mine: dict = {}
-    for mp in (met or {}).get('matched_peaks') or ():
-        if normalize_mult(mp.get('type')) != 's' or mp.get('peak_ppm') is None:
-            continue
-        if not in_study(mp, band_ppm):
-            continue
-        nh = nh_at.get(round(float(mp.get('db_ppm') or 0), 3))
-        if nh:
-            mine[round(float(mp['peak_ppm']), 4)] = nh
-    if len(mine) < 2:
-        return False
-    if not set(mine) - {round(float(p), 4) for p in taken_peaks}:
-        return False            # every one of them is somebody else's peak
+            listed[round(float(c), 3)] = dp
 
     x = np.asarray(ppm, dtype=float)
     y = np.asarray(trace, dtype=float)
     hwhm = float(linewidth_ppm) / 2.0
-    per_h = []
-    for pk, nh in mine.items():
-        a = integrate_sample(x, y, pk - PAD_LINEWIDTHS * hwhm,
-                             pk + PAD_LINEWIDTHS * hwhm, local_baseline=False)
-        if a is None or not np.isfinite(a) or a <= 0:
-            return False        # one of them could not be measured at all
-        per_h.append(float(a) / nh)
-    med = float(np.median(per_h))
-    if med <= 0:
+    per_proton, peaks = [], []
+    for mp in (met or {}).get('matched_peaks') or ():
+        if mp.get('peak_ppm') is None or mp.get('db_ppm') is None:
+            continue
+        if not in_study(mp, band_ppm):
+            continue
+        dp = listed.get(round(float(mp['db_ppm']), 3))
+        if dp is None:
+            continue
+        nh = proton_count(dp)
+        if not nh:
+            continue
+        centre = float(dp.get('ppm_center', dp.get('ppm'))) + float(drift_ppm)
+        if excluded_regions and in_excluded_region(centre, excluded_regions):
+            continue
+        field = field_mhz or mp.get('pattern_field_mhz')
+        ev = listed_signal_evidence(dp, centre_ppm=centre,
+                                    field_mhz=float(field)) if field else None
+        lines = [float(v) for v in ((ev or {}).get('predicted_ppms') or ())]
+        if not lines:
+            lines = [centre]
+        area = integrate_sample(x, y, min(lines) - PAD_LINEWIDTHS * hwhm,
+                                max(lines) + PAD_LINEWIDTHS * hwhm,
+                                local_baseline=False)
+        if area is None or not np.isfinite(area) or area <= 0:
+            continue
+        per_proton.append(float(area) / nh)
+        peaks.append(round(float(mp['peak_ppm']), 4))
+
+    if len(per_proton) < 2:
         return False
-    return max(max(v / med, med / v) for v in per_h) <= float(ratio)
+    if not set(peaks) - {round(float(pk), 4) for pk in taken_peaks}:
+        return False            # every one of them is somebody else's peak
+    median = float(np.median(per_proton))
+    if median <= 0:
+        return False
+    return max(max(v / median, median / v)
+               for v in per_proton) <= float(ratio)
 
 
 def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,

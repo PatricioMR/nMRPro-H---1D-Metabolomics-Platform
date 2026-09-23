@@ -127,7 +127,7 @@ class TestAnUnreadableSignal:
         assert held is True
 
 
-class TestSingletsCorroborateEachOther:
+class TestSignalsCorroborateEachOther:
     """Creatine, betaine, creatinine, glycine and acetate -- five of the
     eighteen analytes of the reference study -- carry nothing but singlets,
     because nothing in those molecules has a neighbour to couple to. No
@@ -138,7 +138,7 @@ class TestSingletsCorroborateEachOther:
     @staticmethod
     def _spectrum(peaks, width=0.005):
         import numpy as np
-        ppm = np.linspace(2.5, 4.5, 20001)
+        ppm = np.linspace(0.5, 4.5, 40001)
         y = np.zeros_like(ppm)
         for centre, area in peaks:
             hw = width / 2.0
@@ -158,25 +158,25 @@ class TestSingletsCorroborateEachOther:
                  'ppm_off_drift': 0.001}]}
 
     def test_two_singlets_in_the_listed_ratio_corroborate(self):
-        from processing.quant_shared import singlets_corroborate
+        from processing.quant_shared import signals_corroborate
         ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
-        assert singlets_corroborate(self._creatine(), ppm, y,
+        assert signals_corroborate(self._creatine(), ppm, y,
                                     linewidth_ppm=0.005)
 
     def test_a_ratio_the_protons_do_not_explain_does_not(self):
         """Same two positions, but the 3H singlet reads like 30H: whatever
         stands there, the pair is not this molecule."""
-        from processing.quant_shared import singlets_corroborate
+        from processing.quant_shared import signals_corroborate
         ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 30000.0)])
-        assert not singlets_corroborate(self._creatine(), ppm, y,
+        assert not signals_corroborate(self._creatine(), ppm, y,
                                         linewidth_ppm=0.005)
 
     def test_a_single_singlet_has_nothing_to_link_to(self):
-        from processing.quant_shared import singlets_corroborate
+        from processing.quant_shared import signals_corroborate
         ppm, y = self._spectrum([(3.928, 2000.0)])
         met = self._creatine()
         met['matched_peaks'] = met['matched_peaks'][:1]
-        assert not singlets_corroborate(met, ppm, y, linewidth_ppm=0.005)
+        assert not signals_corroborate(met, ppm, y, linewidth_ppm=0.005)
 
     def test_singlets_that_are_all_somebody_elses_do_not(self):
         """Adenosine passed on inosine's evidence: purine analogues whose
@@ -184,19 +184,54 @@ class TestSingletsCorroborateEachOther:
         1:1 ratio, and the one singlet that tells them apart is under the
         suppressed water. At least one of the pair has to be the analyte's
         own peak."""
-        from processing.quant_shared import singlets_corroborate
+        from processing.quant_shared import signals_corroborate
         ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
-        assert not singlets_corroborate(
+        assert not signals_corroborate(
             self._creatine(), ppm, y, linewidth_ppm=0.005,
             taken_peaks=(3.928, 3.031))
         # one of its own is enough
-        assert singlets_corroborate(
+        assert signals_corroborate(
             self._creatine(), ppm, y, linewidth_ppm=0.005,
             taken_peaks=(3.031,))
 
     def test_a_singlet_outside_the_study_is_not_counted(self):
-        from processing.quant_shared import singlets_corroborate
+        from processing.quant_shared import signals_corroborate
         ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
         met = self._creatine()
         met['matched_peaks'][1]['ppm_off_drift'] = 0.043
-        assert not singlets_corroborate(met, ppm, y, linewidth_ppm=0.005)
+        assert not signals_corroborate(met, ppm, y, linewidth_ppm=0.005)
+
+    def test_a_doublet_and_a_singlet_are_asked_the_same_question(self):
+        """The integral of a multiplet is nH x (area per proton) whatever
+        its multiplicity -- line shares decide height, not area. So an
+        analyte's singlet and its doublet can be asked the same question:
+        how much of you is there? Asking it of the singlets alone promoted
+        2 analytes on the reference study; asking it of every signal
+        promoted 8, and no stranger either way."""
+        import numpy as np
+        from processing.quant_shared import signals_corroborate
+        j_hz, mhz = 7.0, 500.0
+        half = (j_hz / mhz) / 2.0
+        # 2H in one line at 3.900, 3H split over two lines at 1.500 +- J/2
+        ppm, y = self._spectrum([(3.900, 2000.0),
+                                 (1.500 - half, 1500.0),
+                                 (1.500 + half, 1500.0)])
+        met = {
+            'db_peaks': [{'ppm': 3.900, 'type': 's', 'protons': 2},
+                         {'ppm': 1.500, 'type': 'd', 'protons': 3,
+                          'j_coupling': str(j_hz)}],
+            'matched_peaks': [
+                {'db_ppm': 3.900, 'type': 's', 'peak_ppm': 3.900,
+                 'ppm_off_drift': 0.0},
+                {'db_ppm': 1.500, 'type': 'd', 'peak_ppm': 1.500 - half,
+                 'ppm_off_drift': 0.0}]}
+        assert signals_corroborate(met, ppm, y, linewidth_ppm=0.005,
+                                   field_mhz=mhz)
+
+    def test_a_signal_under_a_suppressed_region_is_not_asked(self):
+        """Its area is the solvent's, not the analyte's."""
+        from processing.quant_shared import signals_corroborate
+        ppm, y = self._spectrum([(3.928, 2000.0), (3.031, 3000.0)])
+        met = self._creatine()
+        assert not signals_corroborate(met, ppm, y, linewidth_ppm=0.005,
+                                       excluded_regions=[(3.00, 3.06)])

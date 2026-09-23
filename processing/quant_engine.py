@@ -45,7 +45,7 @@ from processing.quant_integration import (
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
 from processing.quant_shared import (
-    singlets_corroborate,
+    signals_corroborate,
     REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED,
     claim_listed_signals, fingerprint_holds,
     resolve_free_apices, resolve_listed_intruders, resolve_residuals,
@@ -159,17 +159,15 @@ def _confirms(mp, band_ppm=None) -> bool:
             and _in_study(mp, band_ppm))
 
 
-def _matched_singlet_peaks(info, band_ppm=None) -> set:
-    """The peaks this analyte's listed singlets were matched to, inside the
-    study. Used to ask whether a singlet is the analyte's own."""
+def _matched_signal_peaks(info, band_ppm=None) -> set:
+    """The peaks this analyte's listed signals were matched to, inside the
+    study. Used to ask whether a signal is the analyte's own."""
     sig = info.get('signal')
     payload = sig.payload if sig is not None and isinstance(sig.payload, dict) else {}
     met = payload.get('met') or {}
     return {round(float(mp['peak_ppm']), 4)
             for mp in met.get('matched_peaks') or ()
-            if mp.get('peak_ppm') is not None
-            and normalize_mult(mp.get('type')) == 's'
-            and _in_study(mp, band_ppm)}
+            if mp.get('peak_ppm') is not None and _in_study(mp, band_ppm)}
 
 
 def stands_in_study(met, band_ppm=None) -> bool:
@@ -253,17 +251,16 @@ def _identity_of(info, band_ppm=None) -> dict:
     covered = found / listed >= COVERAGE_CORROBORATES
     return {'confirmed': confirmed, 'contradicted': contradicted,
             'corroborated': bool(covered and present), 'listed': listed,
-            # A molecule with no coupling anywhere cannot have a signal
-            # confirmed. Its own singlets standing at the distance and in
-            # the ratio the reference gives is the evidence it does have,
-            # and it counts only on a listing that is otherwise covered.
-            'singlets_linked': bool(covered and info.get('singlets_linked')),
+            # No analyte's signals are independent peaks: they stand at
+            # the distances the reference lists and in the ratio of their
+            # proton counts. Counted only on a listing otherwise covered.
+            'signals_linked': bool(covered and info.get('signals_linked')),
             'residual': info.get('by_residual')}
 
 
 def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
                        listed=1, cascade=None, residual=None,
-                       singlets_linked=False) -> tuple[int, str]:
+                       signals_linked=False) -> tuple[int, str]:
     """How much the study itself says this is the analyte it says it is.
 
     Measured on the reference bench, over every analyte the run quantified,
@@ -292,14 +289,15 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     were never confirmed one by one. Two when its own signals agree on
     the amount to within CASCADE_AGREEMENT_GOOD, one otherwise.
 
-    A molecule with nothing but singlets can never reach three by a
-    confirmed signal -- nothing in it has a neighbour to couple to. Five
-    of the eighteen analytes of the reference study are like that. Its own
-    singlets standing at the fixed distance and in the fixed ratio of
-    protons the reference gives, on peaks nothing else quantified holds
-    and on a listing otherwise covered, is the same kind of evidence a
-    multiplet's line spacing is: 2 of 2 promoted on the reference study
-    were real, and no stranger reached it.
+    An analyte's own signals agreeing on one amount reaches three too.
+    The integral of a multiplet is nH x (area per proton) whatever its
+    multiplicity, so a singlet, a doublet and an m* can all be asked how
+    much of the analyte is there, and a molecule with nothing but singlets
+    -- five of the eighteen here, nothing in them having a neighbour to
+    couple to -- is no longer barred from the top for a fact about its
+    chemistry. On peaks nothing else quantified holds and on a listing
+    otherwise covered: 8 of 8 promoted on the reference study were real,
+    and no stranger reached it. Asking it of the singlets alone reached 2.
     """
     if residual == 'spectrum':
         return 1, ('identified on a free apex by the shape of its signal '
@@ -319,10 +317,10 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
                        f'had left over')
         return 3, (f'{confirmed} of its signals confirmed: the multiplet '
                    f'complete and the coupling inside the gate')
-    if singlets_linked and not residual:
-        return 3, ('its own singlets stand at the distance and in the ratio '
-                   'of protons the reference gives, on peaks nothing else '
-                   'quantified holds')
+    if signals_linked and not residual:
+        return 3, ('its own signals agree on one amount, standing where the '
+                   'reference puts them and in the ratio of their protons, '
+                   'on peaks nothing else quantified holds')
     if listed <= 1:
         return 1, 'the reference lists one signal for it: nothing corroborates it'
     if corroborated:
@@ -1790,21 +1788,25 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         per_proton_areas.pop(mid, None)
         residual_ids.discard(mid)
 
-    # Do an analyte's own singlets corroborate one another? Asked of what
-    # survived, because one of them has to be a peak nobody else quantified
-    # holds -- see quant_shared.singlets_corroborate for why (adenosine on
-    # inosine's aromatics).
+    # Do an analyte's own signals agree with one another on one amount?
+    # Asked of what survived, because one of them has to be a peak nobody
+    # else quantified holds -- see quant_shared.signals_corroborate for
+    # why (adenosine on inosine's aromatics).
     if _mean is not None and linewidth_ppm:
-        _sing_of = {mid: _matched_singlet_peaks(info, ppm_band_ppm)
-                    for mid, info in measured.items()}
+        _peaks_of = {mid: _matched_signal_peaks(info, ppm_band_ppm)
+                     for mid, info in measured.items()}
         for mid, info in measured.items():
-            taken = set().union(*(v for k, v in _sing_of.items() if k != mid)) \
-                if len(_sing_of) > 1 else set()
+            taken = set().union(*(v for k, v in _peaks_of.items() if k != mid)) \
+                if len(_peaks_of) > 1 else set()
+            _ev = info['signal'].evidence or {}
             met = (info['signal'].payload or {}).get('met') \
                 if isinstance(info['signal'].payload, dict) else None
-            info['singlets_linked'] = singlets_corroborate(
+            info['signals_linked'] = signals_corroborate(
                 met, ppm, _mean, linewidth_ppm=linewidth_ppm,
-                taken_peaks=taken, band_ppm=ppm_band_ppm)
+                drift_ppm=float(_ev.get('study_drift_ppm') or 0.0),
+                field_mhz=_ev.get('pattern_field_mhz'),
+                taken_peaks=taken, band_ppm=ppm_band_ppm,
+                excluded_regions=excluded_regions)
 
     rows = []
     for mid, info in measured.items():
