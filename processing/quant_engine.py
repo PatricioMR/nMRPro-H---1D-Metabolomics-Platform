@@ -34,6 +34,7 @@ from processing.quant_deconvolution import (
     MIN_CLAIM_FRACTION, claimants_in_window, fraction_in_window,
     solve_windows, subtract_neighbours)
 from processing.quant_detection_limit import (
+    INTERFERENCE_NOTE,
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
     UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
     integration_noise, local_noise_sigma, predicted_window, strength_band,
@@ -735,17 +736,30 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
 
 def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
                    linewidth_ppm, segments=None):
-    """The SNR and the detection limits of one window, from one noise.
+    """The SNR, the detection limits and the interference of one window.
 
     One noise for the whole of quantification. The SNR column used to
     reconstruct its own from the peak's recorded ratio, which disagreed with
     the limits beside it by a factor of two and, over a baseline offset,
     produced an SNR of 3149 for an analyte at 0.008 mM.
+
+    That one noise is the BLANK's -- the scatter of a signal-free region --
+    for both the ratio and the limits, which is what Currie's framework and
+    the qNMR convention define them from. How crowded the window's
+    surroundings are is measured too, as a ratio to that blank, and
+    returned beside them: it is interference, it costs accuracy rather than
+    detectability, and it is the analyst's to see. Putting it inside the
+    limit instead marked taurine -- second most concentrated analyte of the
+    reference study, group signal-to-noise 639 -- as too weak to quantify.
+
+    Returns ``(snr, lod_area, loq_area, interference)``.
     """
-    sigma_here = local_noise_sigma(ppm, intensities, lo, hi,
-                                   linewidth_ppm=linewidth_ppm,
-                                   global_sigma=noise_sigma) or noise_sigma
-    snr = window_snr(ppm, intensities, lo, hi, sigma_here, included=included)
+    snr = window_snr(ppm, intensities, lo, hi, noise_sigma, included=included)
+    _around = local_noise_sigma(ppm, intensities, lo, hi,
+                                linewidth_ppm=linewidth_ppm,
+                                global_sigma=noise_sigma)
+    interference = (float(_around) / float(noise_sigma)
+                    if _around and noise_sigma else float('nan'))
     _p = np.asarray(ppm, dtype=float)
     # The points the integration summed: the segments', where the signal was
     # measured on pieces -- the noise on an area grows with the points in it.
@@ -754,8 +768,8 @@ def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
         _in |= (_p >= min(a, b)) & (_p <= max(a, b))
     n_pts = int(_in.sum())
     dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
-    lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
-    return snr, lod_a, loq_a
+    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
+    return snr, lod_a, loq_a, interference
 
 
 def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
@@ -819,7 +833,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         if nh <= 0:
             continue
         lo, hi = w['window']
-        snr, lod_a, loq_a = _window_limits(
+        snr, lod_a, loq_a, interference = _window_limits(
             ppm, intensities, lo, hi, included=included,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
         areas = {int(s_i): float(v) * nh for s_i, v in by_sample.items()}
@@ -829,6 +843,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
                if r in peaks_by_rank]
         out[mid] = {
             'signal': cand, 'nh': nh, 'snr': snr,
+            'interference': interference,
             'captured': float((w.get('fractions') or {}).get(mid, 1.0)),
             'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
                          for s_i, v in snr.items()},
@@ -1412,7 +1427,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
-        snr, lod_a, loq_a = _window_limits(
+        snr, lod_a, loq_a, interference = _window_limits(
             ppm, intensities, lo, hi, included=included,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
             segments=out.get('segments'))
@@ -1426,6 +1441,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         detected = {s_i: bool(np.isfinite(v) and v >= K_LOD)
                     for s_i, v in snr.items()}
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
+                         'interference': interference,
                          'captured': captured, 'detected': detected,
                          'lines': [float(p.get('ppm', 0.0)) for p in lines],
                          'pattern_lines': list(_ppms),
@@ -2012,14 +2028,15 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         })
         return row
 
-    # The noise of THIS region, not of the quiet one the global estimate came
-    # from. On the reference study six analytes contesting the histidine
-    # imidazole region were handed identical limits because the global sigma
-    # knew nothing about how crowded it is.
-    sigma_here = local_noise_sigma(ppm, arr, lo, hi,
-                                   linewidth_ppm=linewidth_ppm,
-                                   global_sigma=noise_sigma) or noise_sigma
-    lod_a, loq_a = detection_limits(sigma_here, dppm, n_pts)
+    # The blank's noise, as everywhere: a limit is a property of the method,
+    # not of whichever neighbours this analyte happens to have. How crowded
+    # the region is is a separate statement -- see local_noise_sigma.
+    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
+    _around = local_noise_sigma(ppm, arr, lo, hi,
+                                linewidth_ppm=linewidth_ppm,
+                                global_sigma=noise_sigma)
+    interference = (float(_around) / float(noise_sigma)
+                    if _around and noise_sigma else float('nan'))
     verdict = censor(area, lod_a, loq_a)
 
     nh = signal_nh(ev.get('protons'))
@@ -2042,7 +2059,10 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
         '_censored': verdict,
         '_lod_mm': lod_mm,
         '_loq_mm': loq_mm,
-        '_noise_sigma': float(sigma_here),
+        '_noise_sigma': float(noise_sigma) if noise_sigma else float('nan'),
+        # How much louder than the blank this window's surroundings are.
+        # Not a limit: interference, which costs accuracy, not detectability.
+        '_interference': interference,
         '_multiplet_window': [float(lo), float(hi)],
         '_nh': float(nh),
         '_areas_per_sample': areas,
@@ -2195,6 +2215,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # How much of the window the trace ran under the baseline: what the
         # integration counted as nothing (quant_integration.integrate_sample).
         '_below_baseline_share': info.get('below_baseline_share'),
+        # How much louder than the blank this window's surroundings read.
+        # Not a limit: interference costs accuracy, not detectability.
+        '_interference': info.get('interference'),
         # What share of this window's raw area the project's baseline model
         # removed. Nothing to remove and it is zero; a third and the number
         # is the model's as much as the analyte's.
@@ -2259,6 +2282,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _segments_reason(info)
                             + _baseline_reason(info)
                             + _broad_reason(info)
+                            + _interference_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -2384,6 +2408,19 @@ def _pattern_reason(info) -> list:
 # window on a signal has a few noise points under its baseline, not a
 # quarter of its length.
 BASELINE_SILENCED_SHARE = 0.25
+
+
+def _interference_reason(info) -> list:
+    """Said of a window whose surroundings are not noise any more."""
+    r = info.get('interference')
+    if r is None or not np.isfinite(r) or float(r) < INTERFERENCE_NOTE:
+        return []
+    return [f"The band flanking this window reads {float(r):.0f}x the "
+            f"scatter of a signal-free region: what surrounds it is "
+            f"neighbouring signal, not noise. The detection and "
+            f"quantification limits are the method's and do not change "
+            f"with this, but how much of the area is really this "
+            f"analyte's does -- check the region."]
 
 
 def _broad_reason(info) -> list:

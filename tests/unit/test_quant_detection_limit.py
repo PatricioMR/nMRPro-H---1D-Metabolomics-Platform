@@ -393,14 +393,23 @@ def test_the_limit_travels_the_same_chain_as_a_concentration():
 
 
 class TestTheNoiseIsTheRegionsOwn:
-    """A limit built on the spectrometer's quiet region answers "how small a
-    signal would stand out over an empty baseline". In a crowded region that is
-    the wrong question, and it comes back optimistic exactly where it matters.
+    """How crowded a window's surroundings are, measured as INTERFERENCE.
 
-    The symptom: six analytes claiming the histidine imidazole region at
-    7.0926-7.1025 ppm were handed identical limits, differing only by proton
-    count, because the window width and the global sigma were the same for all
-    of them.
+    It used to be the detection limit itself, on the argument that in a
+    crowded region what limits the measurement is the neighbours' skirts and
+    not the noise floor -- six analytes claiming the histidine imidazole
+    region at 7.0926-7.1025 ppm had been handed identical limits, differing
+    only by proton count.
+
+    The thing measured is real; calling it a limit was not. Currie's
+    framework and the qNMR convention both define a limit from the blank, so
+    that it is a property of the method rather than of whichever neighbours
+    an analyte happens to have. Taurine, second most concentrated analyte of
+    the reference study, had this come back 193x the blank -- the band
+    flanking its window holds a skirt 16.9 million counts tall and no
+    detected peak -- and its quantification limit read 1.566 mM against a
+    measured 2.051. Four of the sixteen real analytes were marked weak that
+    way. It is reported now, beside the limits, not inside them.
     """
 
     PPM = np.linspace(6.0, 8.0, 8001)
@@ -458,15 +467,35 @@ class TestTheNoiseIsTheRegionsOwn:
                                  linewidth_ppm=self.LW,
                                  global_sigma=5.0) == 5.0
 
-    def test_the_engine_uses_it(self):
-        """Measured and not reaching the decision is this code base's recurring
-        failure."""
+    def test_the_engine_measures_it_and_reports_it(self):
+        """Measured and not reaching the analyst is this code base's
+        recurring failure. It reaches them as a reason on the row, not as a
+        limit they cannot tell from a real one."""
         import inspect
 
         from processing import quant_engine as qe
         src = inspect.getsource(qe._censored_row)
         assert 'local_noise_sigma(' in src
-        assert 'detection_limits(sigma_here' in src
+        assert 'interference' in src
+
+    def test_the_limits_are_the_blanks_and_not_the_regions(self):
+        """A limit of detection is a property of the method and the blank."""
+        import inspect
+
+        from processing import quant_engine as qe
+        for fn in (qe._censored_row, qe._window_limits):
+            src = inspect.getsource(fn)
+            assert 'detection_limits(noise_sigma' in src, fn.__name__
+            assert 'detection_limits(sigma_here' not in src, fn.__name__
+
+    def test_a_crowded_window_says_so_on_the_row(self):
+        from processing.quant_detection_limit import INTERFERENCE_NOTE
+        from processing.quant_engine import _interference_reason
+        assert _interference_reason({'interference': 1.0}) == []
+        assert _interference_reason({}) == []
+        said = _interference_reason({'interference': 193.0})
+        assert said and 'not noise' in said[0]
+        assert _interference_reason({'interference': INTERFERENCE_NOTE})
 
     def test_two_analytes_in_regions_of_different_crowding_get_different_limits(self):
         """The point of the whole change."""

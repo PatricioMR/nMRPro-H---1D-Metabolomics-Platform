@@ -239,12 +239,16 @@ def test_quantification_measures_its_snr_against_the_same_noise_as_its_limits():
 
     from processing import quant_engine as qe
     src = inspect.getsource(qe._window_limits)
-    i_sigma = src.index('sigma_here = local_noise_sigma')
-    i_snr = src.index('snr = window_snr(')
-    assert i_sigma < i_snr, 'the noise must be settled before the SNR uses it'
-    assert 'window_snr(ppm, intensities, lo, hi, sigma_here' in src
-    # And one place computes it, so a second window -- a shared one, split
-    # between claimants -- cannot reach its own answer by another route.
+    # The blank's sigma for both -- an SNR measured against one noise beside
+    # a limit built on another is two answers to the same question. It is
+    # the blank's because that is what a limit is defined from, and because
+    # a ratio that changed with the neighbours would say an analyte got
+    # fainter when something appeared next to it.
+    assert 'window_snr(ppm, intensities, lo, hi, noise_sigma' in src
+    assert 'detection_limits(noise_sigma' in src
+    # And one place measures how crowded the window is, so a second window
+    # -- a shared one, split between claimants -- cannot reach its own
+    # answer by another route.
     whole = inspect.getsource(qe)
     assert whole.count('local_noise_sigma(ppm, intensities') == 1
 

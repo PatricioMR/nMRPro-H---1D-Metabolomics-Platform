@@ -101,6 +101,13 @@ def integration_noise(sigma, dppm, n_points) -> float:
 def detection_limits(sigma, dppm, n_points, *, k_lod=K_LOD, k_loq=K_LOQ):
     """``(lod_area, loq_area)`` for one window, in the units of the areas.
 
+    ``sigma`` is the BLANK's: the scatter of a signal-free region of this
+    study. That is what Currie's framework and the qNMR convention cited in
+    this module's header both define a limit from, and it is what makes the
+    limit a property of the method rather than of whichever neighbours an
+    analyte happens to have. What the neighbours do is interference --
+    ``local_noise_sigma`` measures it and the row reports it, separately.
+
     The caller converts them to concentration through the same chain any other
     area travels — divided by nH, referenced to the standard, scaled by the
     dilution. A limit expressed in area units cannot be compared with the
@@ -242,6 +249,11 @@ def project_drift(metabolites) -> float:
 # on, narrow enough that it is still the same neighbourhood.
 LOCAL_NOISE_BAND_LINEWIDTHS = 8.0
 
+# How far above the blank a window's surroundings may read before the row
+# says the region is crowded. Two: the flanking band holding twice the
+# scatter of a signal-free region is not noise any more.
+INTERFERENCE_NOTE = 2.0
+
 # 1 / Phi^-1(3/4). Turns a median absolute deviation into the standard
 # deviation it corresponds to for normally distributed values.
 MAD_TO_SIGMA = 1.4826
@@ -249,13 +261,29 @@ MAD_TO_SIGMA = 1.4826
 
 def local_noise_sigma(ppm, intensity, lo, hi, *, linewidth_ppm,
                       global_sigma=None, band_linewidths=None):
-    """The uncertainty of an integral in THIS region, not in a quiet one.
+    """How much of what surrounds this window is not noise: INTERFERENCE.
 
-    A detection limit built on the spectrometer's electronic noise answers
-    "how small a signal would stand out over an empty baseline". In a crowded
-    region that is the wrong question: what limits the measurement there is not
-    the noise floor but the neighbours' skirts, and the limit comes back
-    optimistic in exactly the places it matters.
+    NOT a detection limit, and no longer used as one. A limit of detection
+    is a property of the method and the blank -- Currie's framework and the
+    qNMR convention this module's header cites both define it from the
+    scatter of a signal-free region -- while what a neighbour's skirt does
+    to a measurement is interference, which belongs to selectivity and
+    costs accuracy, not detectability. Feeding this into ``detection_limits``
+    conflated the two and reported an overlap statement wearing a detection
+    limit's name.
+
+    Measured on the reference study: taurine, the second most concentrated
+    analyte, had this come back at 1,035,234 where the spectrum's noise is
+    5,349 -- 193 times -- because the band flanking its window holds a skirt
+    16.9 million counts tall and no detected peak at all. Its quantification
+    limit then read 1.566 mM against a measured 2.051, marking the analyte
+    weak for having neighbours. Four of the sixteen analytes really in the
+    study were marked weak that way; on the blank's sigma, sixteen of
+    sixteen read strong and not one stranger joined them.
+
+    Kept, and reported, because the thing it measures is real: a region this
+    crowded cannot be measured down to the noise floor, and the analyst has
+    to see that. It is the ratio to the blank that says it, not a limit.
 
     The symptom on the reference study: six analytes claiming the histidine
     imidazole region at 7.0926-7.1025 ppm were given identical limits, differing
@@ -280,9 +308,8 @@ def local_noise_sigma(ppm, intensity, lo, hi, *, linewidth_ppm,
     The band flanks the window and excludes it, so what is being measured
     cannot raise the bar it has to clear.
 
-    Never returns less than ``global_sigma``. The instrument's noise is a floor
-    on what any region can achieve, and a local estimate below it would promise
-    a sensitivity the spectrometer does not have.
+    Never returns less than ``global_sigma``: a region cannot be quieter
+    than the instrument, so the ratio to the blank starts at one.
     """
     x = np.asarray(ppm, dtype=float)
     y = np.asarray(intensity, dtype=float)
