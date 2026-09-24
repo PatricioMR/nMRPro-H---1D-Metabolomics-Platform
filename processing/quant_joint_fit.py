@@ -51,7 +51,7 @@ based metabolomics at arbitrary magnetic fields (2024), PMC11525900.
 from __future__ import annotations
 
 import numpy as np
-from scipy.optimize import nnls
+from scipy.optimize import lsq_linear, nnls
 
 # A shape's support: where it stands above this share of its own tallest
 # point. Lorentzian tails never reach zero; below a fiftieth they are not
@@ -81,6 +81,9 @@ SHIFT_STEPS = 7
 # a triplet's area into the singlet it sits on. BATMAN lets the width vary
 # for the same reason.
 WIDTH_SCALES = (0.7, 0.8, 0.9, 1.0, 1.15)
+# The width searched in every sample rather than once per group: p90 16% ->
+# 12% on the 18-analyte tube, nothing on the 50, and four times the time.
+WIDTH_PER_SAMPLE = False
 # Each SIGNAL's own offset from where the reference puts it, found once on
 # the mean trace and then held: within this many linewidths, on a grid of
 # this many steps, in this many passes over the group. The reference was
@@ -94,6 +97,10 @@ WIDTH_SCALES = (0.7, 0.8, 0.9, 1.0, 1.15)
 PART_SHIFT_REACH_LW = 1.0
 PART_SHIFT_STEPS = 9
 PART_SHIFT_PASSES = 2
+# How far a neighbour's amount may move from the group's while one signal
+# is being placed: the cascade's own tolerance for an analyte it did not
+# measure (quant_cascade.FIXED_TOLERANCE).
+NEIGHBOUR_TOLERANCE = 0.25
 
 
 def _lorentz_unit(ppm, centre, fwhm):
@@ -164,33 +171,101 @@ def _solve(A, t):
     return x, float(rnorm) ** 2
 
 
+def _part_vec(comp, nh, ppm, union):
+    """One signal's curve over the group's union, area = its protons, at the
+    component's current offset. The same shape ``Column.part_curves``
+    draws, one signal at a time."""
+    v = np.zeros(union.size)
+    x_all = ppm[union]
+    sel = np.flatnonzero((x_all >= comp.lo - abs(comp.shift_ppm))
+                         & (x_all <= comp.hi + abs(comp.shift_ppm)))
+    if sel.size < 3:
+        return v
+    x = x_all[sel]
+    y = np.asarray(comp.model(x, comp.shift_ppm, comp.width_scale), dtype=float)
+    top = float(y.max())
+    if top <= 0:
+        return v
+    y = y / top
+    order = np.argsort(x)
+    area = float(np.trapezoid(y[order], x=x[order]))
+    if area <= 0:
+        return v
+    v[sel] = y * (float(nh) / area)
+    return v
+
+
 def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
     """Slide every signal of every column on its own over the mean trace,
     holding the best offset. Coordinate descent: one signal at a time, the
     rest of the group fitted with it. Returns ``{(mid, i): offset_ppm}``.
 
+    Each candidate is judged where it differs from the others -- the
+    signal's own reach -- against the rest of the group held at the
+    amounts one fit of the WHOLE group gives, with only the analyte's own
+    amount free (in closed form). Refitting the whole group for every
+    signal and every candidate took 4.6 hours on one 50-analyte tube; a
+    small free fit of the neighbourhood alone was fast and wrong, because
+    a neighbour free there is not held by its own signals elsewhere (p90
+    48% -> 55% on that tube).
+
     The offsets are written on the components (``shift_ppm``), so every
     later curve of the column carries them."""
     reach = PART_SHIFT_REACH_LW * float(linewidth_ppm)
     grid = np.linspace(-reach, reach, PART_SHIFT_STEPS)
-    vecs = [_dense(c, union, ppm=ppm) for c in cols]
+    x_u = ppm[union]
+    parts = [[_part_vec(comp, nh, ppm, union) for comp, nh in c.parts]
+             for c in cols]
+    V = np.column_stack([np.sum(ps, axis=0) if ps else np.zeros(union.size)
+                         for ps in parts]) if cols else np.zeros((union.size, 0))
+    F = (free_block if free_block is not None and np.size(free_block)
+         else np.zeros((union.size, 0)))
+    n_c = V.shape[1]
     base = {id(comp): float(comp.shift_ppm) for c in cols for comp, _nh in c.parts}
     out = {}
     for _pass in range(PART_SHIFT_PASSES):
         for k, col in enumerate(cols):
-            for i, (comp, _nh) in enumerate(col.parts):
+            # the group's amounts, with this column as it now stands
+            amp, _r2 = _solve(np.column_stack([V, F]), t)
+            a_col, a_free = amp[:n_c], amp[n_c:]
+            for i, (comp, nh) in enumerate(col.parts):
+                lo = comp.lo - abs(base[id(comp)]) - 2 * reach
+                hi = comp.hi + abs(base[id(comp)]) + 2 * reach
+                L = np.flatnonzero((x_u >= lo) & (x_u <= hi))
+                if L.size < 3:
+                    continue
+                # the neighbours with lines here may give or take up to
+                # NEIGHBOUR_TOLERANCE of their group amount; the rest are
+                # held; this analyte's own amount is free
+                near = [j for j in range(n_c) if j != k and np.any(V[L, j])]
+                near_f = [j for j in range(F.shape[1]) if np.any(F[L, j])]
+                far = [j for j in range(n_c) if j != k and j not in near]
+                held = V[L][:, far] @ a_col[far] if far else 0.0
+                if F.shape[1]:
+                    far_f = [j for j in range(F.shape[1]) if j not in near_f]
+                    if far_f:
+                        held = held + F[L][:, far_f] @ a_free[far_f]
+                target = t[L] - held
+                rest = V[L, k] - parts[k][i][L]
+                nb = [a_col[j] for j in near] + [a_free[j] for j in near_f]
+                lo_b = np.array([0.0] + [max(a * (1 - NEIGHBOUR_TOLERANCE), 0.0)
+                                         for a in nb])
+                hi_b = np.array([np.inf] + [max(a * (1 + NEIGHBOUR_TOLERANCE), 1e-12)
+                                            for a in nb])
+                Nb = [V[L, j] for j in near] + [F[L, j] for j in near_f]
                 best = None
                 for d in grid:
                     comp.shift_ppm = base[id(comp)] + d
-                    vk = _dense(col, union, ppm=ppm)
-                    A = np.column_stack(vecs[:k] + [vk] + vecs[k + 1:]
-                                        + ([free_block] if free_block is not None
-                                           and free_block.size else []))
-                    _x, r2 = _solve(A, t)
+                    pv = _part_vec(comp, nh, ppm, union)
+                    A = np.column_stack([rest + pv[L]] + Nb)
+                    res = lsq_linear(A, target, bounds=(lo_b, hi_b),
+                                     lsmr_tol='auto')
+                    r2 = float(np.sum((A @ res.x - target) ** 2))
                     if best is None or r2 < best[0]:
-                        best = (r2, d, vk)
+                        best = (r2, d, pv)
                 comp.shift_ppm = base[id(comp)] + best[1]
-                vecs[k] = best[2]
+                V[:, k] += best[2] - parts[k][i]
+                parts[k][i] = best[2]
                 out[(col.mid, i)] = best[1]
     return out
 
@@ -293,14 +368,26 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
         union = union[w[union] > 0]
         if union.size < 3:
             continue
-        designs = []
+        def design(sh, wsc):
+            cols_m = [_dense(columns[k], union, sh, wsc, ppm=ppm)
+                      for k in cols_in]
+            frees_m = [_lorentz_unit(ppm[union], frees[f][0] + sh,
+                                     frees[f][1] * wsc) for f in frees_in]
+            return np.column_stack(cols_m + frees_m)
+
+        # the group's width once, on the mean trace: what broadens it
+        # broadens every sample alike, and five widths in every sample
+        # multiplied the fit by five for nothing the samples disagree on
+        best_w = None
         for wsc in WIDTH_SCALES:
-            for sh in shifts:
-                cols_m = [_dense(columns[k], union, sh, wsc, ppm=ppm)
-                          for k in cols_in]
-                frees_m = [_lorentz_unit(ppm[union], frees[f][0] + sh,
-                                         frees[f][1] * wsc) for f in frees_in]
-                designs.append(np.column_stack(cols_m + frees_m))
+            _x, r2 = _solve(design(0.0, wsc), mean[union])
+            if best_w is None or r2 < best_w[0]:
+                best_w = (r2, wsc)
+        if WIDTH_PER_SAMPLE:
+            designs = [design(sh, wsc) for wsc in WIDTH_SCALES
+                       for sh in shifts]
+        else:
+            designs = [design(sh, best_w[1]) for sh in shifts]
         amps = {columns[k].mid: {} for k in cols_in}
         resid = []
         for s in included:
