@@ -128,15 +128,18 @@ class Column:
     def nh_total(self) -> float:
         return float(sum(nh for _c, nh in self.parts))
 
-    def part_curves(self, ppm, shift=0.0) -> list:
-        """Each signal's sparse curve, area = its protons: [(idx, val)]."""
+    def part_curves(self, ppm, shift=0.0, width=1.0) -> list:
+        """Each signal's sparse curve, area = its protons: [(idx, val)].
+        ``width`` scales every line's width, as a sample broader or
+        narrower than the study's measured linewidth needs."""
         out = []
         for comp, nh in self.parts:
             sel = np.flatnonzero((ppm >= comp.lo - abs(shift)) & (ppm <= comp.hi + abs(shift)))
             if sel.size < 3:
                 continue
             x = ppm[sel]
-            y = np.asarray(comp.model(x, comp.shift_ppm + shift, comp.width_scale), dtype=float)
+            y = np.asarray(comp.model(x, comp.shift_ppm + shift,
+                                      comp.width_scale * float(width)), dtype=float)
             top = float(y.max())
             if top <= 0:
                 continue
@@ -148,8 +151,8 @@ class Column:
             out.append((sel, y * (float(nh) / area)))
         return out
 
-    def curve(self, ppm, shift=0.0):
-        parts = self.part_curves(ppm, shift)
+    def curve(self, ppm, shift=0.0, width=1.0):
+        parts = self.part_curves(ppm, shift, width)
         if not parts:
             return None, None
         idx = np.concatenate([p[0] for p in parts])

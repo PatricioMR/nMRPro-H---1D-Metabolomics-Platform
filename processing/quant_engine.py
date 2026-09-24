@@ -27,12 +27,14 @@ import numpy as np
 
 from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
-    MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, cascade_missed)
+    MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
+    cascade_missed, exclusion_weight)
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
     MIN_CLAIM_FRACTION, claimants_in_window, fraction_in_window,
     solve_windows, subtract_neighbours)
+from processing.quant_joint_fit import joint_measure
 from processing.quant_detection_limit import (
     INTERFERENCE_NOTE,
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
@@ -1030,8 +1032,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              residual_pool=None, singlet_min_snr=None,
              cascade=False, metabolites=None, field_mhz=None,
              ppm_band_ppm=None, claim_signals=True,
-             max_disagreement=None, raw_intensities=None) -> list[dict]:
+             max_disagreement=None, raw_intensities=None,
+             joint_fit=False) -> list[dict]:
     """Quantify a study and return one row per metabolite.
+
+    ``joint_fit`` measures the analytes whose shapes overlap together, with
+    a free component at every detected peak no quantified analyte has a
+    line under (processing.quant_joint_fit). Analytes that overlap nothing
+    keep their integrated amount.
 
     ``singlet_min_snr`` is the signal-to-noise a singlet on its own must
     reach to be quantified (SINGLET_MIN_SNR when None): the analyst's
@@ -1099,7 +1107,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         shared_overrides=shared_overrides, diagnostics=diagnostics,
         residual_pool=residual_pool, singlet_min_snr=singlet_min_snr,
         ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals,
-        raw_intensities=raw_intensities)
+        raw_intensities=raw_intensities, joint_fit=joint_fit,
+        field_mhz=field_mhz)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -1329,7 +1338,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    shared_overrides=None, diagnostics=None,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
                    ppm_band_ppm=None, claim_signals=True,
-                   raw_intensities=None):
+                   raw_intensities=None, joint_fit=False, field_mhz=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1894,6 +1903,43 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 taken_peaks=taken, band_ppm=ppm_band_ppm,
                 excluded_regions=excluded_regions)
 
+    # Where the analytes' shapes overlap, integration counts the neighbours'
+    # area as theirs; measure those together instead, with room for what is
+    # not in the library. The integrated amount is kept on the row: the fit
+    # replaces it, and the replacement has to be visible and undoable.
+    if joint_fit and measured and linewidth_ppm and _mean is not None:
+        _jmets = [(info['signal'].payload or {}).get('met')
+                  for info in measured.values()
+                  if isinstance(info['signal'].payload, dict)]
+        _jmets = [m for m in _jmets if m]
+        _jfield = field_mhz or next(
+            ((info['signal'].evidence or {}).get('pattern_field_mhz')
+             for info in measured.values()
+             if (info['signal'].evidence or {}).get('pattern_field_mhz')),
+            None)
+        if _jfield:
+            _jcols = [c for c in build_columns(
+                _jmets, field_mhz=float(_jfield),
+                linewidth_ppm=float(linewidth_ppm),
+                drift_ppm=float(study_drift(_jmets) or 0.0))
+                if c.mid in measured]
+            _jf = joint_measure(
+                _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
+                _cols, sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
+                weight=exclusion_weight(ppm, excluded_regions))
+            for mid, r in _jf.items():
+                measured[mid]['joint_fit'] = {
+                    'group': list(r['group']), 'free': int(r['free']),
+                    'residual': float(r['residual']),
+                    'signal_offsets_ppm': list(r.get('signal_offsets_ppm') or ()),
+                    'integrated': dict(per_proton_areas.get(mid) or {}),
+                    'fitted': dict(r['amplitudes'])}
+                per_proton_areas[mid] = dict(r['amplitudes'])
+                # the row's areas and its concentrations are one measurement
+                _nh = float(measured[mid]['nh'])
+                measured[mid]['areas'] = {s: v * _nh
+                                          for s, v in r['amplitudes'].items()}
+
     rows = []
     for mid, info in measured.items():
         nh = info['nh']
@@ -2289,6 +2335,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # How much louder than the blank this window's surroundings read.
         # Not a limit: interference costs accuracy, not detectability.
         '_interference': info.get('interference'),
+        # Present when the amount came from the joint fit of an overlapping
+        # group: who it was fitted with, how many unknown peaks the fit made
+        # room for, what share of the region nothing explains, and the
+        # amount integration had given, so the change can be undone.
+        '_joint_fit': info.get('joint_fit'),
         # What share of this window's raw area the project's baseline model
         # removed. Nothing to remove and it is zero; a third and the number
         # is the model's as much as the analyte's.
@@ -2354,6 +2405,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _baseline_reason(info)
                             + _broad_reason(info)
                             + _interference_reason(info)
+                            + _joint_fit_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -2479,6 +2531,22 @@ def _pattern_reason(info) -> list:
 # window on a signal has a few noise points under its baseline, not a
 # quarter of its length.
 BASELINE_SILENCED_SHARE = 0.25
+
+
+def _joint_fit_reason(info) -> list:
+    """Said of an amount the joint fit measured."""
+    jf = info.get('joint_fit')
+    if not jf:
+        return []
+    others = max(len(jf.get('group') or ()) - 1, 0)
+    free = int(jf.get('free') or 0)
+    res = jf.get('residual')
+    tail = (f" {100 * float(res):.0f}% of the region is explained by nothing."
+            if res is not None and np.isfinite(res) else '')
+    return [f"Measured by fitting its shape together with {others} other "
+            f"analyte(s) and {free} unassigned peak(s) whose signals overlap "
+            f"it, instead of integrating a window that holds theirs too. The "
+            f"integrated amount is kept on the row.{tail}"]
 
 
 def _interference_reason(info) -> list:

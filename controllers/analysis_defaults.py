@@ -65,6 +65,9 @@ QUANTIFICATION = {
     # 23%, and false positives from 7 to 6.
     'quantify_shapes': True,
     'resolve_shared': True,
+    # Overlapping analytes fitted together, with free components for the
+    # peaks no quantified analyte explains (processing.quant_joint_fit).
+    'joint_fit': False,
     'singlet_min_snr': 5.0,
     'cascade': True,
     # percent, as the interface shows it

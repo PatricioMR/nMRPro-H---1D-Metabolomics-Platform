@@ -72,11 +72,11 @@ def region_noise(ppm, raw, region):
     return float(sigma) if np.isfinite(sigma) and sigma > 0 else None
 
 
-def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
-              standard_nh, standard_conc, standard_name='IS',
-              aligned_first=False, keep_detection_alignment=False,
-              overrides=None, log=print):
-    """``(peaks, metabolites, rows, noise_std, settings)`` for one study.
+def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
+            aligned_first=False, keep_detection_alignment=False,
+            overrides=None, log=print):
+    """Detection and annotation, as the interface runs them: everything
+    before an amount is measured.
 
     ``aligned_first`` presses the Align button before detecting, with the
     dialog's own settings (icoshift, 50 segments, 0.030 ppm): it replaces
@@ -154,6 +154,23 @@ def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
             min_distance_ppm=d['min_distance_ppm'],
             excluded_regions=excluded, peak_correlation=peak_corr,
             n_samples_correlated=raw.shape[1] if raw.ndim == 2 else 1)
+    return {'ppm': ppm, 'raw': raw, 'corr': corr, 'peaks': peaks,
+            'mets': mets, 'params': params, 'noise_std': noise_std,
+            'excluded': excluded, 'settings': d}
+
+
+def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
+                      standard_conc, standard_name='IS', overrides=None):
+    """The quantification step alone, on what ``prepare`` detected and
+    annotated. Only the quantification's own settings are read from
+    ``overrides``: changing how an amount is measured does not change what
+    was detected or annotated, so a test of the one need not redo the
+    other."""
+    d = defaults(overrides)
+    ppm, raw, corr = prep['ppm'], prep['raw'], prep['corr']
+    peaks, mets, params = prep['peaks'], prep['mets'], prep['params']
+    noise_std, excluded = prep['noise_std'], prep['excluded']
+    with contextlib.redirect_stdout(io.StringIO()):
         ref = min(peaks, key=lambda p: abs(float(p['ppm']) - standard_ppm))
         rows = quantify_project(
             metabolites=mets, peaks=peaks, ppm=ppm,
@@ -173,8 +190,26 @@ def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
             singlet_min_snr=d['singlet_min_snr'],
             cascade=d['cascade'],
             max_disagreement=d['max_disagreement_pct'] / 100.0,
-            raw_intensities=raw)
-    return peaks, mets, rows, noise_std, d
+            raw_intensities=raw, joint_fit=d['joint_fit'])
+    return rows
+
+
+def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
+              standard_nh, standard_conc, standard_name='IS',
+              aligned_first=False, keep_detection_alignment=False,
+              overrides=None, log=print):
+    """``(peaks, metabolites, rows, noise_std, settings)`` for one study:
+    ``prepare`` then ``quantify_prepared``."""
+    prep = prepare(ppm, raw, samples_info, db_path=db_path,
+                   field_mhz=field_mhz, aligned_first=aligned_first,
+                   keep_detection_alignment=keep_detection_alignment,
+                   overrides=overrides, log=log)
+    rows = quantify_prepared(prep, samples_info, standard_ppm=standard_ppm,
+                             standard_nh=standard_nh,
+                             standard_conc=standard_conc,
+                             standard_name=standard_name, overrides=overrides)
+    return (prep['peaks'], prep['mets'], rows, prep['noise_std'],
+            prep['settings'])
 
 
 def score(rows, truth) -> dict:
