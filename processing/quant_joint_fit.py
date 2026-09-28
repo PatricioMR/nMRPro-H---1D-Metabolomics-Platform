@@ -166,9 +166,25 @@ def _solve(A, t):
     """Non-negative least squares: the amplitudes and the squared residual.
     The active-set solver -- tens of columns over thousands of points is
     exactly its case, and it is an order of magnitude faster than a
-    general bounded solver there."""
-    x, rnorm = nnls(A, t, maxiter=50 * max(A.shape[1], 1))
-    return x, float(rnorm) ** 2
+    general bounded solver there.
+
+    Solved on the triangular factor of ``A`` (``A = QR``): ``|Ax - t|^2 =
+    |Rx - Q't|^2 + |t - QQ't|^2``, the second term independent of ``x`` --
+    the same problem, minimum and residual, over n rows instead of the
+    group's thousands of points. The active set refits its passive columns
+    at every step; over the full trace that was 52 ms a solve and half the
+    joint fit's time."""
+    m, n = A.shape
+    if n == 0:
+        return np.zeros(0), float(np.sum(t ** 2))
+    if m <= n:
+        x, rnorm = nnls(A, t, maxiter=50 * n)
+        return x, float(rnorm) ** 2
+    Q, R = np.linalg.qr(A)
+    qt = Q.T @ t
+    x, rnorm = nnls(R, qt, maxiter=50 * n)
+    outside = max(float(t @ t) - float(qt @ qt), 0.0)
+    return x, float(rnorm) ** 2 + outside
 
 
 def _part_vec(comp, nh, ppm, union):
@@ -258,8 +274,11 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
                     comp.shift_ppm = base[id(comp)] + d
                     pv = _part_vec(comp, nh, ppm, union)
                     A = np.column_stack([rest + pv[L]] + Nb)
+                    # the bounded active set: exact, and a few columns
+                    # is its case (the iterative default spent ~1 ms a
+                    # candidate on overhead, a third of the joint fit)
                     res = lsq_linear(A, target, bounds=(lo_b, hi_b),
-                                     lsmr_tol='auto')
+                                     method='bvls')
                     r2 = float(np.sum((A @ res.x - target) ** 2))
                     if best is None or r2 < best[0]:
                         best = (r2, d, pv)

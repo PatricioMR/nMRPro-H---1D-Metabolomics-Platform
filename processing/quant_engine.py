@@ -498,6 +498,15 @@ DRIFT_RESIDUAL_MIN_SIGNALS = 3
 # stranger back to three dots on the crowded one; not kept.
 POSITION_SCATTER_K = 3.0
 
+# Candidates annotation proposed and quantification did not report enter
+# the joint fit as columns whose amounts are not reported (ASICS, Tardivel
+# et al. 2017, fits the whole library, not only what it reports). On the
+# reference bench filled to 100 analytes, three seeds: joint-fit bias
+# +20% -> +5%, p90 135% -> 92%; at 50, p90 51% -> 48%; three dots still
+# no stranger. The price: 0.6-1.0 more strangers per run at two dots, all
+# cascade rows whose residual the better amounts left differently.
+JOINT_FIT_CANDIDATES = True
+
 # The share of its own window an analyte has to keep for the split to
 # leave its number standing on its own. Above it, what the others took is
 # a rounding of the analyte: an error of half in the neighbour moves the
@@ -1165,7 +1174,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     withdrawn: dict = {}
     rows: list = []
     for _round in range(AMOUNT_ROUNDS):
-        rows, bad = _quantify_once(candidates=cands, withdrawn=withdrawn, **kw)
+        rows, bad = _quantify_once(candidates=cands, withdrawn=withdrawn,
+                                   retry=_round < AMOUNT_ROUNDS - 1, **kw)
         if not bad:
             break
         withdrawn.update(bad)
@@ -1390,12 +1400,14 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    shared_overrides=None, diagnostics=None,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
                    ppm_band_ppm=None, claim_signals=True,
-                   raw_intensities=None, joint_fit=False, field_mhz=None):
+                   raw_intensities=None, joint_fit=False, field_mhz=None,
+                   retry=False):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
     stands. ``withdrawn`` (in) are the analytes earlier rounds took out;
-    they get their rows here.
+    they get their rows here. With ``retry``, a round that contradicts
+    anyone returns no rows: the caller elects again without them.
 
     Every metabolite that was a candidate gets a row, quantified or not: an
     analyte that vanishes from the table cannot be questioned, and the reason
@@ -1922,6 +1934,10 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                         checkable and not seen):
                     bad[mid] = (SINGLET_UNSUPPORTED,
                                 _fingerprint_detail(verdicts, snr=snr_rep))
+    if bad and retry:
+        # the caller withdraws these and elects again: the rows would be
+        # thrown away, and the joint fit below is most of their cost
+        return [], bad
     for mid in list(bad) + list(withheld):
         measured.pop(mid, None)
         per_proton_areas.pop(mid, None)
@@ -1973,16 +1989,35 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
              if (info['signal'].evidence or {}).get('pattern_field_mhz')),
             None)
         if _jfield:
+            # Every candidate annotation proposed that stands in the study
+            # enters too, as a column whose amount is not reported: the
+            # library, not only its winners (ASICS fits the whole library).
+            # Without them the area of an analyte really present and not
+            # quantified has nowhere to go but into a quantified neighbour.
+            _nuis = {}
+            if JOINT_FIT_CANDIDATES:
+                for _c in candidates or ():
+                    _m = ((_c.payload or {}).get('met')
+                          if isinstance(_c.payload, dict) else None)
+                    if (not _m or not _m.get('id') or _m['id'] in measured
+                            or _m['id'] in _nuis):
+                        continue
+                    if any(_in_study(mp, ppm_band_ppm)
+                           for mp in _m.get('matched_peaks') or ()
+                           if mp.get('db_ppm') is not None):
+                        _nuis[_m['id']] = _m
             _jcols = [c for c in build_columns(
-                _jmets, field_mhz=float(_jfield),
+                _jmets + list(_nuis.values()), field_mhz=float(_jfield),
                 linewidth_ppm=float(linewidth_ppm),
                 drift_ppm=float(study_drift(_jmets) or 0.0))
-                if c.mid in measured]
+                if c.mid in measured or c.mid in _nuis]
             _jf = joint_measure(
                 _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
                 _cols, sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
                 weight=exclusion_weight(ppm, excluded_regions))
             for mid, r in _jf.items():
+                if mid not in measured:
+                    continue          # a candidate: its amount absorbs, unreported
                 measured[mid]['joint_fit'] = {
                     'group': list(r['group']), 'free': int(r['free']),
                     'residual': float(r['residual']),

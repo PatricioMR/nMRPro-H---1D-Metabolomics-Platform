@@ -3,8 +3,10 @@ import numpy as np
 import pytest
 
 from processing.quant_cascade import build_columns
+from scipy.optimize import nnls
+
 from processing.quant_joint_fit import (
-    free_components, joint_measure, refine_part_shifts)
+    _solve, free_components, joint_measure, refine_part_shifts)
 
 MHZ = 500.0
 LW = 2.6 / MHZ
@@ -130,3 +132,31 @@ def test_a_second_peak_beside_a_known_line_is_free():
                             np.full(PPM.size, 100.0), sigma=1.0,
                             linewidth_ppm=LW)
     assert [round(c, 3) for c, _w in frees] == [3.306]
+
+
+def test_the_reduced_solve_is_the_full_problem():
+    rng = np.random.default_rng(3)
+    A = np.abs(rng.normal(size=(2000, 12)))
+    t = A @ np.r_[np.abs(rng.normal(size=8)), np.zeros(4)]         + rng.normal(0, 0.5, 2000)
+    x, r2 = _solve(A, t)
+    x0, rn = nnls(A, t)
+    assert np.allclose(x, x0, atol=1e-8)
+    assert r2 == pytest.approx(rn ** 2, rel=1e-9)
+
+
+def test_an_unreported_neighbour_in_the_fit_keeps_its_area_off_the_analyte():
+    """Why the engine hands the fit every candidate annotation proposed,
+    reported or not: without B's column A overlaps nothing, is left to its
+    integration, and its window counts B's line under it as A."""
+    a = _met('A', [(3.250, 's', 3, None), (3.900, 's', 3, None)])
+    b = _met('B', [(3.252, 's', 3, None), (3.410, 's', 2, None)])
+    both = _cols(a, b)
+    X = np.column_stack([_trace(both, {'A': 1000.0, 'B': 1000.0},
+                                noise=2.0, seed=s) for s in range(3)])
+    alone = joint_measure([c for c in both if c.mid == 'A'], [], PPM, X,
+                          range(3), sigma=2.0, linewidth_ppm=LW)
+    with_b = joint_measure(both, [], PPM, X, range(3), sigma=2.0,
+                           linewidth_ppm=LW)
+    assert 'A' not in alone
+    got = np.median(list(with_b['A']['amplitudes'].values()))
+    assert got == pytest.approx(1000.0, rel=0.05)
