@@ -83,7 +83,7 @@ from gui.stages._quant_adapter import quantify_project  # noqa: E402
 from processing.stocsy import compute_peak_correlation_matrix  # noqa: E402
 
 DB_DEFAULT = os.path.join(REPO, 'databases',
-                          'BMRB_Metabolomics_Mammalian_v03.db')
+                          'BMRB_Metabolomics_Mammalian_v04.db')
 OUT_DIR = os.path.join(REPO, 'validation', 'out')
 
 # ── the study ────────────────────────────────────────────────────────────────
@@ -232,7 +232,7 @@ def annotate(ppm, X, peaks, noise, db_path, *, shapes=True, patterns=False):
     m = _measured_columns_sql(cols)
     entries = [dict(r) for r in con.execute(
         f"select s.bmrb_id as hmdb_id, met.name, {m['ppm']} as ppm_center, "
-        f"{m['ppm']} as ppm, s.multiplicity as type, {m['j']} as j_coupling, "
+        f"{m['ppm']} as ppm, {m['mult']} as type, {m['j']} as j_coupling, "
         f"{m['j_sigma']} as j_sigma, {m['pattern']} as pattern_lines, "
         f"{m['profile']} as pattern_profile, {m['profile_fwhm']} as "
         f"profile_fwhm_hz, {m['profile_nh']} as profile_nh, s.protons "

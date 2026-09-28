@@ -25,7 +25,7 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.50"
+__version__   = "0.51"
 RELEASE_STAGE = "Alpha"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 
@@ -90,9 +90,10 @@ def databases_dir():
     """Writable databases directory.
 
     Dev: the repo's own ``databases/`` folder (edited in place). Frozen: a
-    per-user folder under %APPDATA%/NMRPro-H, seeded once from the bundled
-    defaults — so the user adds/edits .db/.csv there and app updates never
-    overwrite them (seeding only when the folder is empty/new).
+    per-user folder under %APPDATA%/NMRPro-H, where every bundled .db/.csv
+    the folder does not hold yet is copied in -- so a new database version
+    reaches an existing installation -- and nothing already there is ever
+    overwritten: the user adds and edits databases there.
     """
     if not _is_frozen():
         # Development: use the project's databases/ directly.
@@ -102,18 +103,17 @@ def databases_dir():
 
     target = os.path.join(user_data_dir(), "databases")
     os.makedirs(target, exist_ok=True)
-    # Seed from the bundled defaults the first time (target empty).
+    # Seeded from the bundled defaults with whatever the folder lacks. Only
+    # when it was empty, a new version (BMRB v04) never reached an
+    # installation that already had a database.
     try:
-        if not any(f.lower().endswith((".db", ".csv"))
-                   for f in os.listdir(target)):
-            seed = asset_path("databases")
-            if os.path.isdir(seed):
-                for fname in os.listdir(seed):
-                    if fname.lower().endswith((".db", ".csv")):
-                        _src = os.path.join(seed, fname)
-                        _dst = os.path.join(target, fname)
-                        if not os.path.exists(_dst):
-                            shutil.copy2(_src, _dst)
+        seed = asset_path("databases")
+        if os.path.isdir(seed):
+            for fname in os.listdir(seed):
+                if fname.lower().endswith((".db", ".csv")):
+                    _dst = os.path.join(target, fname)
+                    if not os.path.exists(_dst):
+                        shutil.copy2(os.path.join(seed, fname), _dst)
     except Exception as exc:
         print(f"[app_paths] database seeding skipped: {exc}")
     return target

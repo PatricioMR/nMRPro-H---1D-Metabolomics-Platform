@@ -83,9 +83,15 @@ def _measured_columns_sql(shift_cols) -> dict:
     profile = 's.pattern_profile' if 'pattern_profile' in cols else 'NULL'
     profile_w = 's.profile_fwhm_hz' if 'profile_fwhm_hz' in cols else 'NULL'
     profile_nh = 's.profile_nh' if 'profile_nh' in cols else 'NULL'
+    # v04 reads the multiplicity off the reference spectra where every
+    # agreeing BMRB acquisition contradicts the curators' label or makes a
+    # generic 'm' specific (taurine's triplets, listed 'd' and 'm'). The
+    # listing stays in its column; this is what the search matches against.
+    mult = ('COALESCE(s.mult_meas, s.multiplicity)' if 'mult_meas' in cols
+            else 's.multiplicity')
     return {'ppm': ppm, 'j': j, 'j_sigma': j_sigma, 'pattern': pattern,
             'profile': profile, 'profile_fwhm': profile_w,
-            'profile_nh': profile_nh}
+            'profile_nh': profile_nh, 'mult': mult}
 
 def pattern_of(entry, mhz) -> list:
     """``[(ppm, rel_intensity)]`` of a measured line pattern laid on the
@@ -267,14 +273,14 @@ def search_database(*, db_path, db_type, peaks_to_search, annotatable_peaks,
                     f"SELECT s.{id_col} as hmdb_id, met.name,"
                     f" {_meas['ppm']} as ppm_center,"
                     f" {_meas['ppm']} as ppm,"
-                    " s.atom_name, s.multiplicity as type,"
+                    f" s.atom_name, {_meas['mult']} as type,"
                     f" {_meas['j']} as j_coupling,"
                     f" {_meas['j_sigma']} as j_sigma,"
                     f" {_meas['pattern']} as pattern_lines,"
                     f" {_meas['profile']} as pattern_profile,"
                     f" {_meas['profile_fwhm']} as profile_fwhm_hz,"
                     f" {_meas['profile_nh']} as profile_nh,"
-                    f" s.multiplicity{_protons_col}"
+                    f" {_meas['mult']} as multiplicity{_protons_col}"
                     " FROM shifts_1h s"
                     " JOIN metabolites met"
                     f"   ON s.{id_col} = met.{met_id_col}"

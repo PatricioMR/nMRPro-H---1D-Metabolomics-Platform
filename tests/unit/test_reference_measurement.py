@@ -365,7 +365,10 @@ class TestTheAppReadsTheMeasurement:
         v01 = _measured_columns_sql({'ppm', 'j_coupling'})
         assert v01 == {'ppm': 's.ppm', 'j': 's.j_coupling', 'j_sigma': 'NULL',
                        'pattern': 'NULL', 'profile': 'NULL',
-                       'profile_fwhm': 'NULL', 'profile_nh': 'NULL'}
+                       'profile_fwhm': 'NULL', 'profile_nh': 'NULL',
+                       'mult': 's.multiplicity'}
+        v04 = _measured_columns_sql({'ppm', 'multiplicity', 'mult_meas'})
+        assert v04['mult'] == 'COALESCE(s.mult_meas, s.multiplicity)'
         v03 = _measured_columns_sql({'ppm', 'pattern_profile',
                                      'profile_fwhm_hz'})
         assert v03['profile'] == 's.pattern_profile'
