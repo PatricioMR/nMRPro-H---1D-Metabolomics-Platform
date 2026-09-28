@@ -118,6 +118,20 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
     # would never ground the feet there. baseline_level defaults to 0 (mean path).
     thr = float(baseline_level) + 3.0 * eff_noise      # intensity ≤ thr → baseline
 
+    # Where the feet are is decided on a copy smoothed over half a linewidth;
+    # heights, areas and grades are read on the trace itself. On a per-sample
+    # maximum the top of a real line follows ONE sample's noise, point to
+    # point, while ``noise_std`` is the quiet region's spread of the maximum
+    # -- half as large. The walk below took each such wiggle for a valley:
+    # on the reference bench filled to 100 analytes, 29 of 264 peaks (SNR
+    # 52 in median) came out 3 to 11 points wide against 42, their height a
+    # wiggle's, graded Poor and barred from annotation -- valine's doublet
+    # among them. Half a linewidth leaves a line's shape and its valleys.
+    _lw = _linewidth_points(intensity, sorted_indices)
+    _win = int(_lw // 2) | 1 if _lw else 0
+    walk_ref = (savgol_filter(np.asarray(intensity, float), _win, 2)
+                if _win >= 5 and _win < n else np.asarray(intensity, float))
+
     # ──────────────────────────────────────────────────────────────────────────
     # Phase 1a  ·  outer baseline feet for every apex
     # ──────────────────────────────────────────────────────────────────────────
@@ -130,25 +144,41 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
     # The rise margin keeps noise wiggles from being mistaken for a valley.
     rise_margin = 2.0 * eff_noise
 
+    # A valley is also a dip the line's own height notices: the top of a
+    # tall line on a per-sample maximum carries structure far above the
+    # noise (the internal standard, 5.4e6 high, a 2e5 dip where samples
+    # sit a fraction of a point apart), and at twice the noise alone the
+    # walk stopped on it. The dips between apices are decided below, on
+    # the trace, by the minimum between them -- not by this walk.
+    VALLEY_FRACTION = 0.05
+
     def _walk(apex, step):
         """Walk outward from apex (step ±1). Returns (foot_idx, grounded)."""
-        run_min_idx, run_min_val = apex, float(intensity[apex])
+        margin = max(rise_margin, VALLEY_FRACTION * (float(walk_ref[apex])
+                                                      - float(baseline_level)))
+        run_min_idx, run_min_val = apex, float(walk_ref[apex])
         j = apex + step
         while 0 <= j < n:
-            v = float(intensity[j])
+            v = float(walk_ref[j])
             if v <= thr:                       # reached baseline
                 return j, True
             if v < run_min_val:
                 run_min_val, run_min_idx = v, j
-            elif v > run_min_val + rise_margin:  # signal rising again → valley
+            elif v > run_min_val + margin:     # signal rising again → valley
                 return run_min_idx, bool(run_min_val <= thr)
             j += step
         # Hit the spectrum edge without grounding → lowest point seen.
         return run_min_idx, bool(run_min_val <= thr)
 
     for apex in sorted_indices:
-        lf, lg = _walk(apex, -1)
-        rf, rg = _walk(apex, +1)
+        # from the smoothed copy's own top: one point off it on a tall line
+        # is uphill by more than the margin, and the walk would call the
+        # apex its own valley (DSS, SNR 870, went to height 0 and was lost)
+        _lo, _hi = max(0, apex - _win), min(n, apex + _win + 1)
+        top = _lo + int(np.argmax(walk_ref[_lo:_hi]))
+        lf, lg = _walk(top, -1)
+        rf, rg = _walk(top, +1)
+        lf, rf = min(lf, apex), max(rf, apex)
         outer_left[apex]  = lf
         outer_right[apex] = rf
         lg_map[apex]      = lg

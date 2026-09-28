@@ -86,3 +86,59 @@ def test_isolated_peak_grounds_at_baseline():
     p = seps[0]
     assert float(y[p['start_idx']]) < 0.2 * float(y.max())
     assert float(y[p['end_idx']]) < 0.2 * float(y.max())
+
+
+def test_a_noisy_maximum_does_not_cut_a_line_at_a_wiggle():
+    """The top of a line on a per-sample maximum follows one sample's noise
+    point to point, at about twice the quiet spread the walk is given. The
+    feet must still land at the line's feet, not at the first wiggle (the
+    walk on the trace itself cut these to 5-39 points and graded one Poor)."""
+    ppm = np.linspace(0.0, 1.0, 20000)                 # ~40 points per FWHM
+    line = _g(ppm, 0.5, 1.0, 0.00085)
+    fwhm_pts = 2.355 * 0.00085 / (ppm[1] - ppm[0])
+    for seed in range(4):
+        rng = np.random.default_rng(seed)
+        X = np.column_stack([line * (1 + 0.1 * k)
+                             + rng.normal(0, 0.05, ppm.size)
+                             for k in range(12)])
+        ref = X.max(axis=1)
+        quiet = ref[:5000]
+        spread = 1.4826 * np.median(np.abs(quiet - np.median(quiet)))
+        p = separate_overlapping_peaks(
+            ref, [int(np.argmax(ref))], ppm, noise_std=spread,
+            baseline_level=float(np.median(quiet)))[0]
+        assert p['end_idx'] - p['start_idx'] > fwhm_pts
+        assert p['signal_quality'] != 'Poor'
+
+
+def test_a_tall_line_keeps_its_height_when_its_top_is_off_the_raw_apex():
+    """The smoothed copy's top can sit a point beside the raw maximum; on a
+    tall line one point is uphill by more than the walk's margin. Walked
+    from the raw apex, the internal standard came out with height 0 and
+    was dropped."""
+    ppm = np.linspace(0.0, 1.0, 20000)
+    line = _g(ppm, 0.5, 100.0, 0.00085)
+    for seed in range(6):
+        rng = np.random.default_rng(seed)
+        X = np.column_stack([line + rng.normal(0, 0.05, ppm.size)
+                             for _ in range(12)])
+        ref = X.max(axis=1)
+        quiet = ref[:5000]
+        spread = 1.4826 * np.median(np.abs(quiet - np.median(quiet)))
+        p = separate_overlapping_peaks(
+            ref, [int(np.argmax(ref))], ppm, noise_std=spread,
+            baseline_level=float(np.median(quiet)))[0]
+        assert p['height'] > 0.5 * float(ref.max())
+
+
+def test_a_dip_of_a_few_percent_on_a_tall_top_is_not_a_valley():
+    """A tall line's top on a per-sample maximum carries structure far above
+    the noise (the internal standard: a 4% dip on 5.4e6). Twice the noise
+    alone called it a valley, and the standard lost its left foot."""
+    ppm = np.linspace(0.0, 1.0, 20000)
+    d = 0.0019
+    y = _g(ppm, 0.5 - d / 2, 50.0, 0.00085) + _g(ppm, 0.5 + d / 2, 50.0, 0.00085)
+    apex = int(np.argmax(y))
+    p = separate_overlapping_peaks(y, [apex], ppm, noise_std=0.005)[0]
+    assert p['start_idx'] < 10000 - 40 and p['end_idx'] > 10000 + 40
+    assert p['height'] > 0.5 * float(y.max())
