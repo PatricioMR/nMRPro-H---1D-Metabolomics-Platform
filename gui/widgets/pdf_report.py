@@ -572,7 +572,7 @@ def _params_table(qs, app, annotation_stage=None):
 
 
 # ── Qualidade ─────────────────────────────────────────────────────────────────
-def _quality_info(r, theoretical):
+def _quality_info(r, theoretical, precision=None):
     conc   = r.get('conc_mm', float('nan'))
     conf   = r.get('_confidence', 0) or 0
 
@@ -593,11 +593,16 @@ def _quality_info(r, theoretical):
         elif abs(dev_pct) < 15:  return f'WARN  (Dev {dev_pct:+.1f}%)', _YELLOW
         else:                    return f'FAIL  (Dev {dev_pct:+.1f}%)', _RED
 
-    # _confidence é int 1/2/3
-    ci = int(conf)
-    if   ci >= 3: return 'CONF ●●●  100%', _GREEN
-    elif ci >= 2: return 'CONF ●●○   67%', _YELLOW
-    else:         return 'CONF ●○○   33%', _RED
+    # The level with the identity precision it was MEASURED to have (the
+    # lowest over the validation mixtures, see the validation page) -- not
+    # a fraction of three, which the report printed before and which no
+    # measurement stood behind.
+    ci = min(max(int(conf), 1), 3)
+    dots = {3: '●●●', 2: '●●○', 1: '●○○'}[ci]
+    col = {3: _GREEN, 2: _YELLOW, 1: _RED}[ci]
+    p = (precision or {}).get(ci)
+    return (f'CONF {dots}  ≥{100 * p:.0f}%*' if p is not None
+            else f'CONF {dots}'), col
 
 
 # ── Multiplicity, spelled out ────────────────────────────────────────────────
@@ -650,6 +655,24 @@ METHOD_REFERENCES = {
     'JG-Deconv': ('Shared-window balance',
                   'Non-negative least squares over the windows two analytes '
                   'share (Lawson & Hanson 1974).'),
+    'JointFit': ('Joint fit of overlapping analytes',
+                 'Every analyte whose signals overlap, and every candidate '
+                 'the annotation proposed there, fitted together by '
+                 'non-negative least squares on the reference shapes, with '
+                 'free Lorentzian components for lines no reference claims; '
+                 'each signal placed locally with its neighbours fitted '
+                 'beside it. Hao J., Astle W., De Iorio M., Ebbels T.M.D., '
+                 'BATMAN, Bioinformatics 2012, 28, 2088-2090; Tardivel P.J.C. '
+                 'et al., ASICS, Metabolomics 2017, 13, 109; Lawson & Hanson '
+                 '1974.'),
+    'Cascade': ('Residual cascade',
+                'An analyte the election left out, identified on what the '
+                'quantified analytes leave by its whole reference listing at '
+                'one amount, and measured beside the neighbours that reach '
+                'into its regions. Orthogonal matching pursuit: Pati Y.C., '
+                'Rezaiifar R., Krishnaprasad P.S., Proc. 27th Asilomar Conf. '
+                'Signals, Systems and Computers 1993; targeted profiling: '
+                'Weljie et al., Anal. Chem. 2006, 78, 4430-4442.'),
     'Resolved': ('Shared window resolved by shape',
                  'The window is modelled per sample as a non-negative sum of '
                  'the shapes of the analytes the annotation accepted in it, '
@@ -674,7 +697,31 @@ def _methods_used(r) -> list:
         out.append('JG-Deconv')
     if r.get('_deconv'):
         out.append('Resolved')
+    if r.get('_joint_fit'):
+        out.append('JointFit')
+    if r.get('_by_cascade'):
+        out.append('Cascade')
     return out
+
+
+# What every report used, whatever each row was measured by.
+PIPELINE_REFERENCES = (
+    ('Baseline model (detection)',
+     'SNIP: Ryan C.G. et al., Nucl. Instr. Meth. B 1988, 34, 396-402.'),
+    ('Peak boundaries',
+     'Feet located on a Savitzky-Golay smoothed copy of the trace (half a '
+     'linewidth): Savitzky A., Golay M.J.E., Anal. Chem. 1964, 36, '
+     '1627-1639. Heights and areas read on the trace itself.'),
+    ('Reference database',
+     'Biological Magnetic Resonance Data Bank: Ulrich E.L. et al., Nucleic '
+     'Acids Res. 2008, 36, D402-D408; Hoch J.C. et al., Nucleic Acids Res. '
+     '2023, 51, D368-D376. Positions, couplings and line shapes measured on '
+     'the deposited spectra; from v04 checked against every deposited '
+     'spectrum of the compound, with the curators’ listing kept beside '
+     'each measured value.'),
+    ('Line position precision',
+     'Posener D.W., J. Magn. Reson. 1974, 14, 121-128.'),
+)
 
 
 def _method_label(r) -> str:
@@ -710,6 +757,8 @@ def _references_section(results, styles) -> list:
     from reportlab.lib.units import cm as _cm
     out = [Spacer(1, 0.3 * _cm),
            Paragraph('Methods and references', styles['h2'])]
+    for title, text in PIPELINE_REFERENCES:
+        out.append(Paragraph(f'<b>{title}.</b> {text}', styles['small']))
     for k in used:
         title, text = METHOD_REFERENCES[k]
         out.append(Paragraph(f'<b>{title}.</b> {text}', styles['small']))
@@ -719,7 +768,7 @@ def _references_section(results, styles) -> list:
 # ── Bloco de 1 analito ───────────────────────────────────────────────────────
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
-                   crop_w_cm, crop_h_cm, unit='mM'):
+                   crop_w_cm, crop_h_cm, unit='mM', precision=None):
     crop_fig, lorentz_r2 = _peak_crop_fig(
         ppm, all_int, r, samples_info, group_colors,
         width_in=crop_w_cm * 0.55, height_in=crop_h_cm * 0.55)
@@ -778,7 +827,7 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
     # Status confidence: já tem ● e ○
     status = r.get('status', '—')
 
-    qual_label, qual_color_rl = _quality_info(r, theoretical)
+    qual_label, qual_color_rl = _quality_info(r, theoretical, precision)
     qhex = ('#2e7d32' if qual_color_rl == _GREEN else
             '#f9a825' if qual_color_rl == _YELLOW else '#c62828')
 
@@ -913,6 +962,17 @@ def generate_pdf(output_path: str, quant_stage, app,
 
     theoretical = dict(getattr(quant_stage, '_validation_theoretical', {}) or {})
     styles  = _make_styles()
+    # The field the analysis ran at -- the one the analyst set for the
+    # annotation, else the one the data declared -- picks the validation
+    # the report quotes.
+    project_mhz = None
+    try:
+        project_mhz = float(annotation_stage.spectrometer_var.get())
+    except Exception:
+        project_mhz = getattr(app, 'spectrometer_mhz', None)
+    from data.quality_reference import for_field, level_precision
+    _vfield, _ventry, _vexact = for_field(project_mhz)
+    precision = {lv: level_precision(_ventry, lv) for lv in (1, 2, 3)}
     avail_w = PAGE_W - 2 * MARGIN
 
     # Logo
@@ -1017,9 +1077,20 @@ def generate_pdf(output_path: str, quant_stage, app,
         block = _analyte_block(
             r, ppm, all_int, si, gc, theoretical,
             styles, avail_w,
-            crop_w_cm=crop_w_cm, crop_h_cm=crop_h_cm, unit=unit)
+            crop_w_cm=crop_w_cm, crop_h_cm=crop_h_cm, unit=unit,
+            precision=precision)
         spacer = Spacer(1, 0.15 * cm)
         story.append(KeepTogether([block, spacer]))
 
+    if _ventry is not None:
+        story.append(Paragraph(
+            f'* Identity precision measured for this level at {_vfield} MHz '
+            f'(lowest over the validation mixtures); see Validation.',
+            styles['small']))
+    from gui.widgets.pdf_validation import validation_section
+    _val = validation_section(project_mhz, styles, avail_w)
+    if _val:
+        story.append(PageBreak())
+        story.extend(_val)
     story.extend(_references_section(results_sorted, styles))
     doc.build(story)

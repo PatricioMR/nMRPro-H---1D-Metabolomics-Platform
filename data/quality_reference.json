@@ -1,0 +1,122 @@
+{
+ "500": {
+  "software": "NMRPro-H v0.51 Alpha",
+  "date": "2026-09-28",
+  "database": "BMRB_Metabolomics_Mammalian_v04.db",
+  "design": {
+   "field_mhz": 500.0,
+   "linewidth_hz": 2.6,
+   "samples": 12,
+   "groups": 2,
+   "noise": "lactate doublet at SNR 500",
+   "concentration_range_mm": [
+    0.05,
+    1.0
+   ],
+   "reference_analytes": 18,
+   "seeds": 3,
+   "internal_standard": "DSS 0.5 mM"
+  },
+  "tubes": {
+   "18": {
+    "analytes": 18,
+    "runs": 3,
+    "levels": {
+     "1": {
+      "real": 9,
+      "false": 20,
+      "precision": 0.3103448275862069,
+      "error_median": 0.10101023525199426,
+      "error_p90": 0.24937135266464247
+     },
+     "2": {
+      "real": 25,
+      "false": 0,
+      "precision": 1.0,
+      "error_median": 0.07369460115219278,
+      "error_p90": 0.15067453718795093
+     },
+     "3": {
+      "real": 14,
+      "false": 0,
+      "precision": 1.0,
+      "error_median": 0.03856865837608825,
+      "error_p90": 0.10247755335797633
+     }
+    },
+    "found": 0.8888888888888888,
+    "recall_2plus": 0.7222222222222222,
+    "precision_2plus": 1.0,
+    "false_per_run": 6.666666666666667,
+    "error_median": 0.059134716660917186,
+    "error_p90": 0.14674378549303288
+   },
+   "50": {
+    "analytes": 50,
+    "runs": 3,
+    "levels": {
+     "1": {
+      "real": 17,
+      "false": 55,
+      "precision": 0.2361111111111111,
+      "error_median": 0.24868795986936876,
+      "error_p90": 0.5254148452304661
+     },
+     "2": {
+      "real": 63,
+      "false": 3,
+      "precision": 0.9545454545454546,
+      "error_median": 0.12453258815413892,
+      "error_p90": 0.3900109164332842
+     },
+     "3": {
+      "real": 21,
+      "false": 0,
+      "precision": 1.0,
+      "error_median": 0.07323248687990858,
+      "error_p90": 0.24081782761110637
+     }
+    },
+    "found": 0.6733333333333333,
+    "recall_2plus": 0.56,
+    "precision_2plus": 0.9655172413793104,
+    "false_per_run": 19.333333333333332,
+    "error_median": 0.13274885039816464,
+    "error_p90": 0.3885371953535307
+   },
+   "100": {
+    "analytes": 100,
+    "runs": 3,
+    "levels": {
+     "1": {
+      "real": 28,
+      "false": 73,
+      "precision": 0.27722772277227725,
+      "error_median": 0.32788876047946136,
+      "error_p90": 1.6917886348057138
+     },
+     "2": {
+      "real": 92,
+      "false": 5,
+      "precision": 0.9484536082474226,
+      "error_median": 0.18024461876089615,
+      "error_p90": 0.9583722326631277
+     },
+     "3": {
+      "real": 33,
+      "false": 0,
+      "precision": 1.0,
+      "error_median": 0.27621637544757616,
+      "error_p90": 0.6484230331615146
+     }
+    },
+    "found": 0.51,
+    "recall_2plus": 0.4166666666666667,
+    "precision_2plus": 0.9615384615384616,
+    "false_per_run": 26.0,
+    "error_median": 0.22713661969609472,
+    "error_p90": 1.0846338899211232
+   }
+  }
+ }
+}
