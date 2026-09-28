@@ -241,6 +241,7 @@ class ProjectManager:
                 'shared_deconv':    _safe_var(qnt, 'shared_var'),
                 'singlet_min_snr':  _safe_var(qnt, 'singlet_snr_var'),
                 'cascade':          _safe_var(qnt, 'cascade_var'),
+                'joint_fit':        _safe_var(qnt, 'joint_fit_var'),
                 'max_disagreement': _safe_var(qnt, 'max_disagreement_var'),
                 # Saved under its old key: the setting is the same question
                 # and an old project that answered it must keep its answer.
@@ -602,6 +603,7 @@ class ProjectManager:
                 _set_var(qnt, 'shared_var',       qnt_state.get('shared_deconv'))
                 _set_var(qnt, 'singlet_snr_var',  qnt_state.get('singlet_min_snr'))
                 _set_var(qnt, 'cascade_var',      qnt_state.get('cascade'))
+                _set_var(qnt, 'joint_fit_var',    qnt_state.get('joint_fit'))
                 _set_var(qnt, 'max_disagreement_var',
                          qnt_state.get('max_disagreement'))
                 # saved under 'j_resolve' since the JG-Deconv box; the

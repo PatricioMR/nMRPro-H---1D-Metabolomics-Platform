@@ -39,6 +39,8 @@ WIRED = [
     ('quantification_stage.py', 'norm_var', 'QUANTIFICATION', 'normalisation'),
     ('quantification_stage.py', 'bl_model_quant_var', 'QUANTIFICATION',
      'baseline_model'),
+    ('quantification_stage.py', 'joint_fit_var', 'QUANTIFICATION',
+     'joint_fit'),
 ]
 
 
@@ -79,6 +81,7 @@ def test_the_measured_defaults():
     assert QUANTIFICATION['quantify_shapes'] is True
     assert QUANTIFICATION['resolve_shared'] is True
     assert QUANTIFICATION['cascade'] is True
+    assert QUANTIFICATION['joint_fit'] is True
     assert QUANTIFICATION['max_disagreement_pct'] == 30.0
     assert ANNOTATION['tolerance_ppm'] == 0.05
 

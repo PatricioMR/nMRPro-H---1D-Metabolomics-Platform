@@ -341,6 +341,20 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # analyte is subtracted at its measured amount and the analytes
         # whose whole listing best explains what is left are added, one
         # amount for all their signals. A second opinion that only adds.
+        # Overlapping analytes measured together (processing.quant_joint_fit):
+        # a window counts its neighbours' area as its own; the fit divides
+        # the region by the analytes' shapes, with room for peaks nothing
+        # in the library explains. Slower on a crowded spectrum.
+        jff = ttk.Frame(s2); jff.pack(fill=tk.X, pady=1)
+        self.joint_fit_var = tk.BooleanVar(value=QUANTIFICATION['joint_fit'])
+        ttk.Checkbutton(
+            jff, text='Measure overlapping analytes together',
+            variable=self.joint_fit_var).pack(side=tk.LEFT)
+        ttk.Label(jff, text='on: shapes fitted jointly where windows overlap, '
+                            'unknown peaks kept apart; slower on crowded '
+                            'spectra',
+                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
+                                                             padx=4)
         mf6 = ttk.Frame(s2); mf6.pack(fill=tk.X, pady=1)
         self.cascade_var = tk.BooleanVar(value=QUANTIFICATION['cascade'])
         ttk.Checkbutton(

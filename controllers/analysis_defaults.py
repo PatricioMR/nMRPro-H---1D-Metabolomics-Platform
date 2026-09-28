@@ -67,7 +67,14 @@ QUANTIFICATION = {
     'resolve_shared': True,
     # Overlapping analytes fitted together, with free components for the
     # peaks no quantified analyte explains (processing.quant_joint_fit).
-    'joint_fit': False,
+    # Over three seeds of the reference bench, against integration:
+    #   18 analytes  p90 20% -> 18%, bias -2% -> 0%
+    #   50 analytes  p90 67% -> 51%, bias +6% -> +1%, false positives 19 -> 15
+    #   100 analytes p90 218% -> 135%, bias +28% -> +20%
+    # identification and three-dot precision unchanged or better. It costs
+    # time: about 16 s, 83 s and 254 s to quantify those tubes against 5,
+    # 17 and 39 s.
+    'joint_fit': True,
     'singlet_min_snr': 5.0,
     'cascade': True,
     # percent, as the interface shows it

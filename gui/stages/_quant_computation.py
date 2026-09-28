@@ -576,6 +576,8 @@ class _QuantCompMixin:
             _singlet_snr = float(_ssv.get()) if _ssv is not None else None
         except (tk.TclError, ValueError):
             _singlet_snr = None
+        _jv = getattr(self, 'joint_fit_var', None)
+        _joint = bool(_jv.get()) if _jv is not None else False
         _cv = getattr(self, 'cascade_var', None)
         _cascade = bool(_cv.get()) if _cv is not None else False
         _mdv = getattr(self, 'max_disagreement_var', None)
@@ -614,6 +616,7 @@ class _QuantCompMixin:
             diagnostics=_diag,
             singlet_min_snr=_singlet_snr,
             cascade=_cascade,
+            joint_fit=_joint,
             max_disagreement=_max_dis,
             # the study before the project's baseline model, so every
             # window can say what the model took out of it
