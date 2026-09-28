@@ -48,7 +48,7 @@ _CACHED_SOURCES = (
     'processing/stocsy.py', 'processing/baseline_model.py',
     'processing/annotation_scoring.py', 'processing/annotation_quality.py',
     'processing/annotation_detectability.py',
-    'controllers/annotation_controller.py', 'controllers/analysis_defaults.py',
+    'controllers/annotation_controller.py',
     'validation/app_annotation.py', 'validation/mixture_bench.py',
     'gui/widgets/annotation_results_window.py')
 

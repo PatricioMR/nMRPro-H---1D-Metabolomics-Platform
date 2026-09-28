@@ -374,3 +374,40 @@ class TestWhatCostsADot:
             evidence = {'n_found': 3, 'n_expected': 3, 'delta_j_hz': 1.8,
                         'j_sigma_hz': 0.19}
         assert _structural_evidence(_S(), 0.20) == 2
+
+
+class TestPositionScatter:
+    """How tightly the analytes really in a study sit on its drift, robust
+    to the strangers a crowded spectrum confirms: on the reference bench
+    filled to 100 analytes nearly half the confirmed signals were strangers'
+    at 5-20 mppm while the real ones clustered under 1 mppm."""
+
+    @staticmethod
+    def _mets(offs):
+        return [{'matched_peaks': [{'annotation_quality': 'good',
+                                    'ppm_off_drift': o} for o in offs]}]
+
+    def test_the_lower_quartile_holds_with_half_the_signals_strangers(self):
+        from processing.quant_engine import study_position_scatter
+        real = [0.0002, 0.0004, 0.0005, 0.0006, 0.0008, 0.0010]
+        strangers = [0.006, 0.008, 0.010, 0.012, 0.015]
+        got = study_position_scatter(self._mets(real + strangers))
+        assert got < 0.001
+        # the median, which the singlet rule uses, is dragged into them
+        assert float(np.median(real + strangers)) > 0.0009
+
+    def test_too_few_confirmed_signals_say_nothing(self):
+        from processing.quant_engine import study_position_scatter
+        assert study_position_scatter(self._mets([0.001, 0.002])) is None
+
+    def test_an_unconfirmed_signal_does_not_calibrate_it(self):
+        from processing.quant_engine import study_position_scatter
+        mets = [{'matched_peaks': [{'annotation_quality': 'bad',
+                                    'ppm_off_drift': 0.0001}] * 5}]
+        assert study_position_scatter(mets) is None
+
+    def test_the_row_says_why_it_was_held_at_one_dot(self):
+        from processing.quant_engine import _position_reason
+        assert _position_reason({}) == []
+        said = _position_reason({'position_cap': (0.0079, 0.0021)})
+        assert said and '7.9 mppm' in said[0] and 'One dot' in said[0]

@@ -238,6 +238,44 @@ def study_drift_residual(metabolites, band_ppm=None) -> float | None:
     return float(np.median(offs))
 
 
+def study_position_scatter(metabolites, band_ppm=None) -> float | None:
+    """How tightly the analytes really in this study sit on its drift: the
+    LOWER QUARTILE of ``|ppm_off_drift|`` over the signals annotation
+    confirmed. ``None`` with fewer than DRIFT_RESIDUAL_MIN_SIGNALS.
+
+    A quartile and not the median (``study_drift_residual``), because in a
+    crowded spectrum the confirmed signals are a mixture: on the reference
+    bench filled to 100 analytes nearly half of them belonged to strangers
+    -- a complete multiplet with its coupling inside the gate is easy to
+    find among a hundred compounds' lines -- and those sat 5 to 20 mppm off
+    the drift while the real analytes' clustered under 1 mppm. The median
+    came out at 4 to 6 mppm, dragged up by exactly what it was meant to
+    judge; the lower quartile, 0.7 to 1.0, holds with up to half the
+    signals contaminated.
+    """
+    offs = []
+    for met in metabolites or ():
+        for mp in (met or {}).get('matched_peaks') or ():
+            if _confirms(mp, band_ppm) and mp.get('ppm_off_drift') is not None:
+                offs.append(abs(float(mp['ppm_off_drift'])))
+    if len(offs) < DRIFT_RESIDUAL_MIN_SIGNALS:
+        return None
+    return float(np.percentile(offs, 25))
+
+
+def _position_reason(info) -> list:
+    """Said of a row whose measured signal stands off the study."""
+    pc = info.get('position_cap')
+    if not pc:
+        return []
+    off, bar = pc
+    return [f"The signal this amount was measured on stands "
+            f"{1000 * off:.1f} mppm from this study's drift, beyond the "
+            f"{1000 * bar:.1f} mppm the analytes confirmed here sit within: "
+            f"most likely another compound's peak. One dot, whatever the "
+            f"rest of its evidence."]
+
+
 def _identity_of(info, band_ppm=None, drift_residual=None) -> dict:
     """The identity evidence of a measured analyte, from what the run
     already holds: the signals annotation confirmed (Good, and standing
@@ -445,6 +483,20 @@ SHARED_MAX_CONFIDENCE = 2
 # How many confirmed signals a study needs before its own drift residual
 # means anything. Three is the fewest a median is not an accident of.
 DRIFT_RESIDUAL_MIN_SIGNALS = 3
+
+# How far past the study's position scatter (study_position_scatter) the
+# signal an amount was measured on may stand before the row is held at one
+# dot. End to end over three seeds of the reference bench:
+#   100 analytes  false positives at >=2 dots 8.0 -> 0.7 per run, at three
+#                 dots 3.0 -> 0.0; real analytes at >=2 dots 37.0 -> 30.0,
+#                 the ones it took down measured 35% off in median
+#   18 analytes   false positives at >=2 dots 1.0 -> 0.3; real analytes
+#                 14.0 -> 10.7 -- taurine and glutathione among them, well
+#                 measured, whose listed position is the reference's own
+#                 error: position alone cannot tell them from a stranger.
+# A floor of 2 mppm on the bar spared betaine on the sparse tube and let a
+# stranger back to three dots on the crowded one; not kept.
+POSITION_SCATTER_K = 3.0
 
 # The share of its own window an analyte has to keep for the split to
 # leave its number standing on its own. Above it, what the others took is
@@ -1878,10 +1930,13 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # How tightly this study holds together, from the signals it confirmed
     # by their coupling. A singlet has no shape to be judged on; this is
     # what it is judged on instead.
-    _drift_residual = study_drift_residual(
-        [(info['signal'].payload or {}).get('met')
-         for info in measured.values()
-         if isinstance(info['signal'].payload, dict)], ppm_band_ppm)
+    _qmets = [(info['signal'].payload or {}).get('met')
+              for info in measured.values()
+              if isinstance(info['signal'].payload, dict)]
+    _drift_residual = study_drift_residual(_qmets, ppm_band_ppm)
+    # How tightly the analytes really here sit on the drift -- robust to a
+    # crowded spectrum's strangers (see study_position_scatter).
+    _scatter = study_position_scatter(_qmets, ppm_band_ppm)
 
     # Do an analyte's own signals agree with one another on one amount?
     # Asked of what survived, because one of them has to be a peak nobody
@@ -1978,6 +2033,15 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+        # The signal the amount was measured on, off where this study puts
+        # things: whatever else agrees, the number is somebody's peak.
+        _off = (info['signal'].evidence or {}).get('ppm_off_drift')
+        _bar = (POSITION_SCATTER_K * _scatter
+                if _scatter is not None else None)
+        if _bar is not None and _off is not None and abs(float(_off)) > _bar:
+            info['position_cap'] = (abs(float(_off)), _bar)
+            level = min(level, 1)
+            dots = _DOTS[level]
         info['identity_level'] = ident
         info['identity_why'] = ident_why
         info['confidence_axes'] = {
@@ -1986,6 +2050,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             'strength': info.get('strength'),
             'shared': _really_shared,
             'share_kept': info.get('share_kept'),
+            'position_off': (info['position_cap'][0]
+                             if info.get('position_cap') else None),
         }
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
                          pqn_factors, standard, standard_conc,
@@ -2406,6 +2472,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _broad_reason(info)
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
+                            + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
         '_hits': [sig.payload] if sig.payload is not None else [],
