@@ -34,7 +34,8 @@ from processing.quant_concentration import (
 from processing.quant_deconvolution import (
     MIN_CLAIM_FRACTION, claimants_in_window, fraction_in_window,
     solve_windows, subtract_neighbours)
-from processing.quant_joint_fit import joint_measure
+from processing.quant_joint_fit import (
+    PART_SHIFT_REACH_LW, PART_SHIFT_STEPS, joint_measure)
 from processing.quant_detection_limit import (
     INTERFERENCE_NOTE,
     BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
@@ -261,6 +262,30 @@ def study_position_scatter(metabolites, band_ppm=None) -> float | None:
     if len(offs) < DRIFT_RESIDUAL_MIN_SIGNALS:
         return None
     return float(np.percentile(offs, 25))
+
+
+def _fit_step(linewidth_ppm) -> float:
+    """The joint fit's grid step when it slides one signal on its own."""
+    reach = PART_SHIFT_REACH_LW * float(linewidth_ppm or 0.0)
+    return 2.0 * reach / max(PART_SHIFT_STEPS - 1, 1)
+
+
+def _fitted_offset(info) -> tuple[float, float] | None:
+    """Where the joint fit, with the neighbours fitted beside it, put the
+    analyte's signals: ``(|offset| of the one the amount was measured on,
+    median |offset| of its others)`` -- ``None`` when the fit did not place
+    the measured one. With no other signal the median is 0."""
+    jf = info.get('joint_fit') or {}
+    exp = (info['signal'].evidence or {}).get('expected_ppm')
+    parts = list(jf.get('signal_offsets') or ())
+    if exp is None or not parts:
+        return None
+    k = min(range(len(parts)), key=lambda i: abs(parts[i][0] - float(exp)))
+    if abs(parts[k][0] - float(exp)) > 0.01:
+        return None
+    others = [abs(float(o)) for i, (_c, o) in enumerate(parts) if i != k]
+    return (abs(float(parts[k][1])),
+            float(np.median(others)) if others else 0.0)
 
 
 def _position_reason(info) -> list:
@@ -497,6 +522,21 @@ DRIFT_RESIDUAL_MIN_SIGNALS = 3
 # A floor of 2 mppm on the bar spared betaine on the sparse tube and let a
 # stranger back to three dots on the crowded one; not kept.
 POSITION_SCATTER_K = 3.0
+
+# A signal off the drift at its apex is released from the cap when the
+# joint fit, with its neighbours fitted beside it, puts it within this many
+# of its grid steps (_fit_step) -- an apex pulled by an overlapping line is
+# not a stranger's -- and puts the analyte's OTHER signals, in median,
+# within FITTED_OTHERS_STEPS: a real analyte fitted with its neighbours
+# lands on its listing, a stranger lands one signal on somebody's line and
+# the rest at the edge of the reach. The measured signal alone let two
+# strangers through to two and three dots at 50 analytes (meso-erythritol,
+# histidinol). One and a half: the grid is coarser than the scatter.
+# Reference bench, three seeds: recall at two dots 56% -> 67% at 18
+# analytes, 47% -> 53% at 50, 35% -> 40% at 100; strangers at two dots and
+# at three unchanged (three: none).
+FITTED_POSITION_STEPS = 1.5
+FITTED_OTHERS_STEPS = 1.0
 
 # Candidates annotation proposed and quantification did not report enter
 # the joint fit as columns whose amounts are not reported (ASICS, Tardivel
@@ -2021,7 +2061,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 measured[mid]['joint_fit'] = {
                     'group': list(r['group']), 'free': int(r['free']),
                     'residual': float(r['residual']),
-                    'signal_offsets_ppm': list(r.get('signal_offsets_ppm') or ()),
+                    'signal_offsets': list(r.get('signal_offsets') or ()),
                     'integrated': dict(per_proton_areas.get(mid) or {}),
                     'fitted': dict(r['amplitudes'])}
                 per_proton_areas[mid] = dict(r['amplitudes'])
@@ -2073,7 +2113,13 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         _off = (info['signal'].evidence or {}).get('ppm_off_drift')
         _bar = (POSITION_SCATTER_K * _scatter
                 if _scatter is not None else None)
-        if _bar is not None and _off is not None and abs(float(_off)) > _bar:
+        _fit = _fitted_offset(info)
+        _step = _fit_step(linewidth_ppm)
+        _pulled = (_fit is not None
+                   and _fit[0] <= FITTED_POSITION_STEPS * _step
+                   and _fit[1] <= FITTED_OTHERS_STEPS * _step)
+        if (_bar is not None and _off is not None and abs(float(_off)) > _bar
+                and not _pulled):
             info['position_cap'] = (abs(float(_off)), _bar)
             level = min(level, 1)
             dots = _DOTS[level]

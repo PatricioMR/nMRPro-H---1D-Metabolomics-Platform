@@ -25,7 +25,7 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.49"
+__version__   = "0.50"
 RELEASE_STAGE = "Alpha"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 

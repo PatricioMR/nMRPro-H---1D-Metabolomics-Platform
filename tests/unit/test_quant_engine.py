@@ -411,3 +411,44 @@ class TestPositionScatter:
         assert _position_reason({}) == []
         said = _position_reason({'position_cap': (0.0079, 0.0021)})
         assert said and '7.9 mppm' in said[0] and 'One dot' in said[0]
+
+
+class TestFittedPosition:
+    """An apex pulled off the drift by an overlapping line is not a
+    stranger's: the cap asks where the joint fit, with the neighbours
+    fitted beside it, put the signal."""
+
+    @staticmethod
+    def _info(expected, parts):
+        from types import SimpleNamespace
+        return {'signal': SimpleNamespace(evidence={'expected_ppm': expected}),
+                'joint_fit': {'signal_offsets': parts}}
+
+    def test_the_offset_of_the_measured_signal_is_read(self):
+        from processing.quant_engine import _fitted_offset
+        info = self._info(3.250, [(3.900, 0.004), (3.2502, -0.0019),
+                                  (2.100, -0.002)])
+        mine, others = _fitted_offset(info)
+        assert mine == pytest.approx(0.0019)
+        assert others == pytest.approx(0.003)
+
+    def test_a_lone_signal_has_no_others_to_disagree(self):
+        from processing.quant_engine import _fitted_offset
+        assert _fitted_offset(self._info(3.25, [(3.25, 0.0)])) == (0.0, 0.0)
+
+    def test_no_fit_or_no_matching_signal_says_nothing(self):
+        from processing.quant_engine import _fitted_offset
+        assert _fitted_offset(self._info(3.25, [])) is None
+        assert _fitted_offset(self._info(3.25, [(3.9, 0.001)])) is None
+        assert _fitted_offset({'signal': self._info(3.25, [])['signal']}) is None
+
+    def test_the_bar_is_one_and_a_half_grid_steps(self):
+        from processing.quant_engine import FITTED_POSITION_STEPS, _fit_step
+        from processing.quant_joint_fit import (
+            PART_SHIFT_REACH_LW, PART_SHIFT_STEPS)
+        lw = 0.0052
+        step = _fit_step(lw)
+        assert step == pytest.approx(2 * PART_SHIFT_REACH_LW * lw
+                                     / (PART_SHIFT_STEPS - 1))
+        # one step off is inside, two is not
+        assert step < FITTED_POSITION_STEPS * step < 2 * step

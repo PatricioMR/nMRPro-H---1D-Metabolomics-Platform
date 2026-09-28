@@ -317,7 +317,8 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
 
     ``columns`` is the cascade's ``Column`` for every quantified analyte.
     Returns ``{mid: {'amplitudes': {sample: area per proton}, 'group':
-    [mid, ...], 'free': n, 'residual': fraction}}`` for the analytes that
+    [mid, ...], 'free': n, 'residual': fraction, 'signal_offsets':
+    [(listed centre ppm, fitted offset ppm), ...]}}`` for the analytes that
     share their support with another analyte or with a free component;
     the others are left to their integration and do not appear.
 
@@ -427,6 +428,9 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
                         'free': len(frees_in),
                         'residual': float(np.nanmedian(resid))
                         if resid else float('nan'),
-                        'signal_offsets_ppm': [v for (m, _i), v in
-                                               offsets.items() if m == mid]}
+                        'signal_offsets': [
+                            ((comp.lo + comp.hi) / 2.0, offsets[(mid, i)])
+                            for c in columns if c.mid == mid
+                            for i, (comp, _nh) in enumerate(c.parts)
+                            if (mid, i) in offsets]}
     return out
