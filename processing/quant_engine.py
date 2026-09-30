@@ -2184,8 +2184,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                           or float(_given) >= float(_loq))
                          and (_kept is None
                               or float(_kept) < SHARE_KEPT_ALONE)))
-        _really_shared = (info.get('unshared_reason') is not None
-                          or (bool(info.get('shared_with')) and _material))
+        _really_shared = rests_on_shared_window(info, _material)
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
@@ -2781,6 +2780,23 @@ def _pattern_reason(info) -> list:
 # window on a signal has a few noise points under its baseline, not a
 # quarter of its length.
 BASELINE_SILENCED_SHARE = 0.25
+
+
+def rests_on_shared_window(info, material) -> bool:
+    """Whether the row's number rests on how a shared window was divided,
+    which costs a dot: the window could not be split, or other analytes
+    took a material share of it.
+
+    An amount the joint fit gave does not: the fit replaced that
+    measurement, overlap and all. Charging the dot anyway took alanine and
+    caffeine off three dots on the tube of 100 the moment the window step
+    saw one neighbour more, with the number in the table untouched by it
+    (three seeds: three-dot reals 12/4/3 -> 18/12/9, no stranger).
+    """
+    if info.get('joint_fit'):
+        return False
+    return (info.get('unshared_reason') is not None
+            or (bool(info.get('shared_with')) and bool(material)))
 
 
 def joint_fit_refusal(rec) -> str | None:

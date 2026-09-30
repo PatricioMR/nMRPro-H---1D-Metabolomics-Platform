@@ -237,3 +237,14 @@ def test_a_fit_that_misplaced_the_shape_does_not_replace_the_integration():
     assert 'edge' in joint_fit_refusal(held) and '3.426' in joint_fit_refusal(held)
     other = dict(ok, focus_matches_window=False)
     assert 'not on the lines the election found' in joint_fit_refusal(other)
+
+
+def test_a_joint_fit_amount_does_not_pay_for_a_shared_window():
+    from processing.quant_engine import rests_on_shared_window
+    shared = {'shared_with': ['X']}
+    assert rests_on_shared_window(shared, True)
+    assert not rests_on_shared_window(shared, False)
+    assert rests_on_shared_window({'unshared_reason': 'could not split'}, False)
+    # the fit replaced the window's division: the number does not rest on it
+    assert not rests_on_shared_window({**shared, 'joint_fit': {'group': []}},
+                                      True)
