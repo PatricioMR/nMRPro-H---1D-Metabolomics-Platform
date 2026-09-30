@@ -173,11 +173,20 @@ def compound_trace(x, signals, conc, *, shift):
     return y
 
 
-def build_study(db_path, *, seed=0, panel=None):
+# How much each analyte varies between the samples of one group, as the sd
+# of a log-normal factor. 0.12 is what every baseline so far was measured
+# at; biological replicates of an extract vary more than that, and the
+# variation is itself evidence -- all of a molecule's signals move with it.
+BIO_CV = 0.12
+
+
+def build_study(db_path, *, seed=0, panel=None, bio_cv=BIO_CV):
     """``(X, sigma, truth, foreign)`` for a study of ``panel`` (PANEL when
     None). The noise is anchored to lactate's doublet whatever the panel,
     so a larger panel is the same experiment with more in the tube -- not a
-    different spectrometer."""
+    different spectrometer. ``bio_cv`` is each analyte's variation between
+    the samples of a group (BIO_CV); the draws are the same whatever it is,
+    only scaled."""
     con = sqlite3.connect(db_path)
     rng = np.random.default_rng(seed)
     truth, comps = {}, []
@@ -203,7 +212,7 @@ def build_study(db_path, *, seed=0, panel=None):
         y += _lorentz_area(PPM, STANDARD_PPM + rng.normal(0, 0.0003),
                            STANDARD_MM * STANDARD_NH * AREA_UNIT, LINEWIDTH_HZ)
         for name, mid, sigs, conc, factor in comps:
-            c = truth[mid][grp] * float(np.exp(rng.normal(0.0, 0.12)))
+            c = truth[mid][grp] * float(np.exp(rng.normal(0.0, bio_cv)))
             y += compound_trace(PPM, sigs, c, shift=shift)
         for name, sigs, conc in foreign:
             y += compound_trace(PPM, sigs, conc * float(np.exp(rng.normal(0.0, 0.12))),

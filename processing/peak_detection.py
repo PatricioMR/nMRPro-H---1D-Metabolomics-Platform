@@ -667,6 +667,39 @@ def _detect_single(spectrum, eff_noise, min_height, min_snr, distance_in_points,
     return sorted(set(apices))
 
 
+# A resonance seen on the MEAN of the samples and missed in each of them:
+# 20 sigma on the mean of 18 samples is ~5 sigma in any one, under the
+# per-sample gate. On the virtual bench's tube of 100, 24 analytes had a
+# clean signal of 14-22 sigma (glucose 5.23, xylose 5.19, hypoxanthine,
+# cis-aconitate) and no peak on it; 21 of them were lost. Taken only where
+# nothing detected is within MEAN_ISOLATION_LINEWIDTHS: the version that
+# detected on the group mean everywhere (ADR-047) made fragments on big
+# peaks' tails -- the DSS lost 27% of its area to one -- and more strangers.
+MEAN_MIN_SNR = 10.0
+MEAN_ISOLATION_LINEWIDTHS = 3.0
+
+
+def _isolated_mean_apices(mean_ref, existing, lw_pts, distance_in_points):
+    """Apices standing MEAN_MIN_SNR above the mean trace's own floor (height
+    and prominence) that no detected apex is within MEAN_ISOLATION_LINEWIDTHS
+    of. ``existing`` are the apices per-sample detection found."""
+    y = np.asarray(mean_ref, dtype=float)
+    med, sig = _quiet_segment_stats(y)
+    if not np.isfinite(sig) or sig <= 0 or not lw_pts:
+        return []
+    idx, _ = find_peaks(y, height=med + MEAN_MIN_SNR * sig,
+                        prominence=MEAN_MIN_SNR * sig,
+                        distance=max(1, int(distance_in_points)), width=2)
+    reach = MEAN_ISOLATION_LINEWIDTHS * float(lw_pts)
+    have = np.asarray(sorted(int(e) for e in existing), dtype=int)
+    out = []
+    for i in idx:
+        if have.size and np.min(np.abs(have - int(i))) <= reach:
+            continue
+        out.append(int(i))
+    return out
+
+
 def _linewidth_points(reference, apex_indices, n_top=30):
     """The reference spectrum's linewidth in points, at half maximum.
 
@@ -1122,6 +1155,31 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 else:
                     deduped.append(sc)
             cons_idx = deduped
+            # What the mean shows and no single sample could: isolated
+            # resonances too weak per sample (MEAN_MIN_SNR). Present in the
+            # included samples -- the mean they were seen on.
+            # Isolated from what detection KEEPS: the union also holds the
+            # same resonance seen weakly in one or two samples, which the
+            # gate below drops -- measured against those, glucose's apex
+            # was never isolated from itself. Such a weak apex at the same
+            # place is taken up rather than doubled.
+            _strong = [c for c in cons_idx if detection_ref[c] >= min_height]
+            _mean_only = set()
+            for _mi in _isolated_mean_apices(
+                    np.mean(corrected_2d[:, _incl], axis=1), _strong,
+                    _lw_pts, distance_in_points):
+                _same = [c for c in cons_idx
+                         if abs(c - _mi) <= distance_in_points]
+                if not _same:
+                    cons_idx.append(_mi)
+                    _same = [_mi]
+                for _c in _same:
+                    _mean_only.add(_c)
+                    idx_to_presence[_c] = [s in _incl
+                                           for s in range(n_samples)]
+            if _mean_only:
+                print(f"   Mean-trace apices (isolated, >= {MEAN_MIN_SNR:g} sigma): "
+                      f"{len(_mean_only)}")
             if cons_idx:
                 idx_arr = np.asarray(sorted(cons_idx), dtype=int)
                 seps = separate_overlapping_peaks(
@@ -1129,7 +1187,8 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                     baseline_level=det_med)
                 separated_peaks = [
                     pk for pk in seps
-                    if detection_ref[pk['index']] >= min_height
+                    if (detection_ref[pk['index']] >= min_height
+                        or pk['index'] in _mean_only)
                     and (pk['height'] > 0 or pk.get('n_cluster_peaks', 1) > 1)]
                 _presence_full = idx_to_presence
             else:

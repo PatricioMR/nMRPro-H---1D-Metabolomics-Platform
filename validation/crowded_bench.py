@@ -49,7 +49,7 @@ _CACHED_SOURCES = (
     'processing/annotation_scoring.py', 'processing/annotation_quality.py',
     'processing/annotation_detectability.py',
     'controllers/annotation_controller.py',
-    'validation/app_annotation.py', 'validation/mixture_bench.py',
+    'validation/app_annotation.py',
     'gui/widgets/annotation_results_window.py')
 
 CONC_RANGE_MM = (0.05, 1.0)
@@ -90,19 +90,19 @@ def panel(db_path, n, *, seed=0):
                    for k, i in enumerate(order[:n - len(base)])]
 
 
-def _cache_key(n, seed, overrides) -> str:
+def _cache_key(n, seed, overrides, bio_cv=mb.BIO_CV) -> str:
     import hashlib
-    import inspect
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     h = hashlib.sha1()
     h.update(f'{n}|{seed}'.encode())
+    if bio_cv != mb.BIO_CV:
+        h.update(f'bio_cv={bio_cv!r}'.encode())
     # only what detection and annotation read: a quantification setting
     # must not make a new tube
     from controllers.analysis_defaults import ANNOTATION, DETECTION
     d = defaults(overrides)
     for k in sorted(set(DETECTION) | set(ANNOTATION)):
         h.update(f'{k}={d[k]!r};'.encode())
-    h.update(inspect.getsource(panel).encode())
     for rel in _CACHED_SOURCES:
         with open(os.path.join(root, rel), 'rb') as f:
             h.update(f.read())
@@ -111,21 +111,41 @@ def _cache_key(n, seed, overrides) -> str:
     return h.hexdigest()[:16]
 
 
-def prepared(n, seed=0, overrides=None):
-    """``(prep, truth)`` for one tube: the spectrum, what detection found
-    and what annotation made of it -- from disk when this code has made it
-    before. Only quantification runs again in a test."""
+def spectrum(n, seed=0, bio_cv=mb.BIO_CV):
+    """``(X, truth)``: the synthetic tube itself, made once and kept. Keyed on
+    what it is -- size, seed, variation, reference database -- and not on
+    any code, so a change to detection, annotation or the bench's own
+    scripts never makes a new spectrum: the same tubes are the parameter
+    every change is measured against."""
     import pickle
     os.makedirs(CACHE_DIR, exist_ok=True)
-    path = os.path.join(CACHE_DIR,
-                        f'tube_{n}_s{seed}_{_cache_key(n, seed, overrides)}.pkl')
+    st = os.stat(mb.DB_DEFAULT)
+    tag = f'{n}_s{seed}_cv{bio_cv:g}_db{st.st_size}'
+    path = os.path.join(CACHE_DIR, f'spectrum_{tag}.pkl')
     if os.path.exists(path):
         with open(path, 'rb') as f:
             return pickle.load(f)
     pan = panel(mb.DB_DEFAULT, n, seed=seed)
     with contextlib.redirect_stdout(io.StringIO()):
         X, _sigma, truth, _f = mb.build_study(mb.DB_DEFAULT, seed=seed,
-                                              panel=pan)
+                                              panel=pan, bio_cv=bio_cv)
+    with open(path, 'wb') as f:
+        pickle.dump((X, truth), f, protocol=pickle.HIGHEST_PROTOCOL)
+    return X, truth
+
+
+def prepared(n, seed=0, overrides=None, bio_cv=mb.BIO_CV):
+    """``(prep, truth)`` for one tube: the spectrum, what detection found
+    and what annotation made of it -- from disk when this code has made it
+    before. Only quantification runs again in a test."""
+    import pickle
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    path = os.path.join(CACHE_DIR,
+                        f'tube_{n}_s{seed}_{_cache_key(n, seed, overrides, bio_cv)}.pkl')
+    if os.path.exists(path):
+        with open(path, 'rb') as f:
+            return pickle.load(f)
+    X, truth = spectrum(n, seed, bio_cv)
     prep = prepare(mb.PPM, X, mb.SAMPLES, db_path=mb.DB_DEFAULT,
                    field_mhz=mb.MHZ, overrides=overrides,
                    log=lambda *a: None)
@@ -137,10 +157,10 @@ def prepared(n, seed=0, overrides=None):
     return pickle.loads(blob)
 
 
-def run(n, seed=0, overrides=None, log=print):
+def run(n, seed=0, overrides=None, log=print, bio_cv=mb.BIO_CV):
     """``(score, n_peaks, seconds)`` for one study of ``n`` analytes;
     ``seconds`` is the quantification's alone."""
-    prep, truth = prepared(n, seed, overrides)
+    prep, truth = prepared(n, seed, overrides, bio_cv)
     t0 = time.monotonic()
     rows = quantify_prepared(prep, mb.SAMPLES, standard_ppm=mb.STANDARD_PPM,
                              standard_nh=mb.STANDARD_NH,
@@ -163,6 +183,9 @@ def main():
     ap.add_argument('--seeds', type=int, nargs='+', default=[0])
     ap.add_argument('--set', nargs='*', default=[], metavar='KEY=VALUE',
                     help='override a default, e.g. --set joint_fit=true')
+    ap.add_argument('--bio-cv', type=float, default=mb.BIO_CV,
+                    help='how much each analyte varies between the samples of '
+                         'a group (log-normal sd); %(default)s by default')
     a = ap.parse_args()
     overrides = {}
     for kv in a.set:
@@ -176,7 +199,8 @@ def main():
     results, core = [], []
     for n in a.sizes:
         for seed in a.seeds:
-            s, n_peaks, secs = run(n, seed, overrides=overrides)
+            s, n_peaks, secs = run(n, seed, overrides=overrides,
+                                   bio_cv=a.bio_cv)
             lab = f'{n} analitos' + (f' (seed {seed})' if len(a.seeds) > 1 else '')
             print(f'{lab}: {n_peaks} picos, {secs:.0f} s, falhou '
                   f'{len(s["missed"])}', flush=True)
