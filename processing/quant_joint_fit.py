@@ -53,6 +53,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import lsq_linear, nnls
 
+
 # A shape's support: where it stands above this share of its own tallest
 # point. Lorentzian tails never reach zero; below a fiftieth they are not
 # worth a place in anyone's fit.
@@ -312,7 +313,7 @@ def _groups(nodes):
 
 
 def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
-                  weight=None):
+                  weight=None, baseline=None):
     """Fit the overlapping analytes together, per sample.
 
     ``columns`` is the cascade's ``Column`` for every quantified analyte.
@@ -325,6 +326,12 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     ``residual`` is the median over the samples of the share of the
     group's trace the fit leaves unexplained -- how much of the region
     neither the library nor the free components account for.
+
+    ``baseline`` (the shape of ``X``, ``quant_integration.cluster_baseline``)
+    is subtracted before anything is fitted: fixed, not fitted, because a
+    free constant or slope in the fit takes the pedestal the overlapping
+    tails build under a crowded region, which is area, and hands it to
+    nobody. None fits the trace as it stands.
     """
     ppm = np.asarray(ppm, float)
     X = np.asarray(X, float)
@@ -333,6 +340,8 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     included = [int(s) for s in included]
     if not columns or not included:
         return {}
+    if baseline is not None:
+        X = X - np.asarray(baseline, float).reshape(X.shape)
     w = np.ones(ppm.size) if weight is None else np.asarray(weight, float)
     mean = X[:, included].mean(axis=1)
 
@@ -410,14 +419,16 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
             designs = [design(sh, best_w[1]) for sh in shifts]
         amps = {columns[k].mid: {} for k in cols_in}
         resid = []
+        chosen = {}
         for s in included:
             t = X[union, s]
             best = None
-            for A in designs:
+            for i_d, A in enumerate(designs):
                 x_, r2 = _solve(A, t)
                 if best is None or r2 < best[0]:
-                    best = (r2, x_)
-            r2, x = best
+                    best = (r2, x_, i_d)
+            r2, x, i_d = best
+            chosen[s] = float(shifts[i_d % len(shifts)])
             for j, k in enumerate(cols_in):
                 amps[columns[k].mid][s] = float(x[j])
             tt = float(np.sum(t ** 2))
@@ -425,6 +436,12 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
         members = [columns[k].mid for k in cols_in]
         for mid in members:
             out[mid] = {'amplitudes': amps[mid], 'group': members,
+                        # where each sample's shapes stood and how wide,
+                        # so a report draws the curve that was fitted
+                        'shift_by_sample': dict(chosen),
+                        'width_scale': float(best_w[1]),
+                        'offset_limit': float(linewidth_ppm)
+                        * PART_SHIFT_REACH_LW,
                         'free': len(frees_in),
                         'residual': float(np.nanmedian(resid))
                         if resid else float('nan'),

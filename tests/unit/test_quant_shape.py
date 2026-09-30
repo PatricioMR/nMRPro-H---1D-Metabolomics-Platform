@@ -127,6 +127,27 @@ class TestTheShapeInTheEngine:
         assert row['_rejection'] == SHAPE_UNIDENTIFIED
         assert 'apex' in row['_status_reasons'][0]
 
+    def test_an_eligible_analyte_only_in_the_remainder_pool_keeps_a_row(self):
+        """The application hands every shape to the remainder pool, never to
+        the election. One that no remainder takes had no step that wrote its
+        row, and 16 eligible analytes left the bench's table that way."""
+        from processing.quantification import SHAPE_UNIDENTIFIED
+        shape = Candidate(met_id='S', peak_rank=None, line_ranks=frozenset(),
+                          evidence={**_shape_ev(explained=0.95),
+                                    'eligible': True})
+        stranger = Candidate(met_id='N', peak_rank=None, line_ranks=frozenset(),
+                             evidence={**_shape_ev(), 'eligible': False})
+        rows = quantify(candidates=[], peaks_by_rank={}, ppm=PPM,
+                        intensities=_study([100.0, 200.0, 400.0]),
+                        samples_info=[], included=[0, 1, 2],
+                        groups={'G': [0, 1, 2]}, dj_gold_hz=0.2,
+                        noise_sigma=SIGMA, deconvolve=False,
+                        residual_pool=[shape, stranger])
+        by = {r['hmdb_id']: r for r in rows}
+        assert by['S']['_not_quantified']
+        assert by['S']['_rejection'] == SHAPE_UNIDENTIFIED
+        assert 'N' not in by
+
     def test_a_shape_on_a_free_apex_is_quantified_at_the_apex_s_amount(self):
         """With the resolution on, a detected apex nobody holds, at which the
         shape scaled to it fits under the trace over its whole width,

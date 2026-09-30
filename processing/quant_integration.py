@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from processing.quant_deconvolution import baseline_under_line
+
 
 def multiplet_window(line_peaks) -> tuple[float, float] | None:
     """Foot to foot over every line of the signal, as (lo_ppm, hi_ppm).
@@ -202,31 +204,253 @@ def _window_mask(ppm, lo, hi):
     return (ppm >= lo) & (ppm <= hi)
 
 
-def local_baseline_line(seg):
-    """The local baseline of a window: the straight line joining its two
-    ends, each clipped at zero so a negative foot cannot tilt it up into the
-    signal. ``seg`` is the trace inside the window in ascending ppm."""
+# The local baseline is read on a stretch this many linewidths wide, its
+# median the level: one point is one noise draw, the lowest point of a
+# stretch is a noise trough (ADR-020 measured the bias that puts on a clean
+# window), the median of a stretch is neither.
+BASELINE_STRETCH_LINEWIDTHS = 2.0
+# How far past a window's foot the walk to the baseline may go before the
+# region is called crowded and the lowest level on the way is taken instead.
+ANCHOR_MAX_REACH_LINEWIDTHS = 20.0
+
+
+def _running_median(y, n):
+    y = np.asarray(y, dtype=float)
+    n = max(int(n) | 1, 1)
+    if n == 1 or y.size < n:
+        return y.copy()
+    from scipy.ndimage import median_filter
+    return median_filter(y, size=n, mode='nearest')
+
+
+def _cluster_edge(foot, peaks, lw, side, trace):
+    """Where the baseline is read beyond ``foot`` on ``side`` (-1 down in
+    ppm, +1 up): the centre of the first stretch no detected peak reaches.
+    Every peak within WINDOW_REACH_LINEWIDTHS of the walk pushes it on, so
+    it crosses the whole cluster of overlapping signals the window sits in
+    and stops where the trace has come back to the floor they all stand on.
+    Past ANCHOR_MAX_REACH_LINEWIDTHS the region is crowded all the way; the
+    stretch with the lowest median on the way is the nearest thing to a
+    floor it has. None when that is needed and there is no trace."""
+    reach = WINDOW_REACH_LINEWIDTHS * lw
+    stretch = BASELINE_STRETCH_LINEWIDTHS * lw
+    limit = ANCHOR_MAX_REACH_LINEWIDTHS * lw
+    edge = float(foot)
+    while True:
+        if side < 0:
+            blockers = [q for q in peaks
+                        if edge - stretch - reach < q < edge + reach]
+        else:
+            blockers = [q for q in peaks
+                        if edge - reach < q < edge + stretch + reach]
+        nxt = ((min(blockers) - reach) if side < 0
+               else (max(blockers) + reach)) if blockers else edge
+        # A free foot stands exactly one reach from its apex, and rounding
+        # can put the apex a hair inside it: a blocker that moves nothing
+        # is not one.
+        if side * (nxt - edge) <= 1e-9 * lw:
+            return edge + side * stretch / 2.0
+        edge = nxt
+        if abs(edge - foot) > limit:
+            break
+    if trace is None:
+        return None
+    ppm, y = np.asarray(trace[0], dtype=float), np.asarray(trace[1], dtype=float)
+    a, b = sorted((float(foot), float(foot) + side * limit))
+    m = (ppm >= a) & (ppm <= b)
+    if m.sum() < 1:
+        return None
+    step = float(np.median(np.abs(np.diff(ppm)))) if ppm.size > 1 else 0.0
+    n = int(round(stretch / step)) if step > 0 else 1
+    idx = np.flatnonzero(m)
+    lo_i, hi_i = max(idx[0] - n, 0), min(idx[-1] + n + 1, ppm.size)
+    med = _running_median(y[lo_i:hi_i], n)[idx - lo_i]
+    return float(ppm[idx[int(np.argmin(med))]])
+
+
+def baseline_anchors(lo, hi, peak_ppms, linewidth_ppm, *, trace=None):
+    """``(lo_centre, hi_centre, half_width)``: where the local baseline of
+    the window ``[lo, hi]`` is read, or None without a linewidth.
+
+    Not at the window's own ends. A window between two signals has its ends
+    on their tails -- on the neighbour's flank, or in the valley between
+    them, which in an overlap is the sum of both tails and not the floor --
+    and a line through them passed over the signal and took it away:
+    measured on a line two widths beside a neighbour five times its size,
+    76% of it (the whole of it at twenty times). The baseline is read where
+    the cluster of overlapping signals ends (``_cluster_edge``), and what a
+    neighbour puts inside the window is the model's to take out
+    (``fraction_in_window``, the joint fit), not a straight line's.
+
+    ``peak_ppms`` are every detected peak's apex, the window's own lines
+    among them. A window with no peak within reach of its ends keeps its
+    ends, as before, but reads them on a stretch rather than a point.
+    """
+    lw = abs(float(linewidth_ppm or 0.0))
+    if lw <= 0:
+        return None
+    peaks = [float(p) for p in peak_ppms or () if p is not None]
+    lo, hi = min(lo, hi), max(lo, hi)
+    a = _cluster_edge(lo, peaks, lw, -1, trace)
+    b = _cluster_edge(hi, peaks, lw, +1, trace)
+    if a is None:
+        a = lo - BASELINE_STRETCH_LINEWIDTHS * lw / 2.0
+    if b is None:
+        b = hi + BASELINE_STRETCH_LINEWIDTHS * lw / 2.0
+    return float(a), float(b), float(BASELINE_STRETCH_LINEWIDTHS * lw / 2.0)
+
+
+def cluster_baseline(ppm, X, peak_ppms, linewidth_ppm):
+    """``(n_points, n_samples)``: the local baseline under the whole
+    spectrum, for the measurements that fit shapes rather than integrate a
+    window (the cascade, the joint fit).
+
+    The same rule as ``baseline_anchors``, drawn once for everything: the
+    detected peaks are gathered into clusters -- peaks with no free stretch
+    between them -- and the baseline is read on the free stretch just past
+    each cluster's ends (median of the stretch, clipped at zero), joined by
+    straight lines. A cluster longer than two ANCHOR_MAX_REACH_LINEWIDTHS
+    is crowded all the way; it is read again at the lowest stretch of every
+    such length inside it, the floor it has. A shape fitted on the trace
+    less this line is fitted on its signal, not on the pedestal the
+    overlapping tails and a broad envelope build under a crowded region:
+    on a cell extract that pedestal stood at 20-80% of the lines' height
+    in the sugar region and was fitted as analyte.
+
+    None without a linewidth or a peak.
+    """
+    lw = abs(float(linewidth_ppm or 0.0))
+    peaks = sorted(float(p) for p in peak_ppms or ()
+                   if p is not None and np.isfinite(float(p)))
+    if lw <= 0 or not peaks:
+        return None
+    ppm = np.asarray(ppm, dtype=float)
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    reach = WINDOW_REACH_LINEWIDTHS * lw
+    stretch = BASELINE_STRETCH_LINEWIDTHS * lw
+    half = stretch / 2.0
+    limit = ANCHOR_MAX_REACH_LINEWIDTHS * lw
+    clusters, start, prev = [], peaks[0], peaks[0]
+    for q in peaks[1:]:
+        if q - prev < 2.0 * reach + stretch:
+            prev = q
+        else:
+            clusters.append((start, prev))
+            start = prev = q
+    clusters.append((start, prev))
+    order = np.argsort(ppm)
+    xs, mean = ppm[order], X[order].mean(axis=1)
+    step = float(np.median(np.diff(xs))) if xs.size > 1 else 0.0
+    n_med = int(round(stretch / step)) if step > 0 else 1
+    centres = []
+    for a, b in clusters:
+        centres += [a - reach - half, b + reach + half]
+        lo, hi = a - reach, b + reach
+        if hi - lo > 2.0 * limit:
+            for s0 in np.arange(lo + limit / 2.0, hi - limit, limit):
+                m = (xs >= s0) & (xs <= s0 + limit)
+                if m.sum() > n_med:
+                    idx = np.flatnonzero(m)
+                    med = _running_median(mean[idx], n_med)
+                    centres.append(float(xs[idx[int(np.argmin(med))]]))
+    centres = sorted(c for c in set(centres) if xs[0] <= c <= xs[-1])
+    if not centres:
+        return None
+    levels = np.empty((len(centres), X.shape[1]))
+    for k, c in enumerate(centres):
+        m = np.abs(ppm - c) <= half
+        if not m.any():
+            m = np.zeros(ppm.shape, dtype=bool)
+            m[int(np.argmin(np.abs(ppm - c)))] = True
+        levels[k] = np.maximum(np.median(X[m], axis=0), 0.0)
+    B = np.empty_like(X)
+    for s in range(X.shape[1]):
+        B[:, s] = np.interp(ppm, centres, levels[:, s])
+    return B
+
+
+def anchor_levels(ppm, y, anchors):
+    """``((lo_ppm, level), (hi_ppm, level))``: the trace's median on each
+    anchor's stretch, clipped at zero as the window ends always were -- a
+    negative level would tilt the line up into the signal. None when a
+    stretch falls off the spectrum."""
+    if anchors is None:
+        return None
+    ppm = np.asarray(ppm, dtype=float)
+    y = np.asarray(y, dtype=float)
+    c_lo, c_hi, half = (float(v) for v in anchors)
+    out = []
+    for c in (c_lo, c_hi):
+        m = (ppm >= c - half) & (ppm <= c + half)
+        if m.sum() < 1:
+            if c < ppm.min() or c > ppm.max():
+                return None
+            m = np.zeros(ppm.shape, dtype=bool)
+            m[int(np.argmin(np.abs(ppm - c)))] = True
+        out.append((c, max(float(np.median(y[m])), 0.0)))
+    return tuple(out)
+
+
+def shift_anchors(anchors, d):
+    if anchors is None or not d:
+        return anchors
+    c_lo, c_hi, half = (float(v) for v in anchors)
+    return c_lo + d, c_hi + d, half
+
+
+def local_baseline_line(seg, x=None, levels=None):
+    """The local baseline of a window. Given ``levels`` (``anchor_levels``)
+    and the window's ``x``, the straight line through the two anchors;
+    otherwise the line joining the window's two ends, each clipped at zero
+    so a negative foot cannot tilt it up into the signal. ``seg`` is the
+    trace inside the window in ascending ppm."""
     seg = np.asarray(seg, dtype=float)
     if seg.size < 2:
         return np.zeros_like(seg)
+    if levels is not None and x is not None:
+        (c0, v0), (c1, v1) = levels
+        x = np.asarray(x, dtype=float)
+        if c1 == c0:
+            return np.full(seg.shape, (v0 + v1) / 2.0)
+        return v0 + (v1 - v0) * (x - c0) / (c1 - c0)
     return np.linspace(max(float(seg[0]), 0.0), max(float(seg[-1]), 0.0),
                        seg.size)
 
 
-def baseline_and_signal(seg, *, local_baseline=True, clip=True):
+def baseline_and_signal(seg, *, local_baseline=True, clip=True, x=None,
+                        levels=None):
     """``(baseline, signal)`` for a window's trace: the baseline the
     integration subtracts (the local line, or zero) and what is left above
     it, clipped at zero -- the part that is area. ``clip=False`` keeps the
     signed difference, for the one reader that needs noise to stay
-    symmetric (the detection limit)."""
+    symmetric (the detection limit). ``x``/``levels`` draw the line through
+    the anchors (``local_baseline_line``)."""
     seg = np.asarray(seg, dtype=float)
-    base = local_baseline_line(seg) if local_baseline else np.zeros_like(seg)
+    base = (local_baseline_line(seg, x=x, levels=levels) if local_baseline
+            else np.zeros_like(seg))
     diff = seg - base
     return base, (np.maximum(diff, 0.0) if clip else diff)
 
 
+def baseline_under(x, ppm, y, anchors, *, local_baseline=True):
+    """The baseline the integration subtracted, at ``x`` (ascending or not),
+    for a trace ``y`` on ``ppm``: what the stage plot and the PDF draw, so
+    they draw the line the number was measured against."""
+    x = np.asarray(x, dtype=float)
+    order = np.argsort(x)
+    seg = np.interp(x[order], np.asarray(ppm, float)[np.argsort(ppm)],
+                    np.asarray(y, float)[np.argsort(ppm)])
+    lv = anchor_levels(ppm, y, anchors) if local_baseline else None
+    base = np.empty_like(x)
+    base[order], _ = baseline_and_signal(seg, local_baseline=local_baseline,
+                                         x=x[order], levels=lv)
+    return base
+
+
 def below_baseline_share(ppm, y, lo, hi, *, local_baseline=True,
-                         segments=None) -> float | None:
+                         segments=None, anchors=None) -> float | None:
     """The fraction of the integrated points where the trace lies under the
     baseline -- what the clip in ``integrate_sample`` set to zero. Near zero
     for a window on a signal; large for a window whose feet stand on
@@ -239,7 +463,9 @@ def below_baseline_share(ppm, y, lo, hi, *, local_baseline=True,
     x, seg = ppm[m], y[m]
     order = np.argsort(x)
     x, seg = x[order], seg[order]
-    base, _ = baseline_and_signal(seg, local_baseline=local_baseline)
+    base, _ = baseline_and_signal(
+        seg, local_baseline=local_baseline, x=x,
+        levels=anchor_levels(ppm, y, anchors) if local_baseline else None)
     pieces = ([(min(a, b), max(a, b)) for a, b in segments]
               if segments else [(min(lo, hi), max(lo, hi))])
     k = np.zeros(x.shape, dtype=bool)
@@ -251,17 +477,19 @@ def below_baseline_share(ppm, y, lo, hi, *, local_baseline=True,
 
 
 def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None,
-                     clip=True):
+                     clip=True, anchors=None):
     """Area of one sample between ``lo`` and ``hi`` ppm.
 
-    ``local_baseline`` subtracts the straight line joining the window's two
-    endpoints before integrating — the qNMR convention, and what removes the
-    broad component a multiplet happens to be sitting on. The endpoints are
-    clipped at zero first, so a negative excursion at one foot cannot tilt the
-    baseline up into the signal.
+    ``local_baseline`` subtracts a straight line before integrating — the
+    qNMR convention, and what removes the broad component a multiplet
+    happens to be sitting on. Given ``anchors`` (``baseline_anchors``) the
+    line runs through the trace's level where the cluster of signals the
+    window sits in ends; without them, through the window's two endpoints.
+    Either level is clipped at zero first, so a negative excursion cannot
+    tilt the baseline up into the signal.
 
-    ``segments`` sums only the points inside those pieces of the window, the
-    baseline still drawn through the WINDOW's two endpoints: a foreign peak
+    ``segments`` sums only the points inside those pieces of the window, one
+    baseline still drawn under the whole window: a foreign peak
     between two lines cuts the window around it, and a baseline drawn through
     the cut would be drawn through that peak's flank -- measured, it took the
     area negative. The window's feet are where the signal is not; the cut is
@@ -290,8 +518,9 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None,
     x, seg = ppm[m], y[m]
     order = np.argsort(x)
     x, seg = x[order], seg[order]
-    _base, seg = baseline_and_signal(seg, local_baseline=local_baseline,
-                                     clip=clip)
+    _base, seg = baseline_and_signal(
+        seg, local_baseline=local_baseline, clip=clip, x=x,
+        levels=anchor_levels(ppm, y, anchors) if local_baseline else None)
     pieces = ([(min(a, b), max(a, b)) for a, b in segments]
               if segments else [(min(lo, hi), max(lo, hi))])
     total, any_piece = 0.0, False
@@ -373,7 +602,7 @@ def subtract_blank(areas: dict, blank_areas: dict) -> dict:
 
 def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
                              local_baseline=True, shifts=None,
-                             segments=None) -> dict:
+                             segments=None, anchors=None) -> dict:
     """The signal's area in every sample the caller allows.
 
     ``included`` is the list of sample indices to measure — blanks and excluded
@@ -384,8 +613,10 @@ def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
     where it is.
 
     ``segments`` are the pieces of the window the area is summed over (what
-    ``signal_segments`` cut around the lines), the baseline drawn through the
-    span's two ends; ``lo``/``hi`` are then the span of the segments.
+    ``signal_segments`` cut around the lines), one baseline under all of
+    them; ``lo``/``hi`` are then the span of the segments. ``anchors``
+    (``baseline_anchors``) are where that baseline is read, moved with each
+    sample's window.
 
     Returns ``{sample_idx: area}``. A sample whose window holds too few points
     is absent from the mapping rather than present with a zero: no measurement
@@ -407,7 +638,7 @@ def integrate_across_samples(ppm, intensities, lo, hi, *, included=None,
         a = integrate_sample(ppm, arr[:, s], lo + d, hi + d,
                              local_baseline=local_baseline,
                              segments=[(a_ + d, b_ + d) for a_, b_ in segs]
-                             or None)
+                             or None, anchors=shift_anchors(anchors, d))
         if a is not None:
             out[int(s)] = a
     return out
@@ -454,7 +685,8 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
     the segments apart. ``window`` is the segments' span.
     ``below_baseline_share`` is the fraction of the window (on the mean of
     the measured samples) where the trace ran under the baseline and
-    counted nothing.
+    counted nothing. ``baseline_anchors`` are where the local baseline was
+    read (``baseline_anchors``), None without one or without a linewidth.
     """
     mean_trace = _mean_trace(ppm, intensities, included)
     if linewidth_ppm:
@@ -472,17 +704,25 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
     if not segs:
         return None
     lo, hi = float(segs[0][0]), float(segs[-1][1])
+    anchors = None
+    if local_baseline and linewidth_ppm:
+        anchors = baseline_anchors(
+            lo, hi, [pk.get('ppm') for pk in list(line_peaks or ())
+                     + list(other_peaks or ())],
+            linewidth_ppm, trace=mean_trace)
     shifts = window_shifts(line_peaks) if align else {}
     areas = integrate_across_samples(ppm, intensities, lo, hi,
                                      included=included,
                                      local_baseline=local_baseline,
-                                     shifts=shifts, segments=segs)
+                                     shifts=shifts, segments=segs,
+                                     anchors=anchors)
     blank_area = float('nan')
     if blank_indices:
         blanks = integrate_across_samples(ppm, intensities, lo, hi,
                                           included=list(blank_indices),
                                           local_baseline=local_baseline,
-                                          shifts=shifts, segments=segs)
+                                          shifts=shifts, segments=segs,
+                                          anchors=anchors)
         if blanks:
             blank_area = float(np.mean(list(blanks.values())))
             areas = subtract_blank(areas, blanks)
@@ -495,9 +735,11 @@ def integrate_signal(line_peaks, ppm, intensities, *, included=None,
         'blank_area': blank_area,
         'geometry': geometry,
         'foreign_inside': foreign,
+        'baseline_anchors': anchors,
         'below_baseline_share': (
             below_baseline_share(mean_trace[0], mean_trace[1], lo, hi,
-                                 local_baseline=local_baseline, segments=segs)
+                                 local_baseline=local_baseline, segments=segs,
+                                 anchors=anchors)
             if mean_trace is not None else None),
     }
 
@@ -515,7 +757,7 @@ MIN_TRUSTED_CAPTURE = 0.75
 
 def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
                                  *, min_trusted=MIN_TRUSTED_CAPTURE,
-                                 segments=None):
+                                 segments=None, anchors=None):
     """How much of a signal's true area a window of these bounds contains.
 
     A Lorentzian's tails never end. Integrating between finite limits always
@@ -553,6 +795,12 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
     alone holds half of itself, and dividing by that half is what puts the
     middle line back.
 
+    ``anchors`` (``(lo_ppm, hi_ppm)``, where a local baseline was read)
+    take out what that line removes of the signal's own tails: the model
+    describes what was integrated. Left out, a clean line read 0.92 of
+    itself (ADR-016) with the baseline at the window's ends; read beyond
+    the cluster the trapezium is small, but it is not zero.
+
         Bharti, S.K. & Roy, R. (2012). Quantitative 1H NMR spectroscopy.
         TrAC Trends in Analytical Chemistry 35:5-26.
     """
@@ -574,6 +822,8 @@ def lorentzian_captured_fraction(line_ppms, weights, lo, hi, hwhm,
         for a, b in segs:
             f += (wi / total) * (np.arctan((b - p) / g)
                                  - np.arctan((a - p) / g)) / np.pi
+        if anchors is not None:
+            f -= (wi / total) * baseline_under_line(p, segs, anchors[:2], g)
     if not np.isfinite(f) or f <= 0:
         return None
     if f < float(min_trusted):

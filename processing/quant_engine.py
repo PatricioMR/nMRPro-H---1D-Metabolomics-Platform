@@ -28,7 +28,8 @@ import numpy as np
 from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
-    cascade_missed, exclusion_weight)
+    cascade_missed, exclusion_weight, fit_curve_record,
+    slide_step as cascade_slide_step)
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
 from processing.quant_deconvolution import (
@@ -43,7 +44,7 @@ from processing.quant_detection_limit import (
     integration_noise, local_noise_sigma, predicted_window, strength_band,
     window_is_excluded)
 from processing.quant_integration import (
-    MIN_TRUSTED_CAPTURE,
+    MIN_TRUSTED_CAPTURE, cluster_baseline,
     integrate_across_samples, integrate_sample, integrate_signal,
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     pattern_lines, refine_apex_ppm)
@@ -57,7 +58,8 @@ from processing.quant_shared import (
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    AMOUNT_CONTRADICTED, CASCADE_CROWDED, LOST_COMPETITION, NO_MEASURABLE_WINDOW,
+    AMOUNT_CONTRADICTED, CASCADE_CROWDED, FIT_MISPLACED, LOST_COMPETITION,
+    NO_MEASURABLE_WINDOW,
     OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
     SHAPES_OFF, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
@@ -426,6 +428,21 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
         dis = float(cascade.get('disagreement') or float('nan'))
         if np.isfinite(dis) and dis <= CASCADE_AGREEMENT_GOOD:
             return 2, f'the cascade placed it and its own signals agree to {100 * dis:.0f}%'
+        # Placed on the study's drift (ADR-042's reading of position: what
+        # is in the mixture moves with the study). On the crowded tubes
+        # (2026-09-29, seed 0) every stranger the cascade quantified sat two
+        # or three steps of its slide off the drift; the reals held at one
+        # dot at zero or one -- singlets with nothing to agree with
+        # (acetate, glycine, gallic acid) and multiplets agreeing to 21-40%
+        # (myo-inositol, 5-methyluridine, spermidine). The one real held off
+        # the drift was acetyl phosphate, read 219-407% high. How far its
+        # signals may disagree is already the bar on having a number at all.
+        if cascade.get('placed'):
+            if not np.isfinite(dis):
+                return 2, ('the cascade placed its one signal on the study\'s '
+                           'drift, within one step of its slide')
+            return 2, (f'the cascade placed it on the study\'s drift; its '
+                       f'own signals agree to {100 * dis:.0f}%')
         return 1, 'the cascade placed it and no second signal could check the amount'
     if contradicted:
         return 1, (f'{contradicted} signal(s) of its own listing are missing '
@@ -1191,6 +1208,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     the first). Up to AMOUNT_ROUNDS rounds. See ``_quantify_once`` for
     the rest.
     """
+    # One baseline under the whole spectrum for the measurements that fit
+    # shapes (joint fit, cascade), read where each cluster of signals ends.
+    cluster_base = (cluster_baseline(
+        ppm, intensities, [p.get('ppm') for p in (peaks_by_rank or {}).values()],
+        linewidth_ppm) if local_baseline and linewidth_ppm else None)
     kw = dict(
         peaks_by_rank=peaks_by_rank, ppm=ppm, intensities=intensities,
         samples_info=samples_info, included=included, groups=groups,
@@ -1209,7 +1231,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         residual_pool=residual_pool, singlet_min_snr=singlet_min_snr,
         ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals,
         raw_intensities=raw_intensities, joint_fit=joint_fit,
-        field_mhz=field_mhz)
+        field_mhz=field_mhz, cluster_base=cluster_base)
     cands = list(candidates or ())
     withdrawn: dict = {}
     rows: list = []
@@ -1247,7 +1269,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             standard_conc=standard_conc,
             external_standard_samples=external_standard_samples,
             dilution=dilution, correction=correction,
-            proton_correction=proton_correction, diagnostics=diag)
+            proton_correction=proton_correction, diagnostics=diag,
+            local_baseline=local_baseline, cluster_base=cluster_base)
     return rows
 
 
@@ -1256,7 +1279,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                   excluded_regions, standard_areas, standard_nh,
                   standard_conc, external_standard_samples, dilution,
                   correction, proton_correction, max_disagreement=None,
-                  diagnostics=None) -> list:
+                  diagnostics=None, local_baseline=False,
+                  cluster_base=None) -> list:
     """The rows the cascade adds to a quantified study, in place of the
     rejected rows of the analytes it takes in.
 
@@ -1264,10 +1288,15 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
     proton before normalisation -- the cascade works on the spectrum as
     measured -- and what it finds is normalised by the same factors, so a
     cascade row and an elected one are comparable numbers.
+
+    ``cluster_base`` (``quant_integration.cluster_baseline``) is the local
+    baseline the cascade fits on top of, when the run subtracts one.
     """
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
+    if cluster_base is not None:
+        arr = arr - np.asarray(cluster_base, dtype=float).reshape(arr.shape)
     incl = [int(i) for i in (included if included is not None
                              else range(arr.shape[1]))]
     quantified = [r for r in rows if not r.get('_not_quantified') and not r.get('_is_is')]
@@ -1294,6 +1323,10 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                                     external_samples=external_standard_samples)
                 if standard_areas else None)
     by_id = {r.get('hmdb_id'): r for r in rows}
+    cols = {c.mid: c for c in build_columns(
+        [m for m in metabolites or () if m.get('id') in found],
+        field_mhz=field_mhz, linewidth_ppm=linewidth_ppm,
+        drift_ppm=drift_ppm)}
     out = list(rows)
     for mid, res in found.items():
         nh = float(res['nh'])
@@ -1328,8 +1361,18 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                                 'step', 'nh', 'free_share', 'capped_share',
                                 'disagreement')}
         else:
+            # placed on the study's drift: no further from where the study
+            # puts every other signal than one step of the cascade's slide
+            res['placed'] = abs(float(res.get('shift_ppm') or 0.0)) <= \
+                1.001 * cascade_slide_step(linewidth_ppm)
             row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
                                former=former)
+            if mid in cols and res.get('window'):
+                row['_fit_curve'] = fit_curve_record(
+                    cols[mid], ppm, res['window'], res['per_proton'], groups,
+                    label='Cascade fit', shift=float(res.get('shift_ppm') or 0.0),
+                    baseline=cluster_base)
+        row['_local_baseline'] = bool(local_baseline)
         if former is not None:
             out[out.index(former)] = row
         else:
@@ -1363,9 +1406,10 @@ def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> 
         '_integ_mode': 'Cascade',
         '_not_quantified': False,
         '_by_cascade': True,
-        '_cascade': {k: res[k] for k in ('apex_snr', 'shift_ppm', 'at_cap',
-                                         'signals', 'step', 'nh', 'free_share',
-                                         'capped_share', 'disagreement')},
+        '_cascade': {k: res.get(k) for k in ('apex_snr', 'shift_ppm', 'at_cap',
+                                             'signals', 'step', 'nh',
+                                             'free_share', 'capped_share',
+                                             'disagreement', 'placed')},
         '_peak': None,
         '_peak_rank': None,
         '_display_peak_rank': None,
@@ -1441,7 +1485,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
                    ppm_band_ppm=None, claim_signals=True,
                    raw_intensities=None, joint_fit=False, field_mhz=None,
-                   retry=False):
+                   retry=False, cluster_base=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1598,7 +1642,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             _ppms, _weights, lo, hi, linewidth_ppm / 2.0,
             min_trusted=(0.0 if out.get('geometry') == 'lines'
                          else MIN_TRUSTED_CAPTURE),
-            segments=out.get('segments'))
+            segments=out.get('segments'),
+            anchors=out.get('baseline_anchors'))
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
@@ -1661,7 +1706,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         _corrected, _removed = subtract_neighbours(
             {k: {'window': v['window'], 'lines': v['lines'],
                  'weights': v['weights'], 'areas': v['areas'],
-                 'segments': v.get('segments')}
+                 'segments': v.get('segments'),
+                 'anchors': (v['baseline_anchors'][:2]
+                             if v.get('baseline_anchors') else None)}
              for k, v in _trusted.items()},
             linewidth_ppm / 2.0)
         for k, v in _trusted.items():
@@ -1893,7 +1940,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 m: w['used'] for m, w in _claimed.items() if w['used']}
 
     if use_pqn and len(per_proton_areas) >= 3:
-        per_proton_areas, pqn_factors = apply_pqn(per_proton_areas)
+        per_proton_areas, pqn_factors = apply_pqn(
+            per_proton_areas, exclude=external_standard_samples or ())
 
     standard = None
     if standard_areas:
@@ -2018,6 +2066,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # area as theirs; measure those together instead, with room for what is
     # not in the library. The integrated amount is kept on the row: the fit
     # replaces it, and the replacement has to be visible and undoable.
+    _misplaced: dict = {}
     if joint_fit and measured and linewidth_ppm and _mean is not None:
         _jmets = [(info['signal'].payload or {}).get('met')
                   for info in measured.values()
@@ -2054,21 +2103,53 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             _jf = joint_measure(
                 _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
                 _cols, sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
-                weight=exclusion_weight(ppm, excluded_regions))
+                weight=exclusion_weight(ppm, excluded_regions),
+                baseline=cluster_base)
+            _jcol_of = {c.mid: c for c in _jcols}
             for mid, r in _jf.items():
                 if mid not in measured:
                     continue          # a candidate: its amount absorbs, unreported
+                # What the report draws: the fitted shape, on the baseline
+                # the fit stood on -- not a window that was not integrated.
+                _rec = (fit_curve_record(
+                    _jcol_of[mid], ppm, measured[mid]['window'],
+                    r['amplitudes'], groups, label='Joint fit',
+                    shift_by_sample=r.get('shift_by_sample'),
+                    width=r.get('width_scale', 1.0),
+                    baseline=cluster_base,
+                    offsets=r.get('signal_offsets') or (),
+                    offset_limit=r.get('offset_limit'))
+                    if measured[mid].get('window') else None)
+                _why = joint_fit_refusal(_rec)
+                if _why:
+                    # The fit measured a shape that is not where the signal
+                    # is, or another signal than the one elected. Its amount
+                    # is not this analyte's -- and neither is the integrated
+                    # one, whose window holds the neighbours the fit was
+                    # there to separate (FIT_MISPLACED).
+                    _misplaced[mid] = _why
+                    continue
+                measured[mid]['fit_curve'] = _rec
                 measured[mid]['joint_fit'] = {
                     'group': list(r['group']), 'free': int(r['free']),
                     'residual': float(r['residual']),
                     'signal_offsets': list(r.get('signal_offsets') or ()),
                     'integrated': dict(per_proton_areas.get(mid) or {}),
                     'fitted': dict(r['amplitudes'])}
-                per_proton_areas[mid] = dict(r['amplitudes'])
+                # normalised like every other analyte: the fit's amplitudes
+                # are the spectrum's, and the PQN above was applied to the
+                # integrated amounts they replace
+                per_proton_areas[mid] = {
+                    s: v / float(pqn_factors.get(s, 1.0))
+                    for s, v in r['amplitudes'].items()}
                 # the row's areas and its concentrations are one measurement
                 _nh = float(measured[mid]['nh'])
                 measured[mid]['areas'] = {s: v * _nh
                                           for s, v in r['amplitudes'].items()}
+
+    for mid in _misplaced:
+        measured.pop(mid, None)
+        per_proton_areas.pop(mid, None)
 
     rows = []
     for mid, info in measured.items():
@@ -2151,6 +2232,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         if mid in residual_ids or mid in measured:
             continue
         rows.append(_rejected_row(mid, reason))
+    for mid, why in _misplaced.items():
+        rows.append(_rejected_row(mid, FIT_MISPLACED, detail=f' Here {why}.'))
     for mid, (n_found, n_all, share, missing) in partial.items():
         rows.append(_rejected_row(
             mid, PARTIAL_MULTIPLET,
@@ -2185,6 +2268,17 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         rows.append(_rejected_row(mid, reason, detail=detail))
     for mid, (reason, detail) in withheld.items():
         rows.append(_rejected_row(mid, reason, detail=detail))
+    # An analyte that may be quantified but whose every usable signal is a
+    # shape sits only in the remainder pool: it competes for no peak, and
+    # when no remainder takes it no step above writes its row. On the
+    # virtual bench 16 eligible analytes left the table that way, three of
+    # them in the tube. One that vanishes cannot be questioned.
+    _have = {r.get('hmdb_id') for r in rows}
+    for c in residual_pool:
+        if ((c.evidence or {}).get('eligible') and c.met_id not in _have
+                and c.met_id not in measured):
+            rows.append(_rejected_row(c.met_id, SHAPE_UNIDENTIFIED))
+            _have.add(c.met_id)
 
     if standard_areas:
         rows.append(_standard_row(standard_areas, standard_nh, standard_conc,
@@ -2479,6 +2573,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # How much of the window the trace ran under the baseline: what the
         # integration counted as nothing (quant_integration.integrate_sample).
         '_below_baseline_share': info.get('below_baseline_share'),
+        # Where the local baseline was read -- beyond the cluster of signals
+        # the window sits in -- as [lo_ppm, hi_ppm, half-width], so the plot
+        # and the PDF draw the line the area was measured against.
+        '_baseline_anchors': ([float(v) for v in info['baseline_anchors']]
+                              if info.get('baseline_anchors') else None),
         # How much louder than the blank this window's surroundings read.
         # Not a limit: interference costs accuracy, not detectability.
         '_interference': info.get('interference'),
@@ -2487,6 +2586,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # room for, what share of the region nothing explains, and the
         # amount integration had given, so the change can be undone.
         '_joint_fit': info.get('joint_fit'),
+        # The shape the fit gave this analyte and the baseline under it,
+        # per group, when the amount came from a fit: what the report draws.
+        '_fit_curve': info.get('fit_curve'),
         # What share of this window's raw area the project's baseline model
         # removed. Nothing to remove and it is zero; a third and the number
         # is the model's as much as the analyte's.
@@ -2679,6 +2781,35 @@ def _pattern_reason(info) -> list:
 # window on a signal has a few noise points under its baseline, not a
 # quarter of its length.
 BASELINE_SILENCED_SHARE = 0.25
+
+
+def joint_fit_refusal(rec) -> str | None:
+    """Why the joint fit's amount may not replace the integrated one, or
+    None when it may.
+
+    Two ways a fit measures something other than the analyte. It left
+    signals at the edge of how far it may move them (``at_limit``): the
+    reference puts the shape further from the trace's peak than the fit is
+    allowed to follow, so the amplitude is that of a shape standing beside
+    the signal. Or the signal the fit centres on is not the one the
+    election found (``focus_matches_window``). On a cell extract 25 of 46
+    fitted rows were held at the edge and 15 fitted another signal; drawn,
+    maltose's fitted triplet stood between the trace's peaks.
+    """
+    if not rec:
+        return None
+    why = []
+    if rec.get('at_limit'):
+        why.append(f"{len(rec['at_limit'])} of {rec.get('n_signals')} of "
+                   f"its signals stood at the edge of how far the fit may "
+                   f"move them (listed at "
+                   + ', '.join(f'{c:.3f}' for c in rec['at_limit'])
+                   + ' ppm): the shape is not where the peak is')
+    if rec.get('focus_matches_window') is False:
+        lo, hi = rec.get('focus') or (0.0, 0.0)
+        why.append(f'the fit centres on a signal at {lo:.3f}-{hi:.3f} ppm, '
+                   f'not on the lines the election found')
+    return '; '.join(why) or None
 
 
 def _joint_fit_reason(info) -> list:

@@ -77,6 +77,7 @@ QUANTIFICATION = {
     'joint_fit': True,
     'singlet_min_snr': 5.0,
     'cascade': True,
-    # percent, as the interface shows it
-    'max_disagreement_pct': 30.0,
+    # percent, as the interface shows it; the measurement is beside
+    # quant_cascade.MAX_SIGNAL_DISAGREEMENT
+    'max_disagreement_pct': 45.0,
 }

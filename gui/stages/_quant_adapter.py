@@ -23,7 +23,7 @@ from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify
 from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
-    integrate_sample, lorentzian_captured_fraction)
+    baseline_anchors, integrate_sample, lorentzian_captured_fraction)
 from processing.quant_concentration import standard_per_proton
 from processing.quant_detection_limit import (
     project_drift, project_noise)
@@ -138,6 +138,10 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'fp_consistent': mp.get('fp_consistent'),
                     'fp_checked': mp.get('fp_checked'),
                     'quality': mp.get('annotation_quality'),
+                    # whether the analyte may be quantified at all: a signal
+                    # in the pool of one that may is owed a row, measured
+                    # or not
+                    'eligible': _eligible,
                     'manual_quality': (qm.get((mid, rank))
                                        or qm.get((met.get('id'), rank))),
                     'score': mp.get('composite_score',
@@ -244,16 +248,22 @@ def standard_areas_from_peak(ref_peak, ppm, intensities, *,
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
+    anchors = (baseline_anchors(
+        lo, hi, [ref_peak.get('ppm')] + [q.get('ppm') for q in other_peaks
+                                         or ()],
+        linewidth_ppm, trace=(ppm, arr.mean(axis=1)))
+        if local_baseline and linewidth_ppm else None)
     # Corrected for what the window leaves outside, the same way an analyte's
     # area is. Uncorrected, the standard held 94% of its line while a doublet
     # held 83%, and every concentration in the study carried the difference.
     captured = lorentzian_captured_fraction(
         [float(ref_peak.get('ppm', 0.0))], [1.0], lo, hi,
-        (linewidth_ppm or 0.0) / 2.0) or 1.0
+        (linewidth_ppm or 0.0) / 2.0,
+        anchors=anchors[:2] if anchors else None) or 1.0
     out = {}
     for s in range(arr.shape[1]):
         a = integrate_sample(ppm, arr[:, s], lo, hi,
-                             local_baseline=local_baseline)
+                             local_baseline=local_baseline, anchors=anchors)
         if a is not None:
             out[s] = float(a) / captured
     return out

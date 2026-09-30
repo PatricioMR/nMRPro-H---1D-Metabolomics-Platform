@@ -42,8 +42,24 @@ def _height(x, centre, hwhm):
     return (g / np.pi) / ((float(x) - float(centre)) ** 2 + g ** 2)
 
 
+def baseline_under_line(centre, segments, anchors, hwhm) -> float:
+    """What the local baseline takes of one unit-area Lorentzian at
+    ``centre``: the straight line through the line's own height at the two
+    anchors (``(lo_ppm, hi_ppm)``, where the integration read its baseline),
+    integrated over the segments summed. The trapezium of the qNMR local
+    baseline, drawn where the integration drew it."""
+    c0, c1 = float(anchors[0]), float(anchors[1])
+    h0, h1 = _height(c0, centre, hwhm), _height(c1, centre, hwhm)
+
+    def at(x):
+        return h0 if c1 == c0 else h0 + (h1 - h0) * (x - c0) / (c1 - c0)
+
+    return float(sum((b - a) * (at(a) + at(b)) / 2.0 for a, b in segments))
+
+
 def fraction_in_window(line_ppms, weights, lo, hi, hwhm, *,
-                       local_baseline=False, segments=None) -> float:
+                       local_baseline=False, segments=None,
+                       anchors=None) -> float:
     """How much of a signal's area a window of these bounds actually measures.
 
     The same expression as the capture correction, read the other way round:
@@ -65,8 +81,9 @@ def fraction_in_window(line_ppms, weights, lo, hi, hwhm, *,
     hands the difference to whoever is left.
 
     ``segments`` replaces the one window with several disjoint ones (the
-    pieces a signal is integrated on, each with its own baseline), and the
-    fraction is the sum over them.
+    pieces a signal is integrated on, one baseline under all of them), and
+    the fraction is the sum over them. ``anchors`` (``(lo_ppm, hi_ppm)``)
+    are where that baseline was read; without them, the span's two ends.
     """
     ppms = [float(p) for p in (line_ppms or ()) if p is not None]
     if not ppms or not hwhm or float(hwhm) <= 0:
@@ -78,17 +95,19 @@ def fraction_in_window(line_ppms, weights, lo, hi, hwhm, *,
         w = [1.0] * len(ppms)
     total = float(sum(w))
     f = 0.0
+    ends = ((float(anchors[0]), float(anchors[1])) if anchors
+            else (min(a for a, _ in segs), max(b for _, b in segs)))
     for p, wi in zip(ppms, w):
-        for a, b in segs:
-            share = (_cumulative(b, p, hwhm) - _cumulative(a, p, hwhm))
-            if local_baseline:
-                share -= (b - a) * (_height(a, p, hwhm)
-                                    + _height(b, p, hwhm)) / 2.0
-            f += (wi / total) * share
+        share = sum(_cumulative(b, p, hwhm) - _cumulative(a, p, hwhm)
+                    for a, b in segs)
+        if local_baseline:
+            share -= baseline_under_line(p, segs, ends, hwhm)
+        f += (wi / total) * share
     return float(f) if np.isfinite(f) else 0.0
 
 
-def neighbour_leak(window, neighbours, hwhm, *, segments=None) -> float:
+def neighbour_leak(window, neighbours, hwhm, *, segments=None,
+                   anchors=None) -> float:
     """The area inside ``window`` that belongs to the signals around it.
 
     ``neighbours`` are ``(line_ppms, weights, total_area)`` for every other
@@ -96,14 +115,18 @@ def neighbour_leak(window, neighbours, hwhm, *, segments=None) -> float:
     for their own tails, so this asks how much of a known quantity lands here
     rather than inferring an unknown one. ``segments``, when the signal was
     integrated on pieces, are the pieces the leak is summed over.
+    ``anchors``, when the window was integrated against a local baseline
+    read there, take out what that baseline already removed of each
+    neighbour: the leak is what is left of them in the area.
     """
     lo, hi = window
     leak = 0.0
     for ppms, weights, area in neighbours or ():
         if area is None or not np.isfinite(area):
             continue
-        leak += float(area) * fraction_in_window(ppms, weights, lo, hi, hwhm,
-                                                 segments=segments)
+        leak += float(area) * fraction_in_window(
+            ppms, weights, lo, hi, hwhm, segments=segments,
+            local_baseline=anchors is not None, anchors=anchors)
     return float(leak)
 
 
@@ -112,7 +135,9 @@ def subtract_neighbours(signals, hwhm, *, max_fraction=0.5):
 
     ``signals`` maps a key to ``{'window': (lo, hi), 'lines': [...],
     'weights': [...], 'areas': {sample: area}}``, with ``'segments'`` where
-    the signal was integrated on pieces of its window. Returns
+    the signal was integrated on pieces of its window and ``'anchors'``
+    (``(lo_ppm, hi_ppm)``) where it was integrated against a local baseline
+    read there. Returns
     ``{key: {sample: corrected_area}}`` alongside ``{key: leak_fraction}`` so
     the caller can say how much was removed and from what.
 
@@ -144,7 +169,8 @@ def subtract_neighbours(signals, hwhm, *, max_fraction=0.5):
             continue
         others = [(signals[j].get('lines'), signals[j].get('weights'),
                    totals[j]) for j in keys if j != k]
-        leak = neighbour_leak(win, others, hwhm, segments=sig.get('segments'))
+        leak = neighbour_leak(win, others, hwhm, segments=sig.get('segments'),
+                              anchors=sig.get('anchors'))
         own = totals[k]
         if (not np.isfinite(leak) or leak <= 0 or not np.isfinite(own)
                 or own <= 0 or leak > float(max_fraction) * own):

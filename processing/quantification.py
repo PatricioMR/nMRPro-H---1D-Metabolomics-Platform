@@ -44,6 +44,7 @@ AMOUNT_CONTRADICTED = 'amount_contradicted'
 SINGLET_UNSUPPORTED = 'singlet_unsupported'
 WINDOW_TAKEN = 'window_taken'
 OFF_THE_STUDY = 'off_the_study'
+FIT_MISPLACED = 'fit_misplaced'
 
 REJECTION_TEXT = {
     LOST_COMPETITION:
@@ -68,6 +69,13 @@ REJECTION_TEXT = {
         'its own amount and its whole shape agree, and the rest of its '
         'fingerprint carries the amount (with "Deconvolve windows … by '
         'shape" on). No such apex was found for it.',
+    FIT_MISPLACED:
+        'Not quantified: its signals overlap others, and the joint fit that '
+        'measures overlapping analytes could not place its shape on its '
+        'signal. The amount it gives is that of a shape beside the peak, and '
+        'the integrated window holds the neighbours: neither measures this '
+        'analyte. On the virtual bench, falling back to the integration '
+        'reported an analyte that was not in the tube.',
     CASCADE_CROWDED:
         'Identified by the cascade but not quantified: either most of the '
         'signal of this analyte lies where analytes already quantified '

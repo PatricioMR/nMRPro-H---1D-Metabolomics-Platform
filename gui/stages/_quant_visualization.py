@@ -10,7 +10,8 @@ import tkinter as tk
 import numpy as np
 import matplotlib.pyplot as plt
 
-from processing.quant_integration import baseline_and_signal
+from plotting.fit_curve import draw_fit_curve
+from processing.quant_integration import baseline_and_signal, baseline_under
 
 from ._quant_helpers import (
     _fit_lorentz_mean, _fit_lorentz_mean_with_bl, _fit_lorentz_sample,
@@ -417,16 +418,29 @@ class _QuantVisMixin:
             # nothing (quant_integration.integrate_sample), as the PDF
             # draws it.
             _use_bl = r.get('_local_baseline', True)
+            _anch = r.get('_baseline_anchors')
+            _fit = r.get('_fit_curve')
             _ord_r = np.argsort(x_reg)
             for g, idxs in groups.items():
                 s_idxs = [i for i in idxs if i < n_s]
+                # an amount a fit gave is drawn as the fit, not as a window
+                if _fit and draw_fit_curve(ax1, _fit, g,
+                                           g_colors.get(g, '#888'),
+                                           label=f'{g} {_fit.get("label", "fit")}',
+                                           alpha=0.18):
+                    continue
                 if s_idxs:
                     y_g = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
                     if _show_deconv:
                         y_g = y_g * _jr_frac
-                    _b = np.empty_like(y_g)
-                    _b[_ord_r], _ = baseline_and_signal(
-                        y_g[_ord_r], local_baseline=_use_bl)
+                    if _anch and _use_bl and not _show_deconv:
+                        _b = baseline_under(
+                            x_reg, ppm_arr,
+                            np.mean(all_int[:, s_idxs], axis=1), _anch)
+                    else:
+                        _b = np.empty_like(y_g)
+                        _b[_ord_r], _ = baseline_and_signal(
+                            y_g[_ord_r], local_baseline=_use_bl)
                     _above = y_g >= _b
                     ax1.fill_between(x_reg, _b, y_g,
                                      where=(_above if _in_seg is None
@@ -510,6 +524,12 @@ class _QuantVisMixin:
                         gm = np.mean(ys, axis=0)
                         ax1.plot(x_view, gm, color=col, lw=1.8, alpha=0.95, label=g)
 
+                _fit = r.get('_fit_curve')
+                for g in groups:
+                    if _fit:
+                        draw_fit_curve(ax1, _fit, g, g_colors.get(g, '#888'),
+                                       label=f'{g} {_fit.get("label", "fit")}',
+                                       alpha=0.18)
                 for lo_rg, hi_rg in region_marks:
                     lo_rg, hi_rg = float(min(lo_rg, hi_rg)), float(max(lo_rg, hi_rg))
                     ax1.axvspan(lo_rg, hi_rg, color='#1565C0', alpha=0.13, zorder=0)

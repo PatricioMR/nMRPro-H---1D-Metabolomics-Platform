@@ -120,3 +120,18 @@ class TestPQN:
         """A concentration corrected by an unseen number cannot be checked."""
         _, factors = apply_pqn({'a': {0: 1.0}, 'b': {0: 2.0}, 'c': {0: 3.0}})
         assert set(factors) == {0}
+
+    def test_an_external_standard_tube_is_not_a_diluted_sample(self):
+        """A tube holding the standard and little else: against the study's
+        profile its quotient is its emptiness (0.004 on a cell study), and
+        dividing by it multiplied what was read there 200 times."""
+        data = {'a': {0: 10.0, 1: 12.0, 2: 0.04}, 'b': {0: 20.0, 1: 22.0,
+                                                        2: 0.09},
+                'c': {0: 30.0, 1: 33.0, 2: 0.12}}
+        out, factors = apply_pqn(data, exclude=[2])
+        assert factors[2] == 1.0
+        assert out['a'][2] == pytest.approx(0.04)
+        # and it does not pull the reference the samples are measured on
+        _, alone = apply_pqn({k: {s: v for s, v in d.items() if s != 2}
+                              for k, d in data.items()})
+        assert factors[0] == pytest.approx(alone[0])

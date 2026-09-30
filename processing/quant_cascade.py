@@ -97,7 +97,15 @@ FIXED_TOLERANCE = 0.25      # a quantified analyte's amplitude, in the joint fit
 # ninetieth percentile. An analyte measured with everything else in place
 # is not the analyte measured alone, and it is the first that a study
 # reports, so it is the first that sets this.
-MAX_SIGNAL_DISAGREEMENT = 0.30
+#
+# Raised to 0.45 on the crowded tubes (2026-09-29, seed 0, with the joint
+# fit refusing misplaced shapes): the analytes the cascade identified and
+# then refused were in the tube at 30-48% disagreement (putrescine, UDP-
+# glucuronate, IMP), the first stranger at 47% (homoserine). 18 analytes:
+# nothing moves. 50: 29 -> 32 found, false positives 7 -> 7, p90 26 -> 31%.
+# 100: 54 -> 58 found, false positives 5 -> 5, p90 67 -> 66%. At 0.50 the
+# first stranger comes in. What enters is a cascade row, one dot.
+MAX_SIGNAL_DISAGREEMENT = 0.45
 OWNED_SHARE = 0.7           # of a point's height explained: it is theirs
 SIGNAL_AGREEMENT_SNR = 5.0  # a signal quiet than this does not testify
 
@@ -162,6 +170,101 @@ class Column:
         out = np.zeros(uniq.size)
         np.add.at(out, inv, val)
         return uniq, out
+
+
+def slide_grid(linewidth_ppm):
+    """Where the cascade may slide a column: SHIFT_STEPS positions within
+    SHIFT_REACH_LW linewidths either side of the study's drift."""
+    reach = SHIFT_REACH_LW * float(linewidth_ppm)
+    return np.linspace(-reach, reach, SHIFT_STEPS)
+
+
+def slide_step(linewidth_ppm) -> float:
+    """One step of ``slide_grid``: how finely the cascade places a column."""
+    reach = SHIFT_REACH_LW * float(linewidth_ppm or 0.0)
+    return 2.0 * reach / max(SHIFT_STEPS - 1, 1)
+
+
+def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
+                     shift=0.0, shift_by_sample=None, width=1.0,
+                     baseline=None, offsets=(), offset_limit=None,
+                     pad_ppm=0.1) -> dict | None:
+    """What a fitted analyte's row carries so a report draws the number the
+    table shows.
+
+    The signal in focus is the column's signal that overlaps ``window`` (the
+    elected lines), or the nearest one -- drawn whole, every line of it,
+    at the shift and width the fit chose, one unit per proton. Beside it:
+    each group's fitted amplitude by the table's own statistic (mean over
+    the samples where it is positive) with how many samples that is, each
+    group's mean of the baseline the fit stood on (None when it stood on
+    zero), whether the fitted signal is the one the election found
+    (``focus_matches_window``), and which of the column's signals the fit
+    left at the edge of how far it may move them (``offsets`` against
+    ``offset_limit``): a shape held at that edge is not where the trace's
+    peak is, and its amount is the amount of a misplaced shape.
+
+    ``amplitudes`` are ``{sample: area per proton}`` in the spectrum's own
+    units, before any normalisation, so the curve scales onto the trace.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    shift_by_sample = dict(shift_by_sample or {})
+    w_lo, w_hi = min(window), max(window)
+    parts = []
+    for comp, nh in col.parts:
+        lo_p = comp.lo + comp.shift_ppm + shift
+        hi_p = comp.hi + comp.shift_ppm + shift
+        # a part's support is padded around its lines; the lines are the
+        # signal, the pad is room for its tails
+        lines = [float(v) + comp.shift_ppm + shift for v in (comp.lines or ())]
+        a, b = (min(lines), max(lines)) if lines else (lo_p, hi_p)
+        parts.append((a, b, float(nh)))
+    if not parts:
+        return None
+    # a singlet's lines span nothing: meeting the window is what counts
+    meets = [a <= w_hi and b >= w_lo for a, b, _ in parts]
+    overlap = [min(b, w_hi) - max(a, w_lo) if m else -np.inf
+               for (a, b, _), m in zip(parts, meets)]
+    k = (int(np.argmax(overlap)) if any(meets) else
+         int(np.argmin([abs((a + b) / 2 - (w_lo + w_hi) / 2)
+                        for a, b, _ in parts])))
+    f_lo, f_hi, f_nh = parts[k]
+    lo, hi = min(f_lo, w_lo) - pad_ppm, max(f_hi, w_hi) + pad_ppm
+    sel = np.flatnonzero((ppm >= lo) & (ppm <= hi))
+    if sel.size < 2:
+        return None
+    amp_by_group, n_by_group, base_by_group, unit_by_group = {}, {}, {}, {}
+    for g, members in (groups or {}).items():
+        members = list(members)
+        vals = [float(amplitudes[s]) for s in members
+                if s in amplitudes and np.isfinite(amplitudes[s])]
+        pos = [v for v in vals if v > 0]
+        n_by_group[str(g)] = [len(pos), len(vals)]
+        if pos:
+            amp_by_group[str(g)] = float(np.mean(pos))
+        sh = [shift_by_sample[s] for s in members if s in shift_by_sample]
+        idx, val = col.curve(ppm, shift + (float(np.median(sh)) if sh else 0.0),
+                             width)
+        unit = np.zeros(sel.size)
+        if idx is not None:
+            j = np.searchsorted(sel, idx)
+            ok = j < sel.size
+            ok[ok] &= sel[j[ok]] == idx[ok]
+            unit[j[ok]] = val[ok]
+        unit_by_group[str(g)] = unit.tolist()
+        if baseline is not None and members:
+            B = np.asarray(baseline, dtype=float)
+            base_by_group[str(g)] = B[sel][:, members].mean(axis=1).tolist()
+    at_limit = []
+    if offset_limit:
+        at_limit = [float(c) for c, off in offsets or ()
+                    if abs(float(off)) >= 0.999 * float(offset_limit)]
+    return {'ppm': ppm[sel].tolist(), 'unit_by_group': unit_by_group,
+            'amp_by_group': amp_by_group, 'n_by_group': n_by_group,
+            'baseline_by_group': base_by_group or None, 'label': label,
+            'focus': [float(f_lo), float(f_hi)], 'focus_nh': f_nh,
+            'focus_matches_window': bool(any(meets)),
+            'at_limit': at_limit, 'n_signals': len(parts)}
 
 
 def build_columns(metabolites, *, field_mhz, linewidth_ppm, drift_ppm,
@@ -304,8 +407,7 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
     t_full = np.asarray(trace, dtype=float)
     weight = np.ones(ppm.size) if weight is None else np.asarray(weight, dtype=float)
     r = t_full * weight
-    reach = SHIFT_REACH_LW * float(linewidth_ppm)
-    shifts = np.linspace(-reach, reach, SHIFT_STEPS)
+    shifts = slide_grid(linewidth_ppm)
     cache = {}
     for col in cols:
         variants = []

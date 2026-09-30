@@ -145,31 +145,46 @@ def pqn_factor(areas: dict, reference: dict, *, min_signals: int = 3):
     return f if f > 0 and np.isfinite(f) else 1.0
 
 
-def pqn_reference(area_by_signal_and_sample: dict) -> dict:
+def pqn_reference(area_by_signal_and_sample: dict, *, exclude=()) -> dict:
     """The reference profile PQN measures each sample against.
 
     The median sample, signal by signal — not a chosen sample, which would make
     every result depend on which one the analyst happened to run first.
+    ``exclude`` are samples that are not part of the study's biology.
     """
+    skip = {int(s) for s in exclude or ()}
     ref = {}
     for sig, per_sample in (area_by_signal_and_sample or {}).items():
-        vals = [v for v in per_sample.values()
-                if v is not None and np.isfinite(v) and v > 0]
+        vals = [v for s, v in per_sample.items()
+                if int(s) not in skip
+                and v is not None and np.isfinite(v) and v > 0]
         if vals:
             ref[sig] = float(np.median(vals))
     return ref
 
 
-def apply_pqn(area_by_signal_and_sample: dict, *, min_signals: int = 3):
+def apply_pqn(area_by_signal_and_sample: dict, *, min_signals: int = 3,
+              exclude=()):
     """Divide every sample by its own dilution factor.
 
     Returns ``(corrected, factors)``. The factors travel with the result: a
     concentration corrected by an unseen number cannot be checked.
+
+    ``exclude`` are tubes that are not diluted samples -- an external
+    standard's tube holds the standard and little else. Against the study's
+    median profile its quotient is the emptiness of the tube (0.004 on a
+    cell study), and dividing by it multiplied everything read there two
+    hundred times: 0.51 mM of fucose in a tube with none. They keep a
+    factor of 1 and stay out of the reference.
     """
-    ref = pqn_reference(area_by_signal_and_sample)
+    skip = {int(s) for s in exclude or ()}
+    ref = pqn_reference(area_by_signal_and_sample, exclude=skip)
     samples = {s for per in area_by_signal_and_sample.values() for s in per}
     factors = {}
     for s in samples:
+        if int(s) in skip:
+            factors[s] = 1.0
+            continue
         this = {sig: per[s] for sig, per in area_by_signal_and_sample.items()
                 if s in per and per[s] is not None}
         factors[s] = pqn_factor(this, ref, min_signals=min_signals)

@@ -245,3 +245,55 @@ def test_the_shaded_area_is_the_area_the_number_came_from():
     reported = np.mean([row['_areas_per_sample'][i] for i in idx])
     reported *= float(row['_captured_fraction'] or 1.0)
     assert painted == pytest.approx(reported, rel=0.02)
+
+
+def _fitted_row(mode):
+    x = np.linspace(3.23, 3.17, 200)
+    unit = 1.0 / (1.0 + ((x - 3.2) / 0.002) ** 2)
+    row = {'metabolite': 'F', 'hmdb_id': 'F', 'ppm': 3.2,
+           '_integ_mode': mode, '_multiplet_window': [3.18, 3.22],
+           '_local_baseline': True,
+           '_fit_curve': {'ppm': x.tolist(),
+                          'unit_by_group': {'All': unit.tolist()},
+                          'amp_by_group': {'All': 50.0},
+                          'n_by_group': {'All': [2, 2]},
+                          'focus': [3.2, 3.2], 'focus_matches_window': True,
+                          'at_limit': [], 'n_signals': 1,
+                          'baseline_by_group': {'All': [5.0] * x.size},
+                          'label': 'Cascade fit'}}
+    if mode == 'Cascade':
+        row['_by_cascade'] = True
+    else:
+        row['_joint_fit'] = {'group': ['F'], 'free': 0}
+    return row
+
+
+def test_a_fitted_amount_is_not_called_an_integration():
+    """The report says where the NUMBER came from: an amount a fit
+    replaced did not come from integrating a window."""
+    rep = _report()
+    assert rep._methods_used(_fitted_row('Cascade')) == ['Cascade']
+    assert rep._methods_used(_fitted_row('Multiplet')) == ['JointFit']
+    assert 'local baseline' in rep._method_label(_fitted_row('Cascade'))
+    assert 'local baseline' not in rep._method_label(
+        {'_integ_mode': 'Multiplet'})
+
+
+def test_the_crop_draws_the_fit_on_the_baseline_it_stood_on():
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    row = _fitted_row('Cascade')
+    x = np.asarray(row['_fit_curve']['ppm'])
+    y = 5.0 + 50.0 * np.asarray(row['_fit_curve']['unit'])
+    ppm = np.linspace(3.4, 3.0, 4000)
+    Y = np.interp(ppm, x[::-1], y[::-1], left=5.0, right=5.0)
+    si = [{'index': i, 'name': f'S{i}', 'label': 'All'} for i in range(2)]
+    fig, _r2 = _report()._peak_crop_fig(ppm, np.column_stack([Y, Y]), row,
+                                        si, {})
+    ax = fig.axes[0]
+    labels = [ln.get_label() for ln in ax.get_lines()]
+    assert 'Cascade fit' in labels and 'baseline' in labels
+    base = next(ln for ln in ax.get_lines() if ln.get_label() == 'baseline')
+    assert np.allclose(base.get_ydata(), 5.0)

@@ -359,7 +359,7 @@ def test_how_far_its_signals_may_disagree_is_the_study_s_call():
 
 def test_the_default_bar_is_the_measured_one():
     from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
-    assert MAX_SIGNAL_DISAGREEMENT == 0.30
+    assert MAX_SIGNAL_DISAGREEMENT == 0.45
 
 
 class TestWhatACascadeRowIsWorth:
@@ -381,6 +381,29 @@ class TestWhatACascadeRowIsWorth:
         from processing.quant_engine import _identity_evidence
         level, why = _identity_evidence(cascade={'disagreement': float('nan')})
         assert level == 1 and 'no second signal' in why
+
+    def test_placed_on_the_study_s_drift_it_is_worth_two(self):
+        """What is in the mixture moves with the study (ADR-042): on the
+        crowded tubes every stranger the cascade took in sat two or three
+        steps of its slide off the drift, the reals at one dot at zero or
+        one."""
+        from processing.quant_engine import _identity_evidence
+        alone = _identity_evidence(cascade={'disagreement': float('nan'),
+                                            'placed': True})
+        assert alone[0] == 2 and 'drift' in alone[1]
+        assert _identity_evidence(cascade={'disagreement': 0.28,
+                                           'placed': True})[0] == 2
+        # off the drift, or placed but disagreeing, nothing changes
+        assert _identity_evidence(cascade={'disagreement': float('nan'),
+                                           'placed': False})[0] == 1
+        assert _identity_evidence(cascade={'disagreement': 0.40,
+                                           'placed': False})[0] == 1
+
+    def test_one_step_of_the_slide_is_the_grid_s_own(self):
+        import numpy as np
+        from processing.quant_cascade import slide_grid, slide_step
+        g = slide_grid(0.006)
+        assert slide_step(0.006) == pytest.approx(float(np.diff(g)[0]))
 
     def test_the_bar_is_not_the_one_that_decides_the_number(self):
         """One threshold answers one question: whether there is a number

@@ -153,6 +153,25 @@ def test_every_quantified_row_says_which_region_produced_it():
             assert hi > lo
 
 
+def test_the_row_says_where_its_local_baseline_was_read_and_keeps_it():
+    """The plot and the PDF draw the line the area was measured against, so
+    the anchors travel on the row -- outside the window, and through a
+    project save and load unchanged."""
+    import pickle
+    rows = [r for r in _run(_study(), local_baseline=True)
+            if not r.get('_not_quantified') and not r.get('_is_is')]
+    assert rows
+    for r in rows:
+        a, b, half = r['_baseline_anchors']
+        lo, hi = r['_multiplet_window']
+        assert a + half <= lo + 1e-9 and b - half >= hi - 1e-9
+    back = pickle.loads(pickle.dumps(rows, protocol=5))
+    assert [r['_baseline_anchors'] for r in back] == \
+        [r['_baseline_anchors'] for r in rows]
+    assert all(r.get('_baseline_anchors') is None
+               for r in _run(_study(), local_baseline=False))
+
+
 # ── The options the panel offers actually change the answer ──────────────────
 
 def test_group_dilution_is_applied_when_the_standard_was_injected_separately():

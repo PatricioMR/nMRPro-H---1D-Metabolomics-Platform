@@ -21,7 +21,8 @@ import matplotlib.ticker as ticker
 
 from scipy.optimize import curve_fit
 
-from processing.quant_integration import baseline_and_signal
+from plotting.fit_curve import draw_fit_curve, fit_warnings
+from processing.quant_integration import baseline_and_signal, baseline_under
 
 import os
 from pathlib import Path
@@ -131,20 +132,26 @@ def _group_means(all_int, samples_info):
     return out
 
 
-def _best_group_trace(group_means, mask, fallback, prefer=None):
-    """The trace the numbers were read on: the group quantification chose
-    (``prefer``, the row's ``_snr_group``); without one, the group whose
-    mean stands highest inside ``mask`` -- the annotation window's rule
-    (``_best_group_mean``) -- or ``fallback``."""
+def _best_group(group_means, mask, prefer=None):
+    """``(group, trace)`` the numbers were read on: the group quantification
+    chose (``prefer``, the row's ``_snr_group``); without one, the group
+    whose mean stands highest inside ``mask`` -- the annotation window's
+    rule (``_best_group_mean``). ``(None, None)`` without groups."""
     for grp, y in group_means:
         if prefer is not None and str(grp) == str(prefer):
-            return y
-    best, best_val = None, -np.inf
+            return grp, y
+    best, best_val = (None, None), -np.inf
     for grp, y in group_means:
         v = float(np.max(y[mask])) if mask.any() else -np.inf
         if v > best_val:
-            best, best_val = y, v
-    return fallback if best is None else best
+            best, best_val = (grp, y), v
+    return best
+
+
+def _best_group_trace(group_means, mask, fallback, prefer=None):
+    """The trace of ``_best_group``, or ``fallback``."""
+    _g, y = _best_group(group_means, mask, prefer)
+    return fallback if y is None else y
 
 
 def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
@@ -221,6 +228,14 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     else:
         ppm_lo    = min(float(ppm[lo_idx]), float(ppm[hi_idx]))
         ppm_hi    = max(float(ppm[lo_idx]), float(ppm[hi_idx]))
+    # An amount from a fit is shown on the whole fitted signal, every line
+    # of it, and on the lines the election found -- both, so a disagreement
+    # between them is in the picture rather than cropped out of it.
+    _focus = (result.get('_fit_curve') or {}).get('focus')
+    if _focus:
+        ppm_lo = min(ppm_lo, float(min(_focus)))
+        ppm_hi = max(ppm_hi, float(max(_focus)))
+        ppm_ctr = (ppm_lo + ppm_hi) / 2.0
     half_span = max((ppm_hi - ppm_lo) / 2.0, 0.015)
     pad       = max(half_span * 2.0, 0.05)
     win_lo, win_hi = ppm_ctr - pad, ppm_ctr + pad
@@ -305,7 +320,25 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     # trace itself. Filled as such, with the fitted curve over it.
     _shape_ev = result.get('_shape_fit')
     _shape_drawn = False
-    if _shape_ev and result.get('_integ_mode', '') == 'Shape':
+    # An amount from a fit (joint fit, cascade) is drawn as the fit.
+    if result.get('_fit_curve'):
+        try:
+            _fg, _ = _best_group(_grp, _in_win, prefer=_shown)
+            _shape_drawn = draw_fit_curve(ax, result['_fit_curve'], _fg,
+                                          _ANALYTE_FILL)
+            if _shape_drawn:
+                ax.legend(fontsize=6, loc='upper left', framealpha=0.7,
+                          edgecolor='#cccccc')
+                _warn = fit_warnings(result['_fit_curve'])
+                if _warn:
+                    ax.text(0.98, 0.97, '\n'.join(_warn),
+                            transform=ax.transAxes, fontsize=6, ha='right',
+                            va='top', color='#b71c1c',
+                            bbox=dict(fc='white', alpha=0.8, lw=0))
+        except Exception:
+            _shape_drawn = False
+    if (not _shape_drawn and _shape_ev
+            and result.get('_integ_mode', '') == 'Shape'):
         try:
             from processing.pattern_shape import _amplitude
             from processing.quant_shape import shape_model
@@ -415,9 +448,13 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         # pieces it summed.
         _order_f = np.argsort(xf)
         _use_bl = result.get('_local_baseline', True)
-        _base = np.empty_like(yf)
-        _base[_order_f], _ = baseline_and_signal(yf[_order_f],
-                                                 local_baseline=_use_bl)
+        _anch = result.get('_baseline_anchors')
+        if _anch and _use_bl and not _show_deconv:
+            _base = baseline_under(xf, ppm_f, _best_full, _anch)
+        else:
+            _base = np.empty_like(yf)
+            _base[_order_f], _ = baseline_and_signal(yf[_order_f],
+                                                     local_baseline=_use_bl)
         if _use_bl and xf.size >= 2:
             ax.plot(xf, _base, color='#ff6666', lw=0.8, ls='--', alpha=0.7,
                     zorder=3, label='baseline')
@@ -686,6 +723,13 @@ METHOD_REFERENCES = {
 
 
 def _methods_used(r) -> list:
+    """The methods the row's NUMBER came from. An amount a fit replaced
+    (joint fit, cascade) did not come from integration, and the report does
+    not say it did."""
+    if r.get('_by_cascade'):
+        return ['Cascade']
+    if r.get('_joint_fit'):
+        return ['JointFit']
     out = []
     if r.get('_integ_mode', '') == 'Shape':
         out.append('Shape')
@@ -697,10 +741,6 @@ def _methods_used(r) -> list:
         out.append('JG-Deconv')
     if r.get('_deconv'):
         out.append('Resolved')
-    if r.get('_joint_fit'):
-        out.append('JointFit')
-    if r.get('_by_cascade'):
-        out.append('Cascade')
     return out
 
 
@@ -741,6 +781,8 @@ def _method_label(r) -> str:
         label += f"; with {', '.join(others)}"
         if rem:
             label += f'; remainder {100 * float(np.median(rem)):.0f}%'
+    if r.get('_local_baseline'):
+        label += '; on the local baseline'
     return label
 
 
@@ -847,6 +889,24 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    else f"{r.get('_integ_mode', '—')}  |  "
                    f"{_multiplicity_name(r.get('_multiplicity'))}  |  "
                    f"nH={_nh:.2f}")
+    _fitc = r.get('_fit_curve')
+    if _fitc and (r.get('_joint_fit') or r.get('_by_cascade')):
+        # The number is the fit's: the cell says what was fitted, with
+        # whom, and in how many samples it was found -- not the window
+        # the fit replaced.
+        _jf = r.get('_joint_fit') or {}
+        integ_label = ('Joint fit' if r.get('_joint_fit') else 'Cascade fit')             + f"  |  {_multiplicity_name(r.get('_multiplicity'))}  |  "             + (f"nH={_nh:.0f}" if float(_nh).is_integer() else f"nH={_nh:.2f}")
+        if _jf.get('group'):
+            integ_label += (f"  |  with {len(_jf['group']) - 1} analyte(s) and "
+                            f"{int(_jf.get('free') or 0)} unassigned peak(s)")
+        if _jf.get('residual') is not None and np.isfinite(float(_jf['residual'])):
+            integ_label += f"  |  {100 * float(_jf['residual']):.0f}% of the region unexplained"
+        _n = [f'{g}: {a} of {b}' for g, (a, b) in
+              (_fitc.get('n_by_group') or {}).items() if b and a < b]
+        if _n:
+            integ_label += '  |  found in ' + ', '.join(_n) + ' samples'
+        for _w in fit_warnings(_fitc):
+            integ_label += f"  |  {_w}"
     # How many of the pattern's lines the number stands on: a triplet
     # measured on two of its lines says so beside its name.
     _n_own = len(r.get('_line_ppms') or ())
@@ -856,10 +916,10 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
     # What separates the shaded area from the number: the tails the window
     # left outside (capture), a neighbour's skirt removed, and windows that
     # followed each sample's drift.
-    _cap = r.get('_captured_fraction')
+    _cap = None if _fitc else r.get('_captured_fraction')
     if _cap is not None and np.isfinite(float(_cap)) and 0 < float(_cap) < 1:
         integ_label += f"  |  window holds {100 * float(_cap):.0f}% of the lineshape, corrected"
-    _nbs = r.get('_neighbour_share')
+    _nbs = None if _fitc else r.get('_neighbour_share')
     if _nbs and np.isfinite(float(_nbs)) and float(_nbs) > 0:
         integ_label += f"  |  {100 * float(_nbs):.1f}% neighbour skirt removed"
     if r.get('_peak_align_shifts'):

@@ -82,7 +82,7 @@ def test_the_measured_defaults():
     assert QUANTIFICATION['resolve_shared'] is True
     assert QUANTIFICATION['cascade'] is True
     assert QUANTIFICATION['joint_fit'] is True
-    assert QUANTIFICATION['max_disagreement_pct'] == 30.0
+    assert QUANTIFICATION['max_disagreement_pct'] == 45.0
     assert ANNOTATION['tolerance_ppm'] == 0.05
 
 
