@@ -738,18 +738,30 @@ def search_database(*, db_path, db_type, peaks_to_search, annotatable_peaks,
                     _score_r, local_peaks, tolerance, mhz,
                     ppm_array=(_ppm_arr if has_spec else None),
                     intensity_array=(_mean_int if has_spec else None))
-                predicted_lines = (_pl_main if _pl_main else
-                                   [{'ppm': float(s), 'rel_intensity': float(ri)}
-                                    for s, ri in shifted_sticks])
+                _stick_lines = [{'ppm': float(s), 'rel_intensity': float(ri)}
+                                for s, ri in shifted_sticks]
+                predicted_lines = _pl_main if _pl_main else _stick_lines
+                _scorer_centre = multiplet_centre
                 if _pl_main:
                     _srt = sorted(_pl_main, key=lambda l: l['ppm'])
                     _tot_ri = (sum(l.get('rel_intensity', 1.0) for l in _srt)
                                or 1.0)
-                    _scorer_centre = (
-                        sum(l['ppm'] * l.get('rel_intensity', 1.0)
-                            for l in _srt) / _tot_ri)
-                else:
-                    _scorer_centre = multiplet_centre
+                    _c_sc = (sum(l['ppm'] * l.get('rel_intensity', 1.0)
+                                 for l in _srt) / _tot_ri)
+                    # The scorer looks for the lines over the whole local
+                    # pool (a tenth of the ppm: a third of a ppm at 3 ppm)
+                    # and can centre them on somebody else's peaks. Lines
+                    # centred further from the reference than the
+                    # tolerance are not this signal's -- the match was
+                    # dropped for exactly that at the end, with a detected
+                    # peak sitting at the reference (ethanolamine,
+                    # 3-ureidopropionate, mesaconate never annotated on
+                    # the tube of 100). The signal is judged on its lines
+                    # around the anchor instead.
+                    if abs(_c_sc - db_ppm) <= tolerance:
+                        _scorer_centre = _c_sc
+                    else:
+                        predicted_lines = _stick_lines
 
             # ── Pattern measurement ──────────────────────────
             # A measured pattern is matched as a shape, not as a
