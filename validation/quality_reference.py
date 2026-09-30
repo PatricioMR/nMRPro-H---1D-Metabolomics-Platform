@@ -9,11 +9,16 @@ many rows were real analytes, how many were not, and how far the real
 ones' amounts were from the truth. The report prints these beside every
 row's dots: a level is a measured precision, not a fraction of three.
 
-    python -m validation.quality_reference
+    python -m validation.quality_reference                 # GISSMO, 500 and 600
+    python -m validation.quality_reference --generator profiles
 
-Writes ``data/quality_reference.json``, keyed by spectrometer field. The
-bench synthesises its spectra at ``mixture_bench.MHZ``; a field enters
-the file only once it has been measured.
+Writes ``data/quality_reference.json``, keyed by spectrometer field: the
+field the analyst sets in the annotation stage picks the entry the report
+prints (``data.quality_reference.for_field``). By default the tubes are
+simulated from GISSMO spin systems at each field (``validation.
+gissmo_bench``), so the spectra are not the profiles the annotation
+searches for; ``--generator profiles`` measures the older bench instead.
+A field enters the file only once it has been measured.
 """
 from __future__ import annotations
 
@@ -46,12 +51,9 @@ def _row_error(r, truth) -> float | None:
     return float(np.median(e)) if e else None
 
 
-def tube_stats(n) -> dict:
-    """Pooled over SEEDS: per level the real and false rows and the real
-    rows' errors; overall recall and precision at two dots or more."""
-    levels = {lv: {'real': 0, 'false': 0, 'errors': []} for lv in (1, 2, 3)}
-    found = truth_n = 0
-    all_err = []
+def _bench_runs(n):
+    """``[(rows, truth)]`` of the reference bench's tube of ``n``."""
+    out = []
     for seed in SEEDS:
         prep, truth = prepared(n, seed)
         rows = quantify_prepared(prep, mb.SAMPLES,
@@ -59,6 +61,24 @@ def tube_stats(n) -> dict:
                                  standard_nh=mb.STANDARD_NH,
                                  standard_conc=mb.STANDARD_MM,
                                  standard_name='DSS')
+        out.append((rows, truth))
+    return out
+
+
+def _gissmo_runs(field):
+    def runs(n):
+        from validation.gissmo_bench import run
+        return [run(field, seed, str(n))[1:3] for seed in SEEDS]
+    return runs
+
+
+def tube_stats(n, runs=_bench_runs) -> dict:
+    """Pooled over SEEDS: per level the real and false rows and the real
+    rows' errors; overall recall and precision at two dots or more."""
+    levels = {lv: {'real': 0, 'false': 0, 'errors': []} for lv in (1, 2, 3)}
+    found = truth_n = 0
+    all_err = []
+    for rows, truth in runs(n):
         truth_n += len(truth)
         for r in rows:
             if r.get('_not_quantified') or r.get('_is_is'):
@@ -100,28 +120,48 @@ def tube_stats(n) -> dict:
 
 
 def main():
-    field = str(int(mb.MHZ))
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawTextHelpFormatter)
+    ap.add_argument('--generator', choices=('gissmo', 'profiles'),
+                    default='gissmo',
+                    help='gissmo: the tubes simulated from GISSMO spin systems '
+                         '(validation.gissmo_bench), at every --fields; '
+                         'profiles: the reference bench, drawn from the '
+                         "database's own profiles, at mixture_bench.MHZ")
+    ap.add_argument('--fields', type=int, nargs='+', default=[500, 600])
+    a = ap.parse_args()
     doc = {}
     if os.path.exists(OUT):
         with open(OUT, encoding='utf-8') as f:
             doc = json.load(f)
-    doc[field] = {
-        'software': APP_VERSION,
-        'date': datetime.date.today().isoformat(),
-        'database': os.path.basename(mb.DB_DEFAULT),
-        'design': {
-            'field_mhz': mb.MHZ, 'linewidth_hz': mb.LINEWIDTH_HZ,
-            'samples': len(mb.SAMPLES), 'groups': 2,
-            'noise': f'lactate doublet at SNR {mb.NOISE_LACTATE_SNR:.0f}',
-            'concentration_range_mm': list(CONC_RANGE_MM),
-            'reference_analytes': len(mb.PANEL), 'seeds': len(SEEDS),
-            'internal_standard': f'DSS {mb.STANDARD_MM} mM',
-        },
-        'tubes': {str(n): tube_stats(n) for n in TUBES},
-    }
+    if a.generator == 'profiles':
+        plan = [(int(mb.MHZ), mb.MHZ, _bench_runs)]
+    else:
+        from validation.gissmo_bench import FIELDS
+        plan = [(fk, FIELDS[fk], _gissmo_runs(FIELDS[fk])) for fk in a.fields]
+    for key, field, runs in plan:
+        doc[str(key)] = {
+            'software': APP_VERSION,
+            'date': datetime.date.today().isoformat(),
+            'database': os.path.basename(mb.DB_DEFAULT),
+            'generator': a.generator,
+            'design': {
+                'field_mhz': field, 'linewidth_hz': mb.LINEWIDTH_HZ,
+                'samples': len(mb.SAMPLES), 'groups': 2,
+                'noise': f'lactate doublet at SNR {mb.NOISE_LACTATE_SNR:.0f}',
+                'concentration_range_mm': list(CONC_RANGE_MM),
+                'reference_analytes': len(mb.PANEL), 'seeds': len(SEEDS),
+                'internal_standard': f'DSS {mb.STANDARD_MM} mM',
+                'spectra': ('GISSMO spin systems solved at the field (Dashti '
+                            'et al., Anal Chem 2017)' if a.generator == 'gissmo'
+                            else "the reference database's own profiles"),
+            },
+            'tubes': {str(n): tube_stats(n, runs) for n in TUBES},
+        }
+        print(f'{key} MHz ({a.generator}) ->', OUT, flush=True)
     with open(OUT, 'w', encoding='utf-8') as f:
         json.dump(doc, f, indent=1)
-    print('->', OUT)
 
 
 if __name__ == '__main__':

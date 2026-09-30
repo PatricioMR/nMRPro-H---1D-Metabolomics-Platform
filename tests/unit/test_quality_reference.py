@@ -58,6 +58,16 @@ class TestReport:
         title = out[0]
         assert isinstance(title, Paragraph) and '500 MHz' in title.text
 
+    def test_the_report_names_the_generator_the_validation_used(self):
+        """Measured on GISSMO spectra, the page must not say the mixtures
+        were built from the database's own line shapes."""
+        from gui.widgets.pdf_validation import spectra_note
+        g = spectra_note({'generator': 'gissmo'})
+        assert 'GISSMO' in g and 'Dashti' in g and 'own measured line' not in g
+        assert 'own measured line shapes' in spectra_note({})
+        assert 'own measured line shapes' in spectra_note(
+            {'generator': 'profiles'})
+
     def test_no_measurement_no_section(self):
         from gui.widgets.pdf_report import _make_styles
         from gui.widgets.pdf_validation import validation_section

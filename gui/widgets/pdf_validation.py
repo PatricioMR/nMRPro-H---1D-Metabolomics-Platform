@@ -165,12 +165,29 @@ def validation_section(project_mhz, styles, avail_w, doc=None) -> list:
         f"database {entry.get('database', '?')}, measured "
         f"{entry.get('date', '?')}.", styles['small']))
     out.append(Spacer(1, 0.1 * cm))
-    out.append(Paragraph(
-        '<b>What it cannot tell.</b> The mixtures were built from the '
-        'reference database’s own measured line shapes, so a compound '
-        'whose real spectrum differs from its reference entry, a matrix '
-        'effect, an uneven baseline or phase error is not in these figures: '
-        'on real samples identity precision can only be lower. The figures '
-        'describe the method, not any single compound of this report.',
-        styles['small']))
+    out.append(Paragraph(spectra_note(entry), styles['small']))
     return out
+
+
+def spectra_note(entry) -> str:
+    """What the validation's spectra were made of, and so what it cannot
+    tell -- said of the generator the entry was measured with."""
+    if (entry or {}).get('generator') == 'gissmo':
+        return ('<b>How the spectra were made, and what it cannot tell.</b> '
+                'Each compound’s spectrum is its GISSMO spin system solved '
+                'at this field, exact to second order (Dashti H et al., Anal '
+                'Chem 2017;89:12201–12208), not the line shapes the '
+                'annotation searches for. Its shifts and couplings come from '
+                'the same BMRB entries as the reference database, so a '
+                'compound shifted by the sample’s own pH, a matrix effect, an '
+                'uneven baseline or phase error is not in these figures: on '
+                'real samples identity precision can only be lower. The '
+                'figures describe the method, not any single compound of '
+                'this report.')
+    return ('<b>What it cannot tell.</b> The mixtures were built from the '
+            'reference database’s own measured line shapes, so a compound '
+            'whose real spectrum differs from its reference entry, a matrix '
+            'effect, an uneven baseline or phase error is not in these '
+            'figures: on real samples identity precision can only be lower. '
+            'The figures describe the method, not any single compound of '
+            'this report.')

@@ -56,14 +56,14 @@ CONC_RANGE_MM = (0.05, 1.0)
 STANDARD_CLEARANCE_PPM = 0.1
 
 
-def panel(db_path, n, *, seed=0):
-    """``[(name, conc_mM, group_factor)]``: the 18 of the reference study
-    and ``n - 18`` more drawn from the reference."""
-    base = list(mb.PANEL)
-    if n <= len(base):
-        return base[:n]
+def pool_draw(db_path, *, seed=0) -> list:
+    """``[(name, conc_mM)]``: every compound of the reference outside the 18
+    that can go in a tube, in the order a tube of this seed takes them and
+    at the amount it takes them at. One shuffle and one draw of amounts for
+    the whole pool: the 100-analyte tube is the 50-analyte tube with fifty
+    more added, each at the same amount it had there."""
     con = sqlite3.connect(db_path)
-    taken = {name for name, _c, _f in base}
+    taken = {name for name, _c, _f in mb.PANEL}
     pool = []
     for bid, name in con.execute('select bmrb_id, name from metabolites '
                                  'order by bmrb_id'):
@@ -77,17 +77,23 @@ def panel(db_path, n, *, seed=0):
         if any(abs(p - mb.STANDARD_PPM) < STANDARD_CLEARANCE_PPM for p in ppms):
             continue
         pool.append(name)
-    # One shuffle and one draw of amounts for the whole pool, then the first
-    # n - 18 of it: the 100-analyte tube is the 50-analyte tube with fifty
-    # more added, each at the same amount it had there.
     rng = np.random.default_rng(10_000 + seed)
     order = rng.permutation(len(pool))
     lo, hi = np.log(CONC_RANGE_MM[0]), np.log(CONC_RANGE_MM[1])
     concs = np.exp(rng.uniform(lo, hi, size=len(pool)))
-    if n - len(base) > len(pool):
-        raise ValueError(f'the reference holds only {len(pool)} more')
-    return base + [(pool[i], float(round(concs[k], 3)), 1.0)
-                   for k, i in enumerate(order[:n - len(base)])]
+    return [(pool[i], float(round(concs[k], 3))) for k, i in enumerate(order)]
+
+
+def panel(db_path, n, *, seed=0):
+    """``[(name, conc_mM, group_factor)]``: the 18 of the reference study
+    and ``n - 18`` more drawn from the reference (``pool_draw``)."""
+    base = list(mb.PANEL)
+    if n <= len(base):
+        return base[:n]
+    draw = pool_draw(db_path, seed=seed)
+    if n - len(base) > len(draw):
+        raise ValueError(f'the reference holds only {len(draw)} more')
+    return base + [(name, c, 1.0) for name, c in draw[:n - len(base)]]
 
 
 def _cache_key(n, seed, overrides, bio_cv=mb.BIO_CV) -> str:
