@@ -86,8 +86,56 @@ def field_note(project_mhz, measured, exact) -> str:
             f'validation was measured at {measured} MHz.')
 
 
-def validation_section(project_mhz, styles, avail_w, doc=None) -> list:
-    """Flowables for the validation page; ``[]`` when nothing is measured."""
+def precision_footnote(field, entry, tube, beyond, n_peaks) -> str:
+    """The note under the rows: which mixture the dots' precision was
+    measured on, and why that one."""
+    if tube is None:
+        return (f'* Identity precision measured for this level at {field} MHz '
+                f'(lowest over the validation mixtures); see Validation.')
+    t = (entry or {}).get('tubes', {}).get(str(tube), {})
+    peaks = t.get('peaks')
+    base = (f'* Identity precision measured for this level at {field} MHz on '
+            f'the validation mixture of {tube} compounds')
+    if n_peaks is None or peaks is None:
+        return (base + ', the most crowded measured: the number of compounds '
+                'in this sample is not known; see Validation.')
+    base += (f' ({peaks:.0f} peaks detected), the one as crowded as this '
+             f'project ({n_peaks} peaks)')
+    if beyond:
+        base += (': this project is more crowded than any mixture measured, '
+                 'and its precision may be lower')
+    return base + '; see Validation.'
+
+
+def crowding_note(entry, n_peaks) -> str:
+    """Why the report quotes the mixture it quotes."""
+    from data.quality_reference import tube_for_peaks
+    tube, beyond = tube_for_peaks(entry, n_peaks)
+    if tube is None:
+        return ''
+    counts = ', '.join(f"{k} compounds {t['peaks']:.0f}"
+                       for k, t in sorted(entry['tubes'].items(),
+                                          key=lambda t: int(t[0]))
+                       if t.get('peaks') is not None)
+    if n_peaks is None:
+        return (f'The number of compounds in a real sample is not known; how '
+                f'crowded its spectrum is, is. This report quotes the '
+                f'mixture of {tube} compounds, the most crowded measured.')
+    s = (f'The number of compounds in a real sample is not known; how crowded '
+         f'its spectrum is, is: this project has {n_peaks} detected peaks '
+         f'(the mixtures: {counts}). The dots in this report quote the '
+         f'mixture of {tube} compounds, the one as crowded as this project.')
+    if beyond:
+        s += (' This project is more crowded than any mixture measured: its '
+              'identity precision can only be lower than quoted.')
+    return s
+
+
+def validation_section(project_mhz, styles, avail_w, doc=None,
+                       n_peaks=None) -> list:
+    """Flowables for the validation page; ``[]`` when nothing is measured.
+    ``n_peaks`` is the project's detected peak count, which picks the
+    mixture the report quotes (``crowding_note``)."""
     measured, entry, exact = for_field(project_mhz, doc)
     if entry is None:
         return []
@@ -131,18 +179,22 @@ def validation_section(project_mhz, styles, avail_w, doc=None) -> list:
     out.append(_table(rows, [w0] + [rest] * len(tubes)))
     out.append(Spacer(1, 0.25 * cm))
 
-    rows = [['Mixture', 'Compounds\nfound', 'Found at\n●● or more',
-             'Precision at\n●● or more', 'False rows\nper analysis',
-             'Amount error,\nall found']]
+    rows = [['Mixture', 'Peaks\ndetected', 'Compounds\nfound',
+             'Found at\n●● or more', 'Precision at\n●● or more',
+             'False rows\nper analysis', 'Amount error,\nall found']]
     for k, t in tubes:
-        rows.append([f'{k} analytes', _pct(t['found']), _pct(t['recall_2plus']),
+        rows.append([f'{k} analytes',
+                     '—' if t.get('peaks') is None else f"{t['peaks']:.0f}",
+                     _pct(t['found']), _pct(t['recall_2plus']),
                      _pct(t['precision_2plus']), f"{t['false_per_run']:.1f}",
                      _err(t)])
     out.append(_table(rows, [avail_w * f for f in
-                             (0.14, 0.15, 0.17, 0.18, 0.16, 0.20)]))
+                             (0.13, 0.11, 0.13, 0.14, 0.15, 0.15, 0.19)]))
     out.append(Spacer(1, 0.25 * cm))
 
-    note = Table([[Paragraph(field_note(project_mhz, measured, exact),
+    _crowd = crowding_note(entry, n_peaks)
+    note = Table([[Paragraph(field_note(project_mhz, measured, exact)
+                             + (' ' + _crowd if _crowd else ''),
                              styles['small'])]], colWidths=[avail_w])
     note.setStyle(TableStyle([('BACKGROUND', (0, 0), (-1, -1), _NOTE),
                               ('BOX', (0, 0), (-1, -1), 0.4, _GRID),

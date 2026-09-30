@@ -81,3 +81,43 @@ class TestReport:
         bare, _c = _quality_info({'metabolite': 'x', 'conc_mm': 1.0,
                                   '_confidence': 3}, None, None)
         assert bare == 'CONF ●●●'
+
+
+class TestCrowding:
+    """A real sample's number of compounds is unknown; its peaks are not.
+    The report quotes the mixture as crowded as the project."""
+
+    ENTRY = {'tubes': {'18': {**_tube(1.0, 0.65, 0.5), 'peaks': 90.0},
+                       '50': {**_tube(1.0, 0.90, 0.4), 'peaks': 200.0},
+                       '100': {**_tube(1.0, 0.96, 0.3), 'peaks': 300.0}}}
+
+    def test_the_nearest_mixture_by_peaks_is_quoted(self):
+        from data.quality_reference import tube_for_peaks
+        assert tube_for_peaks(self.ENTRY, 294) == ('100', False)
+        assert tube_for_peaks(self.ENTRY, 180) == ('50', False)
+        assert tube_for_peaks(self.ENTRY, 60) == ('18', False)
+
+    def test_more_crowded_than_anything_measured_says_so(self):
+        from data.quality_reference import tube_for_peaks
+        assert tube_for_peaks(self.ENTRY, 450) == ('100', True)
+
+    def test_without_a_count_the_most_crowded_mixture(self):
+        from data.quality_reference import tube_for_peaks
+        assert tube_for_peaks(self.ENTRY, None) == ('100', False)
+        old = {'tubes': {'18': _tube(1, 1, 1), '100': _tube(1, 1, 1)}}
+        assert tube_for_peaks(old, 294) == ('100', False)
+        assert tube_for_peaks({}, 294) == (None, False)
+
+    def test_the_level_quotes_its_mixture_not_the_worst(self):
+        assert level_precision(self.ENTRY, 2, '100') == pytest.approx(0.96)
+        assert level_precision(self.ENTRY, 2) == pytest.approx(0.65)
+
+    def test_the_report_says_which_mixture_and_why(self):
+        from gui.widgets.pdf_validation import crowding_note, precision_footnote
+        n = crowding_note(self.ENTRY, 294)
+        assert '294 detected peaks' in n and 'mixture of 100' in n
+        assert 'more crowded' in crowding_note(self.ENTRY, 450)
+        f = precision_footnote(500, self.ENTRY, '100', False, 294)
+        assert '100 compounds' in f and '294 peaks' in f
+        assert 'may be lower' in precision_footnote(500, self.ENTRY, '100',
+                                                    True, 450)

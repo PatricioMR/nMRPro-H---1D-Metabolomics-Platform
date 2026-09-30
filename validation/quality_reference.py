@@ -61,14 +61,14 @@ def _bench_runs(n):
                                  standard_nh=mb.STANDARD_NH,
                                  standard_conc=mb.STANDARD_MM,
                                  standard_name='DSS')
-        out.append((rows, truth))
+        out.append((rows, truth, len(prep['peaks'])))
     return out
 
 
 def _gissmo_runs(field):
     def runs(n):
         from validation.gissmo_bench import run
-        return [run(field, seed, str(n))[1:3] for seed in SEEDS]
+        return [run(field, seed, str(n))[1:4] for seed in SEEDS]
     return runs
 
 
@@ -78,7 +78,9 @@ def tube_stats(n, runs=_bench_runs) -> dict:
     levels = {lv: {'real': 0, 'false': 0, 'errors': []} for lv in (1, 2, 3)}
     found = truth_n = 0
     all_err = []
-    for rows, truth in runs(n):
+    peaks = []
+    for rows, truth, n_peaks in runs(n):
+        peaks.append(n_peaks)
         truth_n += len(truth)
         for r in rows:
             if r.get('_not_quantified') or r.get('_is_is'):
@@ -93,7 +95,10 @@ def tube_stats(n, runs=_bench_runs) -> dict:
                     all_err.append(e)
             else:
                 levels[lv]['false'] += 1
-    out = {'analytes': n, 'runs': len(SEEDS), 'levels': {}}
+    # how crowded the mixture's spectrum is, in the one unit a real sample
+    # can be measured in: the report matches a project to it
+    out = {'analytes': n, 'runs': len(SEEDS), 'levels': {},
+           'peaks': float(np.mean(peaks))}
     for lv, d in levels.items():
         tot = d['real'] + d['false']
         err = np.abs(d['errors'])

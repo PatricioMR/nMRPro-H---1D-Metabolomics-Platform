@@ -41,10 +41,38 @@ def for_field(field_mhz, doc=None):
     return best, doc[str(best)], abs(best - want) < 1.0
 
 
-def level_precision(entry, level) -> float | None:
-    """The lowest identity precision a level reached over the tubes: what
-    a row at that level can be said to be, at least."""
+def tube_for_peaks(entry, n_peaks):
+    """``(tube key, beyond)``: the validation mixture whose spectrum is as
+    crowded as the project's, judged by the peaks detection found -- the one
+    thing a real sample tells about how many compounds it holds. The mixture
+    with the nearest mean peak count; ``beyond`` is True when the project
+    has more peaks than the most crowded mixture measured, whose figures are
+    then the best that can be said. Without a peak count, or an entry that
+    does not record one, the most crowded mixture: a biological extract
+    usually holds a hundred compounds or more. ``(None, False)`` when the
+    entry has no mixtures."""
+    tubes = (entry or {}).get('tubes') or {}
+    if not tubes:
+        return None, False
+    crowded = max(tubes, key=int)
+    counts = {k: t.get('peaks') for k, t in tubes.items()}
+    if n_peaks is None or any(v is None for v in counts.values()):
+        return crowded, False
+    n = float(n_peaks)
+    if n > float(counts[crowded]):
+        return crowded, True
+    return min(counts, key=lambda k: abs(float(counts[k]) - n)), False
+
+
+def level_precision(entry, level, tube=None) -> float | None:
+    """The identity precision a level was measured to have: in ``tube``
+    (``tube_for_peaks``) when given, else the lowest over the tubes -- what a
+    row at that level can be said to be, at least."""
+    tubes = (entry or {}).get('tubes', {})
+    if tube is not None:
+        return (tubes.get(str(tube), {}).get('levels', {})
+                .get(str(level), {}).get('precision'))
     vals = [t['levels'][str(level)]['precision']
-            for t in (entry or {}).get('tubes', {}).values()
+            for t in tubes.values()
             if t['levels'].get(str(level), {}).get('precision') is not None]
     return min(vals) if vals else None

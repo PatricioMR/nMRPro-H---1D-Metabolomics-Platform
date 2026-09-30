@@ -989,6 +989,16 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
 
 
 # ── Ponto de entrada ──────────────────────────────────────────────────────────
+def project_peak_count(quant_stage, app):
+    """How many peaks detection found in this project, or None: what the
+    report matches the validation mixtures against."""
+    for holder in (getattr(quant_stage, 'peak_stage', None), app):
+        peaks = getattr(holder, 'peaks', None)
+        if peaks:
+            return len(peaks)
+    return None
+
+
 def generate_pdf(output_path: str, quant_stage, app,
                  analytes_per_page: int = 5,
                  annotation_stage=None):
@@ -1030,9 +1040,14 @@ def generate_pdf(output_path: str, quant_stage, app,
         project_mhz = float(annotation_stage.spectrometer_var.get())
     except Exception:
         project_mhz = getattr(app, 'spectrometer_mhz', None)
-    from data.quality_reference import for_field, level_precision
+    from data.quality_reference import (
+        for_field, level_precision, tube_for_peaks)
     _vfield, _ventry, _vexact = for_field(project_mhz)
-    precision = {lv: level_precision(_ventry, lv) for lv in (1, 2, 3)}
+    # The mixture as crowded as this project, by the peaks detection found:
+    # the number of compounds in a real sample is unknown, its peaks are not.
+    n_peaks = project_peak_count(quant_stage, app)
+    _vtube, _vbeyond = tube_for_peaks(_ventry, n_peaks)
+    precision = {lv: level_precision(_ventry, lv, _vtube) for lv in (1, 2, 3)}
     avail_w = PAGE_W - 2 * MARGIN
 
     # Logo
@@ -1143,12 +1158,12 @@ def generate_pdf(output_path: str, quant_stage, app,
         story.append(KeepTogether([block, spacer]))
 
     if _ventry is not None:
+        from gui.widgets.pdf_validation import precision_footnote
         story.append(Paragraph(
-            f'* Identity precision measured for this level at {_vfield} MHz '
-            f'(lowest over the validation mixtures); see Validation.',
+            precision_footnote(_vfield, _ventry, _vtube, _vbeyond, n_peaks),
             styles['small']))
     from gui.widgets.pdf_validation import validation_section
-    _val = validation_section(project_mhz, styles, avail_w)
+    _val = validation_section(project_mhz, styles, avail_w, n_peaks=n_peaks)
     if _val:
         story.append(PageBreak())
         story.extend(_val)
