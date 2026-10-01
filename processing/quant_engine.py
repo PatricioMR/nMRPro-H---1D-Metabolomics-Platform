@@ -29,6 +29,7 @@ from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
     cascade_missed, exclusion_weight, fit_curve_record,
+    SHIFT_REACH_LW as CASCADE_FINE_REACH_LW,
     slide_step as cascade_slide_step)
 from processing.quant_concentration import (
     apply_pqn, concentrations, signal_nh, standard_per_proton)
@@ -464,6 +465,12 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
         return 1, ('identified on a free apex by the shape of its signal '
                    'alone: no line of it was confirmed')
     if cascade is not None:
+        if cascade.get('wide'):
+            # slid further than the study's own drift can account for: a
+            # column slid that far agrees with some peak by chance, and its
+            # position is no evidence. The number is shown; one dot
+            return 1, ('the cascade slid its column well away from where the '
+                       'reference lists it: its position is unconfirmed')
         dis = float(cascade.get('disagreement') or float('nan'))
         if np.isfinite(dis) and dis <= CASCADE_AGREEMENT_GOOD:
             return 2, f'the cascade placed it and its own signals agree to {100 * dis:.0f}%'
@@ -1427,6 +1434,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
             # puts every other signal than one step of the cascade's slide
             res['placed'] = abs(float(res.get('shift_ppm') or 0.0)) <= \
                 1.001 * cascade_slide_step(linewidth_ppm)
+            res['wide'] = abs(float(res.get('shift_ppm') or 0.0)) > \
+                1.001 * CASCADE_FINE_REACH_LW * float(linewidth_ppm)
             row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
                                former=former)
             if mid in cols and res.get('window'):
@@ -1471,7 +1480,7 @@ def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> 
         '_cascade': {k: res.get(k) for k in ('apex_snr', 'shift_ppm', 'at_cap',
                                              'signals', 'step', 'nh',
                                              'free_share', 'capped_share',
-                                             'disagreement', 'placed')},
+                                             'disagreement', 'placed', 'wide')},
         '_peak': None,
         '_peak_rank': None,
         '_display_peak_rank': None,

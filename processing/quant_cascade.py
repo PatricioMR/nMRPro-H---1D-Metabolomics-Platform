@@ -70,6 +70,15 @@ CASCADE_MIN_SNR = 5.0       # the analyte's tallest point, at its amplitude
 CASCADE_MAX_STEPS = 60
 SHIFT_STEPS = 7             # within +- SHIFT_REACH_LW linewidths
 SHIFT_REACH_LW = 0.5
+# Past the fine reach, a coarser grid out to this many linewidths: in a real
+# extract every compound stands some way from where the reference lists it
+# (NMR_Murilo: a median 4.5 linewidths, up to 14). A column that slid there
+# is shown at one dot (quant_engine). On the GISSMO bench with each compound
+# 20 mppm off its listing, tube of 18, three seeds: found 34 -> 45 of 54, real
+# at two dots or more 9 -> 26; unshifted, found 51 -> 53, three dots 13/0.
+CASCADE_WIDE_REACH_LW = 8.0
+CASCADE_WIDE_STEP_LW = 0.5
+CASCADE_APEX_HALF_LW = 0.25   # a wide-slid column must stand on an apex this wide
 CAP_RATIO = 3.0             # projection over cap beyond this: contradicted
 CAP_NOISE_SIGMAS = 3.0      # what a region may hold above its trace
 MIN_FREE_SHARE = 0.25       # of a column's weight, outside what is spoken for
@@ -192,9 +201,17 @@ class Column:
 
 def slide_grid(linewidth_ppm):
     """Where the cascade may slide a column: SHIFT_STEPS positions within
-    SHIFT_REACH_LW linewidths either side of the study's drift."""
-    reach = SHIFT_REACH_LW * float(linewidth_ppm)
-    return np.linspace(-reach, reach, SHIFT_STEPS)
+    SHIFT_REACH_LW linewidths either side of the study's drift, and, past
+    them, a coarser grid out to CASCADE_WIDE_REACH_LW linewidths (a
+    compound's own offset from the reference: ``0`` leaves it off)."""
+    lw = float(linewidth_ppm)
+    fine = np.linspace(-SHIFT_REACH_LW * lw, SHIFT_REACH_LW * lw, SHIFT_STEPS)
+    if CASCADE_WIDE_REACH_LW <= SHIFT_REACH_LW:
+        return fine
+    k = np.arange(1, int(CASCADE_WIDE_REACH_LW / CASCADE_WIDE_STEP_LW) + 1)
+    coarse = k * CASCADE_WIDE_STEP_LW * lw
+    coarse = coarse[coarse > SHIFT_REACH_LW * lw * 1.2]
+    return np.sort(np.concatenate([-coarse, fine, coarse]))
 
 
 def slide_step(linewidth_ppm) -> float:
@@ -469,6 +486,15 @@ class CascadeResult:
     stopped_at: tuple | None = None                     # (name, apex_snr) of the best left
 
 
+def _is_apex(r, i, half) -> bool:
+    """Whether point ``i`` is the top of a peak in ``r``: no point within
+    ``half`` points either side stands higher. A column slid away from where
+    the reference lists it must land on a peak of the residual; on the
+    slope of a large one it would only be fitting that peak's tail."""
+    lo, hi = max(i - half, 0), min(i + half + 1, r.size)
+    return bool(r[i] >= np.max(r[lo:hi]))
+
+
 def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
             min_snr=CASCADE_MIN_SNR, max_steps=CASCADE_MAX_STEPS,
             cap_ratio=CAP_RATIO) -> CascadeResult:
@@ -478,6 +504,8 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
     weight = np.ones(ppm.size) if weight is None else np.asarray(weight, dtype=float)
     r = t_full * weight
     shifts = slide_grid(linewidth_ppm)
+    step_ppm = abs(float(ppm[1] - ppm[0])) if ppm.size > 1 else 1.0
+    apex_half = max(int(round(CASCADE_APEX_HALF_LW * float(linewidth_ppm) / step_ppm)), 1)
     cache = {}
     for col in cols:
         variants = []
@@ -500,7 +528,8 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
             # under a taurine. No cap means every signal was spoken for.
             if not np.isfinite(cap) or free_share < MIN_FREE_SHARE:
                 continue
-            variants.append((s, idx, val, nn, float(val.max()), cap, free_share))
+            variants.append((s, idx, val, nn, float(val.max()), cap, free_share,
+                             int(idx[int(np.argmax(val))])))
         if variants:
             cache[col.mid] = variants
     out = CascadeResult()
@@ -511,7 +540,10 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
         for col in cols:
             if col.mid in taken or col.mid not in cache:
                 continue
-            for s, idx, val, nn, top, cap, free in cache[col.mid]:
+            for s, idx, val, nn, top, cap, free, apex in cache[col.mid]:
+                if (abs(s) > 1.2 * SHIFT_REACH_LW * float(linewidth_ppm)
+                        and not _is_apex(r, apex, apex_half)):
+                    continue
                 proj = float(np.dot(r[idx], val)) / nn
                 if proj <= 0:
                     continue

@@ -439,8 +439,10 @@ class TestWhatACascadeRowIsWorth:
     def test_one_step_of_the_slide_is_the_grid_s_own(self):
         import numpy as np
         from processing.quant_cascade import slide_grid, slide_step
+        from processing.quant_cascade import SHIFT_REACH_LW
         g = slide_grid(0.006)
-        assert slide_step(0.006) == pytest.approx(float(np.diff(g)[0]))
+        fine = g[np.abs(g) <= SHIFT_REACH_LW * 0.006 * 1.0001]
+        assert slide_step(0.006) == pytest.approx(float(np.diff(fine)[0]))
 
     def test_the_bar_is_not_the_one_that_decides_the_number(self):
         """One threshold answers one question: whether there is a number
