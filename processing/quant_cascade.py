@@ -67,7 +67,17 @@ from scipy.optimize import lsq_linear
 from processing.quant_shared import component_from_evidence, listed_signal_evidence
 
 CASCADE_MIN_SNR = 5.0       # the analyte's tallest point, at its amplitude
-CASCADE_MAX_STEPS = 60
+CASCADE_MAX_STEPS = 150
+# Selection is by gain, so the late steps are the weak ones. The first
+# CASCADE_FREE_STEPS take any analyte standing CASCADE_MIN_SNR; after them
+# the bar is CASCADE_LATE_MIN_SNR. GISSMO bench, three seeds (2026-10-01):
+# tube of 100, steps 1-30 were 98% real at two dots, 31-60 83%, 61-80 65%,
+# 81-100 43%; at 50 compounds no step past 60 found a real one. Past 60,
+# an apex of 25 sigma kept 22 real against 14 strangers (61%), a bar of 5
+# kept 36 against 88. The cap of 60 steps this replaces held the tubes of
+# 50 and 100 at 60 on every seed.
+CASCADE_FREE_STEPS = 60
+CASCADE_LATE_MIN_SNR = 25.0
 SHIFT_STEPS = 7             # within +- SHIFT_REACH_LW linewidths
 SHIFT_REACH_LW = 0.5
 # Past the fine reach, a coarser grid out to this many linewidths: in a real
@@ -551,6 +561,9 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
                     out.contradicted[col.mid] = (proj, cap)
                     continue
                 a = min(proj, cap)
+                if (step >= CASCADE_FREE_STEPS and sigma
+                        and a * top / float(sigma) < CASCADE_LATE_MIN_SNR):
+                    continue          # the late bar is for the candidate, not the run
                 gain = 2.0 * a * proj * nn - a * a * nn   # residual removed at a
                 if best is None or gain > best[0]:
                     best = (gain, col, s, idx, val, a, top, cap, free)
@@ -558,7 +571,9 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
             break
         gain, col, s, idx, val, a, top, cap, free = best
         apex_snr = a * top / float(sigma) if sigma else float('inf')
-        if apex_snr < min_snr:
+        bar = min_snr if step < CASCADE_FREE_STEPS else max(
+            min_snr, CASCADE_LATE_MIN_SNR)
+        if apex_snr < bar:
             out.stopped_at = (col.name, apex_snr)
             break
         active.append(Entry(col, float(s), idx, val, float(cap),
