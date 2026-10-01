@@ -468,8 +468,12 @@ def test_the_position_band_widens_only_where_the_study_is_loose():
     assert study_position_band(wild) == 0.05                        # capped
 
 
-def test_a_refused_joint_fit_row_says_it_is_the_integral_and_an_upper_bound():
-    from processing.quant_engine import _fit_refused_reason
-    assert _fit_refused_reason({}) == []
-    text = ' '.join(_fit_refused_reason({'fit_refused': '2 of 4 signals at the edge'}))
-    assert 'integral' in text and 'upper bound' in text and 'One dot' in text
+def test_a_refused_joint_fit_row_is_a_candidate_with_an_upper_bound():
+    from processing.quant_engine import _as_candidate
+    row = {'conc_mm': 0.5, '_confidence': 1, 'status': 'x',
+           '_status_reasons': ['earlier'], '_not_quantified': False}
+    _as_candidate(row, '2 of 4 signals at the edge', {'A': [0.4, 0.6], 'B': []})
+    assert row['_not_quantified'] and row['_confidence'] == 0
+    assert row['_upper_bound_mm'] == {'A': 0.5}
+    assert 'Upper bound' in row['_status_reasons'][0]
+    assert row['_status_reasons'][1] == 'earlier'

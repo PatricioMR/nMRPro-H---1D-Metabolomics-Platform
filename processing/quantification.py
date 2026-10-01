@@ -74,8 +74,8 @@ REJECTION_TEXT = {
         'measures overlapping analytes could not place its shape on its '
         'signal. The amount it gives is that of a shape beside the peak, and '
         'the integrated window holds the neighbours: neither measures this '
-        'analyte. On the virtual bench, falling back to the integration '
-        'reported an analyte that was not in the tube.',
+        'analyte. It is a candidate, not an identification: on the virtual '
+        'bench four in five rows of this kind were not in the tube.',
     CASCADE_CROWDED:
         'Identified by the cascade but not quantified: either most of the '
         'signal of this analyte lies where analytes already quantified '

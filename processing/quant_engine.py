@@ -619,12 +619,11 @@ FITTED_OTHERS_STEPS = 1.0
 # cascade rows whose residual the better amounts left differently.
 JOINT_FIT_CANDIDATES = True
 
-# An analyte whose joint fit is refused (``joint_fit_refusal``) keeps the
-# integral of its window, at one dot and said to be an upper bound, instead of
-# leaving the table. Measured on the cell extract NMR_Murilo (20 samples,
-# 500 MHz) the references stand a median 16 mppm -- 4.5 linewidths -- from the
-# peaks, so most fits are refused, and the table fell from 41 analytes to 19
-# (ADR-053). False: refused rows are not quantified (FIT_MISPLACED).
+# An analyte whose joint fit is refused (``joint_fit_refusal``) stays in the
+# table as a candidate: not quantified, with the integral of its window as an
+# upper bound (``_as_candidate``). Measured on the cell extract NMR_Murilo (20
+# samples, 500 MHz) the references stand a median 16 mppm -- 4.5 linewidths --
+# from the peaks, so most fits are refused. False: the row is dropped.
 FIT_MISPLACED_KEEPS_INTEGRAL = True
 
 # The share of its own window an analyte has to keep for the split to
@@ -2262,9 +2261,6 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
-        if info.get('fit_refused'):
-            level = min(level, 1)
-            dots = _DOTS[level]
         # The signal the amount was measured on, off where this study puts
         # things: whatever else agrees, the number is somebody's peak.
         _off = (info['signal'].evidence or {}).get('ppm_off_drift')
@@ -2295,6 +2291,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                          pqn_factors, standard, standard_conc,
                          bool(external_standard_samples), dilution,
                          correction))
+        if info.get('fit_refused'):
+            _as_candidate(rows[-1], info['fit_refused'], by_group)
 
     # What the integration subtracted, so a report can draw the very region
     # the number came from: with a local baseline the area is between the
@@ -2732,7 +2730,6 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _broad_reason(info)
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
-                            + _fit_refused_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
@@ -2907,16 +2904,28 @@ def joint_fit_refusal(rec) -> str | None:
     return '; '.join(why) or None
 
 
-def _fit_refused_reason(info) -> list:
-    """Said of a row whose joint fit was refused and whose number is the
-    integral of its window."""
-    why = info.get('fit_refused')
-    if not why:
-        return []
-    return [f"The joint fit could not place its shape on the signal -- {why}. "
-            f"The amount is the integral of the window, which holds its "
-            f"neighbours' area too: read it as an upper bound. One dot, "
-            f"whatever the rest of its evidence."]
+def _as_candidate(row, why, by_group) -> None:
+    """Turn a row whose joint fit was refused into a candidate: not
+    quantified, not counted as identified, with the integral of its window
+    kept as an upper bound (that window holds its neighbours' area).
+
+    On the bench the rows of this kind were one real analyte in five: 18
+    real against 72 not in the tube, over three seeds of the 100-compound
+    tube. An identification that wrong is a suggestion, not a result."""
+    bound = {g: float(np.median(v)) for g, v in (by_group or {}).items() if v}
+    row['_upper_bound_mm'] = bound
+    row['_fit_refused'] = True
+    row['_not_quantified'] = True
+    row['_rejection'] = FIT_MISPLACED
+    row['_confidence'] = 0
+    row['status'] = STATUS_NONE
+    row['conc_mm'] = float('nan')
+    row['cv_by_group'] = {}
+    text = REJECTION_TEXT[FIT_MISPLACED] + f' Here {why}.'
+    if bound:
+        text += (' Upper bound from integrating its window: ' + ', '.join(
+            f'{g} {v:.4g} mM' for g, v in bound.items()) + '.')
+    row['_status_reasons'] = [text] + list(row.get('_status_reasons') or ())
 
 
 def _joint_fit_reason(info) -> list:
