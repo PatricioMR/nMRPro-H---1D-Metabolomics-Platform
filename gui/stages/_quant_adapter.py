@@ -20,7 +20,7 @@ import numpy as np
 from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, study_drift)
 from processing.multiplet_line_selector import multiplet_line_peaks
-from processing.quant_engine import quantify
+from processing.quant_engine import quantify, study_position_band
 from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
     baseline_anchors, integrate_sample, lorentzian_captured_fraction)
@@ -568,7 +568,8 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         diagnostics=diagnostics,
         singlet_min_snr=singlet_min_snr,
         cascade=cascade,
-        ppm_band_ppm=ppm_band_ppm,
+        ppm_band_ppm=(ppm_band_ppm if ppm_band_ppm is not None
+                      else study_position_band(metabolites)),
         claim_signals=claim_signals,
         max_disagreement=max_disagreement,
         raw_intensities=raw_intensities,

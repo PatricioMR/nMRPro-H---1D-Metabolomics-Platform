@@ -241,6 +241,45 @@ def study_drift_residual(metabolites, band_ppm=None) -> float | None:
     return float(np.median(offs))
 
 
+# The fewest Good matches a study needs before its own position scatter is
+# allowed to widen the band the election, the confirmation of a signal and
+# the position gates judge by.
+BAND_MIN_GOOD_SIGNALS = 20
+# What share of the Good matches the band must hold, and the widest it may
+# become (the annotation's own match tolerance, 0.05 ppm).
+BAND_SHARE = 75.0
+BAND_MAX_PPM = 0.05
+
+
+def study_position_band(metabolites, floor=PPM_BAND_PPM) -> float:
+    """The width of "where this study puts things", measured on the study.
+
+    ``PPM_BAND_PPM`` (20 mppm) was drawn on studies whose compounds move
+    together with one common drift: on the reference bench the confirmed
+    signals of the analytes really in the tube sat a median 1.3 mppm from
+    that drift and the strangers' 27.8. In the NMR_Murilo cell extract each
+    compound has its own offset from its reference (pH, ionic strength,
+    matrix): 55% of the Good matches stood further than 20 mppm from the
+    common drift (median 22, upper quartile 37) -- and the ones annotation
+    called bad stood about as far (median 27). There the band cut real
+    analytes out of the election, out of the confirmation of their signals
+    and out of the table.
+
+    The band is the ``BAND_SHARE`` percentile of ``|ppm_off_drift|`` over the
+    Good matches, never narrower than ``floor`` and never wider than the
+    annotation's match tolerance. ``floor`` where there are fewer than
+    ``BAND_MIN_GOOD_SIGNALS`` Good matches: a tight study stays as it was.
+    """
+    offs = [abs(float(mp['ppm_off_drift']))
+            for met in metabolites or ()
+            for mp in (met or {}).get('matched_peaks') or ()
+            if (mp.get('annotation_quality') or mp.get('quality')) == 'good'
+            and mp.get('ppm_off_drift') is not None]
+    if len(offs) < BAND_MIN_GOOD_SIGNALS:
+        return float(floor)
+    return float(min(max(np.percentile(offs, BAND_SHARE), floor), BAND_MAX_PPM))
+
+
 def study_position_scatter(metabolites, band_ppm=None) -> float | None:
     """How tightly the analytes really in this study sit on its drift: the
     LOWER QUARTILE of ``|ppm_off_drift|`` over the signals annotation
@@ -572,6 +611,14 @@ FITTED_OTHERS_STEPS = 1.0
 # no stranger. The price: 0.6-1.0 more strangers per run at two dots, all
 # cascade rows whose residual the better amounts left differently.
 JOINT_FIT_CANDIDATES = True
+
+# An analyte whose joint fit is refused (``joint_fit_refusal``) keeps the
+# integral of its window, at one dot and said to be an upper bound, instead of
+# leaving the table. Measured on the cell extract NMR_Murilo (20 samples,
+# 500 MHz) the references stand a median 16 mppm -- 4.5 linewidths -- from the
+# peaks, so most fits are refused, and the table fell from 41 analytes to 19
+# (ADR-053). False: refused rows are not quantified (FIT_MISPLACED).
+FIT_MISPLACED_KEEPS_INTEGRAL = True
 
 # The share of its own window an analyte has to keep for the split to
 # leave its number standing on its own. Above it, what the others took is
@@ -1308,7 +1355,11 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         arr = arr - np.asarray(cluster_base, dtype=float).reshape(arr.shape)
     incl = [int(i) for i in (included if included is not None
                              else range(arr.shape[1]))]
-    quantified = [r for r in rows if not r.get('_not_quantified') and not r.get('_is_is')]
+    # a row whose joint fit was refused holds its window's integral, which
+    # includes its neighbours: the cascade may take the analyte in on the
+    # residual instead, and what it subtracts is not that integral
+    quantified = [r for r in rows if not r.get('_not_quantified')
+                  and not r.get('_is_is') and not r.get('_fit_refused')]
     pqn = {}
     for r in quantified:
         pqn.update(r.get('_pqn_factors') or {})
@@ -1360,6 +1411,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                 or (np.isfinite(_dis) and _dis > _bar)):
             # identified, but the amount would come from the part of it
             # nobody else accounts for; that number is not a measurement
+            if former is not None and former.get('_fit_refused'):
+                continue      # keeps the integral it has, at one dot
             row = _rejected_row(mid, CASCADE_CROWDED,
                                 detail=' ' + _cascade_reason(res))
             row['metabolite'] = res.get('name', mid)
@@ -2136,7 +2189,10 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                     # is not this analyte's -- and neither is the integrated
                     # one, whose window holds the neighbours the fit was
                     # there to separate (FIT_MISPLACED).
-                    _misplaced[mid] = _why
+                    if FIT_MISPLACED_KEEPS_INTEGRAL:
+                        measured[mid]['fit_refused'] = _why
+                    else:
+                        _misplaced[mid] = _why
                     continue
                 measured[mid]['fit_curve'] = _rec
                 measured[mid]['joint_fit'] = {
@@ -2197,6 +2253,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+        if info.get('fit_refused'):
+            level = min(level, 1)
+            dots = _DOTS[level]
         # The signal the amount was measured on, off where this study puts
         # things: whatever else agrees, the number is somebody's peak.
         _off = (info['signal'].evidence or {}).get('ppm_off_drift')
@@ -2654,6 +2713,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         # where this amount says they must.
         '_fingerprint_at_amount': list(info.get('fingerprint_at_amount') or ()),
         '_unshared_reason': info.get('unshared_reason'),
+        '_fit_refused': bool(info.get('fit_refused')),
         '_status_reasons': (_residual_reason(info)
                             + (_deconv_reason(info) if info.get('deconv')
                                else _shared_reason(info))
@@ -2663,6 +2723,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _broad_reason(info)
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
+                            + _fit_refused_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
@@ -2835,6 +2896,18 @@ def joint_fit_refusal(rec) -> str | None:
         why.append(f'the fit centres on a signal at {lo:.3f}-{hi:.3f} ppm, '
                    f'not on the lines the election found')
     return '; '.join(why) or None
+
+
+def _fit_refused_reason(info) -> list:
+    """Said of a row whose joint fit was refused and whose number is the
+    integral of its window."""
+    why = info.get('fit_refused')
+    if not why:
+        return []
+    return [f"The joint fit could not place its shape on the signal -- {why}. "
+            f"The amount is the integral of the window, which holds its "
+            f"neighbours' area too: read it as an upper bound. One dot, "
+            f"whatever the rest of its evidence."]
 
 
 def _joint_fit_reason(info) -> list:

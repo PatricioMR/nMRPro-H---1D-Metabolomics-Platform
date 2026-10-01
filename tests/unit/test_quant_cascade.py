@@ -448,3 +448,26 @@ class TestWhatACascadeRowIsWorth:
         from processing.quant_cascade import MAX_SIGNAL_DISAGREEMENT
         from processing.quant_engine import CASCADE_AGREEMENT_GOOD
         assert CASCADE_AGREEMENT_GOOD < MAX_SIGNAL_DISAGREEMENT
+
+
+def test_the_position_band_widens_only_where_the_study_is_loose():
+    from processing.quant_engine import study_position_band
+    from processing.annotation_scoring import PPM_BAND_PPM
+
+    def mets(offs):
+        return [{'matched_peaks': [{'annotation_quality': 'good',
+                                    'ppm_off_drift': o}]} for o in offs]
+    tight = mets([0.001] * 30)
+    loose = mets([0.010] * 10 + [0.035] * 20)
+    wild = mets([0.2] * 30)
+    assert study_position_band(tight) == PPM_BAND_PPM
+    assert study_position_band(mets([0.04] * 5)) == PPM_BAND_PPM   # too few
+    assert PPM_BAND_PPM < study_position_band(loose) <= 0.05
+    assert study_position_band(wild) == 0.05                        # capped
+
+
+def test_a_refused_joint_fit_row_says_it_is_the_integral_and_an_upper_bound():
+    from processing.quant_engine import _fit_refused_reason
+    assert _fit_refused_reason({}) == []
+    text = ' '.join(_fit_refused_reason({'fit_refused': '2 of 4 signals at the edge'}))
+    assert 'integral' in text and 'upper bound' in text and 'One dot' in text

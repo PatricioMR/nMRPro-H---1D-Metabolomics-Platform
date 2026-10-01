@@ -110,18 +110,28 @@ def crowded_tube(n, seed):
     return tube
 
 
-def build(field, seed, composition, *, snr_gain=1.0):
-    """``(X, truth)``: one tube of ``composition`` at ``field``."""
+def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0):
+    """``(X, truth)``: one tube of ``composition`` at ``field``.
+
+    ``ref_shift`` (ppm) gives every compound its own offset from where the
+    reference lists it, the same in every sample: what a real extract's pH,
+    ionic strength and matrix do (BMRB's references were measured at their
+    own). A normal draw of that standard deviation per compound, from a
+    generator of its own so the rest of the tube is the one made without it.
+    In the NMR_Murilo cell extract the peaks the annotation matched stood a
+    median 16 mppm from the listing."""
     systems = load_systems()
     con = sqlite3.connect(mb.DB_DEFAULT)
     lw = mb.LINEWIDTH_HZ
     mb.MHZ = field
     rng = np.random.default_rng(seed)
+    shift_rng = np.random.default_rng(seed + 7_000_003)
     comps, truth = [], {}
     for name, conc, factor in composition:
         mid, _sigs = mb._db_signals(con, name)
         sp, si = stick_spectrum(systems[name], field)
-        comps.append((sp, si * mb.AREA_UNIT, mid))
+        own = float(shift_rng.normal(0.0, ref_shift)) if ref_shift else 0.0
+        comps.append((sp + own, si * mb.AREA_UNIT, mid))
         truth[mid] = {'name': name, 'A': conc, 'B': conc * factor}
     _m, lac = mb._db_signals(con, 'L-lactic acid')
     sigma = (float(mb.compound_trace(PPM, lac, 4.0, shift=0.0).max())
@@ -148,27 +158,34 @@ def _composition(size, seed):
     return c600_tube(seed) if size == 'c600' else crowded_tube(int(size), seed)
 
 
-def tube(field, seed, size='c600', *, snr_b0=False):
+def _shift_tag(ref_shift) -> str:
+    return f'_rs{1000 * ref_shift:.0f}' if ref_shift else ''
+
+
+def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0):
     """The tube, made once and kept."""
     gain = (field / REF_FIELD) ** 1.5 if snr_b0 else 1.0
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, f'gissmo_{size}_{field:.0f}'
                                    f'{"snr" if snr_b0 else ""}'
+                                   f'{_shift_tag(ref_shift)}'
                                    f'_s{seed}_{_data_tag()}.pkl')
     if os.path.exists(path):
         with open(path, 'rb') as f:
             return pickle.load(f)
-    X, truth = build(field, seed, _composition(size, seed), snr_gain=gain)
+    X, truth = build(field, seed, _composition(size, seed), snr_gain=gain,
+                     ref_shift=ref_shift)
     with open(path, 'wb') as f:
         pickle.dump((X, truth), f, protocol=pickle.HIGHEST_PROTOCOL)
     return X, truth
 
 
-def prepared(field, seed, size='c600', *, snr_b0=False):
+def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0):
     """Detection and annotation of the tube, kept until their code changes."""
-    X, truth = tube(field, seed, size, snr_b0=snr_b0)
+    X, truth = tube(field, seed, size, snr_b0=snr_b0, ref_shift=ref_shift)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    h = hashlib.sha1(f'{size}|{field}|{seed}|{snr_b0}|{_data_tag()}'.encode())
+    h = hashlib.sha1(f'{size}|{field}|{seed}|{snr_b0}|{_data_tag()}'
+                     f'{_shift_tag(ref_shift)}'.encode())
     d = defaults()
     for k in sorted(d):
         h.update(f'{k}={d[k]!r};'.encode())
@@ -208,12 +225,15 @@ def _quant_hash() -> str:
     return h.hexdigest()[:16]
 
 
-def run(field, seed, size='c600', *, snr_b0=False, overrides=None):
-    prep, truth = prepared(field, seed, size, snr_b0=snr_b0)
+def run(field, seed, size='c600', *, snr_b0=False, overrides=None,
+        ref_shift=0.0):
+    prep, truth = prepared(field, seed, size, snr_b0=snr_b0,
+                           ref_shift=ref_shift)
     path = None
     if not overrides:
         path = os.path.join(CACHE_DIR, f'gissmo_rows_{size}_{field:.0f}'
-                                       f'{"snr" if snr_b0 else ""}_s{seed}_'
+                                       f'{"snr" if snr_b0 else ""}'
+                                       f'{_shift_tag(ref_shift)}_s{seed}_'
                                        f'{_data_tag()}_{_quant_hash()}.pkl')
     if path and os.path.exists(path):
         with open(path, 'rb') as f:
@@ -247,13 +267,16 @@ def main():
                          "47 compounds with a BMRB spectrum at 600 MHz")
     ap.add_argument('--seeds', type=int, nargs='+', default=[0, 1, 2])
     ap.add_argument('--snr-b0', action='store_true')
+    ap.add_argument('--ref-shift-mppm', type=float, default=0.0,
+                    help='each compound offset from its listing, normal, in mppm')
     a = ap.parse_args()
     res, core = [], []
     for size in a.sizes:
         for fk in a.fields:
             for sd in a.seeds:
-                s, _rows, truth, n_peaks = run(FIELDS[fk], sd, size,
-                                               snr_b0=a.snr_b0)
+                s, _rows, truth, n_peaks = run(
+                    FIELDS[fk], sd, size, snr_b0=a.snr_b0,
+                    ref_shift=a.ref_shift_mppm / 1000.0)
                 lab = f'GISSMO {size} {fk}{" +SNR" if a.snr_b0 else ""} s{sd}'
                 print(f'{lab}: {len(truth)} analitos, {n_peaks} picos',
                       flush=True)

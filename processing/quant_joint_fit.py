@@ -236,7 +236,11 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
     The offsets are written on the components (``shift_ppm``), so every
     later curve of the column carries them."""
     reach = PART_SHIFT_REACH_LW * float(linewidth_ppm)
-    grid = np.linspace(-reach, reach, PART_SHIFT_STEPS)
+    # nearest zero first, and only a strict improvement moves a signal: a
+    # signal whose analyte is not under it fits equally at every offset,
+    # and the first of the grid -- a whole reach away -- used to win,
+    # which read as 'at the edge' and got the analyte refused
+    grid = sorted(np.linspace(-reach, reach, PART_SHIFT_STEPS), key=abs)
     x_u = ppm[union]
     parts = [[_part_vec(comp, nh, ppm, union) for comp, nh in c.parts]
              for c in cols]
@@ -288,7 +292,7 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
                     res = lsq_linear(A, target, bounds=(lo_b, hi_b),
                                      method='bvls')
                     r2 = float(np.sum((A @ res.x - target) ** 2))
-                    if best is None or r2 < best[0]:
+                    if best is None or r2 < best[0] * (1.0 - 1e-9):
                         best = (r2, d, pv)
                 comp.shift_ppm = base[id(comp)] + best[1]
                 V[:, k] += best[2] - parts[k][i]

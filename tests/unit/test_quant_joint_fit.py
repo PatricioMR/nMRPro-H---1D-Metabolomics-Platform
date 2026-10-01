@@ -160,3 +160,17 @@ def test_an_unreported_neighbour_in_the_fit_keeps_its_area_off_the_analyte():
     assert 'A' not in alone
     got = np.median(list(with_b['A']['amplitudes'].values()))
     assert got == pytest.approx(1000.0, rel=0.05)
+
+
+def test_a_signal_with_nothing_under_it_stays_where_it_is_listed():
+    """Where the analyte is absent every offset fits the same. The first of
+    the grid -- a whole reach away -- used to win, which read as 'at the
+    edge' and had the analyte refused for a line that was simply not
+    there."""
+    a = _met('A', [(3.100, 's', 2, None), (3.700, 's', 2, None)])
+    b = _met('B', [(3.100, 's', 2, None)])
+    cols = _cols(a, b)
+    t = _trace(cols[:1], {'A': 1000.0})        # A's 3.100 only; 3.700 is empty
+    union = np.flatnonzero((PPM > 3.0) & (PPM < 3.8))
+    out = refine_part_shifts(cols, None, PPM, t[union], union, LW)
+    assert out[('A', 1)] == pytest.approx(0.0, abs=1e-9)
