@@ -716,6 +716,69 @@ def measure_jointly(active, owners, ppm, X, included, *, sigma, weight=None,
     return out, rel, {m: v / n for m, v in hit.items()}
 
 
+# The cascade's identity score: a logistic model over cascade_features, fitted
+# on the 1515 analytes the cascade took in over the GISSMO bench at 600 MHz --
+# tubes of 18, 50 and 100 compounds, three seeds each, with every compound
+# 0, 10 or 20 mppm off where the reference lists it (585 really in the tube).
+# Tested by leaving out one tube, shift and seed at a time: AUC 0.92 with no
+# offset, 0.87 at 10 mppm, 0.75 at 20 -- against 0.87 / 0.79 for the best
+# single features (apex SNR, disagreement between signals) with no offset. It
+# loses power with the offset because the features themselves do: a column
+# laid where the compound is not has no good evidence to give. The bench is
+# the one the weights came from and a real extract is not it: the score is
+# shown on the row.
+CASCADE_SCORE_MEAN = (3.74508, 4.02431, 1.09975, 0.92879, 0.25193, 0.42046, 1.53515, 3.31691, 0.09109, 0.66007, 2.02588, 1.43083)
+CASCADE_SCORE_SCALE = (1.01854, 0.96012, 1.06514, 0.12676, 0.3885, 0.49363, 0.42069, 0.84987, 0.28774, 0.47369, 0.42437, 0.98445)
+CASCADE_SCORE_COEF = (-1.33071, 2.36708, -0.61654, 0.29815, 0.02969, -0.51235, 0.05465, 0.19615, 0.058, -0.13228, -0.29081, -0.3863)
+CASCADE_SCORE_INTERCEPT = -0.78118
+# Below the first an analyte the cascade took in is a candidate, not an
+# identification; from the second it is worth two dots. Swept offline on the
+# rows of five bench regimes (found of 54, 150, 300; real / strangers at two
+# dots or more, tube 100 without offset): no minimum 223, 201/21 at 0.5 and
+# 175/8 at 0.7; a minimum of 0.15 found 220 with 58 strangers in all, 0.5 only
+# 202 with 24. Two dots at 0.7: no stranger at two dots or more in the tubes
+# of 18 and 50.
+CASCADE_SCORE_MIN = 0.15
+CASCADE_SCORE_TWO = 0.7
+CASCADE_BY_SCORE = True
+
+CASCADE_FEATURES = ('log apex snr', 'log matched snr', 'disagreement',
+                    'free share', 'capped share', 'at cap', 'log signals',
+                    'log step', 'placed', 'wide', 'log nh', 'log shift')
+
+
+def cascade_features(res, linewidth_ppm) -> list:
+    """What the cascade knows about an analyte it took in, as the features
+    of ``cascade_score``: how tall its tallest signal and all its signals
+    together stand over the noise, how well its own signals agree, how much
+    of its listing the residual left it, whether a peak's amplitude held it
+    down, how far it slid, how late it was taken."""
+    sig = np.array([v[3] for v in (res.get('signals') or ())], dtype=float)
+    dis = res.get('disagreement')
+    dis = 3.0 if dis is None or not np.isfinite(dis) else min(float(dis), 3.0)
+    shift = abs(float(res.get('shift_ppm') or 0.0))
+    lw = float(linewidth_ppm)
+    return [np.log1p(float(res.get('apex_snr') or 0.0)),
+            np.log1p(float(np.sqrt(np.sum(sig ** 2))) if sig.size else 0.0),
+            dis, float(res.get('free_share') or 0.0),
+            float(res.get('capped_share') or 0.0),
+            float(bool(res.get('at_cap'))), np.log1p(sig.size),
+            np.log1p(float(res.get('step') or 0)),
+            float(shift <= 1.001 * slide_step(lw)),
+            float(shift > 1.001 * SHIFT_REACH_LW * lw),
+            np.log1p(float(res.get('nh') or 0.0)),
+            np.log1p(1000.0 * shift)]
+
+
+def cascade_score(res, linewidth_ppm) -> float:
+    """The probability the cascade's model gives that an analyte it took in
+    is really in the sample (see ``CASCADE_SCORE_COEF``)."""
+    f = np.asarray(cascade_features(res, linewidth_ppm), dtype=float)
+    z = (f - np.asarray(CASCADE_SCORE_MEAN)) / np.asarray(CASCADE_SCORE_SCALE)
+    t = float(np.dot(z, np.asarray(CASCADE_SCORE_COEF)) + CASCADE_SCORE_INTERCEPT)
+    return float(1.0 / (1.0 + np.exp(-t)))
+
+
 def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                    noise_sigma, linewidth_ppm, drift_ppm, field_mhz,
                    excluded_regions=(), min_snr=CASCADE_MIN_SNR,

@@ -431,29 +431,11 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self.cascade_advice_label.pack(fill=tk.X, padx=24)
         self.cascade_var.trace_add('write',
                                    lambda *_: self._refresh_cascade_advice())
-        # How far an analyte the cascade brought in may have its own
-        # signals disagree and still be given a number. The analyst's
-        # call, like the singlet's signal-to-noise: on the reference
-        # study myo-inositol's four signals agree to 26% and it measures
-        # to within 7%, while hydroxyproline's six disagree by 262%.
-        mf7 = ttk.Frame(s2); mf7.pack(fill=tk.X, pady=1)
-        _l = ttk.Label(mf7, text='  Max disagreement:', font=('Arial', 8),
-                       width=26)
-        _l.pack(side=tk.LEFT)
+        # Kept for the projects saved with it: the cascade's identification
+        # is decided by its score now (quant_cascade.cascade_score), and this
+        # no longer reaches the engine.
         self.max_disagreement_var = tk.DoubleVar(
             value=QUANTIFICATION['max_disagreement_pct'])
-        self._max_disagreement_sb = ttk.Spinbox(
-            mf7, from_=5.0, to=100.0, increment=5.0, width=6,
-            textvariable=self.max_disagreement_var)
-        self._max_disagreement_sb.pack(side=tk.LEFT)
-        self._tip(_l, "Cascade only. How far an analyte's own signals may "
-                      'disagree (%) and still be given a number; above it '
-                      'the analyte is identified without one.')
-        self.cascade_var.trace_add(
-            'write', lambda *_: self._max_disagreement_sb.configure(
-                state='normal' if self.cascade_var.get() else 'disabled'))
-        self._max_disagreement_sb.configure(
-            state='normal' if self.cascade_var.get() else 'disabled')
         ttk.Button(s2, text='Review deconvolution…',
                    command=lambda: self._open_deconvolution_window()).pack(
                        anchor=tk.W, padx=4, pady=(1, 3))

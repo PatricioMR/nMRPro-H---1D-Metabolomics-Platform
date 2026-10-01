@@ -27,6 +27,7 @@ import numpy as np
 
 from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
+    CASCADE_BY_SCORE, CASCADE_SCORE_MIN, CASCADE_SCORE_TWO, cascade_score,
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
     cascade_missed, exclusion_weight, fit_curve_record,
     SHIFT_REACH_LW as CASCADE_FINE_REACH_LW,
@@ -465,6 +466,11 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
         return 1, ('identified on a free apex by the shape of its signal '
                    'alone: no line of it was confirmed')
     if cascade is not None:
+        if cascade.get('score') is not None:
+            sc = float(cascade['score'])
+            return ((2 if sc >= CASCADE_SCORE_TWO else 1),
+                    f'the cascade took it in and its model scores it '
+                    f'{100 * sc:.0f}% likely to be there')
         if cascade.get('wide'):
             # slid further than the study's own drift can account for: a
             # column slid that far agrees with some peak by chance, and its
@@ -1413,8 +1419,13 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         _dis = float(res.get('disagreement') or float('nan'))
         _bar = float(MAX_SIGNAL_DISAGREEMENT if max_disagreement is None
                      else max_disagreement)
-        if (float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
-                or (np.isfinite(_dis) and _dis > _bar)):
+        if CASCADE_BY_SCORE:
+            res['score'] = cascade_score(res, linewidth_ppm)
+            _crowded = res['score'] < CASCADE_SCORE_MIN
+        else:
+            _crowded = (float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
+                        or (np.isfinite(_dis) and _dis > _bar))
+        if _crowded:
             # identified, but the amount would come from the part of it
             # nobody else accounts for; that number is not a measurement
             if former is not None and former.get('_fit_refused'):
@@ -1437,6 +1448,13 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                 1.001 * CASCADE_FINE_REACH_LW * float(linewidth_ppm)
             row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
                                former=former)
+            if float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY:
+                row['_status_reasons'].insert(0, (
+                    f"Most of this analyte's signal lies where analytes already "
+                    f"quantified account for the trace ({100 * (1 - float(res['free_share'])):.0f}%): "
+                    f"it is identified, but its amount is read from the part "
+                    f"nobody else accounts for and is an estimate, not a "
+                    f"measurement."))
             if mid in cols and res.get('window'):
                 row['_fit_curve'] = fit_curve_record(
                     cols[mid], ppm, res['window'], res['per_proton'], groups,
@@ -1479,7 +1497,7 @@ def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> 
         '_cascade': {k: res.get(k) for k in ('apex_snr', 'shift_ppm', 'at_cap',
                                              'signals', 'step', 'nh',
                                              'free_share', 'capped_share',
-                                             'disagreement', 'placed', 'wide')},
+                                             'disagreement', 'placed', 'wide', 'score')},
         '_peak': None,
         '_peak_rank': None,
         '_display_peak_rank': None,

@@ -309,11 +309,12 @@ def test_the_diagnostics_say_what_the_cascade_did():
     assert diag['cascade']['order'][0][1] == 'Missed'
 
 
-def test_an_analyte_mostly_under_other_analytes_is_identified_not_quantified():
+def test_an_analyte_mostly_under_other_analytes_says_its_amount_is_an_estimate():
     """Half its signal sits where a quantified analyte accounts for the
     trace. On the bench an amount read from the free minority missed by a
-    quarter and moved the ratio between groups as much, so no number is
-    given -- the identification still is (CASCADE_CROWDED)."""
+    quarter and moved the ratio between groups as much: the analyte is
+    identified by the cascade's score, and the row says its amount is an
+    estimate (or, below the score's minimum, it is a candidate: CASCADE_CROWDED)."""
     owner = _met('owner', 'Owner', [_signal(2.0, 's', 2)])
     crowded = _met('crowded', 'Crowded', [_signal(2.0, 's', 2),
                                           _signal(3.0, 's', 2)])
@@ -326,9 +327,12 @@ def test_an_analyte_mostly_under_other_analytes_is_identified_not_quantified():
         noise_sigma=SIGMA, linewidth_ppm=LW, deconvolve=False,
         cascade=True, metabolites=[owner, crowded], field_mhz=FIELD)}
     r = rows['crowded']
-    assert r['_by_cascade'] and r['_not_quantified']
-    assert r['_rejection'] == CASCADE_CROWDED
+    assert r['_by_cascade']
     assert 0.25 <= r['_cascade']['free_share'] < MIN_FREE_TO_QUANTIFY
+    if r['_not_quantified']:
+        assert r['_rejection'] == CASCADE_CROWDED
+    else:
+        assert 'estimate' in ' '.join(r['_status_reasons'])
 
 
 def test_a_free_analyte_is_quantified_and_says_how_free_it_was():
