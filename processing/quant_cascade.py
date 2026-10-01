@@ -107,21 +107,39 @@ FIXED_TOLERANCE = 0.25      # a quantified analyte's amplitude, in the joint fit
 # first stranger comes in. What enters is a cascade row, one dot.
 MAX_SIGNAL_DISAGREEMENT = 0.45
 OWNED_SHARE = 0.7           # of a point's height explained: it is theirs
+# Where a quantified analyte's signals are subtracted: each may settle
+# within this many linewidths of its listed place, at the amount measured,
+# where it leaves the least of the mean trace -- the joint fit's own reach
+# (quant_joint_fit.PART_SHIFT_REACH_LW). Subtracted at the listed place, a
+# line standing a few mppm off leaves a remainder shaped like a derivative,
+# tens of sigma tall beside a large signal, and a compound listing a line
+# there takes it. GISSMO tubes at 600 MHz, three seeds (2026-09-30): 18
+# analytes, rows of compounds not in the tube 32 -> 25, at two dots 10 ->
+# 7; 100 analytes 21 -> 18 and 9 -> 5, real found 189 -> 194. Settling the
+# width too changed nothing; settling the cascade's own entries signal by
+# signal helped the strangers as much as the real ones (18: 7 -> 8 false
+# at two dots).
+SETTLE_REACH_LW = 1.0
+SETTLE_STEPS = 17
 SIGNAL_AGREEMENT_SNR = 5.0  # a signal quiet than this does not testify
 
 
 def signal_protons(dp) -> float | None:
-    """A listed signal's proton count: what the reference measured under
-    its profile where it did, its listing otherwise; None when neither."""
-    for key in ('profile_nh', 'protons'):
-        v = dp.get(key)
-        try:
-            v = float(v) if v not in (None, '') else None
-        except (TypeError, ValueError):
-            v = None
-        if v and v > 0:
-            return v
-    return None
+    """A listed signal's proton count, as the reference lists it -- its
+    stoichiometry; None when it lists none.
+
+    Not the protons measured under its profile on the reference spectrum
+    (``profile_nh``): that share carries the reference's own artefacts into
+    every study. Lactate's quartet holds 0.65 of its proton on the BMRB
+    spectrum, attenuated by the water suppression, so its doublet's share
+    came out 3.35 and every lactate was divided by it: 10% low, in any
+    sample (2026-09-30, ADR-060)."""
+    v = dp.get('protons')
+    try:
+        v = float(v) if v not in (None, '') else None
+    except (TypeError, ValueError):
+        v = None
+    return v if v and v > 0 else None
 
 
 class Column:
@@ -331,11 +349,37 @@ def amplitude_cap(parts, trace, weight, sigma) -> float:
     return cap
 
 
+def _settle(parts0, grid_parts, r, a_mean):
+    """For each signal of one subtracted analyte, the candidate place that
+    leaves the least of ``r`` (the mean residual with the analyte already
+    taken out at ``parts0``). Returns the chosen ``(idx, val)`` per signal,
+    nearest to the listed place among equals."""
+    chosen = []
+    for i, (i0, v0) in enumerate(parts0):
+        best = (0.0, (i0, v0))
+        for cand in grid_parts:
+            i_s, v_s = cand[i]
+            u = np.union1d(i0, i_s)
+            d = np.zeros(u.size)
+            d[np.searchsorted(u, i0)] += a_mean * v0
+            d[np.searchsorted(u, i_s)] -= a_mean * v_s
+            gain = float(np.sum(r[u] ** 2) - np.sum((r[u] + d) ** 2))
+            if gain > best[0]:
+                best = (gain, (i_s, v_s))
+        chosen.append(best[1])
+    return chosen
+
+
 def subtract_fixed(cols, ppm, X, fixed, *, sigma=None, included=None,
-                   min_snr=CASCADE_MIN_SNR, owned_share=OWNED_SHARE):
+                   min_snr=CASCADE_MIN_SNR, owned_share=OWNED_SHARE,
+                   linewidth_ppm=None):
     """``X`` (points x samples) minus every fixed analyte at its per-sample
     amplitude ``fixed[mid][sample]``; the columns left free; and the points
     the fixed analytes own.
+
+    With ``linewidth_ppm`` each fixed signal is subtracted where it settles
+    (SETTLE_REACH_LW), largest analyte first; without it, at its listed
+    place.
 
     A point is theirs where, at the amounts they were measured at, they
     already account for ``owned_share`` of the height the spectrum has
@@ -353,24 +397,50 @@ def subtract_fixed(cols, ppm, X, fixed, *, sigma=None, included=None,
     cols_i = [int(i) for i in (included if included is not None
                                else range(X.shape[1]))
               if 0 <= int(i) < X.shape[1]]
+    taken = []
     for col in cols:
         amps = fixed.get(col.mid)
         if not amps:
             free.append(col)
             continue
-        idx, val = col.curve(ppm, 0.0)
-        if idx is None:
+        parts = col.part_curves(ppm, 0.0)
+        if not parts:
             continue
-        good = []
+        per = {}
         for s_i, a in amps.items():
             s_i = int(s_i)
             if a is None or not np.isfinite(a) or a <= 0 or not 0 <= s_i < Y.shape[1]:
                 continue
-            Y[idx, s_i] -= float(a) * val
-            if s_i in cols_i:
-                good.append(float(a))
-        if good:
-            cover[idx] += float(np.mean(good)) * val
+            per[s_i] = float(a)
+            for idx, val in parts:
+                Y[idx, s_i] -= float(a) * val
+        good = [a for s_i, a in per.items() if s_i in cols_i]
+        taken.append((col, parts, per, float(np.mean(good)) if good else 0.0))
+    if linewidth_ppm and cols_i:
+        reach = SETTLE_REACH_LW * float(linewidth_ppm)
+        grid = sorted(np.linspace(-reach, reach, SETTLE_STEPS), key=abs)
+        r = Y[:, cols_i].mean(axis=1)
+        for k in sorted(range(len(taken)), key=lambda k: -taken[k][3]):
+            col, parts, per, a_mean = taken[k]
+            if a_mean <= 0:
+                continue
+            grid_parts = [col.part_curves(ppm, sh) for sh in grid]
+            if any(len(g) != len(parts) for g in grid_parts):
+                continue
+            chosen = _settle(parts, grid_parts, r, a_mean)
+            for (i0, v0), (i_s, v_s) in zip(parts, chosen):
+                if i_s is i0:
+                    continue
+                for s_i, a in per.items():
+                    Y[i0, s_i] += a * v0
+                    Y[i_s, s_i] -= a * v_s
+                r[i0] += a_mean * v0
+                r[i_s] -= a_mean * v_s
+            taken[k] = (col, chosen, per, a_mean)
+    for col, parts, per, a_mean in taken:
+        if a_mean > 0:
+            for idx, val in parts:
+                cover[idx] += a_mean * val
     owned = np.zeros(np.asarray(ppm).size, dtype=bool)
     if sigma and cols_i:
         held = X[:, cols_i].mean(axis=1)
@@ -469,7 +539,10 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
         for k, e in enumerate(active):
             A[[pos[v] for v in e.idx], k] = e.val
         ub = np.array([e.cap for e in active])
-        res = lsq_linear(A, t_full[union] * weight[union], bounds=(0, ub), lsmr_tol='auto')
+        # bvls, as quant_shared.resolve_window: a cap near zero sent the
+        # iterative default into a loop it did not leave
+        res = lsq_linear(A, t_full[union] * weight[union], bounds=(0, ub),
+                         method='bvls')
         amps = np.asarray(res.x, dtype=float)
         for k, e in enumerate(active):
             e.amplitude = float(amps[k])
@@ -548,7 +621,7 @@ def measure_jointly(active, owners, ppm, X, included, *, sigma, weight=None,
             a = float(amps.get(int(s_i), 0.0) or 0.0)
             lo[n_act + k] = max(a * (1.0 - tolerance), 0.0)
             hi[n_act + k] = max(a * (1.0 + tolerance), 1e-12)
-        res = lsq_linear(A, t[union], bounds=(lo, hi), lsmr_tol='auto')
+        res = lsq_linear(A, t[union], bounds=(lo, hi), method='bvls')
         x = np.asarray(res.x, dtype=float)
         for k, e in enumerate(active):
             out.setdefault(e.col.mid, {})[int(s_i)] = float(x[k])
@@ -627,12 +700,14 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                          linewidth_ppm=linewidth_ppm, drift_ppm=drift_ppm)
     Y, free, owned = subtract_fixed(cols, ppm, X, fixed_per_proton or {},
                                     sigma=float(noise_sigma), included=incl,
-                                    min_snr=min_snr)
+                                    min_snr=min_snr,
+                                    linewidth_ppm=float(linewidth_ppm))
     weight = exclusion_weight(ppm, excluded_regions)
     weight[owned] = 0.0
     trace = Y[:, incl].mean(axis=1)
     res = cascade(free, ppm, trace, sigma=float(noise_sigma),
-                  linewidth_ppm=float(linewidth_ppm), weight=weight, min_snr=min_snr)
+                  linewidth_ppm=float(linewidth_ppm), weight=weight,
+                  min_snr=min_snr)
     # Measured on the spectrum as it is, beside the quantified analytes
     # that reach into these regions -- not on what the subtraction left.
     taken = {e.col.mid for e in res.active}

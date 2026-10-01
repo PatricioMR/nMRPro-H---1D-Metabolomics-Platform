@@ -36,6 +36,7 @@ from gui.stages._annotation_helpers import ambiguous_peak_ranks
 from gui.stages._quant_adapter import quantify_project
 from processing.baseline_model import BaselineCache, BaselineModel
 from processing.noise_estimation import estimate_noise_from_region
+from processing.peak_alignment import apply_rigid_shifts
 from processing.peak_detection import as_app_peak, detect_peaks
 from processing.stocsy import compute_peak_correlation_matrix
 from validation.app_annotation import annotate as app_annotate
@@ -73,7 +74,7 @@ def region_noise(ppm, raw, region):
 
 
 def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
-            aligned_first=False, keep_detection_alignment=False,
+            aligned_first=False, keep_detection_alignment=True,
             overrides=None, log=print):
     """Detection and annotation, as the interface runs them: everything
     before an amount is measured.
@@ -81,8 +82,11 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
     ``aligned_first`` presses the Align button before detecting, with the
     dialog's own settings (icoshift, 50 segments, 0.030 ppm): it replaces
     the intensities every later step reads and tells detection not to
-    align again, as the application does. Without it detection aligns a
-    copy for its own use and quantification integrates the unaligned data.
+    align again, as the application does. Without it detection aligns
+    rigidly and, with ``keep_detection_alignment`` (the default, as the
+    detection stage does), the same shifts are carried to the matrix
+    annotation and quantification read. Turned off, they read the
+    unaligned data -- the behaviour before 2026-09-30.
     """
     d = defaults(overrides)
     ppm = np.asarray(ppm, dtype=float)
@@ -120,19 +124,16 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
             min_group_presence=d['min_group_presence'],
             excluded_regions=excluded)
     peaks = [as_app_peak(p) for p in details.get('peaks') or ()]
-    if keep_detection_alignment and not aligned_first:
+    if (keep_detection_alignment and not aligned_first
+            and details.get('alignment_applied')):
         # Detection placed every peak window on the rigidly aligned copy it
         # made; carrying on with the unaligned matrix integrates those
-        # windows where the peaks are not.
-        if bl2d is not None:
-            raise ValueError('keep_detection_alignment with the baseline '
-                             'model on: the removed baseline was not '
-                             'shifted with the spectra, so the raw matrix '
-                             'cannot be rebuilt from the aligned one')
-        _al = details.get('aligned_intensities')
-        if _al is not None and np.shape(_al) == raw.shape:
-            corr = np.asarray(_al, dtype=float)
-            raw = corr.copy()
+        # windows where the peaks are not. The interface does the same: it
+        # replaces the project's intensities and corrects them again.
+        raw = apply_rigid_shifts(raw, details.get('shift_points'))
+        corr = np.asarray(BaselineCache().corrected(ppm, raw, model,
+                                                    already_corrected=False),
+                          dtype=float)
     noise_std = float(details.get('noise_std') or noise or 0.0)
     if not peaks:
         raise RuntimeError('detection found nothing')
@@ -196,7 +197,7 @@ def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
 
 def fresh_run(ppm, raw, samples_info, *, db_path, field_mhz, standard_ppm,
               standard_nh, standard_conc, standard_name='IS',
-              aligned_first=False, keep_detection_alignment=False,
+              aligned_first=False, keep_detection_alignment=True,
               overrides=None, log=print):
     """``(peaks, metabolites, rows, noise_std, settings)`` for one study:
     ``prepare`` then ``quantify_prepared``."""

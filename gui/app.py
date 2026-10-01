@@ -91,6 +91,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self._bl_cache = BaselineCache()
         self.baseline_corrected  = False
         self.alignment_corrected = False
+        self.alignment_shifts_ppm = None
         self.eligible_overrides = {}   # {f'{met_id}__{peak_rank}': bool}
 
         self.group_colors = {

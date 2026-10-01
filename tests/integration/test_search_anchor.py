@@ -22,7 +22,7 @@ from processing.peak_detection import as_app_peak, detect_peaks
 from processing.signal_quality import is_annotatable
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-DB = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_Mammalian_v04.db')
+DB = os.path.join(REPO, 'databases', 'BMRB_Metabolomics_Mammalian_v05.db')
 MHZ = 500.0
 PPM = np.linspace(4.2, 2.8, 14001)
 FWHM = 1.2 / MHZ

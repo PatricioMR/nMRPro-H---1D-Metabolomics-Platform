@@ -44,7 +44,8 @@ CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out',
 # a new cache entry, so a cached tube is never read by code it was not
 # made with.
 _CACHED_SOURCES = (
-    'processing/peak_detection.py', 'processing/signal_quality.py',
+    'processing/peak_detection.py', 'processing/peak_alignment.py',
+    'processing/signal_quality.py', 'validation/fresh_run.py',
     'processing/stocsy.py', 'processing/baseline_model.py',
     'processing/annotation_scoring.py', 'processing/annotation_quality.py',
     'processing/annotation_detectability.py',

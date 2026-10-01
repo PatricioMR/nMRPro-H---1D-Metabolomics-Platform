@@ -32,6 +32,23 @@ def _shift_1d(y, shift_pts):
     return out
 
 
+def apply_rigid_shifts(matrix, shift_pts):
+    """Shift every column of ``matrix`` (points x samples) by its own whole
+    number of points, as ``global_peak_rigid_align`` found them.
+
+    Detection aligns its own copy; this carries the same shifts to the
+    matrix the later steps read, so the peaks it placed stand where the
+    integration and the fits look for them."""
+    arr = np.asarray(matrix, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    out = arr.copy()
+    for s, k in enumerate(np.asarray(shift_pts, dtype=int)[:arr.shape[1]]):
+        if k:
+            out[:, s] = _shift_1d(arr[:, s], int(k))
+    return out
+
+
 def _normalized_overlap_score(ref, sample, shift_pts):
     """Correlation score for one integer shift using only overlapping points."""
     if shift_pts > 0:

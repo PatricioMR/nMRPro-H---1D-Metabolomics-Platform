@@ -83,7 +83,7 @@ from gui.stages._quant_adapter import quantify_project  # noqa: E402
 from processing.stocsy import compute_peak_correlation_matrix  # noqa: E402
 
 DB_DEFAULT = os.path.join(REPO, 'databases',
-                          'BMRB_Metabolomics_Mammalian_v04.db')
+                          'BMRB_Metabolomics_Mammalian_v05.db')
 OUT_DIR = os.path.join(REPO, 'validation', 'out')
 
 # ── the study ────────────────────────────────────────────────────────────────

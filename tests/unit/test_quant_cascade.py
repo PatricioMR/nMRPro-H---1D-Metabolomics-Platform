@@ -68,7 +68,8 @@ def test_a_signal_the_reference_did_not_measure_leaves_no_column():
 
 
 def test_the_protons_come_from_the_profile_where_the_reference_measured_one():
-    assert signal_protons({'protons': 2, 'profile_nh': 1.98}) == pytest.approx(1.98)
+    # stoichiometry, not the share measured on the reference spectrum
+    assert signal_protons({'protons': 3, 'profile_nh': 3.35}) == 3.0
     assert signal_protons({'protons': 2}) == 2.0
     assert signal_protons({'protons': '', 'profile_nh': None}) is None
 
@@ -164,6 +165,42 @@ def test_the_remainder_of_a_subtracted_signal_is_not_a_new_analyte():
     w[owned] = 0.0
     res = cascade(free, PPM, Y[:, 0], sigma=SIGMA, linewidth_ppm=LW, weight=w)
     assert [e.col.mid for e in res.active] == []
+
+
+def _owner_off_its_listing(off_lw):
+    """A quantified singlet listed at 2.0 ppm whose line stands ``off_lw``
+    linewidths away, with its true amount handed to the subtraction."""
+    owner = _met('owner', 'Owner', [_signal(2.0, 's', 1)])
+    cols = build_columns([owner], field_mhz=FIELD, linewidth_ppm=LW,
+                         drift_ppm=0.0)
+    X = np.column_stack([_line(2.0 + off_lw * LW, 1000.0)] * 2)
+    _idx, val = cols[0].curve(PPM, 0.0)
+    amp = 1000.0 / float(val.max())
+    return cols, X, {'owner': {0: amp, 1: amp}}
+
+
+def test_a_quantified_line_off_its_listing_is_subtracted_where_it_stands():
+    """Subtracted at the listed place, a line half a linewidth off leaves a
+    remainder shaped like a derivative, hundreds of sigma tall, for a
+    compound listing a line there to take."""
+    cols, X, fixed = _owner_off_its_listing(0.5)
+    listed, _f, _o = subtract_fixed(cols, PPM, X, fixed, sigma=SIGMA)
+    settled, _f, _o = subtract_fixed(cols, PPM, X, fixed, sigma=SIGMA,
+                                     linewidth_ppm=LW)
+    assert listed[:, 0].max() > 300.0
+    assert settled[:, 0].max() < 0.1 * listed[:, 0].max()
+
+
+def test_a_line_beyond_the_reach_stays_where_it_is_listed():
+    """Settling moves a signal within SETTLE_REACH_LW, not onto whatever
+    peak stands further off: a neighbour two linewidths away is not
+    claimed by the quantified line beside it."""
+    cols, X, fixed = _owner_off_its_listing(0.0)
+    X = X + np.column_stack([_line(2.0 + 2.0 * LW, 400.0)] * 2)
+    settled, _f, _o = subtract_fixed(cols, PPM, X, fixed, sigma=SIGMA,
+                                     linewidth_ppm=LW)
+    near = np.abs(PPM - (2.0 + 2.0 * LW)) < 0.2 * LW
+    assert settled[near, 0].max() > 0.9 * 400.0
 
 
 # ── end to end, through the engine ──────────────────────────────────────

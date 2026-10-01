@@ -10069,5 +10069,36 @@
    ],
    "external": []
   }
- ]
+ ],
+ "forms": {
+  "_about": "GISSMO fits every form a compound takes in solution into one entry, each form at full weight. A form listed here is weighted by its share at equilibrium. D-glucose in D2O, 25-31 C: alpha-pyranose 36%, beta-pyranose 64% -- Angyal SJ, The composition of reducing sugars in solution, Adv Carbohydr Chem Biochem 1984;42:15-68.",
+  "D-Glucose": [
+   {
+    "form": "beta-pyranose",
+    "spins": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6
+    ],
+    "fraction": 0.64
+   },
+   {
+    "form": "alpha-pyranose",
+    "spins": [
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13
+    ],
+    "fraction": 0.36
+   }
+  ]
+ }
 }

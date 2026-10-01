@@ -356,7 +356,7 @@ def refine_geometry(comps, x, trace, *, lb=None, ub=None, movable=None):
 
     def _rss():
         A = np.column_stack([c.curve(x) for c in comps])
-        res = lsq_linear(A, t, bounds=(lb, ub), lsmr_tol='auto')
+        res = lsq_linear(A, t, bounds=(lb, ub), method='bvls')
         r = t - A @ res.x
         return float(np.dot(r, r))
 
@@ -547,8 +547,12 @@ def resolve_window(components, ppm, intensities, *, included=None,
         a_fixed = _fixed_amplitudes(s)
         taken = A_fixed @ a_fixed if A_fixed is not None else 0.0
         if free:
+            # The bounded active set: exact for a window's few columns, and
+            # it terminates. The iterative default looped for over half an
+            # hour on a column whose ceiling was 6e-28 -- an analyte with no
+            # room left in the window (GISSMO 50-analyte tube, 500 MHz).
             res = lsq_linear(A_free, t - taken, bounds=(lb, ub),
-                             lsmr_tol='auto')
+                             method='bvls')
             a = np.asarray(res.x, dtype=float)
             fitted = A_free @ a + taken
         else:

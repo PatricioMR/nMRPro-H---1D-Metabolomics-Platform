@@ -47,15 +47,22 @@ def load_systems(path=SYSTEMS_JSON) -> dict:
     outside the matrix."""
     with open(path, encoding='utf-8') as f:
         doc = json.load(f)
+    forms = doc.get('forms') or {}
     out = {}
     for s in doc['systems']:
         n = len(s['ppm'])
         J = np.zeros((n, n))
         for i, j, v in s['J_hz']:
             J[i, j] = J[j, i] = float(v)
+        weight = np.ones(n)
+        for f_ in forms.get(s['name']) or ():
+            weight[list(f_['spins'])] = float(f_['fraction'])
         out[s['name']] = {'name': s['name'], 'bmse': s['bmse'],
                           'fit_field': s['fit_field_mhz'], 'lw': s['lw_hz'],
                           'ppm': np.asarray(s['ppm'], dtype=float), 'J': J,
+                          # each spin's share of the molecules: below one
+                          # where the entry holds several forms (anomers)
+                          'weight': weight,
                           'external': [[(int(a), float(c)) for a, c in g]
                                        for g in s['external']]}
     return out
@@ -110,7 +117,8 @@ def _fragments(J):
 
 def stick_spectrum(sys_, field_mhz):
     """(ppm, intensity) of every line at ``field_mhz``; intensities sum to
-    the number of protons.
+    the number of protons, each form of the compound at its share
+    (``weight``, the JSON's ``forms``).
 
     Solved fragment by fragment: spins with no coupling path between them
     have independent Hamiltonians, and the spectrum of the whole is the sum
@@ -120,6 +128,7 @@ def stick_spectrum(sys_, field_mhz):
     external couplings that reach it."""
     nu0 = sys_['ppm'] * field_mhz
     J = sys_['J']
+    weight = sys_.get('weight', np.ones(len(nu0)))
     fs, ins = [], []
     for frag in _fragments(J):
         pos = {int(s): k for k, s in enumerate(frag)}
@@ -134,7 +143,7 @@ def stick_spectrum(sys_, field_mhz):
                     nu[si] += s * c
             f, i = _lines(nu, Jf)
             fs.append(f)
-            ins.append(i / 2 ** len(groups))
+            ins.append(i * float(np.mean(weight[frag])) / 2 ** len(groups))
     return np.concatenate(fs) / field_mhz, np.concatenate(ins)
 
 

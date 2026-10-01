@@ -146,12 +146,11 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                                        or qm.get((met.get('id'), rank))),
                     'score': mp.get('composite_score',
                                     mp.get('multiplet_score', 0.0)),
-                    # A shape is divided by the protons measured under its
-                    # profile's window on the reference spectrum, where the
-                    # database measured them; the listed count otherwise.
-                    'protons': (mp.get('profile_nh')
-                                if _shape is not None
-                                and mp.get('profile_nh') else mp.get('protons')),
+                    # Divided by the listed protons, the stoichiometry --
+                    # not by those measured under the profile on the
+                    # reference spectrum, which carry its artefacts (see
+                    # quant_cascade.signal_protons).
+                    'protons': mp.get('protons'),
                     # A measured pattern's relative line heights, for the
                     # capture correction; a first-order multiplet carries none
                     # and the engine falls back to the binomial pattern.

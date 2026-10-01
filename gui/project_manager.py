@@ -91,6 +91,9 @@ class ProjectManager:
                                else None),
             'baseline_corrected':  getattr(app, 'baseline_corrected',  False),
             'alignment_corrected': getattr(app, 'alignment_corrected', False),
+            # The rigid shift detection applied to each sample, kept so the
+            # alignment baked into all_intensities stays auditable.
+            'alignment_shifts_ppm': getattr(app, 'alignment_shifts_ppm', None),
             'samples_info':        app.samples_info,
             'group_colors':    app.group_colors,
             'source_file':     app.current_file,
@@ -346,6 +349,7 @@ class ProjectManager:
             pass
         app.baseline_corrected   = state.get('baseline_corrected',  False)
         app.alignment_corrected  = state.get('alignment_corrected', False)
+        app.alignment_shifts_ppm = state.get('alignment_shifts_ppm')
         app.samples_info     = state.get('samples_info', [])
         app.group_colors     = state.get('group_colors', app.group_colors)
         app.current_file     = state.get('source_file')

@@ -538,7 +538,16 @@ DRIFT_RESIDUAL_MIN_SIGNALS = 3
 #                 error: position alone cannot tell them from a stranger.
 # A floor of 2 mppm on the bar spared betaine on the sparse tube and let a
 # stranger back to three dots on the crowded one; not kept.
-POSITION_SCATTER_K = 3.0
+#
+# 4.5, not 3.0, since the samples reach quantification aligned
+# (2026-09-30): the scatter is measured on the study's signals, and the
+# drift between samples had been part of it -- 1.7 mppm unaligned, 1.1
+# aligned on the 18-analyte GISSMO tube at 600 MHz. What the bar is for,
+# the reference's own error, did not shrink with it. Three seeds,
+# aligned: on the 100-analyte tube real at two dots or more 168 -> 170,
+# three dots 31 -> 33, strangers at two dots 9 -> 9, at three none; the
+# 18-analyte tube unchanged.
+POSITION_SCATTER_K = 4.5
 
 # A signal off the drift at its apex is released from the cap when the
 # joint fit, with its neighbours fitted beside it, puts it within this many

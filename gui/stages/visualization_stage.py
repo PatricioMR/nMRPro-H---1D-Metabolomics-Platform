@@ -265,6 +265,7 @@ class VisualizationStage(BaseStage):
             self.app.all_intensities = self._original_intensities.copy()
             self.app.baseline_corrected  = False
             self.app.alignment_corrected = False
+            self.app.alignment_shifts_ppm = None
             self.app.update_plot()
             try:
                 self.btn_revert.config(state='disabled')

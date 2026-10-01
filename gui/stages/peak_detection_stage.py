@@ -684,6 +684,7 @@ class PeakDetectionStage(BaseStage):
             details = _result['details'] or {}
             raw = details.get('peaks', [])
             elapsed = _result['elapsed']
+            self._keep_detection_alignment(details)
 
             self.processor.ppm = np.asarray(self.app.ppm, dtype=float)
             self.processor.mean_intensity = details.get('reference_intensity')
@@ -795,6 +796,41 @@ class PeakDetectionStage(BaseStage):
                 f"Detected {len(self.peaks)} signals")
 
         overlay.after(100, _poll)
+
+    def _keep_detection_alignment(self, details):
+        """Carry detection's rigid alignment to the project's spectra.
+
+        Detection aligns its own copy and places every peak, and every
+        per-sample apex, on it. Annotation and quantification read the
+        project's intensities: left unaligned, the fits work on a mean trace
+        blurred by the samples' drift (on the 100-analyte bench tube at
+        600 MHz the drift between samples is about one linewidth, and the
+        joint fit left 42% of its region unexplained against 3% aligned).
+        Same as applying the Align dialog: recorded and undone by Revert
+        Processing."""
+        pts = details.get('shift_points')
+        if not details.get('alignment_applied') or pts is None \
+                or not np.any(pts):
+            return
+        from processing.peak_alignment import apply_rigid_shifts
+        vis = self.app.stages.get('visualization')
+        if vis is not None and getattr(vis, '_original_intensities', None) is None:
+            vis._original_intensities = np.array(self.app.all_intensities,
+                                                 dtype=float, copy=True)
+        self.app.all_intensities = apply_rigid_shifts(self.app.all_intensities,
+                                                      pts)
+        self.app.alignment_corrected = True
+        self.app.alignment_shifts_ppm = [float(v) for v in
+                                         details.get('shift_ppm', ())]
+        self.app.invalidate_baseline_cache()
+        try:
+            vis.btn_revert.config(state='normal')
+        except Exception:
+            pass
+        shifts = np.abs(np.asarray(details.get('shift_ppm', ()), float))
+        print(f'[Detection] spectra aligned rigidly for every later step: '
+              f'max {1000 * shifts.max():.2f} mppm, '
+              f'mean {1000 * shifts.mean():.2f} mppm')
 
     def toggle_peaks(self):
         if self.peaks:

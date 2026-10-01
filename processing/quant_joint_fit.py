@@ -95,6 +95,13 @@ WIDTH_PER_SAMPLE = False
 # to whatever sits where it should have been: taurine read -36% and the
 # betaine singlet under it +26%. BATMAN lets every multiplet move on its
 # own; ASICS aligns locally.
+#
+# Kept at 1.0 with the samples aligned (2026-09-30), although the aligned
+# mean trace reads its linewidth 25% narrower (4.5 mppm against 6.0 on the
+# 100-analyte GISSMO tube at 600 MHz) and 1.3 would restore the reach in
+# ppm: three dots 33 -> 37 real there, but an unknown peak twice as tall
+# 0.8 linewidth beside a known singlet then takes 25% of it (+3% at 1.0).
+# The bench holds no compound outside the library; a real sample does.
 PART_SHIFT_REACH_LW = 1.0
 PART_SHIFT_STEPS = 9
 PART_SHIFT_PASSES = 2

@@ -21,3 +21,14 @@ def test_saved_quant_variables_are_restored_by_the_same_key():
     for key in ('shape_fit', 'shared_deconv', 'j_resolve', 'singlet_min_snr',
                 'cascade', 'max_disagreement', 'joint_fit'):
         assert key in saved and key in restored
+
+
+def test_alignment_saved_and_restored_by_the_same_key():
+    # all_intensities is saved aligned once detection aligns it; the shifts
+    # that made it so must come back with it, or the alignment is no longer
+    # auditable after a reload.
+    saved = dict(re.findall(r"'(\w+)':\s*getattr\(app, '(\w+)'", SRC))
+    restored = dict(re.findall(r"app\.(\w+)\s*=\s*state\.get\('(\w+)'", SRC))
+    restored = {k: a for a, k in restored.items()}
+    for key in ('alignment_corrected', 'alignment_shifts_ppm'):
+        assert saved.get(key) == key and restored.get(key) == key

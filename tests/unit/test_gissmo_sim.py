@@ -55,3 +55,15 @@ def test_uncoupled_fragments_solve_apart_as_they_would_together():
     b = render(x, whole_f / 600.0, whole_i, 1.0, 600.0)
     assert np.allclose(a, b, atol=1e-9 * np.abs(b).max())
     assert i.sum() == pytest.approx(5.0)
+
+
+def test_a_compound_in_two_forms_counts_its_protons_once():
+    # GISSMO fits both glucose anomers into one entry at full weight each;
+    # weighted by their equilibrium shares, the molecule has 7 C-H protons
+    from validation.gissmo_sim import load_systems
+    glc = load_systems()['D-Glucose']
+    p, i = stick_spectrum(glc, 600.0)
+    assert i.sum() == pytest.approx(7.0)
+    alpha = i[np.abs(p - 5.222) < 0.02].sum()
+    beta = i[np.abs(p - 4.636) < 0.02].sum()
+    assert alpha / (alpha + beta) == pytest.approx(0.36, abs=0.01)
