@@ -235,7 +235,6 @@ class ProjectManager:
                     (getattr(qnt, '_deconv_overrides', {}) or {}).items()},
                 'integ':            _safe_var(qnt, 'integ_var'),
                 'norm':             _safe_var(qnt, 'norm_var'),
-                'proton_corr':      _safe_var(qnt, 'proton_corr_var'),
                 'mcr':              _safe_var(qnt, 'mcr_var'),
                 'blk_sub':          _safe_var(qnt, 'blk_sub_var'),
                 'local_baseline':   _safe_var(qnt, 'local_baseline_var'),
@@ -596,7 +595,6 @@ class ProjectManager:
                     _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed
                 _set_var(qnt, 'integ_var',      _integ_loaded)
                 _set_var(qnt, 'norm_var',        qnt_state.get('norm'))
-                _set_var(qnt, 'proton_corr_var', qnt_state.get('proton_corr'))
                 _set_var(qnt, 'mcr_var',         qnt_state.get('mcr'))
                 _set_var(qnt, 'blk_sub_var',     qnt_state.get('blk_sub'))
                 _set_var(qnt, 'ext_is_var',        qnt_state.get('ext_is'))

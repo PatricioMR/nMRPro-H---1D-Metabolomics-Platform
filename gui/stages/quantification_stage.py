@@ -111,6 +111,45 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         widget.bind('<Enter>', _show, add='+')
         widget.bind('<Leave>', self._hide_dev_tooltip, add='+')
 
+    def _tip(self, widget, text):
+        """A hover tooltip: the long explanations live here, not in the
+        panel, so the menu fits."""
+        def _show(_e=None):
+            self._hide_dev_tooltip()
+            try:
+                tw = tk.Toplevel(widget)
+                tw.wm_overrideredirect(True)
+                tw.wm_geometry(f'+{widget.winfo_rootx() + 10}'
+                               f'+{widget.winfo_rooty() + widget.winfo_height() + 2}')
+                tk.Label(tw, text=text, justify=tk.LEFT, wraplength=340,
+                         background='#ffffe0', relief=tk.SOLID, borderwidth=1,
+                         font=('Arial', 8), padx=4, pady=2).pack()
+                self._dev_tooltip_win = tw
+            except Exception:
+                self._dev_tooltip_win = None
+        widget.bind('<Enter>', _show, add='+')
+        widget.bind('<Leave>', self._hide_dev_tooltip, add='+')
+
+    def _baseline_choice_of(self, local, model) -> str:
+        for name, pair in self._baseline_choices.items():
+            if pair == (bool(local), bool(model)):
+                return name
+        return 'None'
+
+    def _baseline_from_choice(self, *_):
+        local, model = self._baseline_choices.get(
+            self.baseline_choice_var.get(), (False, False))
+        if self.local_baseline_var.get() != local:
+            self.local_baseline_var.set(local)
+        if self.bl_model_quant_var.get() != model:
+            self.bl_model_quant_var.set(model)
+
+    def _baseline_to_choice(self, *_):
+        name = self._baseline_choice_of(self.local_baseline_var.get(),
+                                        self.bl_model_quant_var.get())
+        if self.baseline_choice_var.get() != name:
+            self.baseline_choice_var.set(name)
+
     def _apply_lipidomics_ui_state(self):
         """Disable options that do not apply to lipidomics region integration
         (multiplet integration, proton correction, JG-Deconv overlap)."""
@@ -261,25 +300,44 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self.integ_var = tk.StringVar(value=QUANTIFICATION['integration'])
         self._integ_rbs = {}
 
-        pf = ttk.Frame(s2); pf.pack(fill=tk.X, pady=1)
-        self.proton_corr_var = tk.BooleanVar(value=QUANTIFICATION['proton_correction'])
-        self._proton_corr_cb = ttk.Checkbutton(
-            pf, text='Proton correction (÷ nH)',
-            variable=self.proton_corr_var)
-        self._proton_corr_cb.pack(side=tk.LEFT)
+        # Always on: against an internal or external standard the division
+        # by nH is not optional (quant_concentration.concentrations), so
+        # there is no box. Kept as a variable for the code that reads it.
+        self.proton_corr_var = tk.BooleanVar(value=True)
 
-        blf = ttk.Frame(s2); blf.pack(fill=tk.X, pady=1)
-        self.local_baseline_var = tk.BooleanVar(value=QUANTIFICATION['local_baseline'])
-        ttk.Checkbutton(blf, text='Local baseline correction (linear, per window) — fallback only',
-                        variable=self.local_baseline_var).pack(side=tk.LEFT)
-        bmf = ttk.Frame(s2); bmf.pack(fill=tk.X, pady=1)
-        # The project baseline model finds peaks; whether areas are measured
-        # on it too is a separate choice (see controllers.analysis_defaults).
+        # What the areas are measured on. Two choices that used to be two
+        # boxes: a linear baseline under each window, and the project's
+        # baseline model (the one detection always uses). Measured on the
+        # GISSMO bench, whose baselines are flat, either one only costs:
+        # the default is neither.
+        self.local_baseline_var = tk.BooleanVar(
+            value=QUANTIFICATION['local_baseline'])
         self.bl_model_quant_var = tk.BooleanVar(
             value=QUANTIFICATION['baseline_model'])
-        ttk.Checkbutton(bmf, text='Integrate on the baseline-model spectrum '
-                                  '(detection always uses it)',
-                        variable=self.bl_model_quant_var).pack(side=tk.LEFT)
+        self._baseline_choices = {
+            'None': (False, False), 'Local per window': (True, False),
+            'Baseline model': (False, True), 'Local + model': (True, True)}
+        self.baseline_choice_var = tk.StringVar(
+            value=self._baseline_choice_of(self.local_baseline_var.get(),
+                                           self.bl_model_quant_var.get()))
+        blf = ttk.Frame(s2); blf.pack(fill=tk.X, pady=1)
+        ttk.Label(blf, text='Baseline:', font=('Arial', 8),
+                  width=10).pack(side=tk.LEFT)
+        _bl_cb = ttk.Combobox(blf, textvariable=self.baseline_choice_var,
+                              values=list(self._baseline_choices), width=18,
+                              state='readonly')
+        _bl_cb.pack(side=tk.LEFT)
+        self._tip(_bl_cb, 'What the areas are measured on.\n'
+                          'None: the spectrum as it is (default).\n'
+                          'Local per window: a straight line under each window, '
+                          'read beyond the cluster of overlapping signals.\n'
+                          'Baseline model: the project baseline model that '
+                          'detection already uses.\n'
+                          'Only worth turning on where the spectrum has a real '
+                          'baseline; on a flat one each costs signal.')
+        self.baseline_choice_var.trace_add('write', self._baseline_from_choice)
+        self.local_baseline_var.trace_add('write', self._baseline_to_choice)
+        self.bl_model_quant_var.trace_add('write', self._baseline_to_choice)
 
         mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
         self._ext_is_indices = []
@@ -298,6 +356,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         if DECONVOLUTION_ENABLED:
             self._j_resolve_cb.pack(side=tk.LEFT)
             self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
+
         # Complex multiplets (m*, ADR-013) are a method still being built.
         # A shape never competes for a peak. On, with the shape resolution
         # below, an m* is offered to the spectrum's remainders and
@@ -305,69 +364,70 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # shape agree (ADR-024); off, it is left out and says so.
         mf3 = ttk.Frame(s2); mf3.pack(fill=tk.X, pady=1)
         self.shape_var = tk.BooleanVar(value=QUANTIFICATION['quantify_shapes'])
-        ttk.Checkbutton(
-            mf3, text='Quantify complex multiplets (m*)',
-            variable=self.shape_var).pack(side=tk.LEFT)
-        ttk.Label(mf3, text='on: identified on a free apex by its shape, '
-                            'with the deconvolution below; never competes '
-                            'for a peak',
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
+        _c = ttk.Checkbutton(mf3, text='Complex multiplets (m*)',
+                             variable=self.shape_var)
+        _c.pack(side=tk.LEFT)
+        self._tip(_c, 'On: a complex multiplet is identified on a free apex '
+                      'by its shape, with the shared-window split below; it '
+                      'never competes for a peak.\n'
+                      'Off: complex multiplets are left out and say so.')
         # A window holding another accepted analyte's signal, resolved by
         # the two shapes after each was measured on its own (ADR-015).
         mf4 = ttk.Frame(s2); mf4.pack(fill=tk.X, pady=1)
         self.shared_var = tk.BooleanVar(value=QUANTIFICATION['resolve_shared'])
-        ttk.Checkbutton(
-            mf4, text='Deconvolve windows two accepted analytes share (by shape)',
-            variable=self.shared_var).pack(side=tk.LEFT)
-        ttk.Label(mf4, text='off: a window is its owner\'s whole',
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
+        _c = ttk.Checkbutton(mf4, text='Split shared windows',
+                             variable=self.shared_var)
+        _c.pack(side=tk.LEFT)
+        self._tip(_c, "On: a window that holds another accepted analyte's "
+                      'signal is divided between the two by their shapes, '
+                      'each measured on its own first.\n'
+                      "Off: a window is its owner's whole.")
         # A singlet on its own: position is its whole evidence, and the
         # signal-to-noise it must reach is the study's call (ADR-025): ten
         # suited a synthetic bench, five an organoid study whose real
         # singlets stood at 5-10.
         mf5 = ttk.Frame(s2); mf5.pack(fill=tk.X, pady=1)
-        ttk.Label(mf5, text='  Min SNR for a lone singlet:', font=('Arial', 8),
-                  width=26).pack(side=tk.LEFT)
+        _l = ttk.Label(mf5, text='  Min SNR, lone singlet:', font=('Arial', 8),
+                       width=26)
+        _l.pack(side=tk.LEFT)
         self.singlet_snr_var = tk.DoubleVar(value=QUANTIFICATION['singlet_min_snr'])
         ttk.Spinbox(mf5, from_=0.0, to=50.0, increment=1.0, width=6,
                     textvariable=self.singlet_snr_var).pack(side=tk.LEFT)
-        ttk.Label(mf5, text='below it a singlet with no other signal seen is '
-                            'not quantified (Good mark overrides)',
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
-        # The cascade (ADR-028): after the election, every quantified
-        # analyte is subtracted at its measured amount and the analytes
-        # whose whole listing best explains what is left are added, one
-        # amount for all their signals. A second opinion that only adds.
+        self._tip(_l, 'Below this signal-to-noise, a singlet with no other '
+                      'signal seen is not quantified (a Good mark overrides).')
         # Overlapping analytes measured together (processing.quant_joint_fit):
         # a window counts its neighbours' area as its own; the fit divides
         # the region by the analytes' shapes, with room for peaks nothing
         # in the library explains. Slower on a crowded spectrum.
         jff = ttk.Frame(s2); jff.pack(fill=tk.X, pady=1)
         self.joint_fit_var = tk.BooleanVar(value=QUANTIFICATION['joint_fit'])
-        ttk.Checkbutton(
-            jff, text='Measure overlapping analytes together',
-            variable=self.joint_fit_var).pack(side=tk.LEFT)
-        ttk.Label(jff, text='on: shapes fitted jointly where windows overlap, '
-                            'unknown peaks kept apart; slower on crowded '
-                            'spectra',
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
+        _c = ttk.Checkbutton(jff, text='Joint fit (overlaps)',
+                             variable=self.joint_fit_var)
+        _c.pack(side=tk.LEFT)
+        self._tip(_c, 'On: analytes whose signals overlap are fitted '
+                      'together, sample by sample, and the area of the '
+                      'region is divided between their shapes. Peaks that '
+                      'nothing in the library explains are kept apart so '
+                      'they do not inflate a known analyte.\n'
+                      'Analytes that overlap nothing keep their integral.\n'
+                      'Slower on a crowded spectrum.')
+        # The cascade (ADR-028): after the election, every quantified
+        # analyte is subtracted at its measured amount and the analytes
+        # whose whole listing best explains what is left are added, one
+        # amount for all their signals. A second opinion that only adds.
         mf6 = ttk.Frame(s2); mf6.pack(fill=tk.X, pady=1)
         self.cascade_var = tk.BooleanVar(value=QUANTIFICATION['cascade'])
-        ttk.Checkbutton(
-            mf6, text='Cascade: add analytes the election missed',
-            variable=self.cascade_var).pack(side=tk.LEFT)
-        ttk.Label(mf6, text='on: the quantified analytes are subtracted and '
-                            'the residual is explained jointly, one amount '
-                            'per analyte; adds only, one dot',
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
+        _c = ttk.Checkbutton(mf6, text='Cascade', variable=self.cascade_var)
+        _c.pack(side=tk.LEFT)
+        self._tip(_c, 'Adds analytes the election missed: the quantified '
+                      'analytes are subtracted and the residual is explained '
+                      'jointly, one amount per analyte.\n'
+                      'It only adds, at two dots at most. On the validation '
+                      'mixtures it finds two to three times more compounds, '
+                      'with more false rows.')
         self.cascade_advice_label = ttk.Label(
             s2, text='', font=('Arial', 8), foreground='#b26a00',
-            wraplength=520, justify=tk.LEFT)
+            wraplength=360, justify=tk.LEFT)
         self.cascade_advice_label.pack(fill=tk.X, padx=24)
         self.cascade_var.trace_add('write',
                                    lambda *_: self._refresh_cascade_advice())
@@ -377,28 +437,26 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # study myo-inositol's four signals agree to 26% and it measures
         # to within 7%, while hydroxyproline's six disagree by 262%.
         mf7 = ttk.Frame(s2); mf7.pack(fill=tk.X, pady=1)
-        ttk.Label(mf7, text='  Max disagreement (cascade):', font=('Arial', 8),
-                  width=26).pack(side=tk.LEFT)
+        _l = ttk.Label(mf7, text='  Max disagreement:', font=('Arial', 8),
+                       width=26)
+        _l.pack(side=tk.LEFT)
         self.max_disagreement_var = tk.DoubleVar(
             value=QUANTIFICATION['max_disagreement_pct'])
-        ttk.Spinbox(mf7, from_=5.0, to=100.0, increment=5.0, width=6,
-                    textvariable=self.max_disagreement_var).pack(side=tk.LEFT)
-        ttk.Label(mf7, text="% between the analyte's own signals; above it "
-                            "the analyte is identified without a number",
-                  font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
-                                                             padx=4)
+        self._max_disagreement_sb = ttk.Spinbox(
+            mf7, from_=5.0, to=100.0, increment=5.0, width=6,
+            textvariable=self.max_disagreement_var)
+        self._max_disagreement_sb.pack(side=tk.LEFT)
+        self._tip(_l, "Cascade only. How far an analyte's own signals may "
+                      'disagree (%) and still be given a number; above it '
+                      'the analyte is identified without one.')
+        self.cascade_var.trace_add(
+            'write', lambda *_: self._max_disagreement_sb.configure(
+                state='normal' if self.cascade_var.get() else 'disabled'))
+        self._max_disagreement_sb.configure(
+            state='normal' if self.cascade_var.get() else 'disabled')
         ttk.Button(s2, text='Review deconvolution…',
                    command=lambda: self._open_deconvolution_window()).pack(
                        anchor=tk.W, padx=4, pady=(1, 3))
-        ttk.Label(s2,
-                  text='Multiplicity: integrates the union of the multiplet signals\' '
-                       'Signal-List boundaries; uses total nH.\n'
-                       'Baseline: a global arPLS baseline (Baek 2015) is applied per sample '
-                       'before integration (skipped if already corrected in Visualization).\n'
-                       'Local baseline: inferior linear fallback — ignored when arPLS is active.\n'
-                       'JG-Deconv: applies fractional areas from Overlap Resolving Method.\n'
-                       'Run JG-Deconv and click "✓ Apply" before enabling.',
-                  font=('Arial', 7), foreground='gray').pack(anchor=tk.W)
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
         ic_row0 = ttk.Frame(s2); ic_row0.pack(fill=tk.X, pady=1)
