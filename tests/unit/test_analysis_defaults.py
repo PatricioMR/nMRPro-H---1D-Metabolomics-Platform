@@ -115,3 +115,13 @@ def test_the_project_keeps_where_areas_are_measured():
     assert "'baseline_model_quant': _safe_var(qnt, 'bl_model_quant_var')" in src
     assert re.search(r"_set_var\(qnt, 'bl_model_quant_var',\s*"
                      r"qnt_state\.get\('baseline_model_quant'\)\)", src)
+
+
+def test_the_cascade_is_advised_against_on_a_sparse_spectrum_only():
+    from controllers.analysis_defaults import CASCADE_MIN_PEAKS, cascade_advice
+    assert 'cascade' in cascade_advice(97)
+    assert '97' in cascade_advice(97)
+    assert cascade_advice(CASCADE_MIN_PEAKS) == ''
+    assert cascade_advice(300) == ''
+    assert cascade_advice(0) == '' and cascade_advice(None) == ''
+    assert cascade_advice(97, enabled=False) == ''

@@ -29,7 +29,7 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from controllers.analysis_defaults import QUANTIFICATION
+from controllers.analysis_defaults import QUANTIFICATION, cascade_advice
 from .base_stage import BaseStage
 from ._quant_helpers import _STD_PRESETS
 from ._quant_visualization import _QuantVisMixin
@@ -365,6 +365,12 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             'per analyte; adds only, one dot',
                   font=('Arial', 7), foreground='gray').pack(side=tk.LEFT,
                                                              padx=4)
+        self.cascade_advice_label = ttk.Label(
+            s2, text='', font=('Arial', 8), foreground='#b26a00',
+            wraplength=520, justify=tk.LEFT)
+        self.cascade_advice_label.pack(fill=tk.X, padx=24)
+        self.cascade_var.trace_add('write',
+                                   lambda *_: self._refresh_cascade_advice())
         # How far an analyte the cascade brought in may have its own
         # signals disagree and still be given a number. The analyst's
         # call, like the singlet's signal-to-noise: on the reference
@@ -488,6 +494,14 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._show_right_panel()
         self._refresh_deconv_label()
         self._apply_lipidomics_ui_state()
+        self._refresh_cascade_advice()
+
+    def _refresh_cascade_advice(self):
+        """Say next to the cascade checkbox when the spectrum is too sparse
+        for it (controllers.analysis_defaults.cascade_advice)."""
+        n = len(getattr(self.peak_stage, 'peaks', None) or ())
+        self.cascade_advice_label.config(
+            text=cascade_advice(n, enabled=bool(self.cascade_var.get())))
 
     def on_deactivate(self):
         if self.frame:

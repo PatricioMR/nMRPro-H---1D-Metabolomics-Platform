@@ -81,3 +81,36 @@ QUANTIFICATION = {
     # quant_cascade.MAX_SIGNAL_DISAGREEMENT
     'max_disagreement_pct': 45.0,
 }
+
+
+# How crowded a spectrum must be before the cascade is worth its false rows.
+# The cascade adds analytes the election missed, at two dots at most. On the
+# GISSMO bench (three seeds each, 2026-10-01), analytes it added at two dots
+# against strangers it added at two dots:
+#
+#   peaks detected   500 MHz    600 MHz
+#   ~90  (18 cpds)   9 : 11     19 : 6
+#   ~200 (50 cpds)   56 : 13    54 : 13
+#   ~300 (100 cpds)  100 : 11   102 : 8
+#
+# At the sparse tube the rows of any level it added were 23 real and 17
+# false at 600 MHz, 16 real and 25 false at 500 MHz; at 100 compounds, 122
+# real and 20 false. Between the ~97 peaks of the sparse tube and the ~190
+# of the next there is no measurement; the bar sits in the gap.
+CASCADE_MIN_PEAKS = 150
+
+
+def cascade_advice(n_peaks, enabled=True) -> str:
+    """A recommendation about the cascade for a spectrum with ``n_peaks``
+    detected peaks, or ``''`` when there is nothing to say.
+
+    A hint, not a setting: the analyst's choice stands.
+    """
+    if not n_peaks or n_peaks >= CASCADE_MIN_PEAKS:
+        return ''
+    if enabled:
+        return (f'Only {n_peaks} peaks detected: on spectra this sparse the '
+                f'cascade adds about as many false rows as real ones '
+                f'(measured on mixtures of 18 compounds). The election alone '
+                f'is recommended here.')
+    return ''
