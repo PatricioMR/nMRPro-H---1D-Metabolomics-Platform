@@ -82,7 +82,9 @@ MEASURED_COLUMNS = (
     # of the compound's signal area, times the compound's listed protons.
     # The windows are bounded at the midpoints between the compound's
     # signals, so they partition its area and a neighbour's tail inside one
-    # window is counted where it lies. What quantification divides by.
+    # window is counted where it lies. Kept as a record of the reference
+    # spectrum: quantification divides by the listed protons, not by this
+    # (since 2026-09-30, ADR-060 -- it carried the reference's artefacts).
     ('profile_nh', 'REAL'),
     # The share as measured, before the check against the listing. Where
     # the two disagree by more than PROFILE_NH_TOLERANCE the reference
