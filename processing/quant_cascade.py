@@ -313,12 +313,16 @@ def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
 
 
 def build_columns(metabolites, *, field_mhz, linewidth_ppm, drift_ppm,
-                  signals_of=None) -> list:
+                  signals_of=None, drift_by_id=None) -> list:
     """One column per annotated metabolite from the signals the reference
     lists for it (``met['db_peaks']``, or what ``signals_of(met)`` returns).
     A signal with no shape (an unresolved 'm' the reference did not
     measure) or no proton count is left out; an analyte with no signal
-    left has no column."""
+    left has no column.
+
+    ``drift_by_id`` gives a compound its own drift in place of ``drift_ppm``
+    (``{mid: ppm}``): what pH and matrix did to it, known from the peak the
+    election matched to one of its signals."""
     cols = []
     for met in metabolites or ():
         mid = met.get('id')
@@ -331,7 +335,8 @@ def build_columns(metabolites, *, field_mhz, linewidth_ppm, drift_ppm,
             c0 = dp.get('ppm_center', dp.get('ppm'))
             if c0 is None:
                 continue
-            ev = listed_signal_evidence(dp, centre_ppm=float(c0) + float(drift_ppm),
+            _drift = (drift_by_id or {}).get(mid, drift_ppm)
+            ev = listed_signal_evidence(dp, centre_ppm=float(c0) + float(_drift),
                                         field_mhz=float(field_mhz))
             if ev is None:
                 continue

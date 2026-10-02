@@ -282,6 +282,29 @@ def study_position_band(metabolites, floor=PPM_BAND_PPM) -> float:
     return float(min(max(np.percentile(offs, BAND_SHARE), floor), BAND_MAX_PPM))
 
 
+# An elected analyte's columns go where the peak the election matched to it
+# stands, not at its listing plus the study's common drift. In a real extract
+# the reference was measured at another pH: the alanine doublet listed at
+# 1.4663 ppm stood at 1.4818 (annotation matched it right, 12 mppm off the
+# common drift of 3), the joint fit could slide its column one linewidth,
+# caught the neighbouring lines one coupling away, and the row was shown at
+# three dots with the curve drawn off its own doublet.
+JOINT_FIT_OWN_DRIFT = True
+
+
+def _elected_drifts(measured) -> dict:
+    """``{mid: ppm}``: how far each elected analyte's own matched peak stands
+    from where the reference lists it."""
+    out = {}
+    for mid, info in measured.items():
+        sig = info.get('signal')
+        payload = sig.payload if sig is not None and isinstance(sig.payload, dict) else {}
+        mp = payload.get('mp') or {}
+        if mp.get('peak_ppm') is not None and mp.get('db_ppm') is not None:
+            out[mid] = float(mp['peak_ppm']) - float(mp['db_ppm'])
+    return out
+
+
 def study_position_scatter(metabolites, band_ppm=None) -> float | None:
     """How tightly the analytes really in this study sit on its drift: the
     LOWER QUARTILE of ``|ppm_off_drift|`` over the signals annotation
@@ -2183,10 +2206,16 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                            for mp in _m.get('matched_peaks') or ()
                            if mp.get('db_ppm') is not None):
                         _nuis[_m['id']] = _m
+            _common = float(study_drift(_jmets) or 0.0)
+            _own = _elected_drifts(measured) if JOINT_FIT_OWN_DRIFT else {}
+            for _m, _d in _own.items():
+                # how far from the study's common drift the compound's own
+                # peak stands: past a linewidth the study does not confirm it
+                measured[_m]['drift_off'] = _d - _common
             _jcols = [c for c in build_columns(
                 _jmets + list(_nuis.values()), field_mhz=float(_jfield),
-                linewidth_ppm=float(linewidth_ppm),
-                drift_ppm=float(study_drift(_jmets) or 0.0))
+                linewidth_ppm=float(linewidth_ppm), drift_ppm=_common,
+                drift_by_id=_own or None)
                 if c.mid in measured or c.mid in _nuis]
             _jf = joint_measure(
                 _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
@@ -2279,6 +2308,12 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+        if (info.get('drift_off') is not None and linewidth_ppm
+                and abs(float(info['drift_off'])) > PART_SHIFT_REACH_LW
+                * float(linewidth_ppm) and level > 2):
+            info['own_drift_cap'] = abs(float(info['drift_off']))
+            level = 2
+            dots = _DOTS[level]
         # The signal the amount was measured on, off where this study puts
         # things: whatever else agrees, the number is somebody's peak.
         _off = (info['signal'].evidence or {}).get('ppm_off_drift')
@@ -2748,6 +2783,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _broad_reason(info)
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
+                            + _own_drift_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
@@ -2944,6 +2980,18 @@ def _as_candidate(row, why, by_group) -> None:
         text += (' Upper bound from integrating its window: ' + ', '.join(
             f'{g} {v:.4g} mM' for g, v in bound.items()) + '.')
     row['_status_reasons'] = [text] + list(row.get('_status_reasons') or ())
+
+
+def _own_drift_reason(info) -> list:
+    """Said of a row held at two dots because its compound stands off the
+    study's common drift."""
+    off = info.get('own_drift_cap')
+    if not off:
+        return []
+    return [f"The peak this analyte was matched to stands {1000 * off:.1f} mppm "
+            f"from where the rest of the study stands: its position is "
+            f"placed from that peak, and no more than two dots rest on a "
+            f"position the study does not confirm."]
 
 
 def _joint_fit_reason(info) -> list:

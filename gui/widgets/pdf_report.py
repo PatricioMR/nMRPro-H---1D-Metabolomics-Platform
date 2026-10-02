@@ -901,6 +901,16 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         # the fit replaced.
         _jf = r.get('_joint_fit') or {}
         integ_label = ('Joint fit' if r.get('_joint_fit') else 'Cascade fit')             + f"  |  {_multiplicity_name(r.get('_multiplicity'))}  |  "             + (f"nH={_nh:.0f}" if float(_nh).is_integer() else f"nH={_nh:.2f}")
+        _focus_nh = _fitc.get('focus_nh')
+        if (not r.get('_joint_fit') and _focus_nh
+                and abs(float(_focus_nh) - float(_nh)) > 1e-6):
+            # the multiplicity and the curve are the focus signal's; the
+            # row's nH is the whole listing's: said, so the card and the
+            # figure describe the same thing
+            _fl = f"{float(_focus_nh):.0f}" if float(_focus_nh).is_integer() \
+                else f"{float(_focus_nh):.1f}"
+            integ_label = (integ_label.rsplit('  |  nH=', 1)[0]
+                           + f"  |  focus signal {_fl} H of {_nh:.0f} H listed")
         _casc_score = (r.get('_cascade') or {}).get('score')
         if _casc_score is not None:
             integ_label += f"  |  identity score {100 * float(_casc_score):.0f}%"
