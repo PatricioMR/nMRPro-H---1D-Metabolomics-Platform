@@ -706,7 +706,12 @@ METHOD_REFERENCES = {
                 'An analyte the election left out, identified on what the '
                 'quantified analytes leave by its whole reference listing at '
                 'one amount, and measured beside the neighbours that reach '
-                'into its regions. Orthogonal matching pursuit: Pati Y.C., '
+                'into its regions. A logistic model of twelve features of the '
+                'fit (signal-to-noise of its tallest signal and of all of them '
+                'together, agreement between its signals, how much of its '
+                'listing the residual left it, how far its column slid) gives '
+                'the identity score printed on the row; it was fitted on '
+                'simulated mixtures. Orthogonal matching pursuit: Pati Y.C., '
                 'Rezaiifar R., Krishnaprasad P.S., Proc. 27th Asilomar Conf. '
                 'Signals, Systems and Computers 1993; targeted profiling: '
                 'Weljie et al., Anal. Chem. 2006, 78, 4430-4442.'),
@@ -896,6 +901,9 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         # the fit replaced.
         _jf = r.get('_joint_fit') or {}
         integ_label = ('Joint fit' if r.get('_joint_fit') else 'Cascade fit')             + f"  |  {_multiplicity_name(r.get('_multiplicity'))}  |  "             + (f"nH={_nh:.0f}" if float(_nh).is_integer() else f"nH={_nh:.2f}")
+        _casc_score = (r.get('_cascade') or {}).get('score')
+        if _casc_score is not None:
+            integ_label += f"  |  identity score {100 * float(_casc_score):.0f}%"
         if _jf.get('group'):
             integ_label += (f"  |  with {len(_jf['group']) - 1} analyte(s) and "
                             f"{int(_jf.get('free') or 0)} unassigned peak(s)")

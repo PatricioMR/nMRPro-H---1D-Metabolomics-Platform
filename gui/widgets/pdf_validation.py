@@ -28,12 +28,13 @@ MEANING = {
        'missing at that amount.',
     2: 'Identity supported, not confirmed line by line: most of its listing '
        'covered, a singlet moving with the study’s drift, a cascade '
-       'identification whose signals agree, or an amount taken from what a '
-       'neighbour’s window left.',
+       'identification its model scores at 70% or more, or an amount taken '
+       'from what a neighbour’s window left.',
     1: 'A candidate: identified by shape alone, a single listed signal with '
        'nothing to corroborate it, a signal of its listing missing at the '
-       'measured amount, or its measured signal off where this study puts '
-       'its compounds. Check before use.',
+       'measured amount, a cascade identification its model scores between '
+       '15% and 70%, or its measured signal off where this study puts its '
+       'compounds. Check before use.',
 }
 
 
