@@ -128,6 +128,27 @@ class TestTheAmountAgainstTheFingerprint:
         assert not rows['S']['_not_quantified']
 
 
+class TestTheManualMarkOverTheFingerprint:
+    def _missing_signal(self, **extra):
+        X = _study([(2.0, 100.0, ((0.0, 1.0),))])
+        c = _cand('A', 1, 2.0, 's', 3, [{'ppm_center': 2.0, 'type': 's', 'protons': 3},
+                                        {'ppm_center': 3.0, 'type': 's', 'protons': 3}],
+                  **extra)
+        return _run([c], {1: _peak(1, 2.0)}, X)['A']
+
+    def test_a_good_mark_quantifies_a_contradicted_analyte_at_one_dot(self):
+        row = self._missing_signal(manual_quality='good')
+        assert not row['_not_quantified']
+        assert row['_confidence'] == 1
+        assert any("analyst's Good mark" in t for t in row['_status_reasons'])
+
+    def test_the_override_is_the_studys_to_turn_off(self, monkeypatch):
+        import processing.quant_engine as qe
+        monkeypatch.setattr(qe, 'MANUAL_GOOD_OVERRIDES', False)
+        row = self._missing_signal(manual_quality='good')
+        assert row['_rejection'] == AMOUNT_CONTRADICTED
+
+
 def test_the_singlet_bar_is_the_studys_to_set():
     """The same faint singlet passes at a bar of 2 and fails at 10."""
     X = _study([(2.0, 6.0, ((0.0, 1.0),))])

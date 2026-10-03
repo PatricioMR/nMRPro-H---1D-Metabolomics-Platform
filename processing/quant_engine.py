@@ -29,7 +29,7 @@ from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
     CASCADE_BY_SCORE, CASCADE_SCORE_MIN, CASCADE_SCORE_TWO, cascade_score,
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
-    cascade_missed, exclusion_weight, fit_curve_record,
+    cascade_missed, exclusion_weight, fit_curve_record, others_removed,
     SHIFT_REACH_LW as CASCADE_FINE_REACH_LW,
     slide_step as cascade_slide_step)
 from processing.quant_concentration import (
@@ -655,6 +655,15 @@ JOINT_FIT_CANDIDATES = True
 # from the peaks, so most fits are refused. False: the row is dropped.
 FIT_MISPLACED_KEEPS_INTEGRAL = True
 
+# A signal the analyst marked Good is quantified although the fingerprint
+# check (AMOUNT_CONTRADICTED) or the joint fit's position refusal
+# (FIT_MISPLACED) would have withdrawn it: the mark is a judgement the engine
+# cannot overrule from the other signals, which a crowded region or a
+# pH-shifted compound can mislead. The row stays at one dot and says so; with
+# a refused fit its amount is the window's integral. False: the engine's
+# refusals stand over the mark.
+MANUAL_GOOD_OVERRIDES = True
+
 # The share of its own window an analyte has to keep for the split to
 # leave its number standing on its own. Above it, what the others took is
 # a rounding of the analyte: an error of half in the neighbour moves the
@@ -1224,6 +1233,13 @@ AMOUNT_ROUNDS = 3
 # this factor: twice is overlap, three times is absence. (Lysine on the
 # same peak fell short eightfold.)
 AMOUNT_RATIO = 3.0
+# The winner's fingerprint contradicts its amount only where a listed signal's
+# region is empty: peak to trough at most this many noise units. None: any
+# region below AMOUNT_RATIO-th of the predicted height contradicts. Bench tube
+# of 18, 600 MHz, three seeds: 6 -> recall at two dots or more 9-12 of 18
+# becomes 12-13, but one two-dot stranger appears in s2 (3 -> in s1 and s2);
+# the baseline has none. Left off.
+AMOUNT_EMPTY_SNR = None
 
 
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
@@ -1407,11 +1423,13 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
             int(s): float(a) / nh * float(pqn.get(int(s), 1.0))
             for s, a in (r.get('_areas_per_sample') or {}).items()
             if a is not None and np.isfinite(a) and a > 0}
+    _resid = {}
     found = cascade_missed(
         metabolites, ppm, arr, incl, fixed_per_proton=fixed,
         noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
         drift_ppm=drift_ppm, field_mhz=field_mhz,
-        excluded_regions=excluded_regions, diagnostics=diagnostics)
+        excluded_regions=excluded_regions, diagnostics=diagnostics,
+        residual_out=_resid)
     if not found:
         return rows
     standard = (standard_per_proton(standard_areas, standard_nh,
@@ -1482,7 +1500,9 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                 row['_fit_curve'] = fit_curve_record(
                     cols[mid], ppm, res['window'], res['per_proton'], groups,
                     label='Cascade fit', shift=float(res.get('shift_ppm') or 0.0),
-                    baseline=cluster_base)
+                    baseline=cluster_base,
+                    residual_of=lambda sel, _m=mid: others_removed(
+                        _resid['Y'], ppm, sel, found, cols, _m))
         row['_local_baseline'] = bool(local_baseline)
         if former is not None:
             out[out.index(former)] = row
@@ -2099,11 +2119,14 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 noise=noise_sigma, linewidth_ppm=linewidth_ppm,
                 drift_ppm=float(ev.get('study_drift_ppm') or 0.0),
                 skip_ppm=ev.get('db_ppm'), excluded_regions=excluded_regions,
-                ratio=AMOUNT_RATIO)
+                ratio=AMOUNT_RATIO, empty_snr=AMOUNT_EMPTY_SNR)
             info['fingerprint_at_amount'] = verdicts
             if not held:
-                bad[mid] = (AMOUNT_CONTRADICTED, _fingerprint_detail(verdicts))
-                continue
+                if MANUAL_GOOD_OVERRIDES and ev.get('manual_quality') == 'good':
+                    info['manual_override'] = _fingerprint_detail(verdicts)
+                else:
+                    bad[mid] = (AMOUNT_CONTRADICTED, _fingerprint_detail(verdicts))
+                    continue
             if not stands_in_study(met, ppm_band_ppm):
                 withheld[mid] = (OFF_THE_STUDY, _off_study_detail(met))
                 continue
@@ -2238,6 +2261,11 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                     offset_limit=r.get('offset_limit'))
                     if measured[mid].get('window') else None)
                 _why = joint_fit_refusal(_rec)
+                if _why and MANUAL_GOOD_OVERRIDES and (
+                        (measured[mid]['signal'].evidence or {}).get(
+                            'manual_quality') == 'good'):
+                    measured[mid]['manual_override'] = _why
+                    _why = None
                 if _why:
                     # The fit measured a shape that is not where the signal
                     # is, or another signal than the one elected. Its amount
@@ -2316,6 +2344,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             # peaks agree with each other by construction
             info['reselect_cap'] = True
             level = 2
+            dots = _DOTS[level]
+        if info.get('manual_override') is not None and level > 1:
+            level = 1
             dots = _DOTS[level]
         if (info.get('drift_off') is not None and linewidth_ppm
                 and abs(float(info['drift_off'])) > PART_SHIFT_REACH_LW
@@ -2794,6 +2825,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _joint_fit_reason(info)
                             + _own_drift_reason(info)
                             + _reselect_reason(info)
+                            + _manual_override_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
@@ -2990,6 +3022,17 @@ def _as_candidate(row, why, by_group) -> None:
         text += (' Upper bound from integrating its window: ' + ', '.join(
             f'{g} {v:.4g} mM' for g, v in bound.items()) + '.')
     row['_status_reasons'] = [text] + list(row.get('_status_reasons') or ())
+
+
+def _manual_override_reason(info) -> list:
+    """Said of a row quantified because the analyst marked it Good, over a
+    refusal of the engine."""
+    why = info.get('manual_override')
+    if why is None:
+        return []
+    return ["Quantified on the analyst's Good mark, over the engine's "
+            f"refusal ({str(why)[:200]}). One dot: nothing but the mark "
+            "stands behind it."]
 
 
 def _reselect_reason(info) -> list:

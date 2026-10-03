@@ -173,28 +173,38 @@ class Column:
     def nh_total(self) -> float:
         return float(sum(nh for _c, nh in self.parts))
 
+    @staticmethod
+    def _part_curve(comp, nh, ppm, shift, width):
+        sel = np.flatnonzero((ppm >= comp.lo - abs(shift)) & (ppm <= comp.hi + abs(shift)))
+        if sel.size < 3:
+            return None
+        x = ppm[sel]
+        y = np.asarray(comp.model(x, comp.shift_ppm + shift,
+                                  comp.width_scale * float(width)), dtype=float)
+        top = float(y.max())
+        if top <= 0:
+            return None
+        y = y / top
+        order = np.argsort(x)
+        area = float(np.trapezoid(y[order], x=x[order]))
+        if area <= 0:
+            return None
+        return sel, y * (float(nh) / area)
+
     def part_curves(self, ppm, shift=0.0, width=1.0) -> list:
         """Each signal's sparse curve, area = its protons: [(idx, val)].
         ``width`` scales every line's width, as a sample broader or
         narrower than the study's measured linewidth needs."""
-        out = []
-        for comp, nh in self.parts:
-            sel = np.flatnonzero((ppm >= comp.lo - abs(shift)) & (ppm <= comp.hi + abs(shift)))
-            if sel.size < 3:
-                continue
-            x = ppm[sel]
-            y = np.asarray(comp.model(x, comp.shift_ppm + shift,
-                                      comp.width_scale * float(width)), dtype=float)
-            top = float(y.max())
-            if top <= 0:
-                continue
-            y = y / top
-            order = np.argsort(x)
-            area = float(np.trapezoid(y[order], x=x[order]))
-            if area <= 0:
-                continue
-            out.append((sel, y * (float(nh) / area)))
-        return out
+        out = [self._part_curve(comp, nh, ppm, shift, width)
+               for comp, nh in self.parts]
+        return [c for c in out if c is not None]
+
+    def part_curve(self, k, ppm, shift=0.0, width=1.0):
+        """The sparse curve of signal ``k`` alone, ``(idx, val)`` or
+        ``(None, None)``."""
+        comp, nh = self.parts[k]
+        c = self._part_curve(comp, nh, ppm, shift, width)
+        return c if c is not None else (None, None)
 
     def curve(self, ppm, shift=0.0, width=1.0):
         parts = self.part_curves(ppm, shift, width)
@@ -233,7 +243,7 @@ def slide_step(linewidth_ppm) -> float:
 def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
                      shift=0.0, shift_by_sample=None, width=1.0,
                      baseline=None, offsets=(), offset_limit=None,
-                     pad_ppm=0.1) -> dict | None:
+                     pad_ppm=0.1, residual_of=None) -> dict | None:
     """What a fitted analyte's row carries so a report draws the number the
     table shows.
 
@@ -248,6 +258,17 @@ def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
     left at the edge of how far it may move them (``offsets`` against
     ``offset_limit``): a shape held at that edge is not where the trace's
     peak is, and its amount is the amount of a misplaced shape.
+
+    ``residual_of(sel)``, when given, returns the spectrum on the points
+    ``sel`` (points x samples) minus every other analyte at its fitted
+    amount: what the cascade fitted this analyte to. Its mean per group is
+    ``residual_by_group``; a figure that drew only the full trace would
+    show an analyte standing under a neighbour a thousand times taller as
+    a flat line.
+
+    ``unit_by_group`` is every signal of the column inside the crop (the
+    whole fit); ``focus_unit_by_group`` the focus signal alone, whose area
+    (amplitude x ``focus_nh``) is the area the row's table shows.
 
     ``amplitudes`` are ``{sample: area per proton}`` in the spectrum's own
     units, before any normalisation, so the curve scales onto the trace.
@@ -279,6 +300,8 @@ def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
     if sel.size < 2:
         return None
     amp_by_group, n_by_group, base_by_group, unit_by_group = {}, {}, {}, {}
+    focus_unit_by_group, residual_by_group = {}, {}
+    R = residual_of(sel) if residual_of is not None else None
     for g, members in (groups or {}).items():
         members = list(members)
         vals = [float(amplitudes[s]) for s in members
@@ -297,6 +320,17 @@ def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
             ok[ok] &= sel[j[ok]] == idx[ok]
             unit[j[ok]] = val[ok]
         unit_by_group[str(g)] = unit.tolist()
+        f_idx, f_val = col.part_curve(
+            k, ppm, shift + (float(np.median(sh)) if sh else 0.0), width)
+        f_unit = np.zeros(sel.size)
+        if f_idx is not None:
+            j = np.searchsorted(sel, f_idx)
+            ok = j < sel.size
+            ok[ok] &= sel[j[ok]] == f_idx[ok]
+            f_unit[j[ok]] = f_val[ok]
+        focus_unit_by_group[str(g)] = f_unit.tolist()
+        if R is not None and members:
+            residual_by_group[str(g)] = R[:, members].mean(axis=1).tolist()
         if baseline is not None and members:
             B = np.asarray(baseline, dtype=float)
             base_by_group[str(g)] = B[sel][:, members].mean(axis=1).tolist()
@@ -305,6 +339,8 @@ def fit_curve_record(col, ppm, window, amplitudes, groups, *, label,
         at_limit = [float(c) for c, off in offsets or ()
                     if abs(float(off)) >= 0.999 * float(offset_limit)]
     return {'ppm': ppm[sel].tolist(), 'unit_by_group': unit_by_group,
+            'focus_unit_by_group': focus_unit_by_group,
+            'residual_by_group': residual_by_group or None,
             'amp_by_group': amp_by_group, 'n_by_group': n_by_group,
             'baseline_by_group': base_by_group or None, 'label': label,
             'focus': [float(f_lo), float(f_hi)], 'focus_nh': f_nh,
@@ -743,8 +779,13 @@ CASCADE_SCORE_INTERCEPT = -0.78118
 # 175/8 at 0.7; a minimum of 0.15 found 220 with 58 strangers in all, 0.5 only
 # 202 with 24. Two dots at 0.7: no stranger at two dots or more in the tubes
 # of 18 and 50.
+# 0.6 instead of 0.7 (ADR-061 session of 2026-10-03; the scores run to 0.70, so
+# 0.7 raised nothing): tubes of 18 and 50, 600 MHz, three seeds, real / strangers
+# at two dots, 18: 22/0 -> 30/0, 50: 67/8 -> 73/13; with a common drift of 13
+# and 4 of scatter, 18: 19/5 -> 27/6, 50: 44/15 -> 58/18. Three dots untouched
+# (cascade rows are never three) and the number found does not change.
 CASCADE_SCORE_MIN = 0.15
-CASCADE_SCORE_TWO = 0.7
+CASCADE_SCORE_TWO = 0.6
 CASCADE_BY_SCORE = True
 
 CASCADE_FEATURES = ('log apex snr', 'log matched snr', 'disagreement',
@@ -784,10 +825,30 @@ def cascade_score(res, linewidth_ppm) -> float:
     return float(1.0 / (1.0 + np.exp(-t)))
 
 
+def others_removed(Y, ppm, sel, found, cols, mid):
+    """``Y`` (the spectrum minus the quantified analytes) on the points
+    ``sel`` (sorted indices), with every other analyte the cascade took in
+    also subtracted at its fitted amount and place: what ``mid`` was
+    fitted to, sample by sample (points x samples)."""
+    R = np.asarray(Y, dtype=float)[sel].copy()
+    for other, res in found.items():
+        col = cols.get(other)
+        if other == mid or col is None:
+            continue
+        for idx, val in col.part_curves(ppm, float(res.get('shift_ppm') or 0.0)):
+            j = np.searchsorted(sel, idx)
+            ok = j < sel.size
+            ok[ok] &= sel[j[ok]] == idx[ok]
+            for s_i, a in (res.get('per_proton') or {}).items():
+                if 0 <= int(s_i) < R.shape[1]:
+                    R[j[ok], int(s_i)] -= float(a) * val[ok]
+    return R
+
+
 def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                    noise_sigma, linewidth_ppm, drift_ppm, field_mhz,
                    excluded_regions=(), min_snr=CASCADE_MIN_SNR,
-                   diagnostics=None) -> dict:
+                   diagnostics=None, residual_out=None) -> dict:
     """What the cascade adds to a quantified study.
 
     ``fixed_per_proton`` is ``{mid: {sample: area per proton}}`` for every
@@ -800,7 +861,10 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
     Returns ``{mid: {'name', 'per_proton': {sample: a}, 'nh', 'apex_snr',
     'shift_ppm', 'at_cap', 'signals': [(ppm, label, nh, predicted_snr)],
     'window': (lo, hi) of the tallest signal, 'step'}}`` in area-per-proton
-    units, the same the election's windows give. ``diagnostics``, when a
+    units, the same the election's windows give. ``residual_out``, when a
+    dict, gets ``'Y'``: the spectrum with every quantified analyte
+    subtracted, which ``others_removed`` turns into the residual one
+    analyte was fitted to. ``diagnostics``, when a
     dict, gets the order taken, the analytes contradicted by their own
     listing and where the cascade stopped.
     """
@@ -819,6 +883,8 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                                     linewidth_ppm=float(linewidth_ppm))
     weight = exclusion_weight(ppm, excluded_regions)
     weight[owned] = 0.0
+    if residual_out is not None:
+        residual_out['Y'] = Y
     trace = Y[:, incl].mean(axis=1)
     res = cascade(free, ppm, trace, sigma=float(noise_sigma),
                   linewidth_ppm=float(linewidth_ppm), weight=weight,

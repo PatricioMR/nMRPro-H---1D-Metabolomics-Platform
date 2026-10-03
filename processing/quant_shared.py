@@ -991,7 +991,7 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
                       linewidth_ppm, drift_ppm=0.0, tolerance_ppm=0.02,
                       skip_ppm=None, ratio=RESIDUAL_FINGERPRINT_RATIO,
                       min_snr=FINGERPRINT_MIN_SNR,
-                      excluded_regions=()) -> tuple[bool, list]:
+                      excluded_regions=(), empty_snr=None) -> tuple[bool, list]:
     """Whether the rest of an analyte's fingerprint can hold the amount a
     window implies.
 
@@ -1004,6 +1004,11 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
     multiplet, as one Lorentzian of the study's width -- and the region
     around the drifted position must hold, peak to trough, at least a
     ``ratio``-th of it. Returns ``(holds, verdicts)``.
+
+    ``empty_snr`` (None: off) narrows a contradiction to a region whose
+    peak-to-trough is at most that many noise units: a signal seen lower than
+    predicted is then not held against the analyte, as an overlap or an amount
+    read off a window that held neighbours would give.
     """
     from processing.annotation_detectability import _line_share, proton_count
     from processing.annotation_scoring import pattern_offsets_hz
@@ -1058,7 +1063,8 @@ def fingerprint_holds(db_peaks, per_proton_area, ppm, trace, *, noise,
             continue
         seg = y[m]
         measured = (float(seg.max()) - float(seg.min())) / float(noise) if noise else float('inf')
-        if measured * float(ratio) < exp_snr:
+        if measured * float(ratio) < exp_snr and (
+                empty_snr is None or measured <= float(empty_snr)):
             if exp_snr >= min_snr:
                 holds = False
                 out.append((centre, mult, exp_snr,
