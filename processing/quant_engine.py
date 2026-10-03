@@ -2308,6 +2308,15 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         level, dots = _confidence(
             info['signal'], info.get('strength'),
             shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+        _mp = ((info['signal'].payload or {}).get('mp')
+               if isinstance(info['signal'].payload, dict) else None) or {}
+        if _mp.get('reselected') and level > 2:
+            # the peak was chosen against the study's reference drift, not
+            # found by the search: a stranger's singlets chosen onto real
+            # peaks agree with each other by construction
+            info['reselect_cap'] = True
+            level = 2
+            dots = _DOTS[level]
         if (info.get('drift_off') is not None and linewidth_ppm
                 and abs(float(info['drift_off'])) > PART_SHIFT_REACH_LW
                 * float(linewidth_ppm) and level > 2):
@@ -2784,6 +2793,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
                             + _own_drift_reason(info)
+                            + _reselect_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
                             + _weak_reason(info, loq_mm)),
@@ -2980,6 +2990,17 @@ def _as_candidate(row, why, by_group) -> None:
         text += (' Upper bound from integrating its window: ' + ', '.join(
             f'{g} {v:.4g} mM' for g, v in bound.items()) + '.')
     row['_status_reasons'] = [text] + list(row.get('_status_reasons') or ())
+
+
+def _reselect_reason(info) -> list:
+    """Said of a row held at two dots because its peak was chosen against the
+    study's reference drift."""
+    if not info.get('reselect_cap'):
+        return []
+    return ["The peak this analyte was matched to is not the nearest to its "
+            "listing: it was chosen as the one standing where the study's "
+            "references stand. No more than two dots rest on a choice the "
+            "search did not make."]
 
 
 def _own_drift_reason(info) -> list:

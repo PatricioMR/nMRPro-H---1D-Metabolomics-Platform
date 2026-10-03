@@ -481,3 +481,50 @@ def test_a_refused_joint_fit_row_is_a_candidate_with_an_upper_bound():
     assert row['_upper_bound_mm'] == {'A': 0.5}
     assert 'Upper bound' in row['_status_reasons'][0]
     assert row['_status_reasons'][1] == 'earlier'
+
+
+def _ann_met(name, mps):
+    return {'id': name, 'name': name, 'matched_peaks': mps}
+
+
+def _confirmed(db, peak):
+    return {'peak_rank': 1, 'annotation_quality': 'good', 'type': 'd',
+            'db_ppm': db, 'peak_ppm': peak, 'delta_j_hz': 0.02,
+            '_n_found_lines': 2, '_n_exp_lines': 2}
+
+
+def test_the_reference_drift_is_the_panel_s_not_the_background_s():
+    from processing.annotation_scoring import reference_drift, study_drift
+    panel = [_ann_met(n, [_confirmed(1.0, 1.013)]) for n in
+             ('L-lactic acid', 'L-alanine', 'L-valine', 'L-isoleucine')]
+    strangers = [_ann_met(f'stranger{i}', [_confirmed(2.0, 2.0 + 0.001 * i)])
+                 for i in range(12)]
+    mets = panel + strangers
+    assert reference_drift(mets) == pytest.approx(0.013)
+    assert study_drift(mets) == pytest.approx(0.013)       # not the median
+    assert reference_drift(strangers) is None               # no panel, no say
+    assert reference_drift(panel[:2]) is None               # too few
+
+
+def test_a_singlet_goes_to_the_peak_standing_where_the_references_stand():
+    from gui.stages._quant_adapter import reselect_singlets
+    panel = [_ann_met(n, [_confirmed(1.0, 1.014)]) for n in
+             ('L-lactic acid', 'L-alanine', 'L-valine')]
+    succ = _ann_met('Succinic acid', [{'peak_rank': 20, 'db_ppm': 2.3913,
+                                   'peak_ppm': 2.3926, 'type': 's',
+                                   'annotation_quality': None,
+                                   'ppm_diff': 0.0013}])
+    peaks = {20: {'rank': 20, 'ppm': 2.3926, 'snr': 69},
+             13: {'rank': 13, 'ppm': 2.4073, 'snr': 160}}
+    out = reselect_singlets(panel + [succ], peaks)
+    mp = next(m for m in out if m['name'] == 'Succinic acid')['matched_peaks'][0]
+    assert mp['peak_rank'] == 13 and mp['reselected']
+    assert succ['matched_peaks'][0]['peak_rank'] == 20       # not touched
+
+
+def test_a_singlet_stays_where_the_search_put_it_without_a_reference_drift():
+    from gui.stages._quant_adapter import reselect_singlets
+    succ = _ann_met('Succinic acid', [{'peak_rank': 20, 'db_ppm': 2.3913,
+                                   'peak_ppm': 2.3926, 'type': 's'}])
+    peaks = {20: {'rank': 20, 'ppm': 2.3926}, 13: {'rank': 13, 'ppm': 2.4073}}
+    assert reselect_singlets([succ], peaks)[0]['matched_peaks'][0]['peak_rank'] == 20

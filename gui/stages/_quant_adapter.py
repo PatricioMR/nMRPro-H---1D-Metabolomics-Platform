@@ -18,7 +18,8 @@ import json
 import numpy as np
 
 from processing.annotation_scoring import (
-    DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, study_drift)
+    DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, is_singlet_like,
+    reference_drift, study_drift)
 from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import quantify, study_position_band
 from processing.quant_shared import annotate_fingerprint_counts
@@ -31,6 +32,70 @@ from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.spectral_regions import measure_linewidth_ppm
 from processing.quantification import Candidate, eligible_metabolite_ids
 from processing.sample_selection import included_sample_indices
+
+
+# A singlet's peak is chosen again, against the study's reference drift, among
+# the detected peaks this far from where the database lists it (ppm); a peak
+# must stand at least SINGLET_RESELECT_MARGIN_PPM closer to the listing plus
+# the drift than the one annotation took, and within SINGLET_RESELECT_REACH_PPM
+# of it. False leaves the annotation's choice, the nearest peak to the listing.
+SINGLET_RESELECT = True
+SINGLET_RESELECT_BAND_PPM = 0.03
+SINGLET_RESELECT_MARGIN_PPM = 0.004
+SINGLET_RESELECT_REACH_PPM = 0.008
+
+
+def reselect_singlets(metabolites, peaks_by_rank):
+    """The annotation took, for each listed singlet, the detected peak
+    nearest its listing. Where the study's references stand some way from
+    their listings (``reference_drift``) the right peak is the one nearest
+    the listing plus that shift: in the NMR_Murilo extract the references
+    stood +13 mppm, succinate's singlet listed at 2.3913 was matched to the
+    peak at 2.3926 (SNR 69) and left the one at 2.4073 (SNR 160) unclaimed.
+
+    Returns ``metabolites`` with the matched peaks of those singlets replaced
+    by copies on the better peak; the annotation's own are not touched.
+    """
+    drift = reference_drift(metabolites)
+    if not SINGLET_RESELECT or drift is None or abs(drift) < SINGLET_RESELECT_MARGIN_PPM:
+        return metabolites
+    common = study_drift(metabolites)
+    peaks = [p for p in peaks_by_rank.values() if p.get('rank') is not None]
+    out, changed = [], 0
+    for met in metabolites or ():
+        mps, touched = [], False
+        for mp in met.get('matched_peaks') or ():
+            db = mp.get('db_ppm')
+            if (db is None or mp.get('peak_ppm') is None
+                    or mp.get('annotation_quality') == 'bad'
+                    or not is_singlet_like(mp.get('type') or mp.get('multiplicity'))):
+                mps.append(mp)
+                continue
+            centre = float(db) + drift
+            near = [p for p in peaks
+                    if abs(float(p['ppm']) - float(db)) <= SINGLET_RESELECT_BAND_PPM]
+            best = min(near, key=lambda p: abs(float(p['ppm']) - centre), default=None)
+            if (best is None or best.get('rank') == mp.get('peak_rank')
+                    or abs(float(best['ppm']) - centre) > SINGLET_RESELECT_REACH_PPM
+                    or abs(float(mp['peak_ppm']) - centre) - abs(float(best['ppm']) - centre)
+                    < SINGLET_RESELECT_MARGIN_PPM):
+                mps.append(mp)
+                continue
+            mp2 = dict(mp)
+            mp2['peak_ppm'] = float(best['ppm'])
+            mp2['peak_rank'] = best['rank']
+            mp2['ppm_diff'] = abs(float(best['ppm']) - float(db))
+            mp2['predicted_lines'] = [{'ppm': float(best['ppm']), 'measured': True,
+                                       'rel_intensity': 1.0}]
+            if common is not None:
+                mp2['ppm_off_drift'] = abs(float(best['ppm']) - float(db) - common)
+            mp2['obs_snr'] = best.get('snr', mp.get('obs_snr'))
+            mp2['reselected'] = True
+            mps.append(mp2)
+            touched = True
+            changed += 1
+        out.append(dict(met, matched_peaks=mps) if touched else met)
+    return out if changed else metabolites
 
 
 def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
@@ -465,6 +530,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
     """
     peaks_by_rank = {p.get('rank'): p for p in (peaks or ())
                      if p.get('rank') is not None}
+    metabolites = reselect_singlets(metabolites, peaks_by_rank)
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)

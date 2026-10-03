@@ -1545,10 +1545,16 @@ def drift_spread(matched_peaks, *, common=None) -> float | None:
 
 
 def study_drift(metabolites) -> float | None:
-    """The study's common drift: the signed median shift of the confirmed
-    multiplets -- lines found, coupling measured -- from the database.
-    A multiplet confirmed on its coupling is where it is; a singlet's shift
-    is the thing in question. None without one."""
+    """The study's common drift: how far the compounds every extract holds
+    (``REFERENCE_PANEL``) stand from their listings, when enough of them are
+    confirmed (``reference_drift``); otherwise the signed median shift of the
+    confirmed multiplets -- lines found, coupling measured -- from the
+    database. A multiplet confirmed on its coupling is where it is; a
+    singlet's shift is the thing in question. None without one."""
+    if STUDY_DRIFT_FROM_PANEL:
+        ref = reference_drift(metabolites)
+        if ref is not None:
+            return ref
     shifts = []
     for met in metabolites or ():
         for mp in met.get('matched_peaks') or ():
@@ -1568,6 +1574,56 @@ def study_drift(metabolites) -> float | None:
             except (KeyError, TypeError, ValueError):
                 continue
     return float(np.median(shifts)) if shifts else None
+
+
+# Metabolites a biological extract almost always holds. Their confirmed
+# multiplets are the study's reference for how far its references stand from
+# the spectrum: prior knowledge about which compounds are present, not about
+# how much of them -- an untargeted study has no expected amount, but lactate,
+# alanine and valine are in a cell extract.
+REFERENCE_PANEL = frozenset({
+    'l-lactic acid', 'l-alanine', 'l-valine', 'l-leucine', 'l-isoleucine',
+    'l-threonine', 'l-lysine', 'l-proline', 'l-phenylalanine', 'l-tyrosine',
+    'l-serine', 'l-glutamic acid', 'l-glutamine', 'glycine', 'taurine',
+    'choline', 'betaine', 'myo-inositol', 'd-glucose', 'alpha-d-glucose',
+    'beta-d-glucose', 'creatine', 'creatinine', 'acetic acid', 'formic acid',
+    'pyruvic acid', 'succinic acid', 'l-methionine', 'l-histidine'})
+# The fewest panel multiplets that may say how far the references stand.
+REFERENCE_MIN_SIGNALS = 3
+# The study's common drift is the panel's when it can be (``study_drift``).
+STUDY_DRIFT_FROM_PANEL = True
+
+
+def reference_drift(metabolites) -> float | None:
+    """How far the study's references stand from the spectrum: the signed
+    median shift (peak minus listing) of the confirmed multiplets of the
+    ``REFERENCE_PANEL`` compounds, or None with fewer than
+    ``REFERENCE_MIN_SIGNALS``.
+
+    ``study_drift`` takes the median of every confirmed multiplet, and on a
+    cell extract it read +2.8 mppm: the confirmed multiplets include a
+    background of coincidences spread evenly across the match tolerance, and
+    the median goes where the background does. Lactate, alanine, valine,
+    isoleucine and glucose stood at +12 to +17 (ADR-061).
+    """
+    shifts = []
+    for met in metabolites or ():
+        if str(met.get('name') or '').strip().lower() not in REFERENCE_PANEL:
+            continue
+        for mp in met.get('matched_peaks') or ():
+            if mp.get('peak_rank') is None or mp.get('annotation_quality') != 'good':
+                continue
+            if normalize_mult(mp.get('type') or mp.get('multiplicity')) == PATTERN_MULT:
+                continue
+            n_f, n_e = mp.get('_n_found_lines'), mp.get('_n_exp_lines')
+            if (mp.get('delta_j_hz') is None or n_f is None or n_e is None
+                    or int(n_e) < 2 or int(n_f) < int(n_e)):
+                continue
+            try:
+                shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
+            except (KeyError, TypeError, ValueError):
+                continue
+    return float(np.median(shifts)) if len(shifts) >= REFERENCE_MIN_SIGNALS else None
 
 
 def annotate_drift_spread(metabolites) -> None:

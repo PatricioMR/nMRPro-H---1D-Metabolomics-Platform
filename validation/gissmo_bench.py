@@ -110,7 +110,8 @@ def crowded_tube(n, seed):
     return tube
 
 
-def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0):
+def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
+          drift=None):
     """``(X, truth)``: one tube of ``composition`` at ``field``.
 
     ``ref_shift`` (ppm) gives every compound its own offset from where the
@@ -139,7 +140,7 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0):
     cols = []
     for info in mb.SAMPLES:
         grp = info['label']
-        shift = mb.DRIFT_PPM + rng.normal(0.0, 0.0015)
+        shift = (mb.DRIFT_PPM if drift is None else drift) + rng.normal(0.0, 0.0015)
         y = rng.normal(0.0, sigma, PPM.size)
         y += mb._lorentz_area(PPM, mb.STANDARD_PPM + rng.normal(0, 0.0003),
                               mb.STANDARD_MM * mb.STANDARD_NH * mb.AREA_UNIT, lw)
@@ -158,34 +159,38 @@ def _composition(size, seed):
     return c600_tube(seed) if size == 'c600' else crowded_tube(int(size), seed)
 
 
-def _shift_tag(ref_shift) -> str:
-    return f'_rs{1000 * ref_shift:.0f}' if ref_shift else ''
+def _shift_tag(ref_shift, drift=None) -> str:
+    return ((f'_rs{1000 * ref_shift:.0f}' if ref_shift else '')
+            + (f'_dr{1000 * drift:.0f}' if drift is not None else ''))
 
 
-def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0):
+def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
+         drift=None):
     """The tube, made once and kept."""
     gain = (field / REF_FIELD) ** 1.5 if snr_b0 else 1.0
     os.makedirs(CACHE_DIR, exist_ok=True)
     path = os.path.join(CACHE_DIR, f'gissmo_{size}_{field:.0f}'
                                    f'{"snr" if snr_b0 else ""}'
-                                   f'{_shift_tag(ref_shift)}'
+                                   f'{_shift_tag(ref_shift, drift)}'
                                    f'_s{seed}_{_data_tag()}.pkl')
     if os.path.exists(path):
         with open(path, 'rb') as f:
             return pickle.load(f)
     X, truth = build(field, seed, _composition(size, seed), snr_gain=gain,
-                     ref_shift=ref_shift)
+                     ref_shift=ref_shift, drift=drift)
     with open(path, 'wb') as f:
         pickle.dump((X, truth), f, protocol=pickle.HIGHEST_PROTOCOL)
     return X, truth
 
 
-def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0):
+def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
+             drift=None):
     """Detection and annotation of the tube, kept until their code changes."""
-    X, truth = tube(field, seed, size, snr_b0=snr_b0, ref_shift=ref_shift)
+    X, truth = tube(field, seed, size, snr_b0=snr_b0, ref_shift=ref_shift,
+                    drift=drift)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     h = hashlib.sha1(f'{size}|{field}|{seed}|{snr_b0}|{_data_tag()}'
-                     f'{_shift_tag(ref_shift)}'.encode())
+                     f'{_shift_tag(ref_shift, drift)}'.encode())
     d = defaults()
     for k in sorted(d):
         h.update(f'{k}={d[k]!r};'.encode())
@@ -226,14 +231,14 @@ def _quant_hash() -> str:
 
 
 def run(field, seed, size='c600', *, snr_b0=False, overrides=None,
-        ref_shift=0.0):
+        ref_shift=0.0, drift=None):
     prep, truth = prepared(field, seed, size, snr_b0=snr_b0,
-                           ref_shift=ref_shift)
+                           ref_shift=ref_shift, drift=drift)
     path = None
     if not overrides:
         path = os.path.join(CACHE_DIR, f'gissmo_rows_{size}_{field:.0f}'
                                        f'{"snr" if snr_b0 else ""}'
-                                       f'{_shift_tag(ref_shift)}_s{seed}_'
+                                       f'{_shift_tag(ref_shift, drift)}_s{seed}_'
                                        f'{_data_tag()}_{_quant_hash()}.pkl')
     if path and os.path.exists(path):
         with open(path, 'rb') as f:
@@ -269,6 +274,8 @@ def main():
     ap.add_argument('--snr-b0', action='store_true')
     ap.add_argument('--ref-shift-mppm', type=float, default=0.0,
                     help='each compound offset from its listing, normal, in mppm')
+    ap.add_argument('--drift-mppm', type=float, default=None,
+                    help='the study-wide shift every compound shares (default 8)')
     a = ap.parse_args()
     res, core = [], []
     for size in a.sizes:
@@ -276,7 +283,8 @@ def main():
             for sd in a.seeds:
                 s, _rows, truth, n_peaks = run(
                     FIELDS[fk], sd, size, snr_b0=a.snr_b0,
-                    ref_shift=a.ref_shift_mppm / 1000.0)
+                    ref_shift=a.ref_shift_mppm / 1000.0,
+                    drift=None if a.drift_mppm is None else a.drift_mppm / 1000.0)
                 lab = f'GISSMO {size} {fk}{" +SNR" if a.snr_b0 else ""} s{sd}'
                 print(f'{lab}: {len(truth)} analitos, {n_peaks} picos',
                       flush=True)
