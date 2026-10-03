@@ -21,7 +21,9 @@ import matplotlib.ticker as ticker
 
 from scipy.optimize import curve_fit
 
-from plotting.fit_curve import draw_fit_curve, fit_warnings
+from plotting.fit_curve import (FIT_ABOVE_TRACE, VIEW_ZOOM_BELOW, draw_fit_curve,
+                                fit_group, fit_over_trace, fit_view_top,
+                                fit_warnings)
 from processing.quant_integration import baseline_and_signal, baseline_under
 
 import os
@@ -148,6 +150,20 @@ def _best_group(group_means, mask, prefer=None):
     return best
 
 
+def _group_amplitude(amps, samples_info, group) -> float:
+    """The amplitude a window resolved by shape found for ``group``: the mean
+    over its samples where it is positive -- the statistic the table reports
+    per group -- so the component drawn on the group's mean trace is the
+    component of the group's number. Without a group, the median over every
+    sample the fit holds."""
+    from gui.stages._quant_adapter import sample_groups
+    members = (sample_groups(samples_info, max(int(k) for k in amps) + 1)
+               .get(group) if group is not None and amps else None)
+    vals = [float(amps[s]) for s in (members or ()) if s in amps
+            and np.isfinite(amps[s]) and amps[s] > 0]
+    return float(np.mean(vals)) if vals else float(np.median(list(amps.values())))
+
+
 def _best_group_trace(group_means, mask, fallback, prefer=None):
     """The trace of ``_best_group``, or ``fallback``."""
     _g, y = _best_group(group_means, mask, prefer)
@@ -205,6 +221,11 @@ def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
 
     fig.tight_layout(pad=0.4)
     return fig
+
+
+def _over_trace_text(ratio) -> str:
+    return (f'the fit holds {ratio:.2f}x the area the trace has under this '
+            f'signal')
 
 
 # ── Recorte espectral centrado no pico ───────────────────────────────────────
@@ -285,6 +306,11 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     _global = (np.asarray(all_int, dtype=float) if all_int.ndim == 1
                else np.mean(all_int, axis=1))
     _shown = result.get('_snr_group')
+    if result.get('_fit_curve'):
+        # the group where the fit found the most, when the SNR's group holds
+        # next to none of it: the card reads this back
+        _shown = fit_group(result['_fit_curve'], _shown)
+        result['_drawn_group'] = _shown
     _best_full = _best_group_trace(_grp, _in_win, _global, prefer=_shown)
     for _g, _y in _grp:
         _is_shown = _shown is not None and str(_g) == str(_shown)
@@ -320,16 +346,24 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     # trace itself. Filled as such, with the fitted curve over it.
     _shape_ev = result.get('_shape_fit')
     _shape_drawn = False
+    _fit_group = None
     # An amount from a fit (joint fit, cascade) is drawn as the fit.
     if result.get('_fit_curve'):
         try:
             _fg, _ = _best_group(_grp, _in_win, prefer=_shown)
             _shape_drawn = draw_fit_curve(ax, result['_fit_curve'], _fg,
                                           _ANALYTE_FILL)
+            _fit_group = _fg
             if _shape_drawn:
                 ax.legend(fontsize=6, loc='upper left', framealpha=0.7,
                           edgecolor='#cccccc')
                 _warn = fit_warnings(result['_fit_curve'])
+                _over = fit_over_trace(result['_fit_curve'], _fg, ppm_f,
+                                       _best_full)
+                # the card says the same as the figure: read back by it
+                result['_fit_over_trace'] = _over
+                if _over is not None and _over > FIT_ABOVE_TRACE:
+                    _warn.append(_over_trace_text(_over))
                 if _warn:
                     ax.text(0.98, 0.97, '\n'.join(_warn),
                             transform=ax.transAxes, fontsize=6, ha='right',
@@ -378,6 +412,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
             _xs = ppm_f[_sel]
             _order = np.argsort(_xs)
             _mid = result.get('hmdb_id')
+            _dg, _ = _best_group(_grp, _in_win, prefer=_shown)
             for _rec in _dc.get('components', ()):
                 _c = component_from_record(_rec)
                 if _c is None:
@@ -385,10 +420,11 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
                 _amps = (_dc.get('amplitudes') or {}).get(_rec['met_id']) or {}
                 if not _amps:
                     continue
-                _m = np.asarray(_c.model(_xs), dtype=float)
-                _top = float(_m.max()) if _m.size else 0.0
-                _m = _m / _top if _top > 0 else _m
-                _y = float(np.median(list(_amps.values()))) * _m
+                # the curve the fit used (shift, width and shape it chose),
+                # whose area times the amplitude is the table's area -- not
+                # the reference's model before the fit moved it
+                _m = np.asarray(_c.curve(_xs), dtype=float)
+                _y = _group_amplitude(_amps, samples_info, _dg) * _m
                 if _rec['met_id'] == _mid:
                     ax.fill_between(_xs[_order], 0, _y[_order], alpha=0.35,
                                     color=_ANALYTE_FILL, linewidth=0, zorder=2)
@@ -522,6 +558,16 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     if y_peak_max > y_base:
         span = y_peak_max - y_base
         ax.set_ylim(y_base - span * 0.04, y_base + span / 0.82)
+    # A fit made on what the other analytes leave, standing under a trace far
+    # taller (a neighbour's peak): the axis is cut on the fit, the traces run
+    # off it, and the figure says so.
+    _view = (fit_view_top(result['_fit_curve'], _fit_group)
+             if _shape_drawn and _fit_group is not None else None)
+    if _view is not None and _view < VIEW_ZOOM_BELOW * ax.get_ylim()[1]:
+        ax.set_ylim(min(0.0, y_base) - 0.04 * _view, _view)
+        ax.text(0.02, 0.02, 'y axis cut on the fit: the traces run off it',
+                transform=ax.transAxes, fontsize=6, va='bottom', color='#555555',
+                bbox=dict(fc='white', alpha=0.8, lw=0))
 
     # Clip ao intervalo da janela — impede linhas de sair do plot
     ax.set_xlim(float(x.max()), float(x.min()))   # ppm invertido
@@ -831,6 +877,10 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
     if _sg is not None:
         _cos = (r.get('_cosine_by_group') or {}).get(_sg)
         snr_s += f'  (group {_sg}' + (f', cosine {_cos:.2f}' if _cos is not None else '') + ')'
+    _dg = r.get('_drawn_group')
+    if _dg is not None and str(_dg) != str(_sg):
+        snr_s += (f'; figure drawn on group {_dg}, where the fit found the '
+                  f'most (the fit holds next to none in {_sg})')
 
     # CV por grupo
     cv_grp = r.get('cv_by_group', {}) or {}
@@ -925,6 +975,9 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
             integ_label += '  |  found in ' + ', '.join(_n) + ' samples'
         for _w in fit_warnings(_fitc):
             integ_label += f"  |  {_w}"
+        _over = r.get('_fit_over_trace')
+        if _over is not None and _over > FIT_ABOVE_TRACE:
+            integ_label += f"  |  {_over_trace_text(_over)}"
     # How many of the pattern's lines the number stands on: a triplet
     # measured on two of its lines says so beside its name.
     _n_own = len(r.get('_line_ppms') or ())

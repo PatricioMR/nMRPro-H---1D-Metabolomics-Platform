@@ -286,7 +286,7 @@ def test_the_crop_draws_the_fit_on_the_baseline_it_stood_on():
     matplotlib.use('Agg')
     row = _fitted_row('Cascade')
     x = np.asarray(row['_fit_curve']['ppm'])
-    y = 5.0 + 50.0 * np.asarray(row['_fit_curve']['unit'])
+    y = 5.0 + 50.0 * np.asarray(row['_fit_curve']['unit_by_group']['All'])
     ppm = np.linspace(3.4, 3.0, 4000)
     Y = np.interp(ppm, x[::-1], y[::-1], left=5.0, right=5.0)
     si = [{'index': i, 'name': f'S{i}', 'label': 'All'} for i in range(2)]
@@ -297,3 +297,56 @@ def test_the_crop_draws_the_fit_on_the_baseline_it_stood_on():
     assert 'Cascade fit' in labels and 'baseline' in labels
     base = next(ln for ln in ax.get_lines() if ln.get_label() == 'baseline')
     assert np.allclose(base.get_ydata(), 5.0)
+
+
+def _resolved_two_groups():
+    """A resolved window on four samples in two groups, the second three
+    times the first: the amplitude the report draws has to be its own
+    group's, as the table's area is."""
+    from processing.quant_shared import component_from_evidence, resolve_window
+    lw = 2.6 / FIELD
+    tau = component_from_evidence(
+        'TAU', {'multiplicity': 't',
+                'predicted_ppms': [3.2 - 6.6 / FIELD, 3.2, 3.2 + 6.6 / FIELD]},
+        label='taurine t', linewidth_ppm=lw, nh=2, owner=True,
+        shift_ppm=0.0006, width_scale=1.3)
+    bet = component_from_evidence(
+        'BET', {'multiplicity': 's', 'peak_ppm': 3.204}, label='betaine s',
+        linewidth_ppm=lw, nh=9, per_proton_hint=1.0)
+    y = 100 * tau.curve(PPM) + 60 * bet.curve(PPM)
+    X = np.column_stack([y, y * 1.1, y * 3.0, y * 3.3])
+    si = [{'index': i, 'label': 'A' if i < 2 else 'B', 'type': 'Sample'}
+          for i in range(4)]
+    out = resolve_window([tau, bet], PPM, X)
+    row = {'metabolite': 'Taurine', 'hmdb_id': 'TAU', 'ppm': 3.2,
+           '_integ_mode': 'Multiplet', '_multiplet_window': [3.18, 3.22],
+           '_areas_per_sample': [out['areas']['TAU'][i] for i in range(4)],
+           '_deconv': {'window': out['window'], 'remainder': out['remainder'],
+                       'components': out['components'],
+                       'amplitudes': out['amplitudes'], 'skipped': []}}
+    return X, si, row
+
+
+def test_the_resolved_component_is_the_curve_the_fit_used_on_its_groups_amplitude():
+    """Painted area == the group's reported area. Drawn from the reference's
+    model before the fit moved and widened it, and at the median amplitude of
+    every sample, the figure was 20-50% off the number it stood beside."""
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    X, si, row = _resolved_two_groups()
+    fig, _r2 = _report()._peak_crop_fig(PPM, X, row, si, {})
+    painted = _polygon_area(fig.axes[0].collections[0])
+    reported = np.mean([row['_areas_per_sample'][i] for i in (2, 3)])
+    assert painted == pytest.approx(reported, rel=0.03)
+
+
+def test_the_group_amplitude_is_the_mean_over_its_positive_samples():
+    group_amplitude = _report()._group_amplitude
+    si = [{'label': 'A', 'type': 'Sample'}, {'label': 'A', 'type': 'Sample'},
+          {'label': 'B', 'type': 'Sample'}, {'label': 'B', 'type': 'Sample'}]
+    amps = {0: 10.0, 1: 0.0, 2: 30.0, 3: 50.0}
+    assert group_amplitude(amps, si, 'A') == 10.0
+    assert group_amplitude(amps, si, 'B') == 40.0
+    assert group_amplitude(amps, si, None) == pytest.approx(20.0)
