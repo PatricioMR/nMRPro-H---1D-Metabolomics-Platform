@@ -1489,6 +1489,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                 1.001 * CASCADE_FINE_REACH_LW * float(linewidth_ppm)
             row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
                                former=former)
+            row['_detected_per_sample'] = _fit_detected(
+                cols.get(mid), ppm, res, noise_sigma)
             if float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY:
                 row['_status_reasons'].insert(0, (
                     f"Most of this analyte's signal lies where analytes already "
@@ -1509,6 +1511,23 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         else:
             out.append(row)
     return out
+
+
+def _fit_detected(col, ppm, res, noise_sigma) -> dict:
+    """``{sample: bool}``: whether the cascade's fit stands ``K_LOD`` noises
+    above the noise in each sample -- its tallest signal at the amplitude the
+    fit found there. The fit gives every sample a positive amplitude whatever
+    the data hold, so without this an analyte the cascade took in would carry
+    a number in samples that show nothing of it. Empty without a noise."""
+    if col is None or not noise_sigma:
+        return {}
+    top = max((float(v.max()) for _i, v in col.part_curves(
+        np.asarray(ppm, dtype=float), float(res.get('shift_ppm') or 0.0))),
+        default=0.0)
+    if top <= 0:
+        return {}
+    return {int(s): bool(float(a) * top / float(noise_sigma) >= K_LOD)
+            for s, a in (res.get('per_proton') or {}).items()}
 
 
 def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> dict:
@@ -2294,6 +2313,11 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 _nh = float(measured[mid]['nh'])
                 measured[mid]['areas'] = {s: v * _nh
                                           for s, v in r['amplitudes'].items()}
+                # a sample where the fit found nothing is not one the analyte
+                # was detected in, whatever its window held of the neighbours
+                measured[mid]['detected'] = {
+                    s: bool(d and float(r['amplitudes'].get(s, 0.0)) > 0.0)
+                    for s, d in (measured[mid].get('detected') or {}).items()}
 
     for mid in _misplaced:
         measured.pop(mid, None)
