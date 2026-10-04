@@ -181,3 +181,148 @@ def test_the_internal_standard_is_not_a_variable_in_the_model():
     assert any(r.get('_is_is') for r in rows), 'the fixture has a standard'
     _, _, features, _ = build_feature_matrix(_FakeApp(rows, samples))
     assert 'Internal standard' not in features
+
+
+# ── Not detected is NaN: the statistics and both exports ─────────────────────
+
+def _with_not_detected(rows):
+    """The first analyte not detected in sample S2 (index 2), a zero in S3."""
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    row['_detected_per_sample'] = [False, True, False, True]
+    row['_concs_per_sample'] = [float('nan'), 1.0, 2.0, 0.0]
+    row['_confidence'] = 1
+    row['_by_cascade'] = True
+    row['_identity_why'] = 'the cascade took it in'
+    return row
+
+
+def test_a_not_detected_sample_is_nan_in_the_statistics_matrix():
+    from gui.stages.statistics_stage import _get_quantification_matrix as build
+    rows, samples = _rows()
+    _with_not_detected(rows)
+    X, _, features, _ = build(_FakeApp(rows, samples))
+    col = X[:, features.index('L-Alanine')]
+    assert col[1] == 1.0
+    assert np.isnan(col[2]), 'detected False: the number the fit gave is not data'
+    assert np.isnan(col[3]), 'a zero is nothing found'
+
+
+def test_a_low_confidence_row_still_reaches_the_statistics():
+    """The analyst reads the confidence; the program does not drop the row."""
+    from gui.stages.statistics_stage import _get_quantification_matrix as build
+    rows, samples = _rows()
+    _with_not_detected(rows)
+    _, _, features, _ = build(_FakeApp(rows, samples))
+    assert 'L-Alanine' in features
+
+
+class _FakeStats:
+    def __init__(self):
+        self.statuses = 0
+
+    def _update_filter_status(self):
+        self.statuses += 1
+
+
+def test_the_multivariate_methods_leave_out_incomplete_features_and_impute_nothing():
+    from gui.stages.statistics_stage import StatisticsStage
+    X = np.array([[1.0, 5.0, np.nan], [2.0, 6.0, 7.0], [3.0, 7.0, 8.0]])
+    fake = _FakeStats()
+    out, labels = StatisticsStage._remove_nan(fake, X, ['a', 'b', 'c'])
+    assert labels == ['a', 'b'] and out.shape == (3, 2)
+    assert fake._nan_dropped == ['c']
+    assert np.array_equal(out, X[:, :2]), 'nothing was filled in'
+
+
+def test_the_per_feature_methods_keep_the_nan_and_drop_only_the_empty():
+    from gui.stages.statistics_stage import StatisticsStage
+    X = np.array([[1.0, np.nan, np.nan], [2.0, 6.0, np.nan], [3.0, 7.0, np.nan]])
+    fake = _FakeStats()
+    out, labels = StatisticsStage._remove_nan(fake, X, ['a', 'b', 'c'],
+                                              complete=False)
+    assert labels == ['a', 'b'] and np.isnan(out[0, 1])
+    assert fake._nan_dropped == []
+
+
+def _export_to(tmp_path, mode, rows, samples, monkeypatch):
+    from gui.stages import _quant_computation as qc
+
+    class _Stage(qc._QuantCompMixin):
+        def __init__(self):
+            self._quant_results = rows
+            self.app = _FakeApp(rows, samples)
+            self.app.all_intensities = np.zeros((10, len(samples)))
+            self._last_norm_mode = 'IS'
+            self.ok = None
+
+        def _status_ok(self, msg):
+            self.ok = msg
+
+    path = str(tmp_path / ('out.csv'))
+    monkeypatch.setattr(qc.filedialog, 'asksaveasfilename', lambda **k: path)
+    shown = []
+    monkeypatch.setattr(qc.messagebox, 'showinfo', lambda *a, **k: shown.append(a))
+    monkeypatch.setattr(qc.messagebox, 'showerror',
+                        lambda *a, **k: shown.append(('ERROR',) + a))
+    _Stage()._export(mode)
+    assert not any(s[0] == 'ERROR' for s in shown), shown
+    return path
+
+
+def _read(path):
+    import csv
+    with open(path, newline='', encoding='utf-8') as f:
+        return list(csv.reader(f))
+
+
+def test_the_csv_marks_not_detected_and_carries_the_confidence(tmp_path, monkeypatch):
+    rows, samples = _rows()
+    _with_not_detected(rows)
+    table = _read(_export_to(tmp_path, 'csv', rows, samples, monkeypatch))
+    head = table[0]
+    for col in ('Confidence', 'Origin', 'IdentityBasis'):
+        assert col in head
+    ala = next(r for r in table if r[0] == 'L-Alanine')
+    assert ala[head.index('Confidence')] == '1'
+    assert ala[head.index('Origin')] == 'Cascade estimate'
+    # the four sample columns are the last four
+    assert ala[-4:] == ['n.d.', ala[-3], 'n.d.', 'n.d.']
+    assert ala[-3] != 'n.d.'
+
+
+def test_metaboanalyst_gets_na_for_not_detected_and_the_confidence_beside_it(
+        tmp_path, monkeypatch):
+    rows, samples = _rows()
+    _with_not_detected(rows)
+    path = _export_to(tmp_path, 'metaboanalyst', rows, samples, monkeypatch)
+    table = _read(path)
+    assert table[0] == ['Sample', 'S1', 'S2', 'S3'], 'the blank is not a column'
+    assert table[1] == ['Label', 'A', 'A', 'B']
+    ala = next(r for r in table[2:] if r[0] == 'L-Alanine')
+    assert ala[1] != 'NA' and ala[2] == 'NA' and ala[3] == 'NA'
+    ann = _read(str(tmp_path / 'out_annotations.csv'))
+    assert ann[0][:3] == ['Feature', 'HMDB_ID', 'Confidence']
+    arow = next(r for r in ann if r[0] == 'L-Alanine')
+    assert arow[2] == '1' and arow[3] == 'Cascade estimate' and arow[5] == '1'
+
+
+def test_metaboanalyst_leaves_out_a_sample_the_analyst_excluded(tmp_path, monkeypatch):
+    rows, samples = _rows()
+    samples[2] = dict(samples[2], excluded=True)
+    table = _read(_export_to(tmp_path, 'metaboanalyst', rows, samples, monkeypatch))
+    assert table[0] == ['Sample', 'S1', 'S3']
+
+
+def test_metaboanalyst_names_are_unique_and_a_feature_never_detected_is_left_out(
+        tmp_path, monkeypatch):
+    rows, samples = _rows()
+    dup = dict(next(r for r in rows if r['hmdb_id'] == 'HMDB0000190'),
+               hmdb_id='HMDB9999999')
+    ghost = dict(dup, metabolite='Ghost', hmdb_id='HMDB1',
+                 _concs_per_sample=[float('nan')] * len(samples))
+    rows += [dup, ghost]
+    table = _read(_export_to(tmp_path, 'metaboanalyst', rows, samples, monkeypatch))
+    names = [r[0] for r in table[2:]]
+    assert len(names) == len(set(names)), names
+    assert 'Ghost' not in names
+    assert any(n.startswith('L-Lactic acid [') for n in names)

@@ -20,8 +20,8 @@ import csv
 import os
 
 from ._quant_adapter import (
-    blank_indices, dilution_and_correction, quantify_project, sample_groups,
-    standard_vector)
+    blank_indices, dilution_and_correction, identity_columns as _identity_columns,
+    quantify_project, reported_values, sample_groups, standard_vector)
 from app_paths import DECONVOLUTION_ENABLED
 from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import format_regions, parse_regions
@@ -839,14 +839,7 @@ class _QuantCompMixin:
         # quantified before a sample was added). Pad/truncate each to exactly n_s
         # so the matrix is rectangular — a ragged list raises "inhomogeneous shape"
         # under numpy and silently skipped all VIP scores.
-        rows = []
-        for r in results:
-            c = list(r.get('_concs_per_sample', []) or [])
-            if len(c) < n_s:
-                c = c + [float('nan')] * (n_s - len(c))
-            elif len(c) > n_s:
-                c = c[:n_s]
-            rows.append(c)
+        rows = [reported_values(r, n_s)[0] for r in results]
         X = np.array(rows, dtype=float).T
 
         blk_idx = set(getattr(self, '_last_blk_indices', []))
@@ -1136,7 +1129,9 @@ class _QuantCompMixin:
                 ci_hdrs  = [h for g in all_groups
                             for h in (f'CI95lo_{g}', f'CI95hi_{g}')]
                 quality_cols = (['ChemShift(ppm)', 'Width(ppm)', 'SNR', 'R2', 'Score',
-                                 'IntegMode', 'Status', 'Norm'] + cv_hdrs + ci_hdrs)
+                                 'IntegMode', 'Status', 'Norm',
+                                 'Confidence', 'Origin', 'IdentityBasis']
+                                + cv_hdrs + ci_hdrs)
 
                 def _fmt(v):
                     try:
@@ -1191,22 +1186,16 @@ class _QuantCompMixin:
                             _im or norm_mode_lbl,
                             status,
                             norm_mode_lbl,
+                            *_identity_columns(r),
                         ] + cv_vals + ci_vals
 
-                        concs = r.get('_concs_per_sample', [])
-                        det   = r.get('_detected_per_sample', [])
-                        # Samples below the per-sample detection limit: report
-                        # 'n.d.' instead of the noise-derived area — fabricating a
-                        # concentration where the analyte is not detected would
-                        # misrepresent the data.
-                        sample_vals = []
-                        for i in range(n_s):
-                            if i < len(det) and det[i] is False:
-                                sample_vals.append('n.d.')
-                            elif i < len(concs):
-                                sample_vals.append(_fmt(concs[i]))
-                            else:
-                                sample_vals.append('NA')
+                        # 'n.d.' where the analyte was not detected (or its
+                        # amount is not positive): a number there would be a
+                        # measurement that does not exist. 'NA' where it was
+                        # never measured (a blank, an excluded sample).
+                        _vals, _nd = reported_values(r, n_s)
+                        sample_vals = ['n.d.' if nd else _fmt(v)
+                                       for v, nd in zip(_vals, _nd)]
 
                         w.writerow([r['metabolite'], hmdb_id] + qual_row + sample_vals)
 
@@ -1225,40 +1214,64 @@ class _QuantCompMixin:
             try:
                 # Bug 7 fix: exclude BLK samples — MetaboAnalyst uses only
                 # experimental samples. Indices of non-BLK samples only.
+                # Samples the analyst excluded from the study are not columns
+                # either: an all-NA sample is a column MetaboAnalyst would
+                # have to guess about.
                 _non_blk_idx = [
                     i for i, s in enumerate(si)
                     if str(s.get('type', s.get('label', ''))).upper() != 'BLK'
+                    and not s.get('excluded', False)
                     and i < n_s
                 ]
                 names  = [si[i].get('name',  f'S{i+1}') for i in _non_blk_idx]
                 labels = [si[i].get('label', 'Unknown')  for i in _non_blk_idx]
+                _seen, _annot, _no_value = {}, [], []
+                _table = []
+                for r in self._quant_results:
+                    # skip the internal standard and lipid index rows, and
+                    # what has no measurable signal
+                    if (r.get('_is_is') or r.get('_is_lipid_index')
+                            or r.get('_not_quantified')):
+                        continue
+                    _vals, _nd = reported_values(r, n_s)
+                    vals = [_vals[i] for i in _non_blk_idx]
+                    # MetaboAnalyst needs one name per feature
+                    name = str(r['metabolite'])
+                    if name in _seen:
+                        name = f"{name} [{r.get('hmdb_id') or _seen[name]}]"
+                    _seen[name] = _seen.get(name, 0) + 1
+                    if not any(np.isfinite(v) for v in vals):
+                        _no_value.append(name)    # nothing for it to model
+                        continue
+                    conf, origin, basis = _identity_columns(r)
+                    _table.append([name] + [f'{v:.6e}' if np.isfinite(v) else 'NA'
+                                            for v in vals])
+                    _annot.append([name, r.get('hmdb_id', ''), conf, origin, basis,
+                                   sum(1 for v in vals if np.isfinite(v)),
+                                   len(vals)])
                 with open(path, 'w', newline='', encoding='utf-8') as f:
                     w = csv.writer(f)
                     # MetaboAnalyst format: row1=Sample+names, row2=Label+groups
                     w.writerow(['Sample'] + names)
                     w.writerow(['Label']  + labels)
-                    for r in self._quant_results:
-                        # Bug 6 fix: skip IS internal standard and lipid index rows.
-                        # Skip não-quantificados — no measurable signal to export.
-                        if (r.get('_is_is') or r.get('_is_lipid_index')
-                                or r.get('_not_quantified')):
-                            continue
-                        concs = r.get('_concs_per_sample', [])
-                        det   = r.get('_detected_per_sample', [])
-                        # Below-detection samples → NA (missing), never a
-                        # noise-derived value: MetaboAnalyst must not treat noise
-                        # as a measured concentration.
-                        vals = []
-                        for i in _non_blk_idx:
-                            if i < len(det) and det[i] is False:
-                                vals.append('NA')
-                            elif i < len(concs) and np.isfinite(concs[i]):
-                                vals.append(f'{concs[i]:.6e}')
-                            else:
-                                vals.append('NA')
-                        w.writerow([r['metabolite']] + vals)
+                    w.writerows(_table)
+                # The dots cannot ride inside MetaboAnalyst's format, so they
+                # travel beside it: the analyst reads the confidence of every
+                # feature before trusting what the statistics make of it.
+                _ann_path = os.path.splitext(path)[0] + '_annotations.csv'
+                with open(_ann_path, 'w', newline='', encoding='utf-8') as f:
+                    w = csv.writer(f)
+                    w.writerow(['Feature', 'HMDB_ID', 'Confidence', 'Origin',
+                                'IdentityBasis', 'N_detected', 'N_samples'])
+                    w.writerows(_annot)
                 self._status_ok(f'MetaboAnalyst → {os.path.basename(path)}')
-                messagebox.showinfo('Export', f'Saved:\n{path}')
+                _note = (f'\n{len(_no_value)} metabolite(s) left out: not '
+                         f'detected in any exported sample.' if _no_value else '')
+                messagebox.showinfo(
+                    'Export',
+                    f'Saved:\n{path}\n\nConfidence of every feature (1 = a '
+                    f'candidate to check, 3 = confirmed):\n{_ann_path}\n\n'
+                    f'n.d. samples are NA.{_note}')
             except Exception as e:
                 messagebox.showerror('Export Error', str(e))
 

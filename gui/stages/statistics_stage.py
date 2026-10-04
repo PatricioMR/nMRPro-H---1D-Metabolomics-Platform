@@ -9,6 +9,8 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import numpy as np
 
+from gui.stages._quant_adapter import reported_values
+
 # ---------- helpers ----------------------------------------------------------
 
 def _get_quantification_matrix(app):
@@ -43,11 +45,12 @@ def _get_quantification_matrix(app):
             # vary — and dominate a normalisation that assumes it can.
             if met.get('_is_is'):
                 continue
-            concs = met.get('_concs_per_sample') or []
-            if not concs:
+            if not met.get('_concs_per_sample'):
                 continue
-            # Align length to n_s
-            col = list(concs[:n_s]) + [float('nan')] * max(0, n_s - len(concs))
+            # Not-detected samples are NaN, never a noise-derived number or a
+            # zero: a value written where the analyte was not seen is a
+            # measurement that does not exist.
+            col, _nd = reported_values(met, n_s)
             feature_labels.append(
                 met.get('metabolite') or met.get('name') or '?')
             X_cols.append(col)
@@ -1242,6 +1245,11 @@ class StatisticsStage:
             parts.append(f'{len(self._excluded_samples)} sample(s) excluded')
         if self._excluded_metabolites:
             parts.append(f'{len(self._excluded_metabolites)} metabolite(s) excluded')
+        _nd = getattr(self, '_nan_dropped', None)
+        if _nd:
+            _names = ', '.join(_nd[:4]) + (', …' if len(_nd) > 4 else '')
+            parts.append(f'{len(_nd)} metabolite(s) with n.d. left out of this '
+                         f'model (nothing imputed): {_names}')
         lbl = getattr(self, '_filter_status_lbl', None)
         if lbl:
             try:
@@ -1948,11 +1956,17 @@ class StatisticsStage:
             X              = X[:, keep_cols]
             feature_labels = [feature_labels[i] for i in keep_cols]
 
-        X, feature_labels = self._remove_nan(X, feature_labels)
+        # The per-feature methods test what each group holds and read a NaN as
+        # a sample without a number; the multivariate ones need every cell.
+        X, feature_labels = self._remove_nan(
+            X, feature_labels,
+            complete=method not in ('Volcano', 'Metabolic Profile',
+                                    'Box / Violin'))
         if X.shape[1] < 2:
             messagebox.showwarning(
                 'No data',
-                'Not enough valid features after removing missing values.',
+                'Not enough features without a not-detected sample (n.d.). '
+                'Nothing is imputed: a model needs a number in every sample.',
                 parent=self.frame)
             return
 
@@ -2549,18 +2563,25 @@ class StatisticsStage:
 
     # ── NaN cleanup ──────────────────────────────────────────────────────────
 
-    def _remove_nan(self, X, feature_labels):
-        """Drop all-NaN columns, then impute remaining NaN with column mean."""
+    def _remove_nan(self, X, feature_labels, *, complete=True):
+        """Leave out the features a model cannot read, and impute nothing.
+
+        A not-detected sample is NaN, and a NaN filled with the column mean is
+        a number nobody measured, pulling every group toward a shared mean.
+        With ``complete`` (the multivariate methods, which need every cell)
+        a feature with a NaN in any sample is left out of this run and named
+        beside the filters; without it (the per-feature methods, which test
+        what each group holds) only the all-NaN features go. The analyst
+        decides what a not-detected sample is worth, outside this program.
+        """
         X = np.array(X, dtype=float)
-        # Drop columns where every sample is NaN
-        valid_cols = ~np.all(np.isnan(X), axis=0)
-        X = X[:, valid_cols]
-        feature_labels = [f for f, v in zip(feature_labels, valid_cols) if v]
-        # Impute remaining NaN with column mean
-        col_means = np.nanmean(X, axis=0)
-        nan_mask  = np.isnan(X)
-        X[nan_mask] = np.take(col_means, np.where(nan_mask)[1])
-        return X, feature_labels
+        feature_labels = list(feature_labels)
+        keep = (~np.any(np.isnan(X), axis=0) if complete
+                else ~np.all(np.isnan(X), axis=0))
+        dropped = [f for f, k in zip(feature_labels, keep) if not k]
+        self._nan_dropped = dropped if complete else []
+        self._update_filter_status()
+        return X[:, keep], [f for f, k in zip(feature_labels, keep) if k]
 
     # ── Scaling ───────────────────────────────────────────────────────────────
 
@@ -3591,8 +3612,14 @@ class StatisticsStage:
         Xb = X_raw[idx_b, :]
 
         eps = 1e-9
-        fc  = (Xb.mean(axis=0) + eps) / (Xa.mean(axis=0) + eps)
-        log2fc = np.log2(fc)
+        # Not-detected samples are NaN and are left out of each group's mean
+        # and test; a feature needs two detected samples in both groups.
+        _na = np.sum(np.isfinite(Xa), axis=0)
+        _nb = np.sum(np.isfinite(Xb), axis=0)
+        with np.errstate(all='ignore'):
+            fc = ((np.nanmean(Xb, axis=0) + eps)
+                  / (np.nanmean(Xa, axis=0) + eps))
+            log2fc = np.log2(fc)
 
         # Drop features whose fold change is non-finite — happens when a group
         # mean is zero/negative (e.g. after baseline/normalization), giving
@@ -3600,7 +3627,7 @@ class StatisticsStage:
         # them) makes the tight-bbox export compute an infinite figure size,
         # which RendererAgg rejects and the whole plot fails to render. We never
         # interpolate the value — the feature is excluded and the user warned.
-        finite = np.isfinite(log2fc)
+        finite = np.isfinite(log2fc) & (_na >= 2) & (_nb >= 2)
         n_dropped = int((~finite).sum())
         if not finite.any():
             raise ValueError(
@@ -3610,16 +3637,17 @@ class StatisticsStage:
         if n_dropped:
             messagebox.showwarning(
                 'Volcano',
-                f'{n_dropped} feature(s) excluded: group mean ≤ 0 gives a '
-                'non-finite fold change. They are not plotted.',
+                f'{n_dropped} feature(s) excluded: fewer than two detected '
+                'samples in a group (n.d. is not a number), or a group mean '
+                '≤ 0 that gives a non-finite fold change. They are not plotted.',
                 parent=self.frame)
             Xa = Xa[:, finite]
             Xb = Xb[:, finite]
             log2fc = log2fc[finite]
             feature_labels = [l for l, ok in zip(feature_labels, finite) if ok]
 
-        pvals = np.array([stats.ttest_ind(Xa[:, j], Xb[:, j],
-                                          equal_var=False).pvalue
+        pvals = np.array([stats.ttest_ind(Xa[:, j], Xb[:, j], equal_var=False,
+                                          nan_policy='omit').pvalue
                           for j in range(Xa.shape[1])])
         pvals = np.nan_to_num(pvals, nan=1.0)
 
@@ -3750,7 +3778,7 @@ class StatisticsStage:
         # Re-fetch raw (unscaled) concentrations — pie charts need absolute values.
         X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
         if X_raw is not None:
-            X_raw, feat_raw = self._remove_nan(X_raw, feat_raw)
+            X_raw, feat_raw = self._remove_nan(X_raw, feat_raw, complete=False)
             if self._excluded_samples:
                 _si = getattr(self.app, 'samples_info', []) or []
                 _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]

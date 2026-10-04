@@ -462,6 +462,67 @@ def _as_sample_list(mapping, n_samples):
     return out
 
 
+def reported_values(row, n_samples):
+    """``(values, not_detected)`` -- the concentration the analyst is given
+    for each of ``n_samples`` samples, and which of the others are 'n.d.'.
+
+    A value is a number only where the analyte was detected and its amount is
+    positive. The fit and the integral give every sample a number whatever the
+    data hold, a zero is the engine saying it found nothing, and a number
+    written where an analyte was not seen puts a measurement where there is
+    none (Helsel 2006, Chemosphere 65:2434). Those samples are NaN, flagged
+    ``not_detected``; a sample the analyte was never measured in (a blank,
+    an excluded sample) is NaN and not flagged: 'NA', not 'n.d.'. Whatever
+    reads the table -- the statistics, both exports -- reads it from here.
+    """
+    concs = list(row.get('_concs_per_sample') or [])
+    det = list(row.get('_detected_per_sample') or [])
+    values, not_detected = [], []
+    for i in range(int(n_samples)):
+        c = concs[i] if i < len(concs) else float('nan')
+        d = det[i] if i < len(det) else float('nan')
+        try:
+            c = float(c)
+        except (TypeError, ValueError):
+            c = float('nan')
+        if isinstance(d, (bool, np.bool_)) and not d:
+            values.append(float('nan')); not_detected.append(True)
+        elif not np.isfinite(c):
+            values.append(float('nan')); not_detected.append(False)
+        elif c <= 0:
+            values.append(float('nan')); not_detected.append(True)
+        else:
+            values.append(c); not_detected.append(False)
+    return values, not_detected
+
+
+def identity_columns(row):
+    """``(confidence, origin, basis)`` of a row as the exports write them.
+
+    The dots are the engine's identity confidence (3 confirmed, 2 supported,
+    1 a candidate): a table that carries only the numbers hides that a row at
+    one dot may be a stranger. Origin says what produced the number -- an
+    integral of a window, a joint fit, the cascade's estimate -- and basis is
+    the engine's own reason for the confidence.
+    """
+    if row.get('_by_cascade'):
+        origin = 'Cascade estimate'
+    elif row.get('_joint_fit'):
+        origin = 'Joint fit'
+    elif row.get('_fit_refused'):
+        origin = 'Integral (joint fit refused)'
+    elif row.get('_deconv') and row.get('_used_j_resolve'):
+        origin = 'Window resolved by shape'
+    else:
+        origin = str(row.get('_integ_mode') or 'Integration')
+    conf = row.get('_confidence')
+    try:
+        conf = int(conf)
+    except (TypeError, ValueError):
+        conf = ''
+    return conf, origin, str(row.get('_identity_why') or '')
+
+
 def _rows_indexed_by_sample(rows, n_samples):
     for r in rows:
         for key in _PER_SAMPLE_FIELDS:

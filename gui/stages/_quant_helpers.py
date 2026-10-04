@@ -103,7 +103,9 @@ def bootstrap_fraction_ci(values, n_boot=1000, ci=0.95, min_n=6, seed=0):
 def _pls_vip(X, y, n_components=2):
     """Compute PLS-DA VIP scores (no sklearn required).
 
-    X : (n_samples, n_features)  — concentrations, NaN columns are skipped
+    X : (n_samples, n_features)  — concentrations; a feature with a NaN (a
+                                   not-detected sample) is left out: nothing
+                                   is imputed
     y : (n_samples,)             — group labels encoded as integers
     Returns array of shape (n_features,) with VIP scores (NaN for skipped cols).
     """
@@ -112,9 +114,14 @@ def _pls_vip(X, y, n_components=2):
     if n_comp < 1 or n < 3:
         return np.full(p, float('nan'))
 
-    col_means = np.nanmean(X, axis=0)
-    nan_cols   = np.all(np.isnan(X), axis=0)
-    Xc = np.where(np.isnan(X), col_means, X)
+    nan_cols = np.any(np.isnan(X), axis=0)
+    if nan_cols.any():
+        out = np.full(p, float('nan'))
+        if (~nan_cols).any():
+            out[~nan_cols] = _pls_vip(X[:, ~nan_cols], y, n_components)
+        return out
+    col_means = X.mean(axis=0)
+    Xc = X
     x_std = Xc.std(axis=0)
     x_std[x_std < 1e-12] = 1.0
     Xc = (Xc - col_means) / x_std
@@ -153,9 +160,7 @@ def _pls_vip(X, y, n_components=2):
     if SS_total < 1e-12:
         return np.full(p, float('nan'))
 
-    vip = np.sqrt(p * (W ** 2 @ SS) / SS_total)
-    vip[nan_cols] = float('nan')
-    return vip
+    return np.sqrt(p * (W ** 2 @ SS) / SS_total)
 
 
 def _cv(vals):
