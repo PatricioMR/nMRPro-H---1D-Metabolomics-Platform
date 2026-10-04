@@ -1,7 +1,7 @@
 {
  "500": {
-  "software": "NMRPro-H v0.53 Alpha",
-  "date": "2026-10-02",
+  "software": "NMRPro-H v0.54 Alpha",
+  "date": "2026-10-03",
   "database": "BMRB_Metabolomics_Mammalian_v05.db",
   "generator": "gissmo",
   "design": {
@@ -25,108 +25,108 @@
     "runs": 3,
     "levels": {
      "1": {
-      "real": 20,
-      "false": 33,
-      "precision": 0.37735849056603776,
-      "error_median": 0.4613140694701896,
-      "error_p90": 0.6649121501760974
+      "real": 16,
+      "false": 37,
+      "precision": 0.3018867924528302,
+      "error_median": 0.29902062289649556,
+      "error_p90": 0.7427635931030943
      },
      "2": {
-      "real": 14,
-      "false": 0,
-      "precision": 1.0,
-      "error_median": 0.10642198565324354,
-      "error_p90": 0.2337109338466502
+      "real": 21,
+      "false": 4,
+      "precision": 0.84,
+      "error_median": 0.12239769171571213,
+      "error_p90": 0.536126245281317
      },
      "3": {
-      "real": 17,
+      "real": 15,
       "false": 0,
       "precision": 1.0,
-      "error_median": 0.07973285776066547,
-      "error_p90": 0.16578429569818315
+      "error_median": 0.0837943409612315,
+      "error_p90": 0.18429978883765494
      }
     },
     "peaks": 88.33333333333333,
-    "found": 0.9444444444444444,
-    "recall_2plus": 0.5740740740740741,
-    "precision_2plus": 1.0,
-    "false_per_run": 11.0,
-    "error_median": 0.11877008267357525,
-    "error_p90": 0.6377107147963442
+    "found": 0.9629629629629629,
+    "recall_2plus": 0.6666666666666666,
+    "precision_2plus": 0.9,
+    "false_per_run": 13.666666666666666,
+    "error_median": 0.15185012855502766,
+    "error_p90": 0.633049972091676
    },
    "50": {
     "analytes": 50,
     "runs": 3,
     "levels": {
      "1": {
-      "real": 37,
-      "false": 58,
-      "precision": 0.3894736842105263,
-      "error_median": 0.4347736021861469,
-      "error_p90": 0.9536440428663376
+      "real": 34,
+      "false": 68,
+      "precision": 0.3333333333333333,
+      "error_median": 0.31186772992745265,
+      "error_p90": 1.1971690355872675
      },
      "2": {
-      "real": 54,
-      "false": 0,
-      "precision": 1.0,
-      "error_median": 0.1124627590945835,
-      "error_p90": 0.34990864233328617
+      "real": 56,
+      "false": 11,
+      "precision": 0.835820895522388,
+      "error_median": 0.16449016018320267,
+      "error_p90": 0.4383249986757471
      },
      "3": {
-      "real": 35,
+      "real": 34,
       "false": 0,
       "precision": 1.0,
-      "error_median": 0.09214729718966752,
-      "error_p90": 0.5257550844978365
+      "error_median": 0.13256958590061307,
+      "error_p90": 0.47032597499244994
      }
     },
     "peaks": 190.66666666666666,
-    "found": 0.84,
-    "recall_2plus": 0.5933333333333334,
-    "precision_2plus": 1.0,
-    "false_per_run": 19.333333333333332,
-    "error_median": 0.141877170502492,
-    "error_p90": 0.716795150215774
+    "found": 0.8266666666666667,
+    "recall_2plus": 0.6,
+    "precision_2plus": 0.8910891089108911,
+    "false_per_run": 26.333333333333332,
+    "error_median": 0.1851782914988086,
+    "error_p90": 0.5658629275111975
    },
    "100": {
     "analytes": 100,
     "runs": 3,
     "levels": {
      "1": {
-      "real": 41,
-      "false": 58,
-      "precision": 0.41414141414141414,
-      "error_median": 0.48102098256870174,
-      "error_p90": 2.333887691411285
+      "real": 33,
+      "false": 69,
+      "precision": 0.3235294117647059,
+      "error_median": 0.5430913400223236,
+      "error_p90": 2.704493466603568
      },
      "2": {
-      "real": 131,
-      "false": 13,
-      "precision": 0.9097222222222222,
-      "error_median": 0.1222949088840165,
-      "error_p90": 0.470018631580567
+      "real": 154,
+      "false": 20,
+      "precision": 0.8850574712643678,
+      "error_median": 0.19303239720939513,
+      "error_p90": 0.5635369214640994
      },
      "3": {
-      "real": 33,
-      "false": 0,
-      "precision": 1.0,
-      "error_median": 0.0832965462736639,
-      "error_p90": 0.6896327579504912
+      "real": 32,
+      "false": 1,
+      "precision": 0.9696969696969697,
+      "error_median": 0.1283504172104906,
+      "error_p90": 0.3015552049402657
      }
     },
     "peaks": 286.6666666666667,
-    "found": 0.6833333333333333,
-    "recall_2plus": 0.5466666666666666,
-    "precision_2plus": 0.9265536723163842,
-    "false_per_run": 23.666666666666668,
-    "error_median": 0.13803394794586515,
-    "error_p90": 0.7165182042307895
+    "found": 0.73,
+    "recall_2plus": 0.62,
+    "precision_2plus": 0.8985507246376812,
+    "false_per_run": 30.0,
+    "error_median": 0.19910380941734218,
+    "error_p90": 0.7796622237493277
    }
   }
  },
  "600": {
-  "software": "NMRPro-H v0.53 Alpha",
-  "date": "2026-10-02",
+  "software": "NMRPro-H v0.54 Alpha",
+  "date": "2026-10-03",
   "database": "BMRB_Metabolomics_Mammalian_v05.db",
   "generator": "gissmo",
   "design": {
@@ -150,102 +150,102 @@
     "runs": 3,
     "levels": {
      "1": {
-      "real": 19,
-      "false": 29,
-      "precision": 0.3958333333333333,
-      "error_median": 0.21228539152905912,
-      "error_p90": 0.6330550313863763
+      "real": 8,
+      "false": 37,
+      "precision": 0.17777777777777778,
+      "error_median": 0.20452222551984897,
+      "error_p90": 0.31125452010796634
      },
      "2": {
-      "real": 19,
+      "real": 30,
       "false": 0,
       "precision": 1.0,
-      "error_median": 0.12886229466806143,
-      "error_p90": 0.4214038806853597
+      "error_median": 0.14157957410253458,
+      "error_p90": 0.4976379828848425
      },
      "3": {
       "real": 13,
       "false": 0,
       "precision": 1.0,
-      "error_median": 0.08103024712437146,
-      "error_p90": 0.15553921425298042
+      "error_median": 0.0608485041765392,
+      "error_p90": 0.14851576184647058
      }
     },
     "peaks": 97.33333333333333,
     "found": 0.9444444444444444,
-    "recall_2plus": 0.5925925925925926,
+    "recall_2plus": 0.7962962962962963,
     "precision_2plus": 1.0,
-    "false_per_run": 9.666666666666666,
-    "error_median": 0.12971462624005575,
-    "error_p90": 0.4222643169067285
+    "false_per_run": 12.333333333333334,
+    "error_median": 0.11145168899059554,
+    "error_p90": 0.4541269855044461
    },
    "50": {
     "analytes": 50,
     "runs": 3,
     "levels": {
      "1": {
-      "real": 38,
-      "false": 49,
-      "precision": 0.4367816091954023,
-      "error_median": 0.2315285204018385,
-      "error_p90": 0.7315022579866766
+      "real": 25,
+      "false": 65,
+      "precision": 0.2777777777777778,
+      "error_median": 0.3040849982931114,
+      "error_p90": 0.8265443296053433
      },
      "2": {
-      "real": 59,
-      "false": 0,
-      "precision": 1.0,
-      "error_median": 0.12207458455590303,
-      "error_p90": 0.4374486084195732
+      "real": 73,
+      "false": 13,
+      "precision": 0.8488372093023255,
+      "error_median": 0.17608934099238566,
+      "error_p90": 0.4871032181009239
      },
      "3": {
-      "real": 35,
+      "real": 34,
       "false": 0,
       "precision": 1.0,
-      "error_median": 0.10531818650671593,
-      "error_p90": 0.33359318110080793
+      "error_median": 0.08014577069998124,
+      "error_p90": 0.29351982508576707
      }
     },
     "peaks": 206.66666666666666,
     "found": 0.88,
-    "recall_2plus": 0.6266666666666667,
-    "precision_2plus": 1.0,
-    "false_per_run": 16.333333333333332,
-    "error_median": 0.16313463839649628,
-    "error_p90": 0.48639813737585186
+    "recall_2plus": 0.7133333333333334,
+    "precision_2plus": 0.8916666666666667,
+    "false_per_run": 26.0,
+    "error_median": 0.15133120673512934,
+    "error_p90": 0.4921874245216675
    },
    "100": {
     "analytes": 100,
     "runs": 3,
     "levels": {
      "1": {
-      "real": 42,
-      "false": 54,
-      "precision": 0.4375,
-      "error_median": 0.3326508220624419,
-      "error_p90": 1.5130092558078314
+      "real": 38,
+      "false": 58,
+      "precision": 0.3958333333333333,
+      "error_median": 0.451543657231839,
+      "error_p90": 2.219411034358021
      },
      "2": {
-      "real": 147,
-      "false": 11,
-      "precision": 0.930379746835443,
-      "error_median": 0.14751929871109637,
-      "error_p90": 0.5131550561955827
+      "real": 154,
+      "false": 20,
+      "precision": 0.8850574712643678,
+      "error_median": 0.1552648339782241,
+      "error_p90": 0.46408109564007344
      },
      "3": {
       "real": 35,
-      "false": 0,
-      "precision": 1.0,
-      "error_median": 0.12322187831491604,
-      "error_p90": 0.6776837021824982
+      "false": 1,
+      "precision": 0.9722222222222222,
+      "error_median": 0.1454348962058487,
+      "error_p90": 0.4836774286533176
      }
     },
     "peaks": 304.0,
-    "found": 0.7466666666666667,
-    "recall_2plus": 0.6066666666666667,
-    "precision_2plus": 0.9430051813471503,
-    "false_per_run": 21.666666666666668,
-    "error_median": 0.16467826206957795,
-    "error_p90": 0.6573792701302632
+    "found": 0.7566666666666667,
+    "recall_2plus": 0.63,
+    "precision_2plus": 0.9,
+    "false_per_run": 26.333333333333332,
+    "error_median": 0.19288765856949197,
+    "error_p90": 0.6680431062237482
    }
   }
  }
