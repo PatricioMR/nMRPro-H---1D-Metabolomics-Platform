@@ -4,7 +4,7 @@ import pytest
 
 from processing.multivariate import (
     pls_r2x_per_component, opls_da,
-    plsda_binarize, plsda_cv_q2, plsda_permutation_p)
+    plsda_binarize, plsda_cv_q2, plsda_permutation_p, permanova)
 
 
 def _two_class(n=24, p=30, seed=0):
@@ -145,3 +145,71 @@ class TestPLSDAValidation:
         X = rng.normal(size=(24, 30)); X[:, :5] += y[:, None] * 2.0; X -= X.mean(0)
         q2 = plsda_cv_q2(X, y, n_comp=2, n_splits=4)
         assert np.isfinite(q2)
+
+
+def _anderson_f_r2(X, labels):
+    """Pseudo-F and R² straight from the distance matrix (Anderson 2001, eqs.
+    2-4): SS_T = Σ d²/N over pairs, SS_W = Σ_g Σ d²/n_g over within-group pairs."""
+    X = np.asarray(X, float)
+    labels = np.asarray(labels)
+    n = len(labels)
+    d2 = ((X[:, None, :] - X[None, :, :]) ** 2).sum(-1)
+    sst = d2[np.triu_indices(n, 1)].sum() / n
+    ssw = 0.0
+    for c in np.unique(labels):
+        idx = np.where(labels == c)[0]
+        sub = d2[np.ix_(idx, idx)]
+        ssw += sub[np.triu_indices(len(idx), 1)].sum() / len(idx)
+    g = len(np.unique(labels))
+    return ((sst - ssw) / (g - 1)) / (ssw / (n - g)), (sst - ssw) / sst
+
+
+class TestPermanova:
+    def test_f_and_r2_match_anderson_distance_formula(self):
+        X, y = _two_class(seed=7)
+        res = permanova(X, y, n_perm=0)
+        f, r2 = _anderson_f_r2(X, y)
+        assert res['F'] == pytest.approx(f)
+        assert res['R2'] == pytest.approx(r2)
+
+    def test_three_groups_unequal_sizes(self):
+        rng = np.random.default_rng(8)
+        y = np.array([0] * 5 + [1] * 8 + [2] * 3)
+        X = rng.normal(size=(16, 10)) + y[:, None] * 0.5
+        res = permanova(X, y, n_perm=0)
+        f, r2 = _anderson_f_r2(X, y)
+        assert res['F'] == pytest.approx(f)
+        assert res['R2'] == pytest.approx(r2)
+        assert res['groups'] == 3 and res['n'] == 16
+
+    def test_significant_for_separated_groups(self):
+        X, y = _two_class(seed=9)
+        assert permanova(X, y, n_perm=199)['p'] < 0.05
+
+    def test_not_significant_for_random_labels(self):
+        rng = np.random.default_rng(10)
+        X = rng.normal(size=(24, 30))
+        y = np.array([0] * 12 + [1] * 12)
+        assert permanova(X, y, n_perm=199)['p'] > 0.05
+
+    def test_p_floor_is_one_over_n_perm_plus_one(self):
+        X = np.vstack([np.zeros((6, 3)), np.full((6, 3), 100.0)])
+        X += np.random.default_rng(11).normal(size=X.shape) * 0.01
+        y = np.array([0] * 6 + [1] * 6)
+        assert permanova(X, y, n_perm=99)['p'] == pytest.approx(1 / 100)
+
+    def test_same_seed_same_p(self):
+        X, y = _two_class(seed=12)
+        assert permanova(X, y, n_perm=99)['p'] == permanova(X, y, n_perm=99)['p']
+
+    def test_string_labels(self):
+        X, y = _two_class(seed=13)
+        names = np.where(y == 0, 'CTRL', 'MSCs EVs')
+        assert permanova(X, names, n_perm=0)['F'] == pytest.approx(
+            permanova(X, y, n_perm=0)['F'])
+
+    def test_undefined_cases_return_none(self):
+        X = np.random.default_rng(14).normal(size=(6, 4))
+        assert permanova(X, [0] * 6) is None                    # one group
+        assert permanova(X[:3], [0, 1, 2]) is None              # no within-group df
+        assert permanova(np.zeros((6, 4)), [0, 0, 0, 1, 1, 1]) is None  # no variance

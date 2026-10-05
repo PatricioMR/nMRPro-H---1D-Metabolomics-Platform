@@ -616,6 +616,53 @@ def _params_table(qs, app, annotation_stage=None):
         ['Groups',            ', '.join(groups) or '—'],
         ['Report date',       datetime.datetime.now().strftime('%Y-%m-%d %H:%M')],
     ]
+    # An edit of the spectrum is part of how the numbers were made.
+    _ra = list(getattr(app, 'region_alignments', None) or [])
+    if _ra:
+        rows.append(['Regional alignment', '; '.join(
+            f"{a['region_ppm'][0]:.3f}-{a['region_ppm'][1]:.3f} ppm "
+            f"({a.get('mode')}, signal #{a.get('signal_rank')})"
+            for a in _ra[:6]) + (f' and {len(_ra) - 6} more' if len(_ra) > 6 else '')])
+    # How this run was made: the options the saved results were produced
+    # with, so the report can be repeated.
+    _run = getattr(qs, '_last_run_settings', None)
+    if not _run:
+        from gui.project_vars import collect_vars
+        _run = collect_vars(qs)
+    _yn = lambda k: 'Yes' if _run.get(k) else 'No'
+    _baseline = {(False, False): 'None', (True, False): 'Local per window',
+                 (False, True): 'Baseline model',
+                 (True, True): 'Local + model'}[
+        (bool(_run.get('local_baseline_var')),
+         bool(_run.get('bl_model_quant_var')))]
+    rows[3:3] = [
+        ['Baseline',            _baseline],
+        ['Cascade',             _yn('cascade_var')],
+        ['Joint fit',           _yn('joint_fit_var')],
+        ['Shape fit',           _yn('shape_var')],
+        ['Shared-window split', _yn('shared_var')],
+        ['Singlet min SNR',     str(_run.get('singlet_snr_var', '—'))],
+        ['Max signal disagreement',
+         f"{_run.get('max_disagreement_var', '—')} %"],
+        ['Blank subtraction',   _yn('blk_sub_var')],
+        ['External IS',         _yn('ext_is_var')],
+    ]
+    # With PQN the groups' mean factors are said, and a gap between them is
+    # flagged: the normalisation may be taking a real difference out.
+    pqn_note_row = None
+    if 'PQN' in str(norm_mode):
+        from gui.stages._quant_adapter import sample_groups
+        from processing.quant_concentration import (
+            pqn_group_divergence_of_rows, pqn_group_note)
+        _div = pqn_group_divergence_of_rows(
+            getattr(qs, '_quant_results', None),
+            sample_groups(si, len(si)))
+        if _div:
+            rows.insert(2, ['PQN factor by group', ',  '.join(
+                f'{g}: {v:.2f}' for g, v in _div['by_group'].items())])
+            if _div['diverges']:
+                pqn_note_row = 3
+                rows.insert(3, ['PQN notice', pqn_group_note(_div)])
 
     if annotation_stage is not None:
         ann = annotation_stage
@@ -636,6 +683,11 @@ def _params_table(qs, app, annotation_stage=None):
             ['Spectrometer',     mhz],
         ]
     col_w = [avail_w * 0.38, avail_w * 0.55]
+    if pqn_note_row is not None:
+        rows[pqn_note_row][1] = Paragraph(
+            rows[pqn_note_row][1],
+            ParagraphStyle('pqnnote', fontSize=7.5, leading=9.5,
+                           textColor=colors.HexColor('#b71c1c')))
     tbl = Table(rows, colWidths=col_w)
     tbl.setStyle(TableStyle([
         ('BACKGROUND',  (0, 0), (-1, 0), _BLUE_DARK),

@@ -191,3 +191,65 @@ def apply_pqn(area_by_signal_and_sample: dict, *, min_signals: int = 3,
     out = {sig: {s: (v / factors.get(s, 1.0)) for s, v in per.items()}
            for sig, per in area_by_signal_and_sample.items()}
     return out, factors
+
+
+# How far apart the groups' mean PQN factors may stand before the analyst is
+# told that PQN is removing a difference between them. The factor reads how
+# much of the sample there is; a group whose factors stand 20% from another's
+# is a group the normalisation has rescaled.
+PQN_GROUP_WARN = 0.20
+
+
+def pqn_group_divergence(factors: dict, groups: dict, *,
+                         threshold: float = PQN_GROUP_WARN) -> dict | None:
+    """The mean PQN factor of every group, and whether they stand apart.
+
+    PQN divides each sample by how concentrated it is against the median
+    sample, so it answers a question about composition: a difference that
+    reaches every metabolite alike -- a group with fewer cells -- is read as
+    dilution and taken out (Dieterle et al. 2006, Anal Chem 78:4281). On the
+    validation bench a global x0.6 on one group was estimated at 3% and
+    removed: the ratio of an unchanged analyte read 1.0 where its amount had
+    fallen to 0.6 (ADR-062). A group-wise gap in the factors is the sign that
+    this is happening, and it is the analyst's to judge.
+
+    ``factors`` is ``{sample: factor}``, ``groups`` ``{group: [samples]}``
+    (blanks are not a group). ``{'by_group': {group: mean}, 'ratio': highest
+    over lowest, 'diverges': bool}``; None with fewer than two groups holding
+    a factor.
+    """
+    by_group = {}
+    for g, idxs in (groups or {}).items():
+        vals = [float(factors[i]) for i in idxs
+                if i in factors and factors[i] is not None
+                and np.isfinite(factors[i]) and factors[i] > 0]
+        if vals:
+            by_group[str(g)] = float(np.mean(vals))
+    if len(by_group) < 2:
+        return None
+    ratio = max(by_group.values()) / min(by_group.values())
+    return {'by_group': by_group, 'ratio': float(ratio),
+            'diverges': bool(ratio - 1.0 > float(threshold))}
+
+
+def pqn_group_divergence_of_rows(rows, groups, *,
+                                 threshold: float = PQN_GROUP_WARN):
+    """``pqn_group_divergence`` from the factors the quantified rows carry
+    (every row holds the same ones), or None when PQN was not applied."""
+    for r in rows or ():
+        f = r.get('_pqn_factors')
+        if isinstance(f, dict) and f:
+            return pqn_group_divergence(
+                {int(k): v for k, v in f.items()}, groups, threshold=threshold)
+    return None
+
+
+def pqn_group_note(div) -> str:
+    """The sentence the application and the report give for a divergence."""
+    by = ', '.join(f'{g} {v:.2f}' for g, v in div['by_group'].items())
+    return (f"PQN is taking a difference between groups out of the data: the "
+            f"mean factor by group is {by} (a ratio of {div['ratio']:.2f}). "
+            "The concentrations are composition relative to the median "
+            "sample: a change that reaches every metabolite alike, such as "
+            "fewer cells in one group, is read as dilution and is not in "
+            "them. Check that this is what the study means (Dieterle 2006).")

@@ -7,6 +7,11 @@ tested independently of the GUI.
 OPLS-DA reference:
     Trygg, J.; Wold, S. "Orthogonal projections to latent structures (O-PLS)."
     Journal of Chemometrics 2002, 16 (3), 119-128.  doi:10.1002/cem.695
+
+PERMANOVA reference:
+    Anderson, M. J. "A new method for non-parametric multivariate analysis of
+    variance." Austral Ecology 2001, 26 (1), 32-46.
+    doi:10.1111/j.1442-9993.2001.01070.pp.x
 """
 from __future__ import annotations
 
@@ -97,6 +102,59 @@ def plsda_permutation_p(X, labels, n_comp, n_splits, n_perm, seed=0):
         if plsda_cv_q2(X, perm, n_comp, n_splits, seed=seed) >= q2_obs:
             ge += 1
     return q2_obs, ge / (int(n_perm) + 1)
+
+
+def _within_group_ss(X, codes, n_groups):
+    """Σ over groups of the squared Euclidean distance to the group centroid."""
+    ssw = 0.0
+    for g in range(n_groups):
+        Xg = X[codes == g]
+        ssw += float(np.sum((Xg - Xg.mean(axis=0)) ** 2))
+    return ssw
+
+
+def permanova(X, labels, n_perm=999, seed=0):
+    """One-factor PERMANOVA on Euclidean distances (Anderson 2001).
+
+    With Euclidean distance the distance-matrix sums of squares equal the
+    ordinary ones around the centroids, so they are computed on ``X`` directly:
+
+        F  = (SS_between / (g-1)) / (SS_within / (N-g))
+        R² = SS_between / SS_total
+
+    The p-value is the share of label permutations whose F reaches the observed
+    one, counting the observed arrangement: (1 + #{F_perm >= F_obs}) /
+    (n_perm + 1). Permuting labels keeps the group sizes. A fixed ``seed`` makes
+    the same data give the same p every time the plot is redrawn.
+
+    Returns ``{'F', 'R2', 'p', 'n_perm', 'n', 'groups'}``, or ``None`` when the
+    test is not defined (fewer than 2 groups, or no sample beyond one per group,
+    so there is no within-group variation to compare against).
+    """
+    X = np.asarray(X, dtype=float)
+    labels = np.asarray(labels)
+    classes, codes = np.unique(labels, return_inverse=True)
+    n, g = X.shape[0], classes.size
+    if g < 2 or n - g < 1:
+        return None
+    sst = float(np.sum((X - X.mean(axis=0)) ** 2))
+    if sst <= 0:
+        return None
+
+    def pseudo_f(c):
+        ssw = _within_group_ss(X, c, g)
+        return ((sst - ssw) / (g - 1)) / (ssw / (n - g)) if ssw > 0 else np.inf
+
+    f_obs = pseudo_f(codes)
+    rng = np.random.default_rng(seed)
+    ge = 1
+    for _ in range(int(n_perm)):
+        if pseudo_f(rng.permutation(codes)) >= f_obs * (1 - 1e-12):
+            ge += 1
+    ssw_obs = _within_group_ss(X, codes, g)
+    return {'F': float(f_obs), 'R2': 1.0 - ssw_obs / sst,
+            'p': ge / (int(n_perm) + 1), 'n_perm': int(n_perm),
+            'n': n, 'groups': g}
 
 
 def opls_da(X, y, n_ortho=1):

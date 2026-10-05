@@ -12,8 +12,15 @@ Panel A : sortable table — Rank, PPM, Start, End, Width, SNR, Quality, Overlap
           • Ctrl+1 = Good, Ctrl+2 = Average, Ctrl+3 = Poor
           • Save button (bottom-left) writes changes back to peak_stage.peaks
 Panel B : signal region mini-plot
+          • Drawn on the spectrum the numbers were measured on (the baseline-
+            corrected one; Raw is a switch), read from the application each
+            time, never a copy from when the window opened.
+          • Shaded = the area measured: between the mean spectrum and the line
+            from the window's first point to its last, where it stands above it
+            -- the Area column is this, per sample, then averaged.
           • Scroll to zoom
-          • Click+drag to redefine start/end boundaries
+          • Right-drag to redefine start/end boundaries: the signal is measured
+            again on the new window (area, height, SNR); its grade is not.
 """
 import tkinter as tk
 
@@ -24,6 +31,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import SpanSelector
 from .peak_sample_view import PeakSampleView
+from processing.peak_detection import foot_line_area, peak_measures
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_AVERAGE, SIGNAL_POOR)
 from gui.utils.quality_palette import (
@@ -185,6 +193,18 @@ class PeakListWindow:
             frame_b, text="", font=("Arial", 8), foreground="#444")
         self.peak_info_label.pack(anchor=tk.W, padx=4)
 
+        # Which spectrum is drawn: the one the Area, height and SNR were
+        # measured on (baseline model applied), or the raw one under it.
+        view_row = ttk.Frame(frame_b)
+        view_row.pack(anchor=tk.W, padx=4)
+        ttk.Label(view_row, text="Spectrum:", font=("Arial", 8)).pack(side=tk.LEFT)
+        self._view_var = tk.StringVar(value='corrected')
+        for text, val in (('Corrected (what the numbers were measured on)',
+                           'corrected'), ('Raw', 'raw')):
+            ttk.Radiobutton(view_row, text=text, variable=self._view_var,
+                            value=val, command=self._reset_zoom
+                            ).pack(side=tk.LEFT, padx=4)
+
         ttk.Label(frame_b,
                   text="Right-drag: redefine boundaries  ·  Toolbar: zoom/pan/home  ·  R: reset",
                   font=("Arial", 7), foreground="#888").pack(anchor=tk.W, padx=4)
@@ -249,6 +269,38 @@ class PeakListWindow:
     def _reset_zoom(self):
         if self._current_peak:
             self._plot_peak(self._current_peak)
+
+    def _refresh_data(self):
+        """``(raw, corrected)`` as the application holds them now. A copy
+        taken when the window opened goes stale the moment detection or an
+        alignment runs again."""
+        app = self.app
+        if (app is not None and getattr(app, 'ppm', None) is not None
+                and getattr(app, 'all_intensities', None) is not None):
+            self.ppm = app.ppm
+            self.all_intensities = app.all_intensities
+        raw = np.asarray(self.all_intensities, dtype=float)
+        corr = raw
+        if app is not None and hasattr(app, 'corrected_intensities'):
+            try:
+                c = app.corrected_intensities()
+                corr = np.asarray(c, dtype=float) if c is not None else raw
+            except Exception:
+                corr = raw
+        return raw, corr
+
+    def _remeasure(self, peak):
+        """Measure a signal again on its (moved) boundaries, on the corrected
+        matrix, with detection's own arithmetic. The grade is not recomputed."""
+        _raw, corr = self._refresh_data()
+        stage = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
+        noise = getattr(stage, 'noise_std', None)
+        m = peak_measures(self.ppm, corr, peak['start_idx'], peak['end_idx'],
+                          noise, index=peak.get('index'))
+        peak.update(area=m['area'], area_per_sample=m['area_per_sample'],
+                    height=m['height'], mean_intensity=m['mean_intensity'],
+                    snr=m['snr'], index=m['index'], ppm=m['ppm'])
+        peak['boundaries_edited'] = True
 
     def _bind_shortcuts(self):
         self.win.bind('<Control-Key-1>', lambda e: self._set_status(STATUS_GOOD))
@@ -392,6 +444,9 @@ class PeakListWindow:
             _qs   = peak.get('signal_quality_score')
             _tier = peak.get('signal_quality')
             gate  = (peak.get('signal_quality_detail') or {}).get('gate_failed')
+            if peak.get('boundaries_edited'):
+                # the grade was made on the boundaries detection found
+                gate = None
             if gate == 'snr':
                 txt = f'{SIGNAL_POOR} · S/N'
             elif gate == 'digital_resolution':
@@ -402,6 +457,8 @@ class PeakListWindow:
                 txt = f'{_qs:.2f}'
             else:
                 txt = '—'
+        if peak.get('boundaries_edited') and not manual:
+            txt += ' · orig. bounds'
         return ('⚓ ' + txt) if peak.get('is_anchor_line', False) else txt
 
     @staticmethod
@@ -625,6 +682,7 @@ class PeakListWindow:
 
     def _open_region_alignment(self, peak):
         from gui.widgets.region_alignment_window import RegionAlignmentWindow
+        self._refresh_data()
 
         def _on_apply(aligned, updated_peak):
             # Persist aligned data in this window so subsequent plots use it
@@ -711,6 +769,7 @@ class PeakListWindow:
                                    parent=self.win)
             return
         from gui.widgets.peak_resolve_window import PeakResolveWindow
+        self._refresh_data()
         _ai = self.all_intensities
         if _ai is not None:
             mean_intensity = (np.mean(_ai, axis=1) if _ai.ndim == 2
@@ -739,6 +798,7 @@ class PeakListWindow:
             self._dequeue_deconv(peak)
 
     def _open_per_sample(self, peak):
+        self._refresh_data()
         if self.app is None or self.all_intensities is None:
             return
         PeakSampleView(self.win, peak, self.ppm,
@@ -786,6 +846,9 @@ class PeakListWindow:
 
     def _plot_peak(self, peak):
         self.ax.clear()
+        raw_all, corr_all = self._refresh_data()
+        corrected_view = self._view_var.get() == 'corrected'
+        data = corr_all if corrected_view else raw_all
 
         center    = peak['ppm']
         p_lo      = min(peak['start_ppm'], peak['end_ppm'])
@@ -811,7 +874,7 @@ class PeakListWindow:
             self.plot_canvas.draw_idle()
             return
 
-        n_samples     = self.all_intensities.shape[1]
+        n_samples     = data.shape[1]
         sample_colors = self._get_sample_colors(n_samples)
 
         y_max_visible = 0.0
@@ -843,7 +906,7 @@ class PeakListWindow:
         for i in shown_samples:
             s_lbl = si[i].get('label', 'Unknown') if i < len(si) else ''
             s_col = g_colors.get(s_lbl, sample_colors[i])
-            y_sample = self.all_intensities[mask, i]
+            y_sample = data[mask, i]
             if len(y_sample) > 0:
                 y_max_visible = max(y_max_visible, float(np.max(y_sample)))
             self.ax.plot(x_region, y_sample,
@@ -853,24 +916,56 @@ class PeakListWindow:
         # Group means — dimmed for sub-peaks
         for lbl, idxs in shown_groups.items():
             if not idxs: continue
-            y_mean   = np.mean(self.all_intensities[mask][:, idxs], axis=1)
+            y_mean   = np.mean(data[mask][:, idxs], axis=1)
             mean_col = g_colors.get(lbl, '#111111')
             self.ax.plot(x_region, y_mean, color=mean_col,
                          linewidth=1.8 if not is_sub else 0.9,
                          alpha=mean_alpha, zorder=3,
                          label=f'{lbl} {"(raw)" if is_sub else "Mean"}')
 
-        # Peak fill — skip for sub-peaks (fit fill is drawn later)
+        # Peak fill — skip for sub-peaks (fit fill is drawn later). The area
+        # the table reports, drawn as it was measured: between the mean spectrum
+        # and the line from the window's first point to its last, where the
+        # spectrum stands above it. (It used to be the highest sample from zero,
+        # which is not an area anybody measured.)
         if not is_sub:
-            fill_mask = (self.ppm >= p_lo) & (self.ppm <= p_hi)
-            x_fill    = self.ppm[fill_mask]
-            if shown_samples and len(x_fill) >= 2:
-                y_fill = np.max(
-                    self.all_intensities[fill_mask][:, shown_samples], axis=1)
+            fill_idx = np.flatnonzero((self.ppm >= p_lo) & (self.ppm <= p_hi))
+            if shown_samples and fill_idx.size >= 2:
+                x_fill = self.ppm[fill_idx]
+                y_fill = np.mean(data[np.ix_(fill_idx, shown_samples)], axis=1)
+                _mean_area, foot = foot_line_area(x_fill, y_fill)
+                # the number: the mean of the per-sample areas, as the table
+                # averages them (the shaded region is the mean spectrum's)
+                area_shown = float(np.mean(
+                    [foot_line_area(x_fill, data[fill_idx, s])[0]
+                     for s in shown_samples]))
                 fc = '#ffaaaa' if peak.get('overlapping', False) else '#aad4ff'
-                self.ax.fill_between(x_fill, 0, y_fill,
-                                     facecolor=fc, alpha=0.25,
-                                     edgecolor='none', zorder=1)
+                self.ax.fill_between(x_fill, foot, y_fill,
+                                     where=y_fill >= foot, facecolor=fc,
+                                     alpha=0.55, edgecolor='none', zorder=1)
+                self.ax.plot(x_fill, foot, color='#666666', linewidth=1.0,
+                             linestyle='--', alpha=0.9, zorder=4)
+                listed = float(peak.get('area', 0.0) or 0.0)
+                same = (listed > 0
+                        and abs(area_shown / listed - 1.0) < 0.02)
+                self.ax.text(
+                    0.02, 0.88,
+                    f"Area of the shaded region: {area_shown:.4g}  "
+                    f"({'corrected' if corrected_view else 'raw'}, mean of the "
+                    f"{len(shown_samples)} samples shown)\n"
+                    f"Area column: {listed:.4g}"
+                    f"{'' if same else '  (differs: groups hidden, raw view or boundaries edited)'}",
+                    transform=self.ax.transAxes, ha='left', va='top',
+                    fontsize=7, color='#444444', zorder=5,
+                    bbox=dict(fc='white', alpha=0.75, lw=0))
+        # the baseline model's share, under the raw spectrum
+        if not corrected_view and shown_samples and mask.any():
+            base = np.mean((raw_all - corr_all)[np.ix_(np.flatnonzero(mask),
+                                                        shown_samples)], axis=1)
+            self.ax.plot(x_region, base, color='#8d6e63', linewidth=1.0,
+                         linestyle=':', alpha=0.9, zorder=3,
+                         label='baseline model (removed in Corrected)')
+            self.ax.legend(loc='upper right', fontsize=7, framealpha=0.7)
 
         # Boundary lines
         for x_bound in (peak['start_ppm'], peak['end_ppm']):
@@ -979,16 +1074,20 @@ class PeakListWindow:
         _y_peak = 0.0
         if shown_samples and _own_mask.sum() > 0:
             _y_peak = float(np.max(
-                self.all_intensities[_own_mask][:, shown_samples]))
+                data[_own_mask][:, shown_samples]))
         if _y_peak <= 0:
             _y_peak = float(peak.get('height', 0.0)) or float(y_max_visible)
 
+        # a corrected spectrum dips under zero between signals: the axis follows
+        _ymin = (float(np.min(data[mask][:, shown_samples]))
+                 if shown_samples and mask.any() else 0.0)
+        _bottom = min(0.0, _ymin * 1.1)
         if is_sub:
             _fh = fit_max if fit_max > 0 else float(peak.get('height', 1.0))
             _top = max(_fh * 1.5, _y_peak * 1.9)
-            self.ax.set_ylim(bottom=0, top=_top)
+            self.ax.set_ylim(bottom=_bottom, top=_top)
         else:
-            self.ax.set_ylim(bottom=0, top=max(_y_peak * 1.9, 1e-9))
+            self.ax.set_ylim(bottom=_bottom, top=max(_y_peak * 1.9, 1e-9))
         self.ax.set_xlabel('δ (ppm)', fontsize=9)
         self.ax.set_ylabel('Intensity', fontsize=9)
         self.ax.tick_params(labelsize=8)
@@ -1045,6 +1144,8 @@ class PeakListWindow:
         peak['start_idx'] = idx_a
         peak['end_idx']   = idx_b
         peak['width_ppm'] = float(abs(self.ppm[idx_b] - self.ppm[idx_a]))
+        # area, height, SNR and apex on the new window: not the old ones
+        self._remeasure(peak)
 
         self._refresh_row(peak)
         # Defer redraw so SpanSelector finishes its own event cleanup first

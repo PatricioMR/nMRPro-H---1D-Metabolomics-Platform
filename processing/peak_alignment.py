@@ -18,17 +18,23 @@ align_to_reference_signal
 import numpy as np
 
 
-def _shift_1d(y, shift_pts):
-    """Integer-shift a 1-D array; fill vacated edges with zero."""
+def _shift_1d(y, shift_pts, *, edge=False):
+    """Integer-shift a 1-D array; fill vacated edges with zero, or with the
+    value at the edge when ``edge`` (a piece of a spectrum that joins the rest
+    must not step to zero where it was moved)."""
     if shift_pts == 0:
         return y.copy()
     n   = len(y)
     out = np.zeros_like(y)
     if shift_pts > 0:
         out[shift_pts:] = y[:n - shift_pts]
+        if edge:
+            out[:shift_pts] = y[0]
     else:
         s = -shift_pts
         out[:n - s] = y[s:]
+        if edge:
+            out[n - s:] = y[-1]
     return out
 
 

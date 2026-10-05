@@ -9,7 +9,11 @@ icoshift (segment-wise cross-correlation) or a single global shift.
 Features:
   - Detects peaks in the region and marks them as alignment anchors
   - Preview: shows before (dashed) vs after (solid) overlay
-  - Apply: patches app.all_intensities for the region only
+  - Apply: patches app.all_intensities for the region only. The spectrum before
+    any processing is kept (Revert), the shifts applied are recorded in
+    ``app.region_alignments`` (saved with the project, listed in the report),
+    and the vacated edges of a shifted piece hold the edge value rather than
+    stepping to zero.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -248,6 +252,7 @@ class RegionAlignmentWindow:
                     n_segments=n_seg,
                     max_shift_ppm=max_sh)
                 n_moved = int(np.sum(np.any(shifts != 0, axis=1)))
+                self._state['shifts_pts'] = shifts.astype(int).tolist()
                 self._status_var.set(
                     f'icoshift: {n_moved}/{shifts.shape[0]} segment(s) shifted.')
             else:
@@ -266,8 +271,9 @@ class RegionAlignmentWindow:
                     hi_s = min(len(corr), lag0 + max_pts + 1)
                     best = int(np.argmax(corr[lo_s:hi_s])) + lo_s - lag0
                     if best != 0:
-                        aligned_r[:, i] = _shift_1d(int_r[:, i], best)
+                        aligned_r[:, i] = _shift_1d(int_r[:, i], best, edge=True)
                     shifts_applied.append(best)
+                self._state['shifts_pts'] = [int(v) for v in shifts_applied]
                 ppm_per_pt = ppm_span / max(1, len(ppm_r) - 1)
                 max_sh_ppm = max(abs(s) * ppm_per_pt for s in shifts_applied)
                 self._status_var.set(
@@ -277,6 +283,17 @@ class RegionAlignmentWindow:
             aligned_full = self.all_int.copy()
             aligned_full[mask, :] = aligned_r
             self._state['aligned'] = aligned_full
+            self._state['record'] = {
+                'region_ppm': (float(ppm_r.min()), float(ppm_r.max())),
+                'mode': mode,
+                'n_segments': (int(self._n_seg_var.get())
+                               if mode == 'icoshift' else None),
+                'max_shift_ppm': float(self._max_shift_var.get()),
+                'signal_rank': self.peak.get('rank'),
+                'signal_ppm': float(self.peak.get('ppm')),
+                'shifts_pts': self._state.get('shifts_pts'),
+                'ppm_per_point': float(abs(self.ppm[1] - self.ppm[0])),
+            }
 
             self._draw_spectra(ppm_r, aligned_r,
                                'Preview — dashed: original  |  solid: aligned',
@@ -312,13 +329,38 @@ class RegionAlignmentWindow:
             self.peak['aligned_region'] = True   # flag for annotation re-search
 
         # ── Persist: update app (so future windows use aligned data) ──────────
+        # What is about to change is kept first, so Revert can put it back:
+        # the spectrum as it was before any processing (once), and a record
+        # of what was shifted where, which the project saves.
+        import datetime
+        vis = (getattr(self.app, 'stages', {}) or {}).get('visualization')
+        if vis is not None and getattr(vis, '_original_intensities', None) is None:
+            vis._original_intensities = np.array(self.app.all_intensities,
+                                                 dtype=float, copy=True)
+        record = dict(self._state.get('record') or {})
+        record['applied'] = datetime.datetime.now().isoformat(timespec='seconds')
+        if not hasattr(self.app, 'region_alignments'):
+            self.app.region_alignments = []
+        self.app.region_alignments.append(record)
         self.app.all_intensities = aligned
+        try:
+            self.app.invalidate_baseline_cache()
+        except Exception:
+            pass
         if hasattr(self.app, 'update_plot'):
             self.app.update_plot()
         try:
-            self.app.btn_revert.config(state='normal')
+            vis.btn_revert.config(state='normal')
         except Exception:
             pass
+        messagebox.showinfo(
+            'Region aligned',
+            f"Samples were shifted between {record['region_ppm'][0]:.4f} and "
+            f"{record['region_ppm'][1]:.4f} ppm.\n\nThe signals and the "
+            "quantification were measured on the spectrum as it was: detect "
+            "the signals again to measure on this one. Revert in the "
+            "visualization stage undoes it; the report lists it.",
+            parent=self.win)
 
         # ── Notify PeakListWindow via callback (updates its own array + redraw)
         if self._on_apply_cb is not None:

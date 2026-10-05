@@ -23,6 +23,9 @@ from ._quant_adapter import (
     blank_indices, dilution_and_correction, identity_columns as _identity_columns,
     quantify_project, reported_values, sample_groups, standard_vector)
 from app_paths import DECONVOLUTION_ENABLED
+from gui.project_vars import collect_vars
+from processing.quant_concentration import (
+    pqn_group_divergence_of_rows, pqn_group_note)
 from processing.sample_selection import included_sample_indices
 from processing.spectral_regions import format_regions, parse_regions
 
@@ -625,12 +628,18 @@ class _QuantCompMixin:
 
         self._prog_apply(70, 'Building results…')
         self._quant_results = rows
+        # Every option this run was made with, kept with its results.
+        self._last_run_settings = collect_vars(self)
         self._quant_diagnostics = _diag
         self._peak_competitor_count = _competitor_counts(metabolites)
         _pqn_vals = [v for r in rows
                      for v in (r.get('_pqn_factors') or {}).values()]
         if _pqn_vals:
             self._pqn_factor = float(np.median(_pqn_vals))
+            _div = pqn_group_divergence_of_rows(
+                rows, sample_groups(si, n_s))
+            if _div and _div['diverges']:
+                messagebox.showwarning('PQN', pqn_group_note(_div))
         # What the manual region editor needs to recompute one row the same
         # way the run computed all of them.
         self._last_norm_mode = norm_mode
@@ -654,6 +663,13 @@ class _QuantCompMixin:
                                  if np.isfinite(r['conc_mm']) else -1),
                   reverse=True)
         self._sync_all_peak_quant()
+        _refused = self._reapply_manual_regions()
+        if _refused:
+            messagebox.showwarning(
+                'Manual regions',
+                f'{len(_refused)} sample window(s) set by hand could not be '
+                f'applied to this run (the number now comes from a fit):\n'
+                + '\n'.join(f'  signal #{k}, sample {i}' for k, i, _w in _refused[:12]))
         _write_debug_log(rows, self._last_groups, norm_mode=norm_mode,
                          proton_corr=proton_corr, blk_sub=subtract_blanks,
                          align=align, ref_peak=ref_peak, ref_conc=ref_conc,
@@ -880,176 +896,175 @@ class _QuantCompMixin:
 
     # ── Per-sample area update (from Peak View manual adjustment) ────────────
 
+    def _row_of_peak(self, peak_obj):
+        """The quantification row an elected window belongs to: by the peak
+        itself, else by its rank (a project reopened has other objects)."""
+        results = self._quant_results or []
+        r = next((x for x in results if x.get('_peak') is peak_obj), None)
+        if r is None and peak_obj.get('rank') is not None:
+            r = next((x for x in results
+                      if x.get('_peak_rank') == peak_obj.get('rank')
+                      and x.get('_multiplet_window')), None)
+        return r
+
+    @staticmethod
+    def _from_a_fit(r) -> bool:
+        """Whether a row's number is a fit's (joint fit, cascade, a window
+        resolved by shape) and not the integral of a window."""
+        return bool(r.get('_by_cascade') or r.get('_joint_fit')
+                    or r.get('_fit_curve')
+                    or (r.get('_deconv') and r.get('_used_j_resolve')))
+
+    def sample_area_editable(self, peak_obj):
+        """``(True, '')`` when a sample's window on this signal can be set by
+        the analyst; else ``(False, why)``. No row yet is editable: the
+        region waits and is applied after the next run."""
+        r = self._row_of_peak(peak_obj)
+        if r is None:
+            return True, ''
+        if self._from_a_fit(r):
+            return False, ('Its number comes from a fit (joint fit, cascade or '
+                           'a window resolved by shape), not from integrating '
+                           'a window: there is no window to move. Change the '
+                           'signal\'s boundaries or re-run with the fit off.')
+        if not r.get('_multiplet_window'):
+            return False, 'The engine kept no integration window for this signal.'
+        return True, ''
+
+    def _window_integral(self, row, sample_idx, lo, hi):
+        """The integral of one sample over ``[lo, hi]`` on the spectrum the
+        run integrated, with the run's baseline choice: the same function
+        for the engine's window and for the analyst's, so only the window
+        differs between them."""
+        from processing.quant_integration import integrate_sample
+        use_model = bool((getattr(self, '_last_run_settings', None) or {}).get(
+            'bl_model_quant_var', self.bl_model_quant_var.get()))
+        mat = (self.app.corrected_intensities() if use_model
+               else self.app.all_intensities)
+        col = np.asarray(mat, dtype=float)[:, sample_idx]
+        return integrate_sample(np.asarray(self.app.ppm, dtype=float), col, lo, hi,
+                                local_baseline=bool(row.get('_local_baseline')))
+
     def update_sample_area(self, peak_obj, sample_idx, lo_ppm, hi_ppm):
-        """Called by PeakSampleView after the user manually adjusts a region."""
-        if not self._quant_results:
-            return
+        """The analyst sets the window one sample of a signal is integrated
+        on. Returns None when done, or why it could not be.
 
-        r = next((x for x in self._quant_results
-                  if x.get('_peak') is peak_obj), None)
+        The engine's number carries every correction its chain applies (the
+        capture of the line, the neighbours' skirts, the proton count, the
+        standard, PQN, the dilution). Re-doing them here would be a second,
+        different engine, and the first version of this was off by the proton
+        count (a factor of 9 on betaine). So the engine's number for that
+        sample is scaled by how much the integral changed: the same integral,
+        on the engine's window and on the analyst's. The same window gives the
+        engine's number back exactly. A number that came from a fit has no
+        window to move and is refused.
+        """
+        ok, why = self.sample_area_editable(peak_obj)
+        if not ok:
+            return why
+        r = self._row_of_peak(peak_obj)
         if r is None:
-            peak_ppm = peak_obj.get('ppm', None)
-            if peak_ppm is not None:
-                r = next((x for x in self._quant_results
-                          if abs(x.get('ppm', float('nan')) - peak_ppm) < 0.002), None)
-        if r is None:
-            return
-
-        all_int = self.app.all_intensities
-        ppm_arr = self.app.ppm
-        n_s     = all_int.shape[1] if all_int is not None else 0
-
-        if '_areas_per_sample' not in r:
-            r['_areas_per_sample'] = [r.get('raw_area', 0.0)] * n_s
-
-        integ_mode  = r.get('_integ_mode', 'Area')
-        used_mcr    = r.get('_used_mcr', False)
-        nh          = r.get('_nh', 1.0)
-        blk_mean    = r.get('_blk_mean_area', 0.0)
-        proton_corr = r.get('_proton_corr', False)
-        use_blk_sub = r.get('_use_blk_sub', False)
-
-        lo_mask = ppm_arr >= min(lo_ppm, hi_ppm)
-        hi_mask = ppm_arr <= max(lo_ppm, hi_ppm)
-        mask    = lo_mask & hi_mask
-        if not mask.any():
-            return
-        idxs    = np.where(mask)[0]
-        lo_i_n  = int(idxs.min())
-        hi_i_n  = int(idxs.max())
-        col     = all_int[lo_i_n:hi_i_n+1, sample_idx]
-        ppm_sub = ppm_arr[lo_i_n:hi_i_n+1]
-
-        if used_mcr:
-            mcr_info = r.get('_mcr')
-            s_vec = mcr_info.get('S') if mcr_info else None
-            orig_lo = mcr_info.get('lo_i', 0) if mcr_info else 0
-            orig_hi = mcr_info.get('hi_i', 0) if mcr_info else 0
-            if s_vec is not None:
-                s_lo = max(0, lo_i_n - orig_lo)
-                s_hi = min(len(s_vec) - 1, hi_i_n - orig_lo)
-                if s_hi > s_lo:
-                    s_sub = s_vec[s_lo:s_hi+1]
-                    c_sub = col[:len(s_sub)]
-                    denom = float(s_sub @ s_sub)
-                    C_s   = max(0.0, float(s_sub @ c_sub) / denom) if denom > 1e-12 else 0.0
-                    s_area_scale = abs(float(_trapz(s_vec, ppm_arr[orig_lo:orig_hi+1])))
-                    area_raw = C_s * (s_area_scale if s_area_scale > 1e-12 else 1.0)
-                else:
-                    area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
-            else:
-                area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
-
+            return None             # applied after the next run
+        n_s = len(r.get('_concs_per_sample') or [])
+        if not 0 <= int(sample_idx) < n_s:
+            return 'That sample is not in the results.'
+        s_i = int(sample_idx)
+        # the engine's own numbers, kept the first time and never compounded
+        if '_engine_concs_per_sample' not in r:
+            r['_engine_concs_per_sample'] = list(r['_concs_per_sample'])
+            r['_engine_areas_per_sample'] = list(r.get('_areas_per_sample') or [])
+        engine_win = tuple(float(v) for v in r['_multiplet_window'])
+        new_win = (float(min(lo_ppm, hi_ppm)), float(max(lo_ppm, hi_ppm)))
+        manual = r.setdefault('_manual_regions', {})
+        same = (abs(new_win[0] - min(engine_win)) < 1e-9
+                and abs(new_win[1] - max(engine_win)) < 1e-9)
+        ratio = 1.0
+        if not same:
+            i_old = self._window_integral(r, s_i, min(engine_win), max(engine_win))
+            i_new = self._window_integral(r, s_i, *new_win)
+            c0 = r['_engine_concs_per_sample'][s_i]
+            if (i_old is None or i_new is None or not np.isfinite(i_old)
+                    or i_old <= 0 or not np.isfinite(c0) or c0 <= 0):
+                return ('The engine measured nothing in this sample on its own '
+                        'window, so there is no number to rescale.')
+            ratio = float(i_new) / float(i_old)
+            manual[s_i] = new_win
         else:
-            area_raw = abs(float(_trapz(col, ppm_sub))) if col.size > 1 else 0.0
+            manual.pop(s_i, None)
+        r['_concs_per_sample'][s_i] = (
+            r['_engine_concs_per_sample'][s_i] * ratio)
+        if r.get('_areas_per_sample') and s_i < len(r['_areas_per_sample']):
+            r['_areas_per_sample'][s_i] = (
+                r['_engine_areas_per_sample'][s_i] * ratio)
+        self._refresh_row_statistics(r)
+        return None
 
-        new_area = area_raw
-        if proton_corr and nh > 0:
-            new_area /= nh
-        if use_blk_sub:
-            new_area -= blk_mean
+    def reset_sample_area(self, peak_obj, sample_idx):
+        """Back to the engine's window and number for one sample."""
+        r = self._row_of_peak(peak_obj)
+        if r is None or '_engine_concs_per_sample' not in r:
+            return
+        return self.update_sample_area(peak_obj, sample_idx,
+                                       *r['_multiplet_window'])
 
-        r['_areas_per_sample'][sample_idx] = new_area
-
-        s_areas = np.array(r['_areas_per_sample'], dtype=float)
-
-        norm_mode_used = getattr(self, '_last_norm_mode', self.norm_var.get())
-        ref_areas_used = getattr(self, '_last_ref_areas', None)
-        ref_conc_used  = getattr(self, '_last_ref_conc',  1.0)
-        _dil           = getattr(self, '_last_sample_dil', np.ones(n_s))
-
-        if norm_mode_used in ('IS', 'IS+PQN') and ref_areas_used is not None:
-            s_concs = np.array([
-                (s_areas[s] / ref_areas_used[s] * ref_conc_used * _dil[s]
-                 if ref_areas_used[s] > 0 else float('nan'))
-                for s in range(n_s)])
-        else:
-            s_concs = s_areas * _dil
-
-        groups     = getattr(self, '_last_groups', {})
-        blk_indices = getattr(self, '_last_blk_indices', [])
-
-        cv_by_group    = {}
-        concs_by_group = {}
-        ci_by_group    = {}
+    def _refresh_row_statistics(self, r):
+        """What follows from the per-sample numbers: the group statistics, the
+        mean and the note that some samples were re-measured by hand. The
+        identity, the status and the detection of the row are the engine's and
+        are left as they are."""
+        s_concs = np.asarray(r['_concs_per_sample'], dtype=float)
+        groups = getattr(self, '_last_groups', {})
+        blk = getattr(self, '_last_blk_indices', [])
+        n_s = s_concs.size
+        cv_by_group, concs_by_group, ci_by_group = {}, {}, {}
         for g, idxs in groups.items():
             vals = [float(s_concs[i]) for i in idxs
                     if i < n_s and np.isfinite(s_concs[i]) and s_concs[i] > 0]
-            cv_by_group[g]    = _cv(vals)
+            cv_by_group[g] = _cv(vals)
             concs_by_group[g] = vals
             _pt, _lo, _hi = _bootstrap_fraction_ci(vals)
             ci_by_group[g] = (_lo, _hi)
-
-        if blk_indices:
-            blk_vals = [float(s_concs[i]) for i in blk_indices
+        if blk:
+            blk_vals = [float(s_concs[i]) for i in blk
                         if i < n_s and np.isfinite(s_concs[i]) and s_concs[i] > 0]
             if blk_vals:
                 concs_by_group['BLK'] = blk_vals
-                cv_by_group['BLK']    = _cv(blk_vals)
-
+                cv_by_group['BLK'] = _cv(blk_vals)
         all_vals = [v for g, vv in concs_by_group.items()
                     if g != 'BLK' for v in vv if np.isfinite(v) and v > 0]
-        mean_conc = float(np.mean(all_vals)) if all_vals else float('nan')
-
-        non_blk_indices = getattr(self, '_last_non_blk_indices', list(range(n_s)))
-        p = r.get('_peak')
-        _snr_ps, _noise_lvl = _per_sample_snr(p, all_int, n_s)
-        _nb_snrs = [_snr_ps[i] for i in non_blk_indices
-                    if i < n_s and np.isfinite(_snr_ps[i])]
-        _mean_snr = (float(np.mean(_nb_snrs)) if _nb_snrs
-                     else (p.get('snr', 0) if p else 0))
-        _det_min_snr = self._detection_min_snr()
-        # Unknown SNR (NaN) stays "detected" — only suppress with evidence of absence.
-        _detected_ps = [bool((not np.isfinite(v)) or v >= _det_min_snr)
-                        for v in _snr_ps]
-        _apk = (p or {}).get('aligned_per_sample')
-        if _apk is not None and len(_apk) == len(_detected_ps):
-            _detected_ps = [bool(d and a) for d, a in zip(_detected_ps, _apk)]
-
-        cvs_finite = [v for g, v in cv_by_group.items()
-                      if g != 'BLK' and np.isfinite(v)]
-        worst_cv   = max(cvs_finite) if cvs_finite else float('nan')
-        _mcr_met   = (r.get('_mcr') or {}).get('metrics', {})
-        _lof       = _mcr_met.get('lof', float('nan'))
-        _r2        = _mcr_met.get('r2',  float('nan'))
-        if not np.isfinite(_r2) and p:
-            _r2 = float(p.get('gaussian_r2', float('nan')))
-
-        _criteria, _reasons = [], []
-        if np.isfinite(worst_cv):
-            _s = 0 if worst_cv < 30 else 1 if worst_cv < 50 else 2
-            _criteria.append(_s)
-            _lbl = 'Good' if _s == 0 else 'Warn' if _s == 1 else 'Poor'
-            _reasons.append(f'CV%: {worst_cv:.1f}%  →  {_lbl}')
-        if np.isfinite(_lof):
-            _s = 0 if _lof < 10 else 1 if _lof < 20 else 2
-            _criteria.append(_s)
-            _lbl = 'Good' if _s == 0 else 'Warn' if _s == 1 else 'Poor'
-            _reasons.append(f'LOF: {_lof:.1f}%  →  {_lbl}')
-        if np.isfinite(_r2):
-            _s = 0 if _r2 > 0.95 else 1 if _r2 > 0.90 else 2
-            _criteria.append(_s)
-            _lbl = 'Good' if _s == 0 else 'Warn' if _s == 1 else 'Poor'
-            _reasons.append(f'R²: {_r2:.4f}  →  {_lbl}')
-        _worst = max(_criteria) if _criteria else 1
-        status = 'good' if _worst == 0 else 'warn' if _worst == 1 else 'poor'
-        if not _reasons:
-            _reasons = ['All parameters within good range']
-
-        r['raw_area']          = float(np.mean(s_areas))
-        r['conc_mm']           = mean_conc
-        r['cv_by_group']       = cv_by_group
-        r['snr']               = _mean_snr
-        r['status']            = status
-        r['_status_reasons']   = _reasons
-        r['_snr_per_sample']      = _snr_ps
-        r['_detected_per_sample'] = _detected_ps
-        r['_concs_per_sample'] = s_concs.tolist()
-        r['_concs_by_group']   = concs_by_group
+        r['conc_mm'] = float(np.mean(all_vals)) if all_vals else float('nan')
+        r['cv_by_group'] = cv_by_group
+        r['_concs_by_group'] = concs_by_group
         r['_conc_ci_by_group'] = ci_by_group
-
+        areas = [a for a in (r.get('_areas_per_sample') or [])
+                 if a is not None and np.isfinite(a)]
+        if areas:
+            r['raw_area'] = r['corr_area'] = float(np.mean(areas))
+        reasons = [t for t in (r.get('_status_reasons') or [])
+                   if not str(t).startswith('Re-measured by hand')]
+        manual = r.get('_manual_regions') or {}
+        if manual:
+            reasons.insert(0, (
+                f'Re-measured by hand in {len(manual)} sample(s) on a window '
+                'the analyst set: the engine\'s number for each was scaled by '
+                'the change in the integral (its corrections are kept); the '
+                'other samples are the engine\'s.'))
+        r['_status_reasons'] = reasons
         if self._right_widget:
             self._refresh_tree_row(r)
+
+    def _reapply_manual_regions(self):
+        """A run measures every sample on the engine's window; the windows the
+        analyst set (stored on the signals) are applied on top of it, so they
+        survive a re-run. Returns what could not be applied."""
+        refused = []
+        for pk in (getattr(self.peak_stage, 'peaks', None) or []):
+            for s_i, adj in (pk.get('sample_regions') or {}).items():
+                why = self.update_sample_area(
+                    pk, int(s_i), adj.get('start_ppm'), adj.get('end_ppm'))
+                if why:
+                    refused.append((pk.get('rank'), int(s_i), why))
+        return refused
 
     # ── Tree row refresh ─────────────────────────────────────────────────────
 

@@ -519,6 +519,12 @@ class StatisticsStage:
             ttk.Checkbutton(self._opt_frame, text='95% confidence ellipses',
                             variable=self._ellipse_var
                             ).grid(row=2, column=0, columnspan=2, sticky=tk.W)
+            ttk.Label(self._opt_frame, text='PERMANOVA perm.:',
+                      font=('Arial', 8)).grid(row=3, column=0, sticky=tk.W)
+            self._n_perm_var = tk.IntVar(value=999)
+            ttk.Spinbox(self._opt_frame, from_=0, to=9999, increment=100,
+                        textvariable=self._n_perm_var, width=6
+                        ).grid(row=3, column=1, sticky=tk.W, padx=4)
 
         elif method in ('PLS-DA', 'OPLS-DA'):
             ttk.Label(self._opt_frame, text='Components:',
@@ -2647,6 +2653,16 @@ class StatisticsStage:
                         edgecolor=color, linewidth=1.2, **kw)
         ax.add_patch(ell)
 
+    @staticmethod
+    def _corner_note(ax, text):
+        """Statistic line in the lower-left corner of the axes, on a pale box so
+        it stays readable over points and ellipses."""
+        if text:
+            ax.text(0.02, 0.02, text, transform=ax.transAxes, fontsize=7,
+                    color='#1a237e', va='bottom', ha='left', zorder=5,
+                    bbox=dict(boxstyle='round,pad=0.25', fc='white',
+                              ec='#cccccc', alpha=0.85))
+
     def _plot_pca(self, X, sample_names, feature_labels, group_labels):
         from sklearn.decomposition import PCA
         n_comp = getattr(self, '_n_comp_var', None)
@@ -2669,6 +2685,23 @@ class StatisticsStage:
 
         y, unique = _group_to_int(group_labels)
         gcols = self._group_colors(unique)
+
+        # Test on the matrix the PCA was fitted to, not on the 2 plotted PCs:
+        # the p-value then answers "do the groups differ?", not "do they differ
+        # in the projection I happened to pick?".
+        n_perm = getattr(self, '_n_perm_var', None)
+        n_perm = n_perm.get() if n_perm else 0
+        perm_text = None
+        if n_perm > 0:
+            from processing.multivariate import permanova
+            res = permanova(X, group_labels, n_perm=n_perm)
+            if res is None:
+                perm_text = 'PERMANOVA not defined (needs ≥2 groups and a group with ≥2 samples)'
+            else:
+                perm_text = (f"PERMANOVA  F = {res['F']:.4g}  ·  R² = {res['R2']:.4f}"
+                             f"  ·  p = {res['p']:.4g}  ({res['n_perm']} permutations)")
+                self._plot_export['rows'].append(
+                    ['PERMANOVA', perm_text.replace('PERMANOVA  ', '')])
 
         biplot  = getattr(self, '_biplot_var',  None)
         biplot  = biplot.get()  if biplot  else False
@@ -2695,6 +2728,7 @@ class StatisticsStage:
                 ax.set_facecolor('#f9f9f9')
                 if idx == 0:
                     ax.legend(fontsize=7, loc='best')
+                    self._corner_note(ax, perm_text)
             # Scree plot
             ax4 = axes[3]
             ax4.bar(range(1, n_comp+1), ev, color='#1565c0', alpha=0.7)
@@ -2730,6 +2764,7 @@ class StatisticsStage:
             ax.axhline(0, color='#cccccc', lw=0.6); ax.axvline(0, color='#cccccc', lw=0.6)
             ax.legend(fontsize=8, loc='best', framealpha=0.85)
             ax.set_facecolor('#f9f9f9')
+            self._corner_note(ax, perm_text)
 
     def _plot_plsda(self, X, sample_names, feature_labels, group_labels, opls=False):
         from sklearn.cross_decomposition import PLSRegression

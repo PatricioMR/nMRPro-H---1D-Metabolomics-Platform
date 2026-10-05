@@ -266,6 +266,11 @@ class VisualizationStage(BaseStage):
             self.app.baseline_corrected  = False
             self.app.alignment_corrected = False
             self.app.alignment_shifts_ppm = None
+            self.app.region_alignments = []
+            try:
+                self.app.invalidate_baseline_cache()
+            except Exception:
+                pass
             self.app.update_plot()
             try:
                 self.btn_revert.config(state='disabled')

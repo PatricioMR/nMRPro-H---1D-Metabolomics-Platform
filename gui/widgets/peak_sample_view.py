@@ -140,8 +140,9 @@ class PeakSampleView:
         # Fetch quantification results for this peak (if quantification has run)
         _quant_stage = getattr(self.app, 'stages', {}).get('quantification', None)
         _quant_results = getattr(_quant_stage, '_quant_results', None) or []
-        _quant_r = next(
-            (r for r in _quant_results if r.get('_peak') is p), None)
+        _quant_r = (_quant_stage._row_of_peak(p)
+                    if _quant_stage is not None
+                    and hasattr(_quant_stage, '_row_of_peak') else None)
         _quant_areas = _quant_r.get('_areas_per_sample') if _quant_r else None
         self._quant_result = _quant_r   # store for callback
         self._quant_stage  = _quant_stage
@@ -279,6 +280,10 @@ class PeakSampleView:
         top_frame.columnconfigure(0, weight=1)
 
         for cid, heading, width, anchor in COLS:
+            # without a quantification row the column is a raw integral of the
+            # window, not the area the engine measured: it says so
+            if cid == 'area' and not self._quant_available:
+                heading = 'Raw area'
             self.tree.heading(cid, text=heading)
             self.tree.column(cid, width=width, anchor=anchor,
                              minwidth=30, stretch=False)
@@ -644,16 +649,35 @@ class PeakSampleView:
     # ── Region editor ─────────────────────────────────────────────────────────
 
     def _open_editor(self, idx):
+        qs = self._quant_stage
+        if self._quant_available and qs is not None:
+            ok, why = qs.sample_area_editable(self.peak)
+            if not ok:
+                messagebox.showinfo('Sample window', why, parent=self.win)
+                return
         d = self._sample_data[idx]
         PeakRegionEditor(
             self.win, idx, d, self.ppm, self._p_lo, self._p_hi,
             on_save=lambda lo, hi: self._on_saved(idx, lo, hi))
 
     def _on_saved(self, s, lo, hi):
+        """The analyst set the window of sample ``s``. The number the engine
+        measured for that sample is scaled by the change of the integral
+        (``update_sample_area``); with no quantification yet the window waits
+        on the signal and is applied by the next run."""
+        qs = self._quant_stage
+        if self._quant_available and qs is not None:
+            why = qs.update_sample_area(self.peak, s, lo, hi)
+            if why:
+                messagebox.showinfo('Sample window', why, parent=self.win)
+                return
         self.peak['sample_regions'][s] = {'start_ppm': lo, 'end_ppm': hi}
-        d = self._sample_data[s]
-        d['lo_s'] = lo; d['hi_s'] = hi; d['adjusted'] = True
+        self._show_sample(s, lo, hi, adjusted=True)
 
+    def _show_sample(self, s, lo, hi, *, adjusted):
+        """Refresh one sample's row and figure for the window ``[lo, hi]``."""
+        d = self._sample_data[s]
+        d['lo_s'] = lo; d['hi_s'] = hi; d['adjusted'] = adjusted
         noise_std = (getattr(
             getattr(self.app, 'stages', {}).get('peak_detection', None),
             'noise_std', None) or 1.0)
@@ -663,80 +687,42 @@ class PeakSampleView:
         d['snr']       = d['intensity'] / noise_std if noise_std > 0 else 0.0
         if lint.size:
             d['ppm'] = float(self.ppm[pk_m][np.argmax(lint)])
-
-        # recompute area after region change
-        def _trapz(y, x):
-            try: return float(np.trapezoid(y, x=x))
-            except AttributeError: return float(np.trapz(y, x=x))
-        pk_m2 = (self.ppm >= lo) & (self.ppm <= hi)
-        lint2 = d['col'][pk_m2]
-        ppm2  = self.ppm[pk_m2]
-        d['area'] = float(abs(_trapz(lint2, ppm2))) if lint2.size > 1 else 0.0
-
+        # the area: the engine's row when there is one, else the raw integral
+        r = self._quant_result
+        areas = (r.get('_areas_per_sample') if r else None) or []
+        if self._quant_available and s < len(areas):
+            d['area'] = float(areas[s])
+        else:
+            try:
+                tr = float(np.trapezoid(lint, x=self.ppm[pk_m]))
+            except AttributeError:
+                tr = float(np.trapz(lint, x=self.ppm[pk_m]))
+            d['area'] = abs(tr) if lint.size > 1 else 0.0
         self.tree.item(str(s), values=(
             d['name'], d['group'],
             f"{d['snr']:.1f}", f"{d['intensity']:.0f}",
             f"{d['area']:.3e}",
             d.get('metabolite', '—'),
             f"{d['ppm']:.4f}", f"{lo:.4f}", f"{hi:.4f}",
-            self.peak.get('status') or '—', '✎'))
-
+            self.peak.get('status') or '—', '✎' if adjusted else ''))
         if self._selected_idx == s:
             self._draw_spectrum(d)
-
-        # Notify quantification stage — pass new region bounds so it recomputes
-        # using the original method (trapz/Lorentz/MCR) on the new region
-        if self._quant_available and self._quant_stage is not None:
-            self._quant_stage.update_sample_area(self.peak, s, lo, hi)
-            # Refresh displayed area from quant result (now method-consistent)
             if hasattr(self, '_info_area_var'):
-                r = self._quant_result
-                areas = r.get('_areas_per_sample', []) if r else []
-                if s < len(areas):
-                    self._info_area_var.set(f"{areas[s]:.3e}")
+                self._info_area_var.set(f"{d['area']:.3e}")
 
     def _reset_adj(self):
         idx = self._selected_idx
         if idx is None:
             return
-        if idx in self.peak['sample_regions']:
-            del self.peak['sample_regions'][idx]
-        d = self._sample_data[idx]
-        d['lo_s'] = self._p_lo; d['hi_s'] = self._p_hi
-        d['adjusted'] = False
-        # recompute values for the original region
-        def _trapz(y, x):
-            try: return float(np.trapezoid(y, x=x))
-            except AttributeError: return float(np.trapz(y, x=x))
-        pk_m = (self.ppm >= self._p_lo) & (self.ppm <= self._p_hi)
-        lint = d['col'][pk_m]
-        ppm_ = self.ppm[pk_m]
-        d['intensity'] = float(np.max(lint)) if lint.size else 0.0
-        noise_std = (getattr(
-            getattr(self.app, 'stages', {}).get('peak_detection', None),
-            'noise_std', None) or 1.0)
-        d['snr'] = d['intensity'] / noise_std if noise_std > 0 else 0.0
-        if lint.size:
-            d['ppm'] = float(self.ppm[pk_m][np.argmax(lint)])
-        d['area'] = float(abs(_trapz(lint, ppm_))) if lint.size > 1 else 0.0
-        self.tree.item(str(idx), values=(
-            d['name'], d['group'],
-            f"{d['snr']:.1f}", f"{d['intensity']:.0f}",
-            f"{d['area']:.3e}",
-            d.get('metabolite', '—'),
-            f"{d['ppm']:.4f}", f"{self._p_lo:.4f}", f"{self._p_hi:.4f}",
-            self.peak.get('status') or '—', ''))
-        if self._selected_idx == idx:
-            self._draw_spectrum(d)
-
-        # Notify quantification stage to restore original area (original region)
-        if self._quant_available and self._quant_stage is not None:
-            self._quant_stage.update_sample_area(self.peak, idx, self._p_lo, self._p_hi)
-            if hasattr(self, '_info_area_var'):
-                r = self._quant_result
-                areas = r.get('_areas_per_sample', []) if r else []
-                if idx < len(areas):
-                    self._info_area_var.set(f"{areas[idx]:.3e}")
+        self.peak['sample_regions'].pop(idx, None)
+        qs = self._quant_stage
+        lo, hi = self._p_lo, self._p_hi
+        if self._quant_available and qs is not None:
+            qs.reset_sample_area(self.peak, idx)
+            win = (self._quant_result or {}).get('_multiplet_window')
+            if win:
+                lo, hi = min(win), max(win)
+        self._show_sample(idx, lo, hi, adjusted=False)
 
     # ── Right-click drag to adjust region directly on the spectrum ────────────
 
@@ -804,33 +790,16 @@ class PeakSampleView:
         self.win.geometry(f'{w}x{h}+{(sw-w)//2}+{(sh-h)//2}')
 
     def _on_close(self):
-        """Recompute quantification for all adjusted samples, then refresh."""
+        """Refresh what depends on the numbers the analyst changed."""
         try:
             qs = self._quant_stage
             if qs is not None and self._quant_available:
-                # Re-apply all per-sample region adjustments using the correct method
-                sample_regions = self.peak.get('sample_regions', {})
-                for s_idx, adj in sample_regions.items():
-                    lo_s = adj.get('start_ppm', self._p_lo)
-                    hi_s = adj.get('end_ppm',   self._p_hi)
-                    try:
-                        qs.update_sample_area(self.peak, int(s_idx), lo_s, hi_s)
-                    except Exception:
-                        pass
-                # Recompute VIP scores then refresh UI
                 try:
                     qs._compute_vip_scores()
                 except Exception:
                     pass
                 if getattr(qs, '_right_widget', None):
                     qs._populate_tree()
-                    try:
-                        sel = qs._tree.selection()
-                        if sel:
-                            qs._tree.selection_set(sel[0])
-                            qs._on_tree_select()
-                    except Exception:
-                        pass
         except Exception:
             pass
         self.win.destroy()

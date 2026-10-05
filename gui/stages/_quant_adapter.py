@@ -515,6 +515,9 @@ def identity_columns(row):
         origin = 'Window resolved by shape'
     else:
         origin = str(row.get('_integ_mode') or 'Integration')
+    manual = row.get('_manual_regions') or {}
+    if manual:
+        origin += f' + window set by hand in {len(manual)} sample(s)'
     conf = row.get('_confidence')
     try:
         conf = int(conf)

@@ -326,3 +326,126 @@ def test_metaboanalyst_names_are_unique_and_a_feature_never_detected_is_left_out
     assert len(names) == len(set(names)), names
     assert 'Ghost' not in names
     assert any(n.startswith('L-Lactic acid [') for n in names)
+
+
+# ── The analyst sets the window of one sample ────────────────────────────────
+
+def _editing_stage(rows, samples):
+    """The quantification stage's own mixin, on the study's rows."""
+    import types
+    from gui.stages import _quant_computation as qc
+
+    class _V:
+        def __init__(self, v):
+            self.v = v
+
+        def get(self):
+            return self.v
+
+    class _Stage(qc._QuantCompMixin):
+        pass
+
+    st = _Stage()
+    st._quant_results = rows
+    st.app = types.SimpleNamespace(
+        ppm=PPM, all_intensities=_study()[2],
+        corrected_intensities=lambda: _study()[2])
+    st.bl_model_quant_var = _V(False)
+    st._last_run_settings = {'bl_model_quant_var': False}
+    st._last_groups = {'A': [1, 2], 'B': [3]}
+    st._last_blk_indices = [0]
+    st._right_widget = None
+    st.peak_stage = types.SimpleNamespace(peaks=[])
+    return st
+
+
+def test_the_engines_own_window_gives_the_engines_number_back():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    before = list(row['_concs_per_sample'])
+    peak = {'rank': row['_peak_rank']}
+    assert st.update_sample_area(peak, 2, *row['_multiplet_window']) is None
+    assert row['_concs_per_sample'] == before
+    assert not row['_manual_regions']
+
+
+def test_a_narrower_window_scales_the_engines_number_by_the_change_in_the_integral():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    engine = list(row['_concs_per_sample'])
+    lo, hi = sorted(row['_multiplet_window'])
+    narrow = (lo + 0.3 * (hi - lo), hi - 0.3 * (hi - lo))
+    peak = {'rank': row['_peak_rank']}
+    assert st.update_sample_area(peak, 2, *narrow) is None
+    i_old = st._window_integral(row, 2, lo, hi)
+    i_new = st._window_integral(row, 2, *narrow)
+    assert row['_concs_per_sample'][2] == pytest.approx(engine[2] * i_new / i_old)
+    assert row['_concs_per_sample'][2] < engine[2]
+    # the other samples are the engine's, and so is the row's identity
+    assert row['_concs_per_sample'][1] == engine[1]
+    assert row['_manual_regions'] == {2: pytest.approx(narrow)}
+    assert row['_status_reasons'][0].startswith('Re-measured by hand in 1 sample')
+
+
+def test_the_edit_is_never_compounded_and_reset_gives_the_engine_back():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    engine = list(row['_concs_per_sample'])
+    lo, hi = sorted(row['_multiplet_window'])
+    peak = {'rank': row['_peak_rank']}
+    st.update_sample_area(peak, 2, lo + 0.2 * (hi - lo), hi)
+    once = row['_concs_per_sample'][2]
+    st.update_sample_area(peak, 2, lo + 0.2 * (hi - lo), hi)
+    assert row['_concs_per_sample'][2] == pytest.approx(once), 'same edit twice'
+    st.reset_sample_area(peak, 2)
+    assert row['_concs_per_sample'] == pytest.approx(engine, nan_ok=True)
+    assert not any(t.startswith('Re-measured') for t in row['_status_reasons'])
+
+
+def test_the_group_statistics_follow_the_edited_sample():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    lo, hi = sorted(row['_multiplet_window'])
+    st.update_sample_area({'rank': row['_peak_rank']}, 2,
+                          lo + 0.3 * (hi - lo), hi - 0.3 * (hi - lo))
+    assert row['_concs_by_group']['A'] == pytest.approx(
+        [row['_concs_per_sample'][1], row['_concs_per_sample'][2]])
+    assert row['conc_mm'] == pytest.approx(
+        sum(row['_concs_per_sample'][1:]) / 3)
+
+
+def test_a_number_from_a_fit_has_no_window_to_move():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    row['_by_cascade'] = True
+    before = list(row['_concs_per_sample'])
+    peak = {'rank': row['_peak_rank']}
+    ok, why = st.sample_area_editable(peak)
+    assert not ok and 'fit' in why
+    assert st.update_sample_area(peak, 2, 1.40, 1.50) == why
+    assert row['_concs_per_sample'] == before
+
+
+def test_the_windows_the_analyst_set_survive_a_new_run():
+    rows, samples = _rows()
+    st = _editing_stage(rows, samples)
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    lo, hi = sorted(row['_multiplet_window'])
+    narrow = (lo + 0.3 * (hi - lo), hi - 0.3 * (hi - lo))
+    peak = {'rank': row['_peak_rank'], 'sample_regions': {
+        2: {'start_ppm': narrow[0], 'end_ppm': narrow[1]}}}
+    st.peak_stage.peaks = [peak]
+    edited = None
+    st.update_sample_area(peak, 2, *narrow)
+    edited = row['_concs_per_sample'][2]
+    # a fresh run: the engine's numbers again, then the windows on top
+    fresh, _ = _rows()
+    st._quant_results = fresh
+    assert st._reapply_manual_regions() == []
+    row2 = next(r for r in fresh if r['hmdb_id'] == 'HMDB0000161')
+    assert row2['_concs_per_sample'][2] == pytest.approx(edited)

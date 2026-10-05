@@ -56,6 +56,9 @@ def test_the_exports_carry_the_identity_of_every_row():
                             )[1] == 'Integral (joint fit refused)'
     assert identity_columns({'_integ_mode': 'Multiplet', '_confidence': 2}
                             )[:2] == (2, 'Multiplet')
+    assert identity_columns({'_integ_mode': 'Multiplet', '_confidence': 2,
+                             '_manual_regions': {1: (1.0, 2.0), 4: (1.0, 2.0)}}
+                            )[1] == 'Multiplet + window set by hand in 2 sample(s)'
     assert identity_columns({})[0] == ''
 
 

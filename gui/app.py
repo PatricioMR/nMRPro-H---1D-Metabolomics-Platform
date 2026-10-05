@@ -92,6 +92,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.baseline_corrected  = False
         self.alignment_corrected = False
         self.alignment_shifts_ppm = None
+        # Regional alignments the analyst applied from the Signal List: where,
+        # how and by how much (an edit of the spectrum must be auditable).
+        self.region_alignments = []
         self.eligible_overrides = {}   # {f'{met_id}__{peak_rank}': bool}
 
         self.group_colors = {
@@ -509,6 +512,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         # Activate new stage
         self.active_stage = stage_name
         self.stages[stage_name].on_activate()
+        # variables the stage builds late, saved in the open project
+        from gui.project_vars import apply_pending
+        apply_pending(self.stages[stage_name])
 
     def _update_stage_availability(self):
         """Activa/desactiva botões de stage conforme 1D vs COSY vs Lipidomica."""

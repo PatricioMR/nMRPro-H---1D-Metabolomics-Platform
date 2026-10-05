@@ -350,3 +350,48 @@ def test_the_group_amplitude_is_the_mean_over_its_positive_samples():
     assert group_amplitude(amps, si, 'A') == 10.0
     assert group_amplitude(amps, si, 'B') == 40.0
     assert group_amplitude(amps, si, None) == pytest.approx(20.0)
+
+
+def _pqn_stage(factors, norm='IS+PQN'):
+    import types
+
+    class _V:
+        def __init__(self, v):
+            self.v = v
+
+        def get(self):
+            return self.v
+
+    qs = types.SimpleNamespace(
+        norm_var=_V(norm), integ_var=_V('Multiplet'), proton_corr_var=_V(True),
+        ref_conc_var=_V(0.5), ref_nh_var=_V(9), ref_peak={'ppm': 0.0},
+        _quant_results=[{'_pqn_factors': factors}])
+    app = types.SimpleNamespace(samples_info=[{'label': 'A'}] * 3
+                                + [{'label': 'B'}] * 3)
+    return qs, app
+
+
+def _cells(tbl):
+    return [[getattr(c, 'text', c) for c in row] for row in tbl._cellvalues]
+
+
+def test_the_report_says_the_pqn_factor_by_group_and_flags_a_gap():
+    qs, app = _pqn_stage({0: 1.0, 1: 1.0, 2: 1.0, 3: 0.6, 4: 0.6, 5: 0.6})
+    cells = _cells(_report()._params_table(qs, app))
+    by = next(r for r in cells if r[0] == 'PQN factor by group')
+    assert 'A: 1.00' in by[1] and 'B: 0.60' in by[1]
+    note = next(r for r in cells if r[0] == 'PQN notice')
+    assert 'taking a difference between groups' in note[1]
+
+
+def test_the_report_gives_the_factors_without_a_notice_when_the_groups_agree():
+    qs, app = _pqn_stage({i: 1.0 for i in range(6)})
+    cells = _cells(_report()._params_table(qs, app))
+    assert any(r[0] == 'PQN factor by group' for r in cells)
+    assert not any(r[0] == 'PQN notice' for r in cells)
+
+
+def test_without_pqn_the_report_adds_nothing():
+    qs, app = _pqn_stage({0: 1.0, 3: 0.5}, norm='IS')
+    cells = _cells(_report()._params_table(qs, app))
+    assert not any(str(r[0]).startswith('PQN') for r in cells)

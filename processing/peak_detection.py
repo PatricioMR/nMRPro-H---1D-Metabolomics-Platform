@@ -47,6 +47,55 @@ def diagnose_array(arr, name):
 
 
 
+def foot_line_area(x, y):
+    """``(area, line)`` of one trace over a signal's window: the area above the
+    straight line from the window's first point to its last, only where the
+    trace stands above it (what is below the line is not signal), by the
+    trapezoid rule. The line is returned so a figure can draw the very region
+    the number came from.
+
+    This is the area the Signal List reports (per sample, then its mean) and
+    what its viewer shades; one function, so they cannot differ.
+    """
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    n = len(y)
+    if n < 2 or len(x) != n:
+        return 0.0, y.copy()
+    line = y[0] + (y[-1] - y[0]) / (n - 1) * np.arange(n)
+    above = np.maximum(y - line, 0.0)
+    return abs(float(np.trapezoid(above, x))), line
+
+
+def peak_measures(ppm, corrected_2d, start_idx, end_idx, noise_std, index=None):
+    """What the Signal List reports about a signal on the window
+    ``[start_idx, end_idx]`` of the baseline-corrected matrix (points x
+    samples): the per-sample areas and their mean, the height on the mean
+    spectrum above the line between the window's ends, the mean intensity at
+    the apex and its SNR. The same arithmetic as detection's last step, so a
+    signal whose boundaries the analyst moved can be re-measured without
+    running detection again. ``index`` is kept when inside the window, else
+    the apex of the mean spectrum.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    Y = np.asarray(corrected_2d, dtype=float)
+    if Y.ndim == 1:
+        Y = Y.reshape(-1, 1)
+    lo, hi = sorted((int(start_idx), int(end_idx)))
+    x = ppm[lo:hi + 1]
+    areas = np.array([foot_line_area(x, Y[lo:hi + 1, s])[0]
+                      for s in range(Y.shape[1])])
+    mean = Y.mean(axis=1)
+    apex = (int(index) if index is not None and lo <= int(index) <= hi
+            else lo + int(np.argmax(mean[lo:hi + 1])))
+    height = float(max(np.max(mean[lo:hi + 1]) - 0.5 * (mean[lo] + mean[hi]), 0.0))
+    mean_int = float(np.mean(Y[apex, :]))
+    return {'area_per_sample': areas, 'area': float(np.mean(areas)),
+            'height': height, 'mean_intensity': mean_int,
+            'snr': mean_int / noise_std if noise_std and noise_std > 0 else 0.0,
+            'index': apex, 'ppm': float(ppm[apex])}
+
+
 def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                                method="auto", baseline_level=0.0):
     """
@@ -1368,28 +1417,8 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             end_idx = peak['end_idx']
             x_region = ppm[start_idx:end_idx + 1]
 
-            areas = []
-            for s in range(n_samples):
-                sample_region = corrected_2d[start_idx:end_idx + 1, s]
-
-                # Baseline correction for integration (linear between valleys)
-                left_val = corrected_2d[start_idx, s]
-                right_val = corrected_2d[end_idx, s]
-
-                if end_idx > start_idx:
-                    slope = (right_val - left_val) / (end_idx - start_idx)
-                    baseline_s = left_val + slope * np.arange(end_idx - start_idx + 1)
-                    corrected_s = sample_region - baseline_s
-                    corrected_s = np.maximum(corrected_s, 0)
-                else:
-                    corrected_s = sample_region
-
-                if len(x_region) > 1 and len(corrected_s) > 1:
-                    area = abs(np.trapezoid(corrected_s, x_region))
-                else:
-                    area = 0.0
-
-                areas.append(area)
+            areas = [foot_line_area(x_region, corrected_2d[start_idx:end_idx + 1, s])[0]
+                     for s in range(n_samples)]
 
             peak['area_per_sample'] = np.array(areas)
             peak['mean_intensity'] = float(np.mean([corrected_2d[peak['index'], s]

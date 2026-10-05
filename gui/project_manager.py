@@ -6,6 +6,11 @@ Saves and restores the full application state to a .nmrproj file (pickle).
 Auto-saves every 5 minutes when a project is open.
 
 Saved state:
+  - EVERY variable of every stage and of the app (gui.project_vars), found by
+    looking at them and not by a list: a parameter nobody listed would come
+    back at its default and give other numbers. Opening a project says which
+    it could not put back, and when the options now set differ from the ones
+    the saved results were produced with.
   - Raw data (ppm, all_intensities, samples_info, group_colors, source file path)
   - Peak detection (noise_std, peaks list, overlapping regions)
   - Deconvolution (queued peaks, results)
@@ -22,6 +27,8 @@ from processing.spectral_regions import (
     format_regions, parse_regions)
 
 from app_paths import APP_VERSION
+from gui.project_vars import (
+    apply_vars, collect_vars, diff_vars, engine_fingerprint)
 
 PROJECT_EXT   = '.nmrproj'
 AUTOSAVE_SECS = 300  # 5 minutes
@@ -78,7 +85,14 @@ class ProjectManager:
         """Gather everything needed to restore the session."""
         app = self.app
         state = {
-            'version':         6,
+            'version':         7,
+            # What wrote it, so a project opened on another version can say so.
+            'software':        {'version': APP_VERSION,
+                                'engine': engine_fingerprint()},
+            # Every variable of the app and of each stage, by name.
+            'vars':            {'app': collect_vars(app),
+                                **{name: collect_vars(st)
+                                   for name, st in app.stages.items()}},
             # Raw data
             'ppm':             app.ppm,
             'ppm_calibration': getattr(app, '_ppm_calibration', None),
@@ -94,6 +108,7 @@ class ProjectManager:
             # The rigid shift detection applied to each sample, kept so the
             # alignment baked into all_intensities stays auditable.
             'alignment_shifts_ppm': getattr(app, 'alignment_shifts_ppm', None),
+            'region_alignments': list(getattr(app, 'region_alignments', [])),
             'samples_info':        app.samples_info,
             'group_colors':    app.group_colors,
             'source_file':     app.current_file,
@@ -196,6 +211,7 @@ class ProjectManager:
                 'jr_contributions_per_sample': getattr(ann, '_j_resolve_contributions_per_sample', None),
                 'jr_status':                   getattr(ann, '_j_resolve_status', None),
                 'jr_conc_est':                 getattr(ann, '_j_resolve_conc_est', None),
+                'mcr_r2_threshold':            getattr(ann, 'mcr_r2_threshold', None),
             }
 
         # ── J-Resolve ─────────────────────────────────────────────────────────
@@ -219,6 +235,12 @@ class ProjectManager:
                 'dj_filter':         _safe_var(jr, '_dj_filter_var'),
                 'dj_tol':            _safe_var(jr, '_dj_tol'),
                 'singlet_anchor':    _safe_var(jr, '_singlet_anchor_var'),
+                'auto_anchored':     set(getattr(jr, '_auto_anchored', set())),
+                'cascade_estimates': dict(getattr(jr, '_cascade_estimates', {})),
+                'nnls_cross_cv':     dict(getattr(jr, '_nnls_cross_cv', {})),
+                'nnls_coverage':     dict(getattr(jr, '_nnls_coverage', {})),
+                'calib_cv_thresh':   getattr(jr, '_calib_cv_thresh', None),
+                'calib_cov_thresh':  getattr(jr, '_calib_cov_thresh', None),
             }
 
         # ── Quantification ────────────────────────────────────────────────────
@@ -255,6 +277,10 @@ class ProjectManager:
                 'ref_conc':         _safe_var(qnt, 'ref_conc_var'),
                 'ref_std':          _safe_var(qnt, 'ref_std_var'),
                 'ref_rank':         _safe_var(qnt, 'ref_rank_var'),
+                # The options the saved results were produced with: they are
+                # not the options now set when the analyst changed one after
+                # running.
+                'last_run_settings': getattr(qnt, '_last_run_settings', None),
                 'last_norm_mode':   getattr(qnt, '_last_norm_mode',   None),
                 'last_ref_areas':   getattr(qnt, '_last_ref_areas',   None),
                 'last_ref_conc':    getattr(qnt, '_last_ref_conc',    None),
@@ -349,6 +375,7 @@ class ProjectManager:
         app.baseline_corrected   = state.get('baseline_corrected',  False)
         app.alignment_corrected  = state.get('alignment_corrected', False)
         app.alignment_shifts_ppm = state.get('alignment_shifts_ppm')
+        app.region_alignments = list(state.get('region_alignments') or [])
         app.samples_info     = state.get('samples_info', [])
         app.group_colors     = state.get('group_colors', app.group_colors)
         app.current_file     = state.get('source_file')
@@ -509,6 +536,8 @@ class ProjectManager:
                     ann._j_resolve_status = ann_state['jr_status']
                 if ann_state.get('jr_conc_est') is not None:
                     ann._j_resolve_conc_est = ann_state['jr_conc_est']
+                if ann_state.get('mcr_r2_threshold') is not None:
+                    ann.mcr_r2_threshold = ann_state['mcr_r2_threshold']
 
                 if ann_state.get('metabolites'):
                     ann._metabolites = ann_state['metabolites']
@@ -551,6 +580,14 @@ class ProjectManager:
                 jr._anchor_confidence = jr_state.get('anchor_confidence', {})
                 jr._anchor_foldrange = jr_state.get('anchor_foldrange', {})
                 jr._anchor_ci = jr_state.get('anchor_ci', {})
+                jr._auto_anchored = set(jr_state.get('auto_anchored', ()))
+                jr._cascade_estimates = jr_state.get('cascade_estimates', {})
+                jr._nnls_cross_cv = jr_state.get('nnls_cross_cv', {})
+                jr._nnls_coverage = jr_state.get('nnls_coverage', {})
+                if jr_state.get('calib_cv_thresh') is not None:
+                    jr._calib_cv_thresh = jr_state['calib_cv_thresh']
+                if jr_state.get('calib_cov_thresh') is not None:
+                    jr._calib_cov_thresh = jr_state['calib_cov_thresh']
                 jr._residual_attributed = jr_state.get('residual_attributed', {})
                 jr._residual_diagnostic = jr_state.get('residual_diagnostic', {})
                 _set_var(jr, '_anchor_tol',        jr_state.get('anchor_tol'))
@@ -747,6 +784,9 @@ class ProjectManager:
             except Exception as _e:
                 print(f'  statistics restore: {_e}')
 
+        # ── Every other variable, by name ─────────────────────────────────────
+        self._restore_all_vars(state)
+
         # ── Redraw & switch stage ─────────────────────────────────────────────
         try:
             app.update_plot()
@@ -763,7 +803,83 @@ class ProjectManager:
             pass
 
 
+    def _restore_all_vars(self, state):
+        """Put back every variable the project saved, and say what did not
+        come back. A variable a stage has not built yet waits in the stage's
+        ``_pending_vars`` and is set when the stage is opened."""
+        app = self.app
+        saved = state.get('vars') or {}
+        targets = {'app': app, **app.stages}
+        failed = {}
+        for name, sv in saved.items():
+            obj = targets.get(name)
+            if obj is None:
+                continue
+            res = apply_vars(obj, sv)
+            obj._pending_vars = {k: sv[k] for k in res['missing']}
+            if res['failed']:
+                failed[name] = res['failed']
+        lines = []
+        for stage, errs in failed.items():
+            lines += [f'  {stage}.{k}: {v}' for k, v in errs.items()]
+        # The options now set against the ones the saved results came from.
+        qnt = app.stages.get('quantification')
+        last = (state.get('qnt') or {}).get('last_run_settings')
+        if qnt is not None and last and (state.get('qnt') or {}).get('quant_results'):
+            changed = diff_vars(last, collect_vars(qnt))
+            if changed:
+                lines.append('')
+                lines.append('The quantification options now set are not the ones '
+                             'the saved results were produced with; running again '
+                             'gives other numbers:')
+                lines += [f'  {k}: {a!r} (results) -> {b!r} (now)'
+                          for k, (a, b) in sorted(changed.items())]
+        sw = state.get('software') or {}
+        eng_now = engine_fingerprint()
+        if (sw.get('version') and sw['version'] != APP_VERSION) or (
+                sw.get('engine') and eng_now and sw['engine'] != eng_now):
+            lines.append('')
+            lines.append(
+                f"Saved by {sw.get('version')} (engine {sw.get('engine')}); "
+                f"this is {APP_VERSION} (engine {eng_now}). The saved results "
+                "are the older engine's until they are run again.")
+        if lines:
+            try:
+                messagebox.showwarning('Project', '\n'.join(
+                    ['Opening this project:'] + [''] + lines))
+            except Exception:
+                pass
+        return failed
+
     # ── File operations ───────────────────────────────────────────────────────
+
+    def _write_project(self, path, state):
+        """Write ``state`` so that a failed save leaves the old project as it
+        was: to a file beside it, read back and checked, then moved over it.
+        The previous version is kept as ``.bak`` for one save."""
+        tmp = f'{path}.tmp'
+        try:
+            with open(tmp, 'wb') as f:
+                pickle.dump(state, f, protocol=5)
+                f.flush()
+                os.fsync(f.fileno())
+            with open(tmp, 'rb') as f:
+                back = pickle.load(f)
+            if (back.get('vars') != state.get('vars')
+                    or back.get('version') != state.get('version')):
+                raise IOError('the file written does not read back the same')
+        except Exception:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+            raise
+        if os.path.exists(path):
+            try:
+                os.replace(path, f'{path}.bak')
+            except OSError:
+                pass
+        os.replace(tmp, path)
 
     def save_project(self, path=None):
         """Save to path. If None, opens Save-As dialog."""
@@ -778,8 +894,7 @@ class ProjectManager:
 
         try:
             state = self._collect_state()
-            with open(path, 'wb') as f:
-                pickle.dump(state, f, protocol=5)
+            self._write_project(path, state)
             self.project_path = path
             self._dirty       = False
             # Begin (or restart) autosave now that a project path exists.
