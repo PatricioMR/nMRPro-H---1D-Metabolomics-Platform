@@ -23,6 +23,8 @@ that lost has no number here, and the reason it has none is recorded.
 """
 from __future__ import annotations
 
+from dataclasses import replace as dc_replace
+
 import numpy as np
 
 from processing.baseline_model import broad_removed_fraction
@@ -30,6 +32,8 @@ from processing.quant_cascade import (
     CASCADE_BY_SCORE, CASCADE_SCORE_MIN, CASCADE_SCORE_TWO, cascade_score,
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
     cascade_missed, exclusion_weight, fit_curve_record, others_removed,
+    COVAR_HALF_WIDTH_LW, COVAR_MAX_SIGNALS, COVAR_MIN_SNR, covariation_confirms,
+    signal_covariation,
     SHIFT_REACH_LW as CASCADE_FINE_REACH_LW,
     slide_step as cascade_slide_step)
 from processing.quant_concentration import (
@@ -51,6 +55,7 @@ from processing.quant_integration import (
     lorentzian_captured_fraction, multiplet_window, pascal_weights,
     pattern_lines, refine_apex_ppm)
 from processing.quant_shape import measure_shape
+from processing.spectrum_coverage import coverage, standard_weight
 from processing.quant_shared import (
     signals_corroborate,
     REMAINDER_NOTE, RESIDUAL_ACCEPT, RESIDUAL_EXPLAINED,
@@ -60,8 +65,8 @@ from processing.quant_shared import (
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    AMOUNT_CONTRADICTED, CASCADE_CROWDED, FIT_MISPLACED, LOST_COMPETITION,
-    NO_MEASURABLE_WINDOW,
+    AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, FIT_MISPLACED,
+    LOST_COMPETITION, NO_MEASURABLE_WINDOW,
     OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
     SHAPES_OFF, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
 from processing.annotation_scoring import (
@@ -491,6 +496,14 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     if cascade is not None:
         if cascade.get('score') is not None:
             sc = float(cascade['score'])
+            if (CASCADE_COVARIATION_RAISES and sc < CASCADE_SCORE_TWO
+                    and covariation_confirms(cascade.get('covar'))):
+                c = cascade['covar']
+                return 2, (f'the cascade took it in (its model scores it '
+                           f'{100 * sc:.0f}%) and its {c["n_signals"]} clear '
+                           f'signals move together across the {c["n_samples"]} '
+                           f'samples (r of at least {c["r_min"]:.2f}): one '
+                           f'molecule has one concentration per sample')
             return ((2 if sc >= CASCADE_SCORE_TWO else 1),
                     f'the cascade took it in and its model scores it '
                     f'{100 * sc:.0f}% likely to be there')
@@ -638,6 +651,14 @@ POSITION_SCATTER_K = 4.5
 # at three unchanged (three: none).
 FITTED_POSITION_STEPS = 1.5
 FITTED_OTHERS_STEPS = 1.0
+# Whether a SINGLET the amount was measured on may be released the same way.
+# A singlet has no lines to be pulled apart by a neighbour: the fit puts it on
+# whatever peak stands nearest, and its other signals are only ever placed
+# within the fit's own reach. On the GISSMO tubes (18 and 50, standard and
+# scattered, 3 seeds) singlets won in the election made 28 of the 54 strangers
+# at two dots against 41 real ones; real ones stood a median 4.5 mppm off the
+# drift and strangers 11.1.
+SINGLET_RELEASED_BY_FIT = False
 
 # Candidates annotation proposed and quantification did not report enter
 # the joint fit as columns whose amounts are not reported (ASICS, Tardivel
@@ -1242,6 +1263,27 @@ AMOUNT_RATIO = 3.0
 AMOUNT_EMPTY_SNR = None
 
 
+def canonical_order(metabolites) -> list:
+    """The annotated analytes in the one order quantification reads them:
+    best annotation score first, ties by id, then name.
+
+    The election, the joint fit and the cascade settle ties by who comes
+    first, and the list arrives in whatever order the annotation, a saved
+    project or a re-annotation left it. On one study, unchanged in content,
+    two orders gave 37 and 40 quantified analytes. Reading it in one order
+    defined by the content makes the table a function of the data alone.
+    """
+    def key(m):
+        try:
+            s = float(m.get('best_score'))
+        except (TypeError, ValueError):
+            s = 0.0
+        if not np.isfinite(s):
+            s = 0.0
+        return (-s, str(m.get('id') or ''), str(m.get('name') or ''))
+    return sorted(metabolites or (), key=key)
+
+
 def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              included, groups, dj_gold_hz, ambiguous_ranks=(),
              standard_areas=None, standard_nh=1.0, standard_conc=0.0,
@@ -1258,8 +1300,19 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              cascade=False, metabolites=None, field_mhz=None,
              ppm_band_ppm=None, claim_signals=True,
              max_disagreement=None, raw_intensities=None,
-             joint_fit=False) -> list[dict]:
+             joint_fit=False, analyst_rejected=(),
+             analyst_accepted=()) -> list[dict]:
     """Quantify a study and return one row per metabolite.
+
+    ``analyst_rejected`` and ``analyst_accepted`` are the analyst's decisions
+    from the deconvolution review, by metabolite id. A rejected analyte is
+    taken out of the election, the joint fit and the cascade -- the others
+    are measured without it -- and keeps a row that says so. An accepted one
+    is quantified over the engine's refusals (the amount its fingerprint
+    contradicts, a lone singlet's bar, a joint fit that could not place its
+    shape, a cascade identification its score leaves without a number), the
+    row naming the decision and keeping the engine's own confidence (one
+    dot where it refused): the same standing as a Good mark.
 
     ``joint_fit`` measures the analytes whose shapes overlap together, with
     a free component at every detected peak no quantified analyte has a
@@ -1339,7 +1392,24 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         ppm_band_ppm=ppm_band_ppm, claim_signals=claim_signals,
         raw_intensities=raw_intensities, joint_fit=joint_fit,
         field_mhz=field_mhz, cluster_base=cluster_base)
-    cands = list(candidates or ())
+    rejected = {str(m) for m in analyst_rejected or ()}
+    accepted = {str(m) for m in analyst_accepted or ()} - rejected
+    cands = [c for c in (candidates or ()) if c.met_id not in rejected]
+    if accepted:
+        # an accepted analyte is held as the analyst's Good mark is, by the
+        # gates that look for it
+        cands = [dc_replace(c, evidence={**(c.evidence or {}),
+                                         'manual_quality': 'good',
+                                         'analyst_accepted': True})
+                 if c.met_id in accepted else c for c in cands]
+    if kw.get('residual_pool'):
+        kw['residual_pool'] = [c for c in kw['residual_pool']
+                               if c.met_id not in rejected]
+    names = {}
+    for c in (candidates or ()):
+        met = (c.payload or {}).get('met') if isinstance(c.payload, dict) else None
+        if met and met.get('name'):
+            names[str(c.met_id)] = met['name']
     withdrawn: dict = {}
     rows: list = []
     for _round in range(AMOUNT_ROUNDS):
@@ -1361,7 +1431,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
         # all. One whose every matched signal landed further from the
         # common drift than the band allows is not a candidate: it would
         # be fitted on columns built at positions the study does not use.
-        _in = [m for m in metabolites if stands_in_study(m, ppm_band_ppm)]
+        _in = [m for m in metabolites if stands_in_study(m, ppm_band_ppm)
+               and str(m.get('id')) not in rejected]
         rows = _cascade_rows(
             rows, _in, ppm=ppm, intensities=intensities,
             included=included, groups=groups, noise_sigma=noise_sigma,
@@ -1377,8 +1448,40 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             external_standard_samples=external_standard_samples,
             dilution=dilution, correction=correction,
             proton_correction=proton_correction, diagnostics=diag,
-            local_baseline=local_baseline, cluster_base=cluster_base)
-    return rows
+            local_baseline=local_baseline, cluster_base=cluster_base,
+            accepted=accepted,
+            peak_ppms=[p.get('ppm') for p in (peaks_by_rank or {}).values()
+                       if p.get('ppm') is not None],
+            standard_ppm=standard_ppm if standard_areas else None)
+    return _with_decisions(rows, rejected, accepted, metabolites, names)
+
+
+def _with_decisions(rows, rejected, accepted, metabolites, names) -> list:
+    """The analyst's decisions on the table: a rejected analyte has a row that
+    says so (and no number), an accepted one is marked as such, whatever the
+    engine did with it."""
+    if not rejected and not accepted:
+        return rows
+    out = [r for r in rows if str(r.get('hmdb_id')) not in rejected]
+    label = {str(m.get('id')): m.get('name') for m in metabolites or ()}
+    label.update({k: v for k, v in names.items() if k not in label})
+    for mid in sorted(rejected):
+        row = _rejected_row(mid, ANALYST_REJECTED)
+        row['metabolite'] = label.get(mid) or mid
+        row['_analyst_decision'] = 'rejected'
+        out.append(row)
+    for r in out:
+        if str(r.get('hmdb_id')) in accepted:
+            r['_analyst_decision'] = 'accepted'
+            if not r.get('_not_quantified') and not any(
+                    str(t).startswith('Accepted by the analyst')
+                    for t in r.get('_status_reasons') or ()):
+                r.setdefault('_status_reasons', []).insert(0, (
+                    'Accepted by the analyst in the deconvolution review: the '
+                    'number is given over whatever the engine would have '
+                    'refused. Its confidence is the engine\'s own; the '
+                    'acceptance does not raise it.'))
+    return out
 
 
 def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
@@ -1387,9 +1490,14 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                   standard_conc, external_standard_samples, dilution,
                   correction, proton_correction, max_disagreement=None,
                   diagnostics=None, local_baseline=False,
-                  cluster_base=None) -> list:
+                  cluster_base=None, accepted=(), peak_ppms=(),
+                  standard_ppm=None) -> list:
     """The rows the cascade adds to a quantified study, in place of the
     rejected rows of the analytes it takes in.
+
+    ``diagnostics['coverage']`` gets how much of the mean trace the final
+    model explains over the detected ``peak_ppms``
+    (processing.spectrum_coverage).
 
     The quantified analytes are handed to the cascade at their area per
     proton before normalisation -- the cascade works on the spectrum as
@@ -1430,6 +1538,14 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         drift_ppm=drift_ppm, field_mhz=field_mhz,
         excluded_regions=excluded_regions, diagnostics=diagnostics,
         residual_out=_resid)
+    if diagnostics is not None and _resid.get('model') is not None:
+        _p = np.asarray(ppm, dtype=float)
+        diagnostics['coverage'] = coverage(
+            ppm, _resid['trace'], _resid['model'], peak_ppms,
+            noise_sigma=noise_sigma,
+            weight=exclusion_weight(_p, excluded_regions) * standard_weight(
+                _p, standard_ppm, field_mhz=field_mhz,
+                linewidth_ppm=linewidth_ppm))
     if not found:
         return rows
     standard = (standard_per_proton(standard_areas, standard_nh,
@@ -1441,7 +1557,14 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         field_mhz=field_mhz, linewidth_ppm=linewidth_ppm,
         drift_ppm=drift_ppm)}
     out = list(rows)
+    # the columns as the cascade placed them, each signal at its own offset
     for mid, res in found.items():
+        if res.get('column') is not None:
+            cols[mid] = res['column']
+    for mid, res in found.items():
+        res['covar'] = (_cascade_covariation(
+            _resid.get('Y'), ppm, found, cols, mid, res, incl, noise_sigma,
+            linewidth_ppm) if CASCADE_COVARIATION else None)
         nh = float(res['nh'])
         areas = {s: a / float(pqn.get(s, 1.0)) * nh
                  for s, a in res['per_proton'].items() if a > 0}
@@ -1462,10 +1585,11 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                      else max_disagreement)
         if CASCADE_BY_SCORE:
             res['score'] = cascade_score(res, linewidth_ppm)
-            _crowded = res['score'] < CASCADE_SCORE_MIN
+            _crowded = res['score'] < CASCADE_SCORE_MIN and mid not in accepted
         else:
-            _crowded = (float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
-                        or (np.isfinite(_dis) and _dis > _bar))
+            _crowded = ((float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
+                         or (np.isfinite(_dis) and _dis > _bar))
+                        and mid not in accepted)
         if _crowded:
             # identified, but the amount would come from the part of it
             # nobody else accounts for; that number is not a measurement
@@ -1479,7 +1603,7 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
             row['_cascade'] = {k: res[k] for k in
                                ('apex_snr', 'shift_ppm', 'at_cap', 'signals',
                                 'step', 'nh', 'free_share', 'capped_share',
-                                'disagreement')}
+                                'disagreement', 'part_offsets')}
         else:
             # placed on the study's drift: no further from where the study
             # puts every other signal than one step of the cascade's slide
@@ -1530,6 +1654,43 @@ def _fit_detected(col, ppm, res, noise_sigma) -> dict:
             for s, a in (res.get('per_proton') or {}).items()}
 
 
+# The cascade measures whether an analyte's own signals move together across
+# the samples (processing.quant_cascade.signal_covariation) and the row keeps
+# it; the review window shows it. Whether that RAISES a row from one dot to two
+# is CASCADE_COVARIATION_RAISES, and it is off: on the virtual bench with
+# strong contrast between groups (half the compounds x3 or x1/3, tube of 50,
+# three seeds) the rows it would raise were 4 real and 2 strangers at r >= 0.8
+# (6 and 4 at 0.6; 2 and 1 at 0.9): a precision of 67% against the 85% two dots
+# already mean. Signals that move together are one molecule's, not necessarily
+# this one: a stranger standing on a real compound's signals co-varies with it.
+CASCADE_COVARIATION = True
+CASCADE_COVARIATION_RAISES = False
+
+
+def _cascade_covariation(Y, ppm, found, cols, mid, res, incl, sigma,
+                         linewidth_ppm) -> dict | None:
+    """``signal_covariation`` of one cascade analyte: the height of each of
+    its clear signals in every included sample, read on the spectrum with
+    everything else the cascade and the election took out of it
+    (``others_removed``), so a neighbour's variation is not this analyte's."""
+    if Y is None or not sigma or not linewidth_ppm:
+        return None
+    sig = sorted((v for v in res.get('signals') or () if v[3] >= COVAR_MIN_SNR),
+                 key=lambda v: -v[3])[:COVAR_MAX_SIGNALS]
+    if len(sig) < 2:
+        return None
+    ppm = np.asarray(ppm, dtype=float)
+    half = COVAR_HALF_WIDTH_LW * float(linewidth_ppm)
+    heights = []
+    for centre, _label, _nh, _snr in sig:
+        sel = np.flatnonzero(np.abs(ppm - float(centre)) <= half)
+        if sel.size < 2:
+            return None
+        R = others_removed(Y, ppm, sel, found, cols, mid)
+        heights.append(R[:, [int(i) for i in incl]].max(axis=0))
+    return signal_covariation(heights, sigma=sigma)
+
+
 def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> dict:
     """A row for an analyte the cascade took in. One dot: its identity
     rests on its whole listing explaining the residual jointly, not on
@@ -1559,7 +1720,8 @@ def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> 
         '_cascade': {k: res.get(k) for k in ('apex_snr', 'shift_ppm', 'at_cap',
                                              'signals', 'step', 'nh',
                                              'free_share', 'capped_share',
-                                             'disagreement', 'placed', 'wide', 'score')},
+                                             'disagreement', 'placed', 'wide', 'score',
+                                             'covar', 'part_offsets')},
         '_peak': None,
         '_peak_rank': None,
         '_display_peak_rank': None,
@@ -2385,9 +2547,12 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 if _scatter is not None else None)
         _fit = _fitted_offset(info)
         _step = _fit_step(linewidth_ppm)
+        _ev = info['signal'].evidence or {}
         _pulled = (_fit is not None
                    and _fit[0] <= FITTED_POSITION_STEPS * _step
-                   and _fit[1] <= FITTED_OTHERS_STEPS * _step)
+                   and _fit[1] <= FITTED_OTHERS_STEPS * _step
+                   and (SINGLET_RELEASED_BY_FIT or not is_singlet_like(
+                       _ev.get('multiplicity') or _ev.get('type') or 's')))
         if (_bar is not None and _off is not None and abs(float(_off)) > _bar
                 and not _pulled):
             info['position_cap'] = (abs(float(_off)), _bar)
@@ -3054,9 +3219,10 @@ def _manual_override_reason(info) -> list:
     why = info.get('manual_override')
     if why is None:
         return []
-    return ["Quantified on the analyst's Good mark, over the engine's "
-            f"refusal ({str(why)[:200]}). One dot: nothing but the mark "
-            "stands behind it."]
+    return ["Quantified on the analyst's decision (a Good mark, or accepted "
+            f"in the deconvolution review), over the engine's refusal "
+            f"({str(why)[:200]}). One dot: nothing but the decision stands "
+            "behind it."]
 
 
 def _reselect_reason(info) -> list:

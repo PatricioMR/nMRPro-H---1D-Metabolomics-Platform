@@ -524,17 +524,22 @@ class _QuantCompMixin:
             ref_name = 'Internal standard'
 
         quality_marks = getattr(ann, '_quality_marks', {}) or {}
+        # What the annotation scored with, from what the project holds -- not
+        # from the results window, which a reopened project may not have.
+        from processing.annotation_scoring import effective_annotation_params
+        try:
+            _tol = float(ann.tolerance_var.get())
+        except Exception:
+            _tol = None
+        _ann_params = effective_annotation_params(
+            getattr(ann, '_annotation_params', None), _tol)
         try:
             from gui.stages._annotation_helpers import (
                 DJ_GOLD_HZ_DEFAULT, ambiguous_peak_ranks)
-            from processing.annotation_scoring import SCORING_DEFAULTS
             # The gate the annotation ranked with. The params dict itself
             # used to be passed here, in dj_gold_hz's position, and the
             # check failed on every run -- quietly, into an empty set.
-            _ann_params = getattr(ann, '_params', None) or {}
-            _gold = float(_ann_params.get(
-                'dj_gold_hz', SCORING_DEFAULTS.get('dj_gold_hz',
-                                                   DJ_GOLD_HZ_DEFAULT)))
+            _gold = float(_ann_params.get('dj_gold_hz', DJ_GOLD_HZ_DEFAULT))
             ambiguous = ambiguous_peak_ranks(
                 metabolites,
                 {(str(k[0]), k[1]): v for k, v in quality_marks.items()},
@@ -601,7 +606,7 @@ class _QuantCompMixin:
             ref_name=ref_name,
             external_is_samples=ext_is,
             group_dilution=getattr(self.app, 'group_dilution_factors', {}),
-            annotation_params=getattr(ann, '_params', None),
+            annotation_params=_ann_params,
             use_pqn=use_pqn,
             local_baseline=local_baseline,
             proton_correction=proton_corr,

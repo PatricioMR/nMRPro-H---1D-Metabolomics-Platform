@@ -92,6 +92,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         self.baseline_corrected  = False
         self.alignment_corrected = False
         self.alignment_shifts_ppm = None
+        # What the Bruker import moved each spectrum by to put its reference
+        # standard at 0 ppm (data.bruker_loader.load_bruker_dataset).
+        self.import_reference = None
         # Regional alignments the analyst applied from the Signal List: where,
         # how and by how much (an edit of the spectrum must be auditable).
         self.region_alignments = []
@@ -729,6 +732,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
             # Load all samples using the robust loader
             self.ppm, self.all_intensities, sample_names, sample_labels = load_all_samples(filepath)
+            self.import_reference = None
 
             # CRITICAL: Create samples_info for BLK identification
             self.samples_info = []
@@ -814,6 +818,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 # Limpar dados 1D para que update_plot saiba que estamos em 2D
                 self.ppm             = None
                 self.all_intensities = None
+                self.import_reference = None
 
                 # Lista de amostras: uma entrada para o experimento 2D
                 name = os.path.basename(root_folder.rstrip('/\\'))
@@ -848,6 +853,10 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 self.cosy_data = None   # garantir que 2D anterior não persiste
                 self._update_stage_availability()
 
+                # Each spectrum's TSP/DSS brought to 0 ppm on its own axis,
+                # before the samples share one: TopSpin's referencing differs
+                # from tube to tube by more than detection can align.
+                _ref_report = {}
                 self.ppm, self.all_intensities, sample_names, sample_labels = \
                     load_bruker_dataset(
                         root_folder,
@@ -856,7 +865,23 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                         n_points=opts['n_points'],
                         expno=opts['expno'],
                         procno=opts['procno'],
+                        reference_ppm=0.0,
+                        reference_report=_ref_report,
                     )
+                from data.bruker_loader import reference_summary
+                _ref_text, _ref_missing = reference_summary(_ref_report)
+                self.import_reference = {'target_ppm': 0.0,
+                                         'samples': _ref_report,
+                                         'summary': _ref_text}
+                print(f'   {_ref_text}')
+                if _ref_missing:
+                    messagebox.showwarning(
+                        'Reference standard',
+                        f'{_ref_text}.\n\nNo TSP/DSS peak near 0.00 ppm in:\n'
+                        + '\n'.join(_ref_missing[:15])
+                        + ('\n…' if len(_ref_missing) > 15 else '')
+                        + '\n\nThese spectra keep TopSpin\'s referencing; '
+                          'align them before detecting.')
 
                 # The field the data was acquired at, from its own procs.
                 # Every predicted J line is placed with it; the interface's
@@ -894,7 +919,9 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                     self.file_label.config(text=os.path.basename(root_folder))
 
                 self.update_plot()
-                self.status_label.config(text="Bruker data loaded", foreground="green")
+                self.status_label.config(
+                    text=f"Bruker data loaded — {_ref_text}",
+                    foreground="orange" if _ref_missing else "green")
                 self.samples_count_label.config(
                     text=f"{len(self.samples_info)} samples")
 
@@ -1577,14 +1604,16 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         qs = self.stages.get('quantification')
         if qs is None:
             return False
+        from processing.deconv_review import kind_of
         rows = getattr(qs, '_quant_results', None) or []
-        if any(r.get('_deconv') for r in rows):
+        if any(kind_of(r) for r in rows):
             return True
         return bool(getattr(qs, '_deconv_overrides', None))
 
     def refresh_deconv_button(self):
-        """The Deconvolution button follows the quantification: there is
-        nothing to review until a run resolved a window by shape."""
+        """The Deconvolution button is on once there are results or
+        decisions to review; before that the Quantification stage's own
+        button opens the review and offers to run it."""
         try:
             self.btn_deconv_shortcut.config(
                 state='normal' if self.quant_has_deconvolution()
@@ -1598,14 +1627,10 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         was deconvolved and what was decided. The MCR window is still
         reachable from the Annotation Results and the Signal List."""
         qs = self.stages.get('quantification')
-        if qs is None or not self.quant_has_deconvolution():
-            from tkinter import messagebox
-            messagebox.showinfo(
-                'Deconvolution',
-                'No window was resolved by shape yet.\n\n'
-                'In Quantification, switch on "Deconvolve windows two '
-                'accepted analytes share (by shape)" and run it.')
+        if qs is None:
             return
+        # opens even before the first run: the window offers to run it and
+        # then shows what will be deconvolved
         qs._open_deconvolution_window()
 
     def open_annot_shortcut(self):

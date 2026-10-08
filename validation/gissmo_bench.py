@@ -110,6 +110,27 @@ def crowded_tube(n, seed):
     return tube
 
 
+# Each chemical environment of a compound moves on its own, as in an extract:
+# every group of spins with one shift gets its own normal offset of this
+# standard deviation (ppm) before the spin system is solved. Every proton has
+# its own titration curve (Tredwell et al., Metabolomics 2016;12:152) and the
+# matrix moves each differently (Takis et al., Nat Commun 2017;8:1662); a
+# compound shifted as a block is the optimistic case. 0: off. Set by
+# --signal-shift-mppm; part of every cache key.
+SIGNAL_SHIFT = 0.0
+
+
+def _spread_signals(sys_, sigma, rng):
+    """A copy of a GISSMO system whose distinct shifts each moved by a normal
+    draw of ``sigma`` (spins sharing a shift move together)."""
+    out = dict(sys_)
+    ppm = np.asarray(sys_['ppm'], dtype=float).copy()
+    for v in np.unique(np.round(ppm, 5)):
+        ppm[np.round(ppm, 5) == v] += float(rng.normal(0.0, sigma))
+    out['ppm'] = ppm
+    return out
+
+
 def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
           drift=None):
     """``(X, truth)``: one tube of ``composition`` at ``field``.
@@ -127,10 +148,13 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
     mb.MHZ = field
     rng = np.random.default_rng(seed)
     shift_rng = np.random.default_rng(seed + 7_000_003)
+    signal_rng = np.random.default_rng(seed + 9_000_011)
     comps, truth = [], {}
     for name, conc, factor in composition:
         mid, _sigs = mb._db_signals(con, name)
-        sp, si = stick_spectrum(systems[name], field)
+        sys_ = (_spread_signals(systems[name], SIGNAL_SHIFT, signal_rng)
+                if SIGNAL_SHIFT else systems[name])
+        sp, si = stick_spectrum(sys_, field)
         own = float(shift_rng.normal(0.0, ref_shift)) if ref_shift else 0.0
         comps.append((sp + own, si * mb.AREA_UNIT, mid))
         truth[mid] = {'name': name, 'A': conc, 'B': conc * factor}
@@ -161,7 +185,8 @@ def _composition(size, seed):
 
 def _shift_tag(ref_shift, drift=None) -> str:
     return ((f'_rs{1000 * ref_shift:.0f}' if ref_shift else '')
-            + (f'_dr{1000 * drift:.0f}' if drift is not None else ''))
+            + (f'_dr{1000 * drift:.0f}' if drift is not None else '')
+            + (f'_ss{1000 * SIGNAL_SHIFT:.0f}' if SIGNAL_SHIFT else ''))
 
 
 def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
@@ -274,9 +299,13 @@ def main():
     ap.add_argument('--snr-b0', action='store_true')
     ap.add_argument('--ref-shift-mppm', type=float, default=0.0,
                     help='each compound offset from its listing, normal, in mppm')
+    ap.add_argument('--signal-shift-mppm', type=float, default=0.0,
+                    help='each chemical environment offset on its own, normal, in mppm')
     ap.add_argument('--drift-mppm', type=float, default=None,
                     help='the study-wide shift every compound shares (default 8)')
     a = ap.parse_args()
+    global SIGNAL_SHIFT
+    SIGNAL_SHIFT = a.signal_shift_mppm / 1000.0
     res, core = [], []
     for size in a.sizes:
         for fk in a.fields:

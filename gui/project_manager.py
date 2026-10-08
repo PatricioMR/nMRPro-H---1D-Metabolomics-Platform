@@ -109,6 +109,7 @@ class ProjectManager:
             # alignment baked into all_intensities stays auditable.
             'alignment_shifts_ppm': getattr(app, 'alignment_shifts_ppm', None),
             'region_alignments': list(getattr(app, 'region_alignments', [])),
+            'import_reference': getattr(app, 'import_reference', None),
             'samples_info':        app.samples_info,
             'group_colors':    app.group_colors,
             'source_file':     app.current_file,
@@ -376,6 +377,7 @@ class ProjectManager:
         app.alignment_corrected  = state.get('alignment_corrected', False)
         app.alignment_shifts_ppm = state.get('alignment_shifts_ppm')
         app.region_alignments = list(state.get('region_alignments') or [])
+        app.import_reference = state.get('import_reference')
         app.samples_info     = state.get('samples_info', [])
         app.group_colors     = state.get('group_colors', app.group_colors)
         app.current_file     = state.get('source_file')

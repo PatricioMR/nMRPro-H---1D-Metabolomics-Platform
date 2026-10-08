@@ -140,7 +140,7 @@ class TestTheManualMarkOverTheFingerprint:
         row = self._missing_signal(manual_quality='good')
         assert not row['_not_quantified']
         assert row['_confidence'] == 1
-        assert any("analyst's Good mark" in t for t in row['_status_reasons'])
+        assert any("analyst's decision" in t for t in row['_status_reasons'])
 
     def test_the_override_is_the_studys_to_turn_off(self, monkeypatch):
         import processing.quant_engine as qe

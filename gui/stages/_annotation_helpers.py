@@ -388,14 +388,11 @@ def _ask_search_mode(parent_widget):
 
 
 def _pick_database(parent_widget):
-    """Show dialog to pick a database: bundled DBs or browse. Returns path or None."""
-    from app_paths import databases_dir
-    _db_folder = databases_dir()
-    bundled = []
-    if os.path.isdir(_db_folder):
-        for fname in sorted(os.listdir(_db_folder)):
-            if fname.lower().endswith(('.db', '.csv')):
-                bundled.append(os.path.join(_db_folder, fname))
+    """Show dialog to pick a database: the reference databases
+    (``app_paths.REFERENCE_DATABASES``) or browse. Returns path or None."""
+    from app_paths import reference_databases
+    _refs = reference_databases()
+    bundled = [path for _label, path in _refs]
 
     if not bundled:
         return filedialog.askopenfilename(
@@ -426,9 +423,8 @@ def _pick_database(parent_widget):
     scrollbar.pack(side='right', fill='y')
     lb.pack(side='left', fill='both', expand=True)
 
-    for path in bundled:
-        name = os.path.splitext(os.path.basename(path))[0].replace('_', ' ').title()
-        lb.insert('end', f'  {name}')
+    for label, _path in _refs:
+        lb.insert('end', f'  {label}')
 
     lb.insert('end', '  Browse for another file…')
     lb.select_set(0)

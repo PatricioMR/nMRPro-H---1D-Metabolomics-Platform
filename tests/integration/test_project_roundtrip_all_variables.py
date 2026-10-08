@@ -95,6 +95,19 @@ def test_every_variable_of_every_stage_comes_back_as_it_was_saved(
     assert not any(wrong.values()), wrong
 
 
+def test_the_import_referencing_comes_back_with_the_project(real_app, pm, tmp_path):
+    rec = {'target_ppm': 0.0, 'summary': 'Reference standard set',
+           'samples': {'S1': {'offset_ppm': 0.0583, 'apex_ppm': 0.0583, 'snr': 9e3},
+                       'S2': {'offset_ppm': None, 'apex_ppm': 0.11, 'snr': 2.0}}}
+    real_app.import_reference = rec
+    path = str(tmp_path / 'ref.nmrproj')
+    assert pm.save_project(path)
+    real_app.import_reference = None
+    with open(path, 'rb') as f:
+        pm._restore_state(pickle.load(f))
+    assert real_app.import_reference == rec
+
+
 def test_save_load_save_gives_the_same_variables(real_app, pm, tmp_path):
     _change_every_variable(real_app)
     first = str(tmp_path / 'a.nmrproj')

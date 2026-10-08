@@ -161,7 +161,8 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
 
 
 def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
-                      standard_conc, standard_name='IS', overrides=None):
+                      standard_conc, standard_name='IS', overrides=None,
+                      diagnostics=None):
     """The quantification step alone, on what ``prepare`` detected and
     annotated. Only the quantification's own settings are read from
     ``overrides``: changing how an amount is measured does not change what
@@ -191,7 +192,8 @@ def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
             singlet_min_snr=d['singlet_min_snr'],
             cascade=d['cascade'],
             max_disagreement=d['max_disagreement_pct'] / 100.0,
-            raw_intensities=raw, joint_fit=d['joint_fit'])
+            raw_intensities=raw, joint_fit=d['joint_fit'],
+            diagnostics=diagnostics)
     return rows
 
 

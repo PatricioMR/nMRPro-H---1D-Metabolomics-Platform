@@ -79,8 +79,30 @@ def _normalized_overlap_score(ref, sample, shift_pts):
     return float(np.dot(ref_seg, samp_seg) / denom)
 
 
-def _best_global_shift(ref, sample, max_shift_pts, use_derivative=True):
-    """Find the best rigid shift that maximizes global peak agreement."""
+def alignment_mask(ppm, excluded_regions=None):
+    """Points that may drive an alignment: everything but the excluded regions
+    and, always, the water window.
+
+    The presaturated water residue is no chemical shift to align on: its
+    height and shape change from tube to tube with the suppression, not with
+    the sample's referencing. On the dorsal-skin extract (600 MHz) the
+    4.50-5.00 ppm window held 99.9% of the spectrum's derivative energy, so a
+    correlation over the whole spectrum was a correlation over the water:
+    already aligned spectra were moved up to 30 mppm and TSP left 0 ppm.
+    With the window out, the same spectra moved 0.9 mppm at most."""
+    from .spectral_regions import WATER_REGION
+    ppm = np.asarray(ppm, dtype=float)
+    keep = np.ones(ppm.size, dtype=bool)
+    for lo, hi in [WATER_REGION, *(excluded_regions or ())]:
+        lo, hi = sorted((float(lo), float(hi)))
+        keep &= ~((ppm >= lo) & (ppm <= hi))
+    return keep
+
+
+def _best_global_shift(ref, sample, max_shift_pts, use_derivative=True,
+                       keep=None):
+    """Find the best rigid shift that maximizes global peak agreement, over
+    the points ``keep`` allows (all of them when None)."""
     if max_shift_pts <= 0:
         return 0
 
@@ -89,6 +111,9 @@ def _best_global_shift(ref, sample, max_shift_pts, use_derivative=True):
     if use_derivative:
         ref_work = np.gradient(ref_work)
         sample_work = np.gradient(sample_work)
+    if keep is not None:
+        ref_work = np.where(keep, ref_work, 0.0)
+        sample_work = np.where(keep, sample_work, 0.0)
 
     best_shift = 0
     best_score = -np.inf
@@ -288,7 +313,8 @@ def warp_from_peak_shifts(ppm, aligned_2d, peaks, max_shift_ppm=0.02):
 
 def global_peak_rigid_align(ppm, all_intensities, samples_info=None,
                             ref_idx=None, max_shift_ppm=0.03,
-                            iterations=2, use_derivative=True):
+                            iterations=2, use_derivative=True,
+                            excluded_regions=None):
     """
     Rigid global alignment driven by overall peak agreement.
 
@@ -313,6 +339,9 @@ def global_peak_rigid_align(ppm, all_intensities, samples_info=None,
         Number of align-reference-refine passes.
     use_derivative : bool
         If True, align using the first derivative to reduce baseline bias.
+    excluded_regions : list of (lo, hi) ppm or None
+        Regions that do not drive the alignment; the water window never does
+        (``alignment_mask``). The whole spectrum is still shifted.
 
     Returns
     -------
@@ -349,6 +378,7 @@ def global_peak_rigid_align(ppm, all_intensities, samples_info=None,
     if not valid_cols:
         valid_cols = list(range(n_samples))
 
+    keep = alignment_mask(ppm, excluded_regions)
     aligned = arr.copy()
     shifts_pts = np.zeros(n_samples, dtype=int)
     reference = aligned[:, ref_idx].copy() if ref_idx is not None else np.mean(aligned[:, valid_cols], axis=1)
@@ -364,6 +394,7 @@ def global_peak_rigid_align(ppm, all_intensities, samples_info=None,
                 arr[:, sample_idx],
                 max_shift_pts=max_shift_pts,
                 use_derivative=use_derivative,
+                keep=keep,
             )
             shifts_pts[sample_idx] = best_shift
             aligned[:, sample_idx] = _shift_1d(arr[:, sample_idx], best_shift)
@@ -375,6 +406,46 @@ def global_peak_rigid_align(ppm, all_intensities, samples_info=None,
 
     shifts_ppm = shifts_pts.astype(float) * ppm_step
     return aligned, shifts_pts, shifts_ppm, reference
+
+
+# How far from its nominal position a spectrum's reference standard is looked
+# for. TopSpin's own referencing put TSP between -0.088 and +0.078 ppm across
+# the samples of one study (Mice ISS, 600 MHz); no common metabolite resonates
+# below 0.2 ppm, so the window does not reach a signal it could mistake.
+REFERENCE_WINDOW_PPM = 0.2
+
+
+def reference_offset(ppm, intensity, target_ppm=0.0,
+                     window_ppm=REFERENCE_WINDOW_PPM, min_snr=None):
+    """Where one spectrum's reference standard (TSP, DSS) sits, relative to
+    ``target_ppm``: ``(offset_ppm, apex_ppm, snr)``, the offset to subtract
+    from the spectrum's axis; or ``(None, apex_ppm, snr)`` when no peak in
+    the window can be the standard -- the tallest point is below ``min_snr``
+    (detection's own default) or on the window's edge, the slope of a
+    signal outside it. Never a guess: a spectrum without its standard is
+    left where it was and said so.
+
+    The apex is placed between points (``parabolic_apex``), so the offset is
+    not rounded to the native grid. The noise is the median absolute
+    point-to-point difference over the whole spectrum, robust to the peaks.
+    """
+    if min_snr is None:
+        from controllers.analysis_defaults import DETECTION
+        min_snr = DETECTION['min_snr']
+    x = np.asarray(ppm, dtype=float)
+    y = np.asarray(intensity, dtype=float)
+    idx = np.flatnonzero(np.abs(x - target_ppm) <= window_ppm)
+    if idx.size < 5:
+        return None, None, 0.0
+    i = int(idx[np.argmax(y[idx])])
+    d = np.diff(y)
+    sigma = 1.4826 * float(np.median(np.abs(d - np.median(d)))) / np.sqrt(2.0)
+    floor = float(np.median(y[idx]))
+    snr = (float(y[i]) - floor) / sigma if sigma > 0 else 0.0
+    apex = float(parabolic_apex(x, y, i))
+    if i in (idx[0], idx[-1]) or snr < min_snr:
+        return None, apex, snr
+    return apex - target_ppm, apex, snr
 
 
 def align_to_reference_signal(ppm, all_intensities, samples_info,

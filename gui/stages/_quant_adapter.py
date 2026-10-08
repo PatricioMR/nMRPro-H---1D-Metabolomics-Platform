@@ -13,6 +13,7 @@ else.
 """
 from __future__ import annotations
 
+import copy
 import json
 
 import numpy as np
@@ -21,7 +22,7 @@ from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, is_singlet_like,
     reference_drift, study_drift)
 from processing.multiplet_line_selector import multiplet_line_peaks
-from processing.quant_engine import quantify, study_position_band
+from processing.quant_engine import canonical_order, quantify, study_position_band
 from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
     baseline_anchors, integrate_sample, lorentzian_captured_fraction)
@@ -515,6 +516,9 @@ def identity_columns(row):
         origin = 'Window resolved by shape'
     else:
         origin = str(row.get('_integ_mode') or 'Integration')
+    dec = row.get('_analyst_decision')
+    if dec:
+        origin += f' + {dec} by the analyst'
     manual = row.get('_manual_regions') or {}
     if manual:
         origin += f' + window set by hand in {len(manual)} sample(s)'
@@ -594,7 +598,13 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
     """
     peaks_by_rank = {p.get('rank'): p for p in (peaks or ())
                      if p.get('rank') is not None}
-    metabolites = reselect_singlets(metabolites, peaks_by_rank)
+    # A copy of its own: the steps below write their working values onto
+    # the metabolites (drift spread, fingerprint verdicts). Written onto the
+    # annotation's list, a second run started from the first one's values --
+    # the same Mice ISS project quantified 45 analytes, then 39 on every run
+    # after, with nothing changed but that.
+    metabolites = reselect_singlets(
+        canonical_order(copy.deepcopy(list(metabolites or ()))), peaks_by_rank)
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
@@ -695,6 +705,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         quantify_shapes=quantify_shapes,
         resolve_shared=resolve_shared,
         shared_overrides=shared_overrides,
+        # the analyst's accept / reject from the deconvolution review ride in
+        # the same per-analyte record as the shared-window decisions
+        analyst_rejected=[m for m, o in (shared_overrides or {}).items()
+                          if (o or {}).get('decision') == 'reject'],
+        analyst_accepted=[m for m, o in (shared_overrides or {}).items()
+                          if (o or {}).get('decision') == 'accept'],
         diagnostics=diagnostics,
         singlet_min_snr=singlet_min_snr,
         cascade=cascade,

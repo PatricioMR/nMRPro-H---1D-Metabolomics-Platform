@@ -144,6 +144,9 @@ def search_database(*, db_path, db_type, peaks_to_search, annotatable_peaks,
     Raises ``IncompatibleDatabase`` when the file holds neither of the
     schemas this reads.
     """
+    from processing.peak_detection import canonical_peak_order
+    peaks_to_search = canonical_peak_order(peaks_to_search)
+    annotatable_peaks = canonical_peak_order(annotatable_peaks)
     # names the body still uses under their old spelling
     mhz = field_mhz
     tolerance = tolerance_ppm

@@ -1088,6 +1088,28 @@ def migrate_params(params: dict) -> dict:
     return out
 
 
+def effective_annotation_params(user_params=None, tolerance_ppm=None) -> dict:
+    """The parameters an annotation runs with, from what the project holds:
+    the scoring defaults, the analyst's own
+    parameters (``annotation_stage._annotation_params``) and the panel's
+    tolerance, which owns ``dppm_gold``.
+
+    One function for the results window, which scores with them, and for
+    quantification, which reads the same gate. Quantification used to read
+    an attribute nothing set and ran on bare defaults, so the same project
+    could be scored with one tolerance and quantified with another."""
+    out = dict(SCORING_DEFAULTS)
+    if user_params:
+        out.update(migrate_params(user_params))
+    try:
+        tol = float(tolerance_ppm)
+    except (TypeError, ValueError):
+        tol = 0.0
+    if tol > 0:
+        out['dppm_gold'] = tol
+    return out
+
+
 # One description of the Annotation Parameters, shared by every dialog that
 # shows them. Two dialogs used to carry their own copy of this list and had
 # already drifted apart.  (group, label, key, help)

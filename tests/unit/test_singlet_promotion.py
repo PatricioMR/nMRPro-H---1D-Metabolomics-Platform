@@ -129,9 +129,11 @@ class TestDppmGateFollowsTheTolerance:
     """
 
     def test_window_takes_dppm_gold_from_the_tolerance_entry(self):
+        from processing.annotation_scoring import effective_annotation_params
         src = inspect.getsource(ARW.__init__)
         assert 'tolerance_var' in src
-        assert "self._params['dppm_gold'] = _tol_hud" in src
+        assert 'effective_annotation_params(' in src
+        assert effective_annotation_params({'dppm_gold': 0.01}, 0.03)['dppm_gold'] == 0.03
 
     def test_there_is_no_second_input_for_the_same_number(self):
         """The Parameters dialogs no longer offer their own Δppm threshold.

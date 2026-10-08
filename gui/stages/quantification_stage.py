@@ -914,9 +914,10 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         menu.add_command(
             label='Quant Signals',
             command=lambda: self._open_quant_peaks_window(r))
-        if r.get('_deconv') or r.get('_unshared_reason'):
+        from processing.deconv_review import kind_of
+        if kind_of(r) or r.get('_deconv') or r.get('_unshared_reason'):
             menu.add_command(
-                label='Deconvolution…',
+                label='Deconvolution review…',
                 command=lambda: self._open_deconvolution_window(
                     str(r.get('hmdb_id', r['metabolite']))))
         menu.add_separator()

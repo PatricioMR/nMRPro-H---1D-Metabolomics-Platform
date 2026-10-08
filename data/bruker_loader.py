@@ -377,13 +377,23 @@ def load_bruker_2d(expno_dir, procno=1):
 # ── Loader principal ──────────────────────────────────────────────────────────
 
 def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,
-                        n_points=32768, expno=1, procno=1):
+                        n_points=32768, expno=1, procno=1,
+                        reference_ppm=None, reference_report=None):
     """
     Carrega todos os espectros Bruker encontrados em root_folder.
 
     Todos os espectros são interpolados para um eixo ppm comum
     (de ppm_max a ppm_min, com n_points pontos) para ficarem compatíveis
     com o formato interno da aplicação.
+
+    ``reference_ppm`` (ex.: 0.0 para TSP/DSS) referencia cada amostra antes
+    da interpolação: o ápice do padrão, procurado no eixo nativo
+    (``processing.peak_alignment.reference_offset``), é levado a esse valor.
+    O TopSpin entrega cada amostra com a sua própria referência (no estudo
+    Mice ISS, -0.088 a +0.078 ppm), além do alcance do alinhamento rígido da
+    deteção. ``reference_report`` (dict) recebe, por amostra,
+    ``{'offset_ppm', 'apex_ppm', 'snr'}``; ``offset_ppm`` None quando o
+    padrão não foi encontrado e a amostra ficou como estava.
 
     Devolve:
         ppm             : np.ndarray shape (n_points,)
@@ -411,6 +421,17 @@ def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,
         try:
             ppm_raw, spec_raw = _load_spectrum(proc_dir)
 
+            name  = _sample_name_from_path(proc_dir, root_folder)
+            if reference_ppm is not None:
+                from processing.peak_alignment import reference_offset
+                off, apex, snr = reference_offset(ppm_raw, spec_raw,
+                                                  target_ppm=reference_ppm)
+                if off is not None:
+                    ppm_raw = ppm_raw - off
+                if reference_report is not None:
+                    reference_report[name] = {'offset_ppm': off,
+                                              'apex_ppm': apex, 'snr': snr}
+
             # Interpolação para eixo comum
             # np.interp exige x crescente — inverter se necessário
             if ppm_raw[0] > ppm_raw[-1]:
@@ -422,7 +443,6 @@ def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,
                                        left=0.0, right=0.0)
             spec_interp    = spec_interp[::-1]   # voltar à ordem NMR
 
-            name  = _sample_name_from_path(proc_dir, root_folder)
             label = _infer_label(name)
 
             sample_names.append(name)
@@ -445,6 +465,23 @@ def load_bruker_dataset(root_folder, ppm_min=0.0, ppm_max=10.0,
           f"{n_points} pontos, ppm {ppm_max:.1f}→{ppm_min:.1f}")
 
     return common_ppm, all_intensities, sample_names, sample_labels
+
+
+def reference_summary(report, target_ppm=0.0):
+    """``(status_text, missing_names)`` for the referencing a
+    ``load_bruker_dataset`` call recorded in ``reference_report``."""
+    moved = {n: r['offset_ppm'] for n, r in report.items()
+             if r.get('offset_ppm') is not None}
+    missing = [n for n, r in report.items() if r.get('offset_ppm') is None]
+    if not moved:
+        return (f'No reference standard found near {target_ppm:.2f} ppm: '
+                f'spectra left as TopSpin referenced them', missing)
+    lo, hi = min(moved.values()) * 1000, max(moved.values()) * 1000
+    text = (f'Reference standard set to {target_ppm:.2f} ppm in {len(moved)} '
+            f'spectra (TopSpin had it {lo:+.1f} to {hi:+.1f} mppm away)')
+    if missing:
+        text += f'; {len(missing)} without a standard left as they were'
+    return text, missing
 
 
 def read_spectrometer_mhz(root_folder, expno=1, procno=1):

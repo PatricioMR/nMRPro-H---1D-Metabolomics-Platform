@@ -1,7 +1,7 @@
 {
  "source": "GISSMO spin systems (gissmo.bmrb.io, simulation_N/spin_simulation.xml), merged coupling matrix (index 1)",
  "reference": "Dashti H, Westler WM, Tonelli M, Wedell JR, Markley JL, Eghbalnia HR. Spin System Modeling of Nuclear Magnetic Resonance Spectra for Applications in Metabolomics and Small Molecule Screening. Anal Chem 2017;89(22):12201-12208. doi:10.1021/acs.analchem.7b02884",
- "selection": "compounds of the Mammalian v04 reference with a BMRB spectrum acquired at 600 MHz and a GISSMO system; simulation_1 unless fitted at 600 and another was not",
+ "selection": "every compound of the reference (BMRB_Metabolomics_Mammalian) whose BMRB entry has a GISSMO system; simulation_1 unless fitted at 600 and another was not; less `excluded`",
  "tube_order": [
   "1-3-diaminopropane",
   "ADP",
@@ -63,6 +63,41 @@
   "2'-Deoxyguanosine 5'-monophosphate"
  ],
  "tube_order_note": "the 58 compounds of the reference with a BMRB spectrum acquired at 600 MHz, in the order the tube draws their concentrations; those without a GISSMO system draw and are left out, so a tube is the same whichever are simulated",
+ "forms": {
+  "_about": "GISSMO fits every form a compound takes in solution into one entry, each form at full weight. A form listed here is weighted by its share at equilibrium. D-glucose in D2O, 25-31 C: alpha-pyranose 36%, beta-pyranose 64% -- Angyal SJ, The composition of reducing sugars in solution, Adv Carbohydr Chem Biochem 1984;42:15-68.",
+  "D-Glucose": [
+   {
+    "form": "beta-pyranose",
+    "spins": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6
+    ],
+    "fraction": 0.64
+   },
+   {
+    "form": "alpha-pyranose",
+    "spins": [
+     7,
+     8,
+     9,
+     10,
+     11,
+     12,
+     13
+    ],
+    "fraction": 0.36
+   }
+  ]
+ },
+ "excluded": {
+  "L-tyrosine": "GISSMO bmse000051 fitted the phenolate (basic pH): aromatic 6.59/6.99, alpha 3.42 ppm; the reference lists 6.89/7.18, 3.93 (median 0.20, max 0.51 ppm off)",
+  "Dopamine": "GISSMO bmse000933 at 2.87/3.21/6.74-6.90 ppm; the reference lists 2.70/2.90/6.48-6.66 (median 0.11, max 0.26 ppm off)"
+ },
  "systems": [
   {
    "name": "1,2,4-Benzenetriol",
@@ -86,6 +121,97 @@
      0,
      2,
      2.8273438
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "1,2-Propanediol",
+   "bmse": "bmse000302",
+   "gissmo_file": "bmse000302_1.xml",
+   "gissmo_name": "1-2-Propanediol",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.961,
+   "ppm": [
+    1.128,
+    1.128,
+    1.128,
+    3.867,
+    3.42941,
+    3.52841
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     6.625
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     6.625
+    ],
+    [
+     2,
+     3,
+     6.625
+    ],
+    [
+     3,
+     4,
+     6.896479
+    ],
+    [
+     3,
+     5,
+     4.220462
+    ],
+    [
+     4,
+     5,
+     -11.648139
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "1,4-Benzoquinone",
+   "bmse": "bmse000304",
+   "gissmo_file": "bmse000304_1.xml",
+   "gissmo_name": "1,4-Benzoquinone",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 2.836,
+   "ppm": [
+    6.79963,
+    6.79963,
+    6.79963,
+    6.79963
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     11.3008864
+    ],
+    [
+     2,
+     3,
+     11.3008864
     ]
    ],
    "external": []
@@ -313,6 +439,62 @@
    "external": []
   },
   {
+   "name": "1-Methyl-L-histidine",
+   "bmse": "bmse000449",
+   "gissmo_file": "bmse000449_1.xml",
+   "gissmo_name": "Ntau-Methyl-L-histidine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.308,
+   "ppm": [
+    3.676,
+    3.676,
+    3.676,
+    6.98842,
+    7.63601,
+    3.06177,
+    3.15365,
+    3.9554
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     3,
+     4,
+     0.419806
+    ],
+    [
+     5,
+     6,
+     -15.3853408
+    ],
+    [
+     5,
+     7,
+     8.0465425
+    ],
+    [
+     6,
+     7,
+     4.8452304
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "2'-Deoxyguanosine 5'-monophosphate",
    "bmse": "bmse000824",
    "gissmo_file": "bmse000824_1.xml",
@@ -388,6 +570,145 @@
      ]
     ]
    ]
+  },
+  {
+   "name": "2'-Deoxyinosine",
+   "bmse": "bmse000942",
+   "gissmo_file": "bmse000942_1.xml",
+   "gissmo_name": "2-Deoxyinosine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.59101,
+    2.83689,
+    4.65006,
+    4.1692,
+    6.47581,
+    8.2025,
+    8.31021,
+    3.82748,
+    3.77403
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.0619687
+    ],
+    [
+     0,
+     2,
+     3.9
+    ],
+    [
+     0,
+     4,
+     6.36
+    ],
+    [
+     1,
+     2,
+     6.3009369
+    ],
+    [
+     1,
+     4,
+     7.0282526
+    ],
+    [
+     2,
+     3,
+     3.2191733
+    ],
+    [
+     3,
+     7,
+     3.4476239
+    ],
+    [
+     3,
+     8,
+     4.7324321
+    ],
+    [
+     7,
+     8,
+     -12.5751831
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "2'-Deoxyuridine",
+   "bmse": "bmse000320",
+   "gissmo_file": "bmse000320_1.xml",
+   "gissmo_name": "2-Deoxyuridine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.4069,
+    2.36169,
+    4.45121,
+    4.03757,
+    6.27149,
+    7.84144,
+    5.87653,
+    3.7471,
+    3.8244
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.1333197
+    ],
+    [
+     0,
+     2,
+     4.0294794
+    ],
+    [
+     0,
+     4,
+     6.7
+    ],
+    [
+     1,
+     2,
+     7.0579723
+    ],
+    [
+     1,
+     4,
+     6.7
+    ],
+    [
+     2,
+     3,
+     4.2767747
+    ],
+    [
+     3,
+     7,
+     5.0327563
+    ],
+    [
+     3,
+     8,
+     3.4626751
+    ],
+    [
+     5,
+     6,
+     8.1881073
+    ],
+    [
+     7,
+     8,
+     -12.4317918
+    ]
+   ],
+   "external": []
   },
   {
    "name": "2,3-diphospho-D-glyceric acid",
@@ -471,6 +792,82 @@
    "external": []
   },
   {
+   "name": "2-Amino-1-phenylethanol",
+   "bmse": "bmse000307",
+   "gissmo_file": "bmse000307_1.xml",
+   "gissmo_name": "2-Amino-1-phenylethanol",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.035,
+   "ppm": [
+    7.42784,
+    7.47689,
+    7.4563,
+    7.45607,
+    7.47711,
+    5.0178,
+    3.23259,
+    3.31523
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     7.4530207
+    ],
+    [
+     0,
+     2,
+     1.3782358
+    ],
+    [
+     0,
+     3,
+     1.3782358
+    ],
+    [
+     0,
+     4,
+     7.4530207
+    ],
+    [
+     1,
+     2,
+     7.6807227
+    ],
+    [
+     1,
+     4,
+     1.7826503
+    ],
+    [
+     2,
+     3,
+     1.7826503
+    ],
+    [
+     3,
+     4,
+     7.6807227
+    ],
+    [
+     5,
+     6,
+     9.0435583
+    ],
+    [
+     5,
+     7,
+     3.8728625
+    ],
+    [
+     6,
+     7,
+     -13.0249956
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "2-Aminoethyl dihydrogen phosphate",
    "bmse": "bmse000308",
    "gissmo_file": "bmse000308_1.xml",
@@ -534,6 +931,74 @@
      [
       3,
       6.69
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "2-Aminoethylphosphonic acid",
+   "bmse": "bmse000309",
+   "gissmo_file": "bmse000309_1.xml",
+   "gissmo_name": "2-Aminoethylphosphonic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.577,
+   "ppm": [
+    3.1677,
+    3.1677,
+    1.7612,
+    1.7612
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.4
+    ],
+    [
+     0,
+     2,
+     7.9320102
+    ],
+    [
+     0,
+     3,
+     7.9320102
+    ],
+    [
+     1,
+     2,
+     7.9320102
+    ],
+    [
+     1,
+     3,
+     7.9320102
+    ],
+    [
+     2,
+     3,
+     -12.4
+    ]
+   ],
+   "external": [
+    [
+     [
+      0,
+      11.567
+     ],
+     [
+      1,
+      11.567
+     ]
+    ],
+    [
+     [
+      2,
+      16.494
+     ],
+     [
+      3,
+      16.494
      ]
     ]
    ]
@@ -716,6 +1181,92 @@
    "external": []
   },
   {
+   "name": "2-hydroxy-3-methylbutyric-acid",
+   "bmse": "bmse000570",
+   "gissmo_file": "bmse000570_1.xml",
+   "gissmo_name": "2-Hydroxy-3-methylbutyric-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.701,
+   "ppm": [
+    0.82162,
+    0.82162,
+    0.82162,
+    0.9536,
+    0.9536,
+    0.9536,
+    2.0048,
+    3.83064
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -16.0
+    ],
+    [
+     0,
+     2,
+     -16.0
+    ],
+    [
+     0,
+     6,
+     6.8543951
+    ],
+    [
+     1,
+     2,
+     -16.0
+    ],
+    [
+     1,
+     6,
+     6.8543951
+    ],
+    [
+     2,
+     6,
+     6.8543951
+    ],
+    [
+     3,
+     4,
+     -16.0
+    ],
+    [
+     3,
+     5,
+     -16.0
+    ],
+    [
+     3,
+     6,
+     6.9889716
+    ],
+    [
+     4,
+     5,
+     -16.0
+    ],
+    [
+     4,
+     6,
+     6.9889716
+    ],
+    [
+     5,
+     6,
+     6.9889716
+    ],
+    [
+     6,
+     7,
+     3.7868799
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "2-hydroxyphenylacetic acid",
    "bmse": "bmse000715",
    "gissmo_file": "bmse000715_1.xml",
@@ -764,6 +1315,74 @@
     [
      4,
      5,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "2-ketobutyric acid",
+   "bmse": "bmse000325",
+   "gissmo_file": "bmse000325_1.xml",
+   "gissmo_name": "2-Ketobutyric-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    1.0533,
+    1.0533,
+    1.0533,
+    2.74374,
+    2.74374
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     7.3360416
+    ],
+    [
+     0,
+     4,
+     7.3360416
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     7.3360416
+    ],
+    [
+     1,
+     4,
+     7.3360416
+    ],
+    [
+     2,
+     3,
+     7.3360416
+    ],
+    [
+     2,
+     4,
+     7.3360416
+    ],
+    [
+     3,
+     4,
      -12.4
     ]
    ],
@@ -884,6 +1503,98 @@
      9,
      10,
      7.992496
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "3,4-Dihydroxybenzoic acid",
+   "bmse": "bmse000328",
+   "gissmo_file": "bmse000328_1.xml",
+   "gissmo_name": "3-4-Dihydroxybenzoic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.37827,
+    6.92773,
+    7.41834
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.2675658
+    ],
+    [
+     0,
+     2,
+     2.0839844
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "3,4-Dihydroxyphenylacetic acid",
+   "bmse": "bmse000329",
+   "gissmo_file": "bmse000329_1.xml",
+   "gissmo_name": "3-4-Dihydroxyphenylacetic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.249,
+   "ppm": [
+    6.70432,
+    6.852,
+    6.8069,
+    3.38807,
+    3.38807
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.0470337
+    ],
+    [
+     0,
+     2,
+     1.9865234
+    ],
+    [
+     3,
+     4,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "3,5-Diiodo-L-tyrosine",
+   "bmse": "bmse000327",
+   "gissmo_file": "bmse000327_1.xml",
+   "gissmo_name": "3-5-Diiodo-L-tyrosine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.219,
+   "ppm": [
+    7.6243,
+    7.6243,
+    2.84672,
+    3.078,
+    3.8428
+   ],
+   "J_hz": [
+    [
+     2,
+     3,
+     -14.9417357
+    ],
+    [
+     2,
+     4,
+     8.4712412
+    ],
+    [
+     3,
+     4,
+     4.7899353
     ]
    ],
    "external": []
@@ -1031,6 +1742,148 @@
      1,
      2,
      1.5843226
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "3-Iodo_L-tyrosine",
+   "bmse": "bmse000337",
+   "gissmo_file": "bmse000337_1.xml",
+   "gissmo_name": "3-Iodo-L-tyrosine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.366,
+   "ppm": [
+    7.1544,
+    6.90539,
+    7.6829,
+    2.99503,
+    3.14622,
+    3.9028
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.1390381
+    ],
+    [
+     0,
+     2,
+     2.2212998
+    ],
+    [
+     3,
+     4,
+     -14.6927493
+    ],
+    [
+     3,
+     5,
+     7.7282716
+    ],
+    [
+     4,
+     5,
+     5.0258582
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "3-Methoxytyramine",
+   "bmse": "bmse000929",
+   "gissmo_file": "bmse000929_1.xml",
+   "gissmo_name": "3-Methoxytyramine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.63,
+   "ppm": [
+    3.8697,
+    3.8697,
+    3.8697,
+    6.90669,
+    6.81789,
+    6.97102,
+    2.93071,
+    2.93071,
+    3.24875,
+    3.24875
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -11.5
+    ],
+    [
+     0,
+     2,
+     -11.5
+    ],
+    [
+     1,
+     2,
+     -11.5
+    ],
+    [
+     3,
+     4,
+     8.0783386
+    ],
+    [
+     4,
+     5,
+     1.9921875
+    ],
+    [
+     4,
+     6,
+     1.0
+    ],
+    [
+     4,
+     7,
+     1.0
+    ],
+    [
+     5,
+     6,
+     1.0
+    ],
+    [
+     5,
+     7,
+     1.0
+    ],
+    [
+     6,
+     7,
+     -12.4
+    ],
+    [
+     6,
+     8,
+     7.3625836
+    ],
+    [
+     6,
+     9,
+     7.3625836
+    ],
+    [
+     7,
+     8,
+     7.3625836
+    ],
+    [
+     7,
+     9,
+     7.3625836
+    ],
+    [
+     8,
+     9,
+     -12.4
     ]
    ],
    "external": []
@@ -1447,6 +2300,114 @@
    "external": []
   },
   {
+   "name": "3-methyladipic acid",
+   "bmse": "bmse000619",
+   "gissmo_file": "bmse000619_1.xml",
+   "gissmo_name": "3-Methyladipic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    0.89359,
+    0.89359,
+    0.89359,
+    1.80503,
+    1.44041,
+    1.55905,
+    2.17114,
+    2.20675,
+    1.92885,
+    2.23517
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     6.626
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     6.626
+    ],
+    [
+     2,
+     3,
+     6.626
+    ],
+    [
+     3,
+     4,
+     7.63066
+    ],
+    [
+     3,
+     5,
+     6.2278151
+    ],
+    [
+     3,
+     8,
+     9.1648169
+    ],
+    [
+     3,
+     9,
+     5.7942817
+    ],
+    [
+     4,
+     5,
+     -13.3742039
+    ],
+    [
+     4,
+     6,
+     10.2953212
+    ],
+    [
+     4,
+     7,
+     5.6698175
+    ],
+    [
+     5,
+     6,
+     6.1851724
+    ],
+    [
+     5,
+     7,
+     10.0767226
+    ],
+    [
+     6,
+     7,
+     -20.9240382
+    ],
+    [
+     8,
+     9,
+     -13.5168359
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "4-Acetamidobutyric acid",
    "bmse": "bmse000468",
    "gissmo_file": "bmse000468_1.xml",
@@ -1613,6 +2574,80 @@
    "external": []
   },
   {
+   "name": "4-Guanidinobutyric acid",
+   "bmse": "bmse000344",
+   "gissmo_file": "bmse000344_1.xml",
+   "gissmo_name": "4-Guanidinobutyric-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.129,
+   "ppm": [
+    1.81618,
+    1.81618,
+    2.23357,
+    2.23357,
+    3.17965,
+    3.17965
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.4
+    ],
+    [
+     0,
+     2,
+     7.3278958
+    ],
+    [
+     0,
+     3,
+     7.3278958
+    ],
+    [
+     0,
+     4,
+     7.0470221
+    ],
+    [
+     0,
+     5,
+     7.0470221
+    ],
+    [
+     1,
+     2,
+     7.3278958
+    ],
+    [
+     1,
+     3,
+     7.3278958
+    ],
+    [
+     1,
+     4,
+     7.0470221
+    ],
+    [
+     1,
+     5,
+     7.0470221
+    ],
+    [
+     2,
+     3,
+     -12.4
+    ],
+    [
+     4,
+     5,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "4-Hydroxybenzaldehyde",
    "bmse": "bmse000259",
    "gissmo_file": "bmse000259_1.xml",
@@ -1685,6 +2720,147 @@
    "external": []
   },
   {
+   "name": "4-Hydroxyphenylacetic acid",
+   "bmse": "bmse000455",
+   "gissmo_file": "bmse000455_1.xml",
+   "gissmo_name": "4-Hydroxyphenylacetic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.538,
+   "ppm": [
+    7.15282,
+    6.85086,
+    6.84839,
+    7.15528,
+    3.437,
+    3.437
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.3914732
+    ],
+    [
+     0,
+     3,
+     1.9232422
+    ],
+    [
+     1,
+     2,
+     1.9232422
+    ],
+    [
+     2,
+     3,
+     8.084505
+    ],
+    [
+     4,
+     5,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "4-Methyl-2-oxovaleric acid",
+   "bmse": "bmse000383",
+   "gissmo_file": "bmse000383_1.xml",
+   "gissmo_name": "4-Methyl-2-oxovaleric-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.936,
+   "ppm": [
+    0.9254,
+    0.9254,
+    0.9254,
+    2.08509,
+    0.9254,
+    0.9254,
+    0.92628,
+    2.59818,
+    2.60028
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     6.625
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     6.625
+    ],
+    [
+     2,
+     3,
+     6.625
+    ],
+    [
+     3,
+     4,
+     6.625
+    ],
+    [
+     3,
+     5,
+     6.625
+    ],
+    [
+     3,
+     6,
+     6.625
+    ],
+    [
+     3,
+     7,
+     7.031031
+    ],
+    [
+     3,
+     8,
+     7.150007
+    ],
+    [
+     4,
+     5,
+     -12.5
+    ],
+    [
+     4,
+     6,
+     -12.5
+    ],
+    [
+     5,
+     6,
+     -12.5
+    ],
+    [
+     7,
+     8,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "4-Nitrocatechol",
    "bmse": "bmse000265",
    "gissmo_file": "bmse000265_1.xml",
@@ -1706,6 +2882,43 @@
      0,
      2,
      2.5489648
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "4-Nitrophenol",
+   "bmse": "bmse000223",
+   "gissmo_file": "bmse000223_1.xml",
+   "gissmo_name": "4-Nitrophenol",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    8.0451,
+    6.67788,
+    6.67788,
+    8.05591
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.8320271
+    ],
+    [
+     0,
+     3,
+     2.1432225
+    ],
+    [
+     1,
+     2,
+     2.1432225
+    ],
+    [
+     2,
+     3,
+     8.8320271
     ]
    ],
    "external": []
@@ -1743,6 +2956,100 @@
      2,
      3,
      8.8997423
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "4-Pyridoxic acid",
+   "bmse": "bmse000930",
+   "gissmo_file": "bmse000930_1.xml",
+   "gissmo_name": "4-Pyridoxic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.638,
+   "ppm": [
+    2.4113,
+    2.4113,
+    2.4113,
+    7.8014,
+    4.7118,
+    4.7118
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     4,
+     5,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "4-hydroxy-3-methoxymandelic acid",
+   "bmse": "bmse000703",
+   "gissmo_file": "bmse000703_1.xml",
+   "gissmo_name": "4-Hydroxy-3-methoxymandelic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    3.867,
+    3.867,
+    3.867,
+    6.89695,
+    6.91267,
+    7.04781,
+    4.9071
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -11.5
+    ],
+    [
+     0,
+     2,
+     -11.5
+    ],
+    [
+     1,
+     2,
+     -11.5
+    ],
+    [
+     3,
+     4,
+     8.32
+    ],
+    [
+     4,
+     5,
+     2.0160156
+    ],
+    [
+     4,
+     6,
+     1.0
+    ],
+    [
+     5,
+     6,
+     1.0
     ]
    ],
    "external": []
@@ -1809,6 +3116,217 @@
      6,
      7,
      -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "4-methylcatechol",
+   "bmse": "bmse000475",
+   "gissmo_file": "bmse000475_1.xml",
+   "gissmo_name": "4-Methylcatechol",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.818,
+   "ppm": [
+    2.2088,
+    2.2088,
+    2.2088,
+    6.782,
+    6.675,
+    6.8238
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     0,
+     3,
+     -0.4405546
+    ],
+    [
+     0,
+     4,
+     -0.05163
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     3,
+     -0.4405546
+    ],
+    [
+     1,
+     4,
+     -0.05163
+    ],
+    [
+     2,
+     3,
+     -0.4405546
+    ],
+    [
+     2,
+     4,
+     -0.05163
+    ],
+    [
+     3,
+     4,
+     1.9452637
+    ],
+    [
+     4,
+     5,
+     7.9687931
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "5-(Hydroxymethyl)uracil",
+   "bmse": "bmse000443",
+   "gissmo_file": "bmse000443_1.xml",
+   "gissmo_name": "5-Hydroxymethyluracil",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.148,
+   "ppm": [
+    7.57625,
+    4.34295,
+    4.34295
+   ],
+   "J_hz": [
+    [
+     1,
+     2,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "5-Hydroxy-L-tryptophan",
+   "bmse": "bmse000457",
+   "gissmo_file": "bmse000457_1.xml",
+   "gissmo_name": "5-Hydroxy-L-tryptophan",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.259,
+   "ppm": [
+    6.8483,
+    7.39114,
+    7.1293,
+    7.2636,
+    3.22264,
+    3.39529,
+    4.0112
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     9.2113037
+    ],
+    [
+     0,
+     2,
+     2.3639648
+    ],
+    [
+     2,
+     3,
+     0.5
+    ],
+    [
+     4,
+     5,
+     -15.5566072
+    ],
+    [
+     4,
+     6,
+     8.4641669
+    ],
+    [
+     5,
+     6,
+     4.6228804
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "5-hydroxyindole-3-acetic acid",
+   "bmse": "bmse000364",
+   "gissmo_file": "bmse000364_1.xml",
+   "gissmo_name": "5-Hydroxyindoleacetate",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.35414,
+    6.81372,
+    7.03916,
+    7.19204,
+    3.5811,
+    3.5811
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.6815111
+    ],
+    [
+     1,
+     2,
+     2.3916504
+    ],
+    [
+     4,
+     5,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "5-methylcytosine",
+   "bmse": "bmse000421",
+   "gissmo_file": "bmse000421_1.xml",
+   "gissmo_name": "5-Methylcytosine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.275,
+   "ppm": [
+    1.9127,
+    1.9127,
+    1.9127,
+    7.3126
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
     ]
    ],
    "external": []
@@ -2530,6 +4048,19 @@
      -13.254043
     ]
    ],
+   "external": []
+  },
+  {
+   "name": "Allantoin",
+   "bmse": "bmse000437",
+   "gissmo_file": "bmse000437_1.xml",
+   "gissmo_name": "Allantoin",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    5.375
+   ],
+   "J_hz": [],
    "external": []
   },
   {
@@ -3330,6 +4861,33 @@
    "external": []
   },
   {
+   "name": "Citrate",
+   "bmse": "bmse000076",
+   "gissmo_file": "bmse000076_1.xml",
+   "gissmo_name": "Citrate",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.72,
+   "ppm": [
+    2.64257,
+    2.52218,
+    2.52218,
+    2.64257
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -15.0625594
+    ],
+    [
+     2,
+     3,
+     -15.0625594
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Creatine",
    "bmse": "bmse000078",
    "gissmo_file": "bmse000078_1.xml",
@@ -3545,6 +5103,119 @@
     ]
    ],
    "external": []
+  },
+  {
+   "name": "Cytidine-5'-monophosphate",
+   "bmse": "bmse000311",
+   "gissmo_file": "bmse000311_1.xml",
+   "gissmo_name": "Cytidine-5-monophosphate",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    6.1232,
+    8.0837,
+    4.04784,
+    3.9711,
+    4.2374,
+    4.3322,
+    4.3418,
+    5.99602
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     7.7061756
+    ],
+    [
+     2,
+     3,
+     -11.7555757
+    ],
+    [
+     2,
+     4,
+     3.4039081
+    ],
+    [
+     3,
+     4,
+     5.2766226
+    ],
+    [
+     4,
+     5,
+     4.6474482
+    ],
+    [
+     5,
+     6,
+     5.0908365
+    ],
+    [
+     6,
+     7,
+     4.9402817
+    ]
+   ],
+   "external": [
+    [
+     [
+      2,
+      2.525
+     ]
+    ],
+    [
+     [
+      3,
+      3.017
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "D-3-phosphoglyceric acid",
+   "bmse": "bmse000007",
+   "gissmo_file": "bmse000007_1.xml",
+   "gissmo_name": "D-3-phosphoglyceric-acid",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.662,
+   "ppm": [
+    4.01536,
+    3.86771,
+    4.17601
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -11.1643517
+    ],
+    [
+     0,
+     2,
+     2.7968665
+    ],
+    [
+     1,
+     2,
+     6.322903
+    ]
+   ],
+   "external": [
+    [
+     [
+      0,
+      5.862
+     ]
+    ],
+    [
+     [
+      1,
+      5.887
+     ]
+    ]
+   ]
   },
   {
    "name": "D-Carnitine",
@@ -3800,6 +5471,38 @@
    "external": []
   },
   {
+   "name": "D-Saccharate",
+   "bmse": "bmse000239",
+   "gissmo_file": "bmse000239_1.xml",
+   "gissmo_name": "D-saccharate",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    4.06379,
+    3.93105,
+    4.1131,
+    4.13368
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     4.5184533
+    ],
+    [
+     0,
+     3,
+     3.0329054
+    ],
+    [
+     1,
+     2,
+     4.4418603
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "D-ornithine",
    "bmse": "bmse000019",
    "gissmo_file": "bmse000019_1.xml",
@@ -4007,6 +5710,125 @@
    "external": []
   },
   {
+   "name": "DL-alpha-Glycerol phosphate",
+   "bmse": "bmse000193",
+   "gissmo_file": "bmse000193_1.xml",
+   "gissmo_name": "DL-alpha-glycerol-phosphate",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    3.67098,
+    3.60083,
+    3.84757,
+    3.77419,
+    3.8205
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -11.6610808
+    ],
+    [
+     0,
+     2,
+     4.8858016
+    ],
+    [
+     1,
+     2,
+     5.9901308
+    ],
+    [
+     2,
+     3,
+     7.1223357
+    ],
+    [
+     2,
+     4,
+     4.5975636
+    ],
+    [
+     3,
+     4,
+     -12.1247579
+    ]
+   ],
+   "external": [
+    [
+     [
+      3,
+      6.277
+     ]
+    ],
+    [
+     [
+      4,
+      6.939
+     ]
+    ]
+   ]
+  },
+  {
+   "name": "DL-homocysteine",
+   "bmse": "bmse000430",
+   "gissmo_file": "bmse000430_1.xml",
+   "gissmo_name": "DL-homocysteine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.7,
+   "ppm": [
+    2.11479,
+    2.16807,
+    2.6238,
+    2.66473,
+    3.86934
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.3559681
+    ],
+    [
+     0,
+     2,
+     6.5191343
+    ],
+    [
+     0,
+     3,
+     8.3812071
+    ],
+    [
+     0,
+     4,
+     7.4815983
+    ],
+    [
+     1,
+     2,
+     8.6247532
+    ],
+    [
+     1,
+     3,
+     6.3197863
+    ],
+    [
+     1,
+     4,
+     5.3435972
+    ],
+    [
+     2,
+     3,
+     -13.3988337
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Diethanolamine",
    "bmse": "bmse000371",
    "gissmo_file": "bmse000371_1.xml",
@@ -4088,6 +5910,80 @@
    "external": []
   },
   {
+   "name": "Dihydrouracil",
+   "bmse": "bmse000425",
+   "gissmo_file": "bmse000425_1.xml",
+   "gissmo_name": "Dihydrouracil",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.67559,
+    2.6731,
+    3.44458,
+    3.44468
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -16.200001
+    ],
+    [
+     0,
+     2,
+     6.5715234
+    ],
+    [
+     0,
+     3,
+     6.2643546
+    ],
+    [
+     1,
+     2,
+     5.9538954
+    ],
+    [
+     1,
+     3,
+     9.1587684
+    ],
+    [
+     2,
+     3,
+     -12.5
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Dihydroxyacetone",
+   "bmse": "bmse000144",
+   "gissmo_file": "bmse000144_1.xml",
+   "gissmo_name": "Dihydroxyacetone",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 0.919,
+   "ppm": [
+    4.4035,
+    4.4035,
+    4.4035,
+    4.4035
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.4
+    ],
+    [
+     2,
+     3,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Dl-Indole-3-lactic acid",
    "bmse": "bmse000409",
    "gissmo_file": "bmse000409_1.xml",
@@ -4144,6 +6040,68 @@
      6,
      7,
      4.2521184
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Epinephrine",
+   "bmse": "bmse000316",
+   "gissmo_file": "bmse000316_1.xml",
+   "gissmo_name": "Epinephrine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.75463,
+    2.75463,
+    2.75463,
+    3.25981,
+    3.26821,
+    4.9284,
+    6.95262,
+    6.85701,
+    6.93691
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     3,
+     4,
+     -12.6164581
+    ],
+    [
+     3,
+     5,
+     2.807094
+    ],
+    [
+     4,
+     5,
+     10.3888898
+    ],
+    [
+     6,
+     7,
+     2.2390886
+    ],
+    [
+     7,
+     8,
+     8.0423369
     ]
    ],
    "external": []
@@ -4259,6 +6217,75 @@
      2,
      3,
      -19.074811
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Ethylmalonic-acid",
+   "bmse": "bmse000578",
+   "gissmo_file": "bmse000578_1.xml",
+   "gissmo_name": "Ethylmalonic acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    0.77936,
+    0.77936,
+    0.77936,
+    1.61307,
+    1.61307,
+    2.88708
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.4
+    ],
+    [
+     0,
+     3,
+     7.3326138
+    ],
+    [
+     0,
+     4,
+     7.3326138
+    ],
+    [
+     1,
+     3,
+     7.3326138
+    ],
+    [
+     1,
+     4,
+     7.3326138
+    ],
+    [
+     2,
+     3,
+     7.3326138
+    ],
+    [
+     2,
+     4,
+     7.3326138
+    ],
+    [
+     3,
+     4,
+     -12.4
+    ],
+    [
+     3,
+     5,
+     7.4503379
+    ],
+    [
+     4,
+     5,
+     7.4503379
     ]
    ],
    "external": []
@@ -4671,6 +6698,26 @@
    "external": []
   },
   {
+   "name": "Guanidineacetic acid",
+   "bmse": "bmse000384",
+   "gissmo_file": "bmse000384_1.xml",
+   "gissmo_name": "Guanidineacetic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.973,
+   "ppm": [
+    3.78395,
+    3.77877
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Guanine",
    "bmse": "bmse000090",
    "gissmo_file": "bmse000090_1.xml",
@@ -4922,6 +6969,205 @@
     [
      5,
      6,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Histamine",
+   "bmse": "bmse000744",
+   "gissmo_file": "bmse000744_1.xml",
+   "gissmo_name": "Histamine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.526,
+   "ppm": [
+    7.11032,
+    7.90283,
+    3.0056,
+    3.0056,
+    3.2845,
+    3.2845
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     1.1823946
+    ],
+    [
+     2,
+     3,
+     -13.0297862
+    ],
+    [
+     2,
+     4,
+     7.213433
+    ],
+    [
+     2,
+     5,
+     6.0226397
+    ],
+    [
+     3,
+     4,
+     8.1029474
+    ],
+    [
+     3,
+     5,
+     6.8239893
+    ],
+    [
+     4,
+     5,
+     -12.6746726
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Homoarginine",
+   "bmse": "bmse000745",
+   "gissmo_file": "bmse000745_1.xml",
+   "gissmo_name": "Homoarginine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    1.40028,
+    1.47068,
+    1.63514,
+    1.63395,
+    3.19574,
+    3.19882,
+    1.89126,
+    1.86804,
+    3.7377
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -15.1668976
+    ],
+    [
+     0,
+     2,
+     11.171193
+    ],
+    [
+     0,
+     3,
+     5.3751009
+    ],
+    [
+     0,
+     6,
+     2.9416451
+    ],
+    [
+     0,
+     7,
+     8.0377628
+    ],
+    [
+     1,
+     2,
+     4.3790328
+    ],
+    [
+     1,
+     3,
+     9.7057258
+    ],
+    [
+     1,
+     6,
+     11.8229263
+    ],
+    [
+     1,
+     7,
+     2.9520305
+    ],
+    [
+     2,
+     3,
+     -13.3886146
+    ],
+    [
+     2,
+     4,
+     5.6552866
+    ],
+    [
+     2,
+     5,
+     8.2940143
+    ],
+    [
+     3,
+     4,
+     5.4209402
+    ],
+    [
+     3,
+     5,
+     8.339599
+    ],
+    [
+     4,
+     5,
+     -13.9687256
+    ],
+    [
+     6,
+     7,
+     -13.8271181
+    ],
+    [
+     6,
+     8,
+     6.4116082
+    ],
+    [
+     7,
+     8,
+     5.4510303
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Homogentisic acid",
+   "bmse": "bmse000200",
+   "gissmo_file": "bmse000200_1.xml",
+   "gissmo_name": "Homogentisic-acid",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    6.6937,
+    6.79685,
+    6.70566,
+    3.4714,
+    3.4714
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.6202224
+    ],
+    [
+     0,
+     2,
+     2.2014747
+    ],
+    [
+     3,
+     4,
      -12.4
     ]
    ],
@@ -5287,6 +7533,220 @@
    "external": []
   },
   {
+   "name": "Isobutyric acid",
+   "bmse": "bmse000439",
+   "gissmo_file": "bmse000439_1.xml",
+   "gissmo_name": "Isobutyric-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.878,
+   "ppm": [
+    1.0492,
+    1.0492,
+    1.0492,
+    2.37371,
+    1.0492,
+    1.0492,
+    1.0492
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     7.0107372
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     7.0107372
+    ],
+    [
+     2,
+     3,
+     7.0107372
+    ],
+    [
+     3,
+     4,
+     7.0107372
+    ],
+    [
+     3,
+     5,
+     7.0107372
+    ],
+    [
+     3,
+     6,
+     7.0107372
+    ],
+    [
+     4,
+     5,
+     -12.5
+    ],
+    [
+     4,
+     6,
+     -12.5
+    ],
+    [
+     5,
+     6,
+     -12.5
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Isonicotinic acid",
+   "bmse": "bmse000133",
+   "gissmo_file": "bmse000133_1.xml",
+   "gissmo_name": "Isonicotinic-acid",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.6686,
+    8.6588,
+    7.6686,
+    8.6588
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     4.5413951
+    ],
+    [
+     0,
+     2,
+     2.1202946
+    ],
+    [
+     1,
+     3,
+     2.0372115
+    ],
+    [
+     2,
+     3,
+     6.9743792
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Isovaleric-acid",
+   "bmse": "bmse000373",
+   "gissmo_file": "bmse000373_1.xml",
+   "gissmo_name": "Isovaleric-acid",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 0.954,
+   "ppm": [
+    0.897,
+    0.897,
+    0.897,
+    1.94,
+    0.8975,
+    0.8975,
+    0.8975,
+    2.0414,
+    2.04114
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     6.6570086
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     6.6570086
+    ],
+    [
+     2,
+     3,
+     6.6570086
+    ],
+    [
+     3,
+     4,
+     6.6570086
+    ],
+    [
+     3,
+     5,
+     6.6570086
+    ],
+    [
+     3,
+     6,
+     6.6570086
+    ],
+    [
+     3,
+     7,
+     7.9295391
+    ],
+    [
+     3,
+     8,
+     7.1394243
+    ],
+    [
+     4,
+     5,
+     -12.5
+    ],
+    [
+     4,
+     6,
+     -12.5
+    ],
+    [
+     5,
+     6,
+     -12.5
+    ],
+    [
+     7,
+     8,
+     -13.3086551
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Itaconic acid",
    "bmse": "bmse000137",
    "gissmo_file": "bmse000137_1.xml",
@@ -5617,6 +8077,61 @@
    "external": []
   },
   {
+   "name": "L-Histidinol",
+   "bmse": "bmse000448",
+   "gissmo_file": "bmse000448_1.xml",
+   "gissmo_name": "L-Histidinol",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.352,
+   "ppm": [
+    7.0975,
+    7.82091,
+    2.93779,
+    2.994,
+    3.61657,
+    3.66202,
+    3.84167
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     0.4314262
+    ],
+    [
+     2,
+     3,
+     -15.0057617
+    ],
+    [
+     2,
+     4,
+     7.750673
+    ],
+    [
+     3,
+     4,
+     6.5211118
+    ],
+    [
+     4,
+     5,
+     6.6071776
+    ],
+    [
+     4,
+     6,
+     3.7049624
+    ],
+    [
+     5,
+     6,
+     -12.3988754
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "L-Kynurenine",
    "bmse": "bmse000172",
    "gissmo_file": "bmse000172_1.xml",
@@ -5861,6 +8376,78 @@
    "external": []
   },
   {
+   "name": "L-carnosine",
+   "bmse": "bmse000246",
+   "gissmo_file": "bmse000246_1.xml",
+   "gissmo_name": "L-carnosine",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.0523,
+    8.0156,
+    3.0154,
+    3.1654,
+    4.46473,
+    2.69065,
+    2.65426,
+    3.226,
+    3.18847
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     0.4
+    ],
+    [
+     2,
+     3,
+     -14.0
+    ],
+    [
+     2,
+     4,
+     8.5297319
+    ],
+    [
+     3,
+     4,
+     4.5353584
+    ],
+    [
+     5,
+     6,
+     -16.7587996
+    ],
+    [
+     5,
+     7,
+     7.0065053
+    ],
+    [
+     5,
+     8,
+     7.0065053
+    ],
+    [
+     6,
+     7,
+     7.0065053
+    ],
+    [
+     6,
+     8,
+     7.0065053
+    ],
+    [
+     7,
+     8,
+     -14.0
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "L-citrulline",
    "bmse": "bmse000032",
    "gissmo_file": "bmse000032_1.xml",
@@ -6048,6 +8635,86 @@
      1,
      2,
      4.424555
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "L-cysteinesulfinic acid",
+   "bmse": "bmse000706",
+   "gissmo_file": "bmse000706_1.xml",
+   "gissmo_name": "L-cysteinesulfinic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.5,
+   "ppm": [
+    2.69296,
+    2.81234,
+    4.1389
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.2
+    ],
+    [
+     0,
+     2,
+     10.039771
+    ],
+    [
+     1,
+     2,
+     2.3502336
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "L-cystine",
+   "bmse": "bmse000035",
+   "gissmo_file": "bmse000035_1.xml",
+   "gissmo_name": "L-cystine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.565,
+   "ppm": [
+    3.09493,
+    2.89323,
+    3.56378,
+    3.0949,
+    2.8932,
+    3.56389
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -13.522432
+    ],
+    [
+     0,
+     2,
+     4.9418
+    ],
+    [
+     1,
+     2,
+     7.335
+    ],
+    [
+     3,
+     4,
+     -13.5224
+    ],
+    [
+     3,
+     5,
+     4.9418
+    ],
+    [
+     4,
+     5,
+     7.33504
     ]
    ],
    "external": []
@@ -7412,6 +10079,53 @@
    "external": []
   },
   {
+   "name": "Methylmalonic acid",
+   "bmse": "bmse000398",
+   "gissmo_file": "bmse000398_1.xml",
+   "gissmo_name": "Methylmalonic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.742,
+   "ppm": [
+    1.22356,
+    1.22356,
+    1.22356,
+    3.15498
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     0,
+     3,
+     6.8
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     3,
+     6.8
+    ],
+    [
+     2,
+     3,
+     6.8
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Muco-inositol",
    "bmse": "bmse000102",
    "gissmo_file": "bmse000102_1.xml",
@@ -7505,6 +10219,165 @@
      4,
      5,
      3.002455
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "N(alpha)-Acetyl-DL-Ornithine",
+   "bmse": "bmse000195",
+   "gissmo_file": "bmse000195_1.xml",
+   "gissmo_name": "N-alpha-acetyl-DL-ornithine",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.0277,
+    2.0277,
+    2.0277,
+    4.16277,
+    1.72071,
+    1.8528,
+    1.69564,
+    1.7119,
+    3.00729,
+    3.00933
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     3,
+     4,
+     8.4004209
+    ],
+    [
+     3,
+     5,
+     4.8956779
+    ],
+    [
+     4,
+     5,
+     -11.213965
+    ],
+    [
+     4,
+     6,
+     7.2108792
+    ],
+    [
+     4,
+     7,
+     4.0278853
+    ],
+    [
+     5,
+     6,
+     6.5657434
+    ],
+    [
+     5,
+     7,
+     7.2108792
+    ],
+    [
+     6,
+     7,
+     -15.6234051
+    ],
+    [
+     6,
+     8,
+     8.950977
+    ],
+    [
+     6,
+     9,
+     9.1458319
+    ],
+    [
+     7,
+     8,
+     2.3652043
+    ],
+    [
+     7,
+     9,
+     9.171016
+    ],
+    [
+     8,
+     9,
+     -12.4097763
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "N,N-Dimethylglycine",
+   "bmse": "bmse000241",
+   "gissmo_file": "bmse000241_1.xml",
+   "gissmo_name": "N-N-dimethylglycine",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 0.969,
+   "ppm": [
+    2.917,
+    2.917,
+    2.917,
+    2.917,
+    2.917,
+    2.917,
+    3.71227,
+    3.71888
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     3,
+     4,
+     -12.5
+    ],
+    [
+     3,
+     5,
+     -12.5
+    ],
+    [
+     4,
+     5,
+     -12.5
+    ],
+    [
+     6,
+     7,
+     -12.4
     ]
    ],
    "external": []
@@ -7646,6 +10519,82 @@
      6,
      7,
      -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "N-acetyl-L-Glutamine",
+   "bmse": "bmse000145",
+   "gissmo_file": "bmse000145_1.xml",
+   "gissmo_name": "N-acetyl-L-glutamine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.791,
+   "ppm": [
+    2.022,
+    2.022,
+    2.022,
+    4.14944,
+    1.91239,
+    2.10861,
+    2.31985,
+    2.31287
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     3,
+     4,
+     8.9893232
+    ],
+    [
+     3,
+     5,
+     4.6015148
+    ],
+    [
+     4,
+     5,
+     -14.4674857
+    ],
+    [
+     4,
+     6,
+     10.668956
+    ],
+    [
+     4,
+     7,
+     4.065777
+    ],
+    [
+     5,
+     6,
+     7.582185
+    ],
+    [
+     5,
+     7,
+     9.215429
+    ],
+    [
+     6,
+     7,
+     -14.916781
     ]
    ],
    "external": []
@@ -7938,6 +10887,100 @@
      4,
      5,
      -16.0033529
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Norepinephrine",
+   "bmse": "bmse000404",
+   "gissmo_file": "bmse000404_1.xml",
+   "gissmo_name": "Norepinephrine",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.757,
+   "ppm": [
+    6.94344,
+    6.86547,
+    6.96037,
+    3.25298,
+    3.19951,
+    4.8801
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.1133306
+    ],
+    [
+     1,
+     2,
+     2.0804501
+    ],
+    [
+     3,
+     4,
+     -13.0919203
+    ],
+    [
+     3,
+     5,
+     4.0895182
+    ],
+    [
+     4,
+     5,
+     8.9437944
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "O-Cresol",
+   "bmse": "bmse000433",
+   "gissmo_file": "bmse000433_1.xml",
+   "gissmo_name": "O-Cresol",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.566,
+   "ppm": [
+    2.2042,
+    2.2042,
+    2.2042,
+    6.90679,
+    7.14438,
+    7.20705,
+    6.8936
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.4
+    ],
+    [
+     0,
+     2,
+     -12.4
+    ],
+    [
+     1,
+     2,
+     -12.4
+    ],
+    [
+     3,
+     4,
+     7.3683316
+    ],
+    [
+     3,
+     5,
+     7.7804914
+    ],
+    [
+     4,
+     6,
+     7.7804914
     ]
    ],
    "external": []
@@ -8455,6 +11498,54 @@
    "external": []
   },
   {
+   "name": "Phenylglyoxylic acid",
+   "bmse": "bmse000743",
+   "gissmo_file": "bmse000743_1.xml",
+   "gissmo_name": "Phenylglyoxylic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.7453,
+    7.5962,
+    7.9463,
+    7.9463,
+    7.5962
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     7.5594808
+    ],
+    [
+     0,
+     2,
+     1.1298896
+    ],
+    [
+     0,
+     3,
+     1.1298896
+    ],
+    [
+     0,
+     4,
+     7.5594808
+    ],
+    [
+     1,
+     2,
+     7.5594808
+    ],
+    [
+     3,
+     4,
+     7.5594808
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Phosphoenolpyruvic acid",
    "bmse": "bmse000107",
    "gissmo_file": "bmse000107_1.xml",
@@ -8764,6 +11855,67 @@
    "external": []
   },
   {
+   "name": "Pyridoxal-5-phosphate",
+   "bmse": "bmse000111",
+   "gissmo_file": "bmse000111_1.xml",
+   "gissmo_name": "Pyridoxal-5-phosphate",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.826,
+   "ppm": [
+    2.45951,
+    2.45951,
+    2.45951,
+    7.75062,
+    10.42276,
+    5.0926,
+    5.0926
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     5,
+     6,
+     -12.4
+    ]
+   ],
+   "external": [
+    [
+     [
+      5,
+      1.158
+     ],
+     [
+      6,
+      1.158
+     ]
+    ],
+    [
+     [
+      5,
+      6.25
+     ],
+     [
+      6,
+      6.25
+     ]
+    ]
+   ]
+  },
+  {
    "name": "Pyridoxamine",
    "bmse": "bmse000130",
    "gissmo_file": "bmse000130_1.xml",
@@ -8915,6 +12067,76 @@
    "external": []
   },
   {
+   "name": "Pyruvic acid",
+   "bmse": "bmse000112",
+   "gissmo_file": "bmse000112_1.xml",
+   "gissmo_name": "Pyruvic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 0.754,
+   "ppm": [
+    2.364,
+    2.364,
+    2.364
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Quinaldic acid",
+   "bmse": "bmse000417",
+   "gissmo_file": "bmse000417_1.xml",
+   "gissmo_name": "Quinaldic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.655,
+   "ppm": [
+    7.60876,
+    7.7886,
+    7.8692,
+    7.87744,
+    8.30592,
+    8.03749
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     6.7980393
+    ],
+    [
+     0,
+     3,
+     8.135772
+    ],
+    [
+     1,
+     2,
+     8.0196627
+    ],
+    [
+     4,
+     5,
+     8.4701788
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Saligenin",
    "bmse": "bmse000768",
    "gissmo_file": "bmse000768_1.xml",
@@ -9002,6 +12224,55 @@
    "external": []
   },
   {
+   "name": "Scyllo-Inosoitol",
+   "bmse": "bmse000113",
+   "gissmo_file": "bmse000113_1.xml",
+   "gissmo_name": "Scyllo-inositol",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.447,
+   "ppm": [
+    3.333,
+    3.333,
+    3.333,
+    3.333,
+    3.333,
+    3.333
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     7.0
+    ],
+    [
+     0,
+     5,
+     7.0
+    ],
+    [
+     1,
+     2,
+     7.0
+    ],
+    [
+     2,
+     3,
+     7.0
+    ],
+    [
+     3,
+     4,
+     7.0
+    ],
+    [
+     4,
+     5,
+     7.0
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Serotonin",
    "bmse": "bmse000757",
    "gissmo_file": "bmse000757_1.xml",
@@ -9073,6 +12344,53 @@
     8.448
    ],
    "J_hz": [],
+   "external": []
+  },
+  {
+   "name": "Sodium L-ascorbate",
+   "bmse": "bmse000182",
+   "gissmo_file": "bmse000182_1.xml",
+   "gissmo_name": "L-ascorbate",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 0.896,
+   "ppm": [
+    3.74287,
+    3.71778,
+    4.00814,
+    4.50298
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -11.79604
+    ],
+    [
+     0,
+     2,
+     6.138054
+    ],
+    [
+     0,
+     3,
+     0.224203
+    ],
+    [
+     1,
+     2,
+     7.41251
+    ],
+    [
+     1,
+     3,
+     0.296564
+    ],
+    [
+     2,
+     3,
+     1.843181
+    ]
+   ],
    "external": []
   },
   {
@@ -9543,6 +12861,182 @@
    "external": []
   },
   {
+   "name": "Thiamine monophosphate",
+   "bmse": "bmse000699",
+   "gissmo_file": "bmse000699_1.xml",
+   "gissmo_name": "Thiamine-monophosphate",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    2.58793,
+    2.58793,
+    2.58793,
+    8.07089,
+    5.42686,
+    5.42686,
+    9.35814,
+    2.48597,
+    2.48597,
+    2.48597,
+    3.24585,
+    3.24585,
+    4.0128,
+    4.0128
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     4,
+     5,
+     -12.4
+    ],
+    [
+     7,
+     8,
+     -14.899999
+    ],
+    [
+     7,
+     9,
+     -14.899999
+    ],
+    [
+     8,
+     9,
+     -14.899999
+    ],
+    [
+     10,
+     11,
+     -12.4
+    ],
+    [
+     10,
+     12,
+     5.6692469
+    ],
+    [
+     10,
+     13,
+     5.6692469
+    ],
+    [
+     11,
+     12,
+     5.6692469
+    ],
+    [
+     11,
+     13,
+     5.6692469
+    ],
+    [
+     12,
+     13,
+     -12.4
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Thymidine",
+   "bmse": "bmse000244",
+   "gissmo_file": "bmse000244_1.xml",
+   "gissmo_name": "Thymidine",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.0,
+   "ppm": [
+    1.88586,
+    1.88586,
+    1.88586,
+    7.64441,
+    6.28533,
+    2.3688,
+    2.3688,
+    4.46394,
+    4.0168,
+    3.76194,
+    3.83459
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -14.899999
+    ],
+    [
+     0,
+     2,
+     -14.899999
+    ],
+    [
+     1,
+     2,
+     -14.899999
+    ],
+    [
+     4,
+     5,
+     6.749
+    ],
+    [
+     4,
+     6,
+     6.749
+    ],
+    [
+     5,
+     6,
+     -12.9989913
+    ],
+    [
+     5,
+     7,
+     5.266895
+    ],
+    [
+     6,
+     7,
+     5.266895
+    ],
+    [
+     7,
+     8,
+     3.8015308
+    ],
+    [
+     8,
+     9,
+     4.988
+    ],
+    [
+     8,
+     10,
+     3.375
+    ],
+    [
+     9,
+     10,
+     -12.361331
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Trans 4 hydroxy l proline",
    "bmse": "bmse000123",
    "gissmo_file": "bmse000123_1.xml",
@@ -9683,6 +13177,56 @@
    "external": []
   },
   {
+   "name": "Trigonelline",
+   "bmse": "bmse000152",
+   "gissmo_file": "bmse000152_1.xml",
+   "gissmo_name": "Trigonelline",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.766,
+   "ppm": [
+    4.444,
+    4.444,
+    4.444,
+    8.84243,
+    8.8342,
+    8.08385,
+    9.12458
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     -12.5
+    ],
+    [
+     0,
+     2,
+     -12.5
+    ],
+    [
+     1,
+     2,
+     -12.5
+    ],
+    [
+     3,
+     4,
+     8.4478781
+    ],
+    [
+     3,
+     5,
+     4.0922447
+    ],
+    [
+     4,
+     5,
+     9.9651805
+    ]
+   ],
+   "external": []
+  },
+  {
    "name": "Trimethylamine",
    "bmse": "bmse000224",
    "gissmo_file": "bmse000224_1.xml",
@@ -9745,6 +13289,67 @@
      7,
      8,
      -12.5
+    ]
+   ],
+   "external": []
+  },
+  {
+   "name": "Tropic acid",
+   "bmse": "bmse000413",
+   "gissmo_file": "bmse000413_1.xml",
+   "gissmo_name": "Tropic-acid",
+   "fit_field_mhz": 499.84,
+   "lw_hz": 1.0,
+   "ppm": [
+    7.32298,
+    7.39002,
+    7.34305,
+    7.34305,
+    7.39002,
+    3.6764,
+    3.85024,
+    4.05666
+   ],
+   "J_hz": [
+    [
+     0,
+     1,
+     8.2175075
+    ],
+    [
+     0,
+     4,
+     8.2175075
+    ],
+    [
+     1,
+     2,
+     8.2175075
+    ],
+    [
+     2,
+     3,
+     2.0
+    ],
+    [
+     3,
+     4,
+     8.2175075
+    ],
+    [
+     5,
+     6,
+     8.1651616
+    ],
+    [
+     5,
+     7,
+     6.926923
+    ],
+    [
+     6,
+     7,
+     -10.9788931
     ]
    ],
    "external": []
@@ -10068,37 +13673,19 @@
     ]
    ],
    "external": []
+  },
+  {
+   "name": "Xanthine",
+   "bmse": "bmse000127",
+   "gissmo_file": "bmse000127_1.xml",
+   "gissmo_name": "Xanthine",
+   "fit_field_mhz": 400.13,
+   "lw_hz": 1.008,
+   "ppm": [
+    7.71629
+   ],
+   "J_hz": [],
+   "external": []
   }
- ],
- "forms": {
-  "_about": "GISSMO fits every form a compound takes in solution into one entry, each form at full weight. A form listed here is weighted by its share at equilibrium. D-glucose in D2O, 25-31 C: alpha-pyranose 36%, beta-pyranose 64% -- Angyal SJ, The composition of reducing sugars in solution, Adv Carbohydr Chem Biochem 1984;42:15-68.",
-  "D-Glucose": [
-   {
-    "form": "beta-pyranose",
-    "spins": [
-     0,
-     1,
-     2,
-     3,
-     4,
-     5,
-     6
-    ],
-    "fraction": 0.64
-   },
-   {
-    "form": "alpha-pyranose",
-    "spins": [
-     7,
-     8,
-     9,
-     10,
-     11,
-     12,
-     13
-    ],
-    "fraction": 0.36
-   }
-  ]
- }
+ ]
 }

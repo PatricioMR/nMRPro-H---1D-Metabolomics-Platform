@@ -253,3 +253,21 @@ def test_a_record_can_be_refitted_without_an_analyte_and_drawn():
         np.median(list(out['amplitudes']['TAU'].values())), rel=1e-6)
     rec, x, y1 = component_curves(out, PPM, sample=1)[1]
     assert y1.max() == pytest.approx(out['amplitudes']['BET'][1], rel=1e-6)
+
+
+def test_a_fixed_shape_listed_before_the_owner_keeps_its_own_amount():
+    """The fixed shapes were read by their place in the list as handed in,
+    after the list had been reordered free-first: a pinned intruder listed
+    before its owner was given the owner's numbers -- silently, or an
+    IndexError when an inseparable shape had also been left out (GISSMO
+    100-analyte tube)."""
+    bet_h = [60.0, 50.0, 70.0, 65.0]
+    X = _study([100, 120, 90, 110], bet_h)
+    bet = _betaine(pinned=True)
+    bet.pin_apex_ppm = 3.254
+    bet.pin_heights = {s: h for s, h in enumerate(bet_h)}
+    out = resolve_window([bet, _taurine(owner=True)], PPM, X,
+                         included=[0, 1, 2, 3])
+    assert out['fixed'] == ['betaine 3.254 s']
+    for s, h in enumerate(bet_h):
+        assert out['amplitudes']['BET'][s] == pytest.approx(h, rel=0.05)

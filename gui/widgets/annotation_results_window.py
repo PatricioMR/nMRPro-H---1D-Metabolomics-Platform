@@ -155,7 +155,7 @@ from processing.annotation_scoring import (
     coverage_fraction, manual_region,
     resolve_dj, score_signal,
     SCORING_DEFAULTS as _SCORING_DEFAULTS,
-    migrate_params as _migrate_params,
+    effective_annotation_params,
     peak_shape_score as _peak_shape_score,
     dj_score,
     expected_line_count,
@@ -484,25 +484,21 @@ class AnnotationResultsWindow:
         # ── Annotation parameters (user-editable via ⚙ Parameters dialog) ────
         # Defaults come from the scoring core, so the dialog, the search
         # worker and the scoring functions cannot disagree about them.
-        self._params = dict(_SCORING_DEFAULTS)
-        self._params['annotatable_tiers'] = [SIGNAL_GOOD, SIGNAL_AVERAGE]
-        # Apply any params the user configured before running annotation
+        # One rule for the window and for quantification
+        # (annotation_scoring.effective_annotation_params): the analyst's
+        # parameters, then the panel's 'Tolerance (ppm)' -- the only place
+        # that number is entered, owning both how far to look for a candidate
+        # and how far a signal may sit from the DB and still be accepted.
         _ann_stage = (app.stages.get('annotation')
                       if app and hasattr(app, 'stages') else None)
-        if _ann_stage is not None and getattr(_ann_stage, '_annotation_params', None):
-            self._params.update(_migrate_params(_ann_stage._annotation_params))
-
-        # 'Tolerance (ppm)' on the Annotation panel is the only place this
-        # number is entered. It owns both roles — how far to look for a
-        # candidate, and how far a signal may sit from the DB and still be
-        # accepted — because they are the same question asked twice.
+        _tol_hud = None
         if _ann_stage is not None:
             try:
                 _tol_hud = float(_ann_stage.tolerance_var.get())
-                if _tol_hud > 0:
-                    self._params['dppm_gold'] = _tol_hud
             except Exception:
-                pass
+                _tol_hud = None
+        self._params = effective_annotation_params(
+            getattr(_ann_stage, '_annotation_params', None), _tol_hud)
 
         # ── Resolve the tk root for thread-safe after() calls ─────────────────
         _root = None
@@ -545,7 +541,9 @@ class AnnotationResultsWindow:
                 # Poor line here would pair its partner with an unrelated
                 # neighbour and report a coupling constant that was never
                 # measured. Poor signals are excluded at the anchor instead.
-                self.peaks = self._expand_peaks_with_subpeaks(peaks)
+                from processing.peak_detection import canonical_peak_order
+                self.peaks = self._expand_peaks_with_subpeaks(
+                    canonical_peak_order(peaks))
 
                 _step(2, 'Grouping metabolites…')
                 _using_saved = self._saved_metabolites is not None

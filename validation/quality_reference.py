@@ -65,6 +65,28 @@ def _bench_runs(n):
     return out
 
 
+def _warm(job):
+    """One GISSMO run in a worker: gissmo_bench.run keeps its rows, so the
+    tables below read them back instead of computing them one by one."""
+    field, n, seed = job
+    from validation.gissmo_bench import run
+    run(field, seed, str(n))
+    return job
+
+
+def warm_gissmo(fields, jobs):
+    """Every (field, tube, seed) the tables need, in parallel processes --
+    a Python process uses one core and the runs are independent."""
+    from concurrent.futures import ProcessPoolExecutor
+    threads = str(max(1, (os.cpu_count() or 1) // max(jobs, 1)))
+    for var in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
+        os.environ[var] = threads
+    todo = [(f, n, s) for f in fields for n in TUBES for s in SEEDS]
+    with ProcessPoolExecutor(max_workers=jobs) as ex:
+        for f, n, s in ex.map(_warm, todo):
+            print(f'  {f:.0f} MHz tube {n} seed {s}', flush=True)
+
+
 def _gissmo_runs(field):
     def runs(n):
         from validation.gissmo_bench import run
@@ -135,6 +157,8 @@ def main():
                          'profiles: the reference bench, drawn from the '
                          "database's own profiles, at mixture_bench.MHZ")
     ap.add_argument('--fields', type=int, nargs='+', default=[500, 600])
+    ap.add_argument('--jobs', type=int, default=8,
+                    help='GISSMO runs computed in parallel before the tables')
     a = ap.parse_args()
     doc = {}
     if os.path.exists(OUT):
@@ -145,6 +169,8 @@ def main():
     else:
         from validation.gissmo_bench import FIELDS
         plan = [(fk, FIELDS[fk], _gissmo_runs(FIELDS[fk])) for fk in a.fields]
+        if a.jobs > 1:
+            warm_gissmo([FIELDS[fk] for fk in a.fields], a.jobs)
     for key, field, runs in plan:
         doc[str(key)] = {
             'software': APP_VERSION,

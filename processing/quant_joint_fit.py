@@ -181,18 +181,22 @@ def _solve(A, t):
     the same problem, minimum and residual, over n rows instead of the
     group's thousands of points. The active set refits its passive columns
     at every step; over the full trace that was 52 ms a solve and half the
-    joint fit's time."""
+    joint fit's time.
+
+    The factor is taken of ``[A | t]`` with R alone: its last column is
+    ``Q't`` and its corner is the part of ``t`` outside ``A``'s span, so Q
+    -- thousands of points by every column -- is never formed. Same
+    problem, same answer to rounding (1e-13), half the time (0.17 -> 0.09 s
+    on 20 000 x 200)."""
     m, n = A.shape
     if n == 0:
         return np.zeros(0), float(np.sum(t ** 2))
     if m <= n:
         x, rnorm = nnls(A, t, maxiter=50 * n)
         return x, float(rnorm) ** 2
-    Q, R = np.linalg.qr(A)
-    qt = Q.T @ t
-    x, rnorm = nnls(R, qt, maxiter=50 * n)
-    outside = max(float(t @ t) - float(qt @ qt), 0.0)
-    return x, float(rnorm) ** 2 + outside
+    Ra = np.linalg.qr(np.column_stack([A, t]), mode='r')
+    x, rnorm = nnls(Ra[:n, :n], Ra[:n, n], maxiter=50 * n)
+    return x, float(rnorm) ** 2 + float(Ra[n, n]) ** 2
 
 
 def _part_vec(comp, nh, ppm, union):

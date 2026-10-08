@@ -536,9 +536,12 @@ def resolve_window(components, ppm, intensities, *, included=None,
     lb = np.zeros(len(free))
     ub = np.array([c.ceiling if c.ceiling is not None else np.inf
                    for c in free])
-    comps = free + fixed
-    areas = {c.met_id: {} for c in comps}
-    amps = {c.met_id: {} for c in comps}
+    # a new name: _fixed_amplitudes reads ``comps`` by the positions the
+    # list was handed in with (fixed_idx), and reordering it under that name
+    # gave a fixed shape listed before its owner the owner's numbers
+    fitted_comps = free + fixed
+    areas = {c.met_id: {} for c in fitted_comps}
+    amps = {c.met_id: {} for c in fitted_comps}
     remainder = {}
     floors = {}
     overshoot = {}
@@ -598,7 +601,7 @@ def resolve_window(components, ppm, intensities, *, included=None,
                             'per_proton_by_sample': dict(c.per_proton_by_sample),
                             'placed_at_expected': bool(
                                 c.evidence.get('placed_at_expected'))}
-                           for c in comps]}
+                           for c in fitted_comps]}
 
 
 def separability(A, owner_flags) -> list:

@@ -25,7 +25,7 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.54"
+__version__   = "0.55"
 RELEASE_STAGE = "Alpha"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 
@@ -37,6 +37,22 @@ APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 # been validated end to end: detect, annotate, elect, integrate, concentrate.
 # Turning it back on is this line; nothing else was removed.
 DECONVOLUTION_ENABLED = False   # "NMRPro-H v0.38 Alpha"
+
+
+# The reference databases the application offers for annotation, in the order
+# it lists them. Both are split from BMRB_Metabolomics_v05
+# (hmdb_api_download/split_dbs.py) and carry every correction of v04 and v05
+# (ADR-049, ADR-060): Mammalian holds the compounds ChEBI places in mammals,
+# General adds those of unknown origin. Older versions stay in git history;
+# an installation that still holds them in its user folder no longer lists
+# them. Any other file is reachable through "Browse".
+REFERENCE_DATABASES = (
+    ("BMRB Mammalian v05", "BMRB_Metabolomics_Mammalian_v05.db"),
+    ("BMRB General v05", "BMRB_Metabolomics_General_v05.db"),
+)
+# Shipped beside them, not offered for annotation: pathway membership for
+# the statistics stage.
+SUPPORT_DATABASES = ("hmdb_pathways.db",)
 
 
 def _is_frozen():
@@ -117,3 +133,12 @@ def databases_dir():
     except Exception as exc:
         print(f"[app_paths] database seeding skipped: {exc}")
     return target
+
+
+def reference_databases():
+    """``[(label, path)]`` of the reference databases present in
+    ``databases_dir()``, in ``REFERENCE_DATABASES`` order."""
+    folder = databases_dir()
+    return [(label, os.path.join(folder, fname))
+            for label, fname in REFERENCE_DATABASES
+            if os.path.isfile(os.path.join(folder, fname))]

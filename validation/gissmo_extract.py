@@ -84,11 +84,15 @@ def extract(xml_dir=XML_DIR, db_path=mb.DB_DEFAULT, out=SYSTEMS_JSON):
     if os.path.exists(out):
         with open(out, encoding='utf-8') as f:
             old = json.load(f)
+    # compounds GISSMO fitted at another pH than the reference lists them
+    # (the JSON's ``excluded``, name -> why): the bench takes the positions
+    # as shared with the database, so these would only be missed
+    excluded = old.get('excluded') or {}
     systems = []
     for name, bid, bmse in con.execute(
             'select name, bmrb_id, bmse_id from metabolites order by name'):
         entry = bmse or bid
-        if not entry or not str(entry).startswith('bmse'):
+        if not entry or not str(entry).startswith('bmse') or name in excluded:
             continue
         f = choose(xml_dir, entry)
         if not f:

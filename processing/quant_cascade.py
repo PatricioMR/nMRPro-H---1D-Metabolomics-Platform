@@ -234,6 +234,84 @@ def slide_grid(linewidth_ppm):
     return np.sort(np.concatenate([-coarse, fine, coarse]))
 
 
+# Each signal of a column finds its own place (ADR-065). The cascade slides an
+# analyte's column as one block; in an extract every chemical environment
+# moves on its own -- each proton has its own titration curve (Tredwell et al.,
+# Metabolomics 2016;12:152) and the matrix moves each differently (Takis et
+# al., Nat Commun 2017;8:1662) -- and on the NMR_Murilo cell extract the
+# cascade's signals stood a median 13 mppm (3.7 linewidths) off the peaks they
+# were meant to explain. BATMAN gives every multiplet its own shift with a
+# prior (Hao et al., Nat Protoc 2014;9:1416), ASICS distorts every peak
+# locally after a global shift (Tardivel et al., Metabolomics 2017;13:109).
+# Here, once the rigid cascade has chosen, each signal of an analyte it took
+# in moves on its own within CASCADE_PART_REACH_LW linewidths to where the
+# spectrum, less every other analyte taken in, best matches it -- only if
+# that is CASCADE_PART_MIN_GAIN better than where the column put it -- and
+# the amount is measured there. Only the amount: who is taken in, and the
+# evidence its identity score reads, stay the rigid column's. Letting the
+# signals move while choosing (GISSMO bench, 600 MHz, tubes 18/50, 3 seeds)
+# found more at two dots with signals scattered 5 mppm, but lost real ones at
+# two dots on the standard bench (18: 30 -> 22): free signals agree on an
+# amount whether or not they are one molecule, and the score loses its best
+# witness. Measured this way, identity is unchanged on both benches; the
+# median error with scattered signals falls (tube 50: 26-31% -> 20-25%) and
+# the extract's peaks explained rise from 41% to 48%. 1 linewidth: 2 and 4
+# explained fewer on the extract.
+CASCADE_PART_SHIFTS = True
+CASCADE_PART_REACH_LW = 1.0
+CASCADE_PART_STEPS = 9
+CASCADE_PART_MIN_GAIN = 0.05
+
+
+def part_offsets(col, ppm, trace, shift, linewidth_ppm, weight=None) -> list:
+    """Each signal's own offset (ppm) from the column's ``shift``: the one in
+    +-CASCADE_PART_REACH_LW linewidths where its curve best matches
+    ``trace`` (normalised projection), kept at 0 unless it does
+    CASCADE_PART_MIN_GAIN better. Nearest zero first, so a tie stays put."""
+    ppm = np.asarray(ppm, dtype=float)
+    t = np.asarray(trace, dtype=float)
+    w = np.ones(ppm.size) if weight is None else np.asarray(weight, dtype=float)
+    reach = CASCADE_PART_REACH_LW * float(linewidth_ppm)
+    grid = sorted(np.linspace(-reach, reach, CASCADE_PART_STEPS), key=abs)
+    out = []
+    for comp, nh in col.parts:
+        best_d, best_v = 0.0, None
+        for d in grid:
+            c = Column._part_curve(comp, nh, ppm, shift + d, 1.0)
+            if c is None:
+                continue
+            idx, val = c
+            v = val * w[idx]
+            nn = float(np.dot(v, v))
+            if nn <= 0:
+                continue
+            score = float(np.dot(t[idx] * w[idx], v)) / np.sqrt(nn)
+            if best_v is None:
+                best_d, best_v, zero = d, score, score
+            elif score > best_v:
+                best_d, best_v = d, score
+        if best_v is None or not (best_d != 0.0
+                                  and best_v > zero + CASCADE_PART_MIN_GAIN * abs(zero)):
+            best_d = 0.0
+        out.append(float(best_d))
+    return out
+
+
+def with_offsets(col, offsets):
+    """A copy of ``col`` whose signals carry their own ``offsets`` (ppm), so
+    every curve drawn from it later -- the per-sample fit, the subtraction,
+    the report -- is the one the cascade chose."""
+    import copy
+    if not offsets or not any(offsets):
+        return col
+    new = Column(col.mid, col.name)
+    for (comp, nh), d in zip(col.parts, offsets):
+        c2 = copy.copy(comp)
+        c2.shift_ppm = float(comp.shift_ppm) + float(d)
+        new.parts.append((c2, nh))
+    return new
+
+
 def slide_step(linewidth_ppm) -> float:
     """One step of ``slide_grid``: how finely the cascade places a column."""
     reach = SHIFT_REACH_LW * float(linewidth_ppm or 0.0)
@@ -816,6 +894,59 @@ def cascade_features(res, linewidth_ppm) -> list:
             np.log1p(1000.0 * shift)]
 
 
+# The signals of one analyte move together across samples: they are one
+# molecule, so they carry one concentration per sample (STOCSY: Cloarec et al.,
+# Anal Chem 2005;77:1282; SPA-STOCSY, Bioinformatics 2023;39:btad593). The
+# cascade fits ONE amplitude to all of an analyte's signals, so it cannot see
+# whether the spectrum agrees across samples; this reads that agreement from
+# the spectrum (what the other analytes leave) at each signal, sample by
+# sample. Evidence that raises, never one that punishes: an analyte whose
+# concentration does not vary across the samples has nothing to correlate and
+# is indistinguishable, not wrong. It uses no group label.
+COVAR_MIN_SNR = 8.0          # a signal is read when its fit stands this far over the noise
+COVAR_MAX_SIGNALS = 3        # the tallest ones
+COVAR_MIN_R = 0.8            # every pair of the read signals correlates at least this much
+COVAR_MIN_VARIATION = 3.0    # and each varies across samples this many noises: the r is not noise
+COVAR_MIN_SAMPLES = 8
+COVAR_HALF_WIDTH_LW = 0.6    # where a signal's height is read around its centre
+
+
+def signal_covariation(heights, *, sigma) -> dict | None:
+    """How well the signals of one analyte agree across samples.
+
+    ``heights`` is one array per signal, its height in every included sample.
+    Returns ``{'r_min', 'r_median', 'variation', 'n_signals', 'n_samples'}``
+    (``variation``: the smallest standard deviation across samples among the
+    signals, in noise units), or None with fewer than two signals or
+    ``COVAR_MIN_SAMPLES`` samples."""
+    H = [np.asarray(h, dtype=float) for h in heights]
+    if len(H) < 2 or not sigma or float(sigma) <= 0:
+        return None
+    n = min(len(h) for h in H)
+    if n < COVAR_MIN_SAMPLES:
+        return None
+    H = [h[:n] for h in H]
+    if any(not np.all(np.isfinite(h)) for h in H):
+        return None
+    sd = [float(np.std(h, ddof=1)) for h in H]
+    if min(sd) <= 0:
+        return {'r_min': float('nan'), 'r_median': float('nan'),
+                'variation': 0.0, 'n_signals': len(H), 'n_samples': n}
+    rs = [float(np.corrcoef(H[i], H[j])[0, 1])
+          for i in range(len(H)) for j in range(i + 1, len(H))]
+    return {'r_min': float(min(rs)), 'r_median': float(np.median(rs)),
+            'variation': float(min(sd) / float(sigma)),
+            'n_signals': len(H), 'n_samples': n}
+
+
+def covariation_confirms(cov) -> bool:
+    """Whether the signals of an analyte move together across the samples
+    firmly enough to count as evidence of one molecule."""
+    return bool(cov and np.isfinite(cov.get('r_min', float('nan')))
+                and cov['r_min'] >= COVAR_MIN_R
+                and cov['variation'] >= COVAR_MIN_VARIATION)
+
+
 def cascade_score(res, linewidth_ppm) -> float:
     """The probability the cascade's model gives that an analyte it took in
     is really in the sample (see ``CASCADE_SCORE_COEF``)."""
@@ -900,7 +1031,39 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                      for e in res.active)]
     per, rel_err, capped = measure_jointly(
         res.active, reach, ppm, X, incl, sigma=float(noise_sigma), weight=weight)
+    if CASCADE_PART_SHIFTS:
+        # who was taken in, and what testifies to its identity, stay the
+        # rigid column's; the amount is measured with each signal where the
+        # spectrum, less every other analyte taken in, puts it
+        fitted = np.zeros(ppm.size)
+        for e in res.active:
+            fitted[e.idx] += e.amplitude * e.val
+        for e in res.active:
+            if len(e.col.parts) < 2:
+                continue
+            own = np.zeros(ppm.size)
+            own[e.idx] = e.amplitude * e.val
+            placed = with_offsets(e.col, part_offsets(
+                e.col, ppm, trace * weight - fitted + own, e.shift_ppm,
+                float(linewidth_ppm), weight))
+            if placed is not e.col:
+                e.col = placed
+        per, _rel, _cap = measure_jointly(
+            res.active, reach, ppm, X, incl, sigma=float(noise_sigma), weight=weight)
+    if residual_out is not None:
+        # what the run accounts for on the mean of the included samples: the
+        # quantified analytes where they settled, and what the cascade took in
+        model = (X - Y)[:, incl].mean(axis=1)
+        for e in res.active:
+            amps = per.get(e.col.mid) or {}
+            a = float(np.mean([float(amps.get(s, 0.0)) for s in incl]))
+            if a > 0:
+                for idx, val in e.col.part_curves(ppm, e.shift_ppm):
+                    model[idx] += a * val
+        residual_out['model'] = model
+        residual_out['trace'] = X[:, incl].mean(axis=1)
     out = {}
+    listed = {c.mid: c for c in cols}
     for e in res.active:
         amps = per.get(e.col.mid) or {}
         if not any(a > 0 for a in amps.values()):
@@ -927,6 +1090,13 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
             'signals': signals,
             'window': (tallest[1], tallest[2]) if tallest else None,
             'step': int(e.step),
+            # the column as the cascade placed it, every signal's own offset
+            # included: what the per-sample fit, the report and the review
+            # must draw
+            'column': e.col,
+            # how far each signal stands from where the column put it (ppm)
+            'part_offsets': [float(c.shift_ppm) - float(c0.shift_ppm) for (c, _n), (c0, _n0)
+                             in zip(e.col.parts, listed[e.col.mid].parts)],
         }
     if diagnostics is not None:
         names = {c.mid: c.name for c in cols}

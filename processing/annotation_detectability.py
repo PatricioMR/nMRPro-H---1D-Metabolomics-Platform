@@ -191,6 +191,38 @@ CONTRADICTION_MIN_EXPECTED_SNR = 20.0
 CONTRADICTION_RATIO = 5.0
 
 
+# Which matched signal sets the amount the rest of the fingerprint is
+# predicted at. 'tallest' (the signal with the highest apex) was the rule;
+# 'lowest' takes the signal that implies the smallest amount per proton per
+# line. A neighbour standing on a matched peak only ever adds height, so each
+# matched peak is an upper bound on the amount and the true amount is at most
+# the lowest of them: the tallest is the one most likely carrying somebody
+# else. Creatinine's methyl at 3.034 sits on creatine's (SNR 1017): at that
+# scale its own 4.04 singlet "should" read 636 and reads 92, and creatinine
+# was marked Bad on a signal matched 0.1 mppm from the drift.
+FINGERPRINT_ANCHOR = 'lowest'
+
+
+def _scale_anchor(matched, apex_snr):
+    """The matched signal the amount is read from. Under 'lowest', only a
+    signal standing as tall as a missing one must be to count
+    (CONTRADICTION_MIN_EXPECTED_SNR) may set it: a match onto noise is not an
+    upper bound on anything, and is exactly what the gate is for -- a stranger
+    claiming creatine's methyl and its own second singlet on a peak of SNR 7."""
+    if FINGERPRINT_ANCHOR == 'tallest':
+        return max(matched, key=apex_snr)
+    implied = []
+    for mp in matched:
+        share = tallest_line_share(mp)
+        per = proton_count(mp) * (share or 0.0)
+        a = apex_snr(mp)
+        if per > 0 and a >= CONTRADICTION_MIN_EXPECTED_SNR:
+            implied.append((a / per, round(float(mp.get('db_ppm') or 0.0), 4), mp))
+    if not implied:
+        return max(matched, key=apex_snr)
+    return min(implied, key=lambda t: (t[0], t[1]))[2]
+
+
 def _peak_snr(pk) -> float:
     try:
         v = float(pk.get('snr'))
@@ -347,8 +379,7 @@ def fingerprint_contradictions(metabolites, ppm_arr, intensity_arr, peaks, *,
                    and mp.get('annotation_quality') != 'bad']
         if not matched:
             continue
-        # The signal that sets the scale: the tallest per proton, per line.
-        anchor = max(matched, key=_apex_snr)
+        anchor = _scale_anchor(matched, _apex_snr)
         a_snr = _apex_snr(anchor)
         _a_share = tallest_line_share(anchor)
         a_per = proton_count(anchor) * (_a_share or 0.0)

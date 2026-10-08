@@ -59,6 +59,37 @@ class TestGlobalPeakRigidAlign:
         assert shifts_pts[1] <= shifts_pts[2]
         assert np.max(np.abs(aligned[:, 1] - aligned[:, 2])) < 1e-9
 
+    @staticmethod
+    def _with_water(n_shifts):
+        """Metabolite peaks moved by known shifts, plus a water residue 500x
+        taller whose position and width change from tube to tube on their
+        own, as presaturation leaves it."""
+        ppm = np.linspace(10.0, 0.0, 20001)
+        base = (_gaussian(ppm, 1.33, 0.002, 1.0)
+                + _gaussian(ppm, 3.03, 0.002, 0.8)
+                + _gaussian(ppm, 3.27, 0.002, 0.6))
+        rng = np.random.default_rng(0)
+        cols = []
+        for k in n_shifts:
+            water = _gaussian(ppm, 4.78 + rng.normal(0, 0.01),
+                              0.02 + rng.uniform(0, 0.02), 500.0)
+            cols.append(np.roll(base, k) + water)
+        return ppm, np.column_stack(cols)
+
+    def test_the_water_residue_does_not_drive_the_alignment(self):
+        true = [0, 4, -3, 6]
+        ppm, X = self._with_water(true)
+        _, shifts_pts, _, _ = global_peak_rigid_align(ppm, X, max_shift_ppm=0.01)
+        assert (shifts_pts - shifts_pts[0]).tolist() == [-k for k in true]
+
+    def test_an_excluded_region_does_not_drive_the_alignment(self):
+        from processing.peak_alignment import alignment_mask
+        ppm = np.linspace(10.0, 0.0, 20001)
+        keep = alignment_mask(ppm, [(7.0, 8.0)])
+        assert not keep[(ppm > 7.0) & (ppm < 8.0)].any()
+        assert not keep[(ppm > 4.5) & (ppm < 5.0)].any()
+        assert keep[(ppm > 1.0) & (ppm < 4.4)].all()
+
 class TestParabolicApex:
     """The sub-pixel step is signed. A ppm axis descends, so a positive
     sub-sample offset must move the apex toward the NEXT index — a smaller ppm.

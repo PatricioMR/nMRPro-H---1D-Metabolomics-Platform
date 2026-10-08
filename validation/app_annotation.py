@@ -19,7 +19,8 @@ import numpy as np
 
 from controllers.annotation_controller import search_database
 from gui.widgets.annotation_results_window import AnnotationResultsWindow
-from processing.annotation_scoring import SCORING_DEFAULTS
+from processing.annotation_scoring import effective_annotation_params
+from processing.peak_detection import canonical_peak_order
 from processing.signal_quality import is_annotatable
 
 
@@ -145,9 +146,9 @@ def annotate(peaks, ppm, intensities, samples_info, *, db_path, field_mhz,
     the ranking reads as corroboration. Left out, the bench ranked every
     contest without its sixth criterion.
     """
-    sc = dict(SCORING_DEFAULTS)
-    sc['dppm_gold'] = float(tolerance_ppm)
-    sc.update(params or {})
+    sc = effective_annotation_params(params, tolerance_ppm)
+    # the order the application's results window reads them in
+    peaks = canonical_peak_order(peaks)
     annotatable = [p for p in peaks if is_annotatable(p, set(tiers))]
     found = search_database(
         db_path=db_path, db_type='hmdb', peaks_to_search=peaks,

@@ -1013,6 +1013,7 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
                 corrected_2d,
                 samples_info=samples_info,
                 max_shift_ppm=global_align_max_shift_ppm,
+                excluded_regions=excluded_regions,
             )
             print(
                 "   Alignment shifts (mppm): min="
@@ -1515,6 +1516,25 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
         traceback.print_exc()
         print("=" * 70)
         raise
+
+def canonical_peak_order(peaks) -> list:
+    """Detected peaks in the one order annotation reads them: by detection
+    rank, then by ppm (high to low) for any without one.
+
+    The search and the scoring settle ties by which peak comes first. Fed
+    the same 99 peaks of one study reversed, annotation returned different
+    matches; a saved project, a re-detection or an edit of the signal list
+    may hand them over in another order. One order defined by the peaks
+    themselves makes the annotation a function of the data alone."""
+    def key(p):
+        r = p.get('rank')
+        try:
+            v = float(p.get('ppm'))
+        except (TypeError, ValueError):
+            v = 0.0
+        return (r is None, r if r is not None else 0, -v)
+    return sorted(peaks or (), key=key)
+
 
 def as_app_peak(p) -> dict:
     """One detected peak in the form the rest of the application reads.

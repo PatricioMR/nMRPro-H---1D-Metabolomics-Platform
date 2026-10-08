@@ -528,3 +528,153 @@ def test_a_singlet_stays_where_the_search_put_it_without_a_reference_drift():
                                    'peak_ppm': 2.3926, 'type': 's'}])
     peaks = {20: {'rank': 20, 'ppm': 2.3926}, 13: {'rank': 13, 'ppm': 2.4073}}
     assert reselect_singlets([succ], peaks)[0]['matched_peaks'][0]['peak_rank'] == 20
+
+
+# ── do an analyte's signals move together across the samples? ─────────────
+
+def test_signals_of_one_molecule_move_together_across_samples():
+    from processing.quant_cascade import covariation_confirms, signal_covariation
+    rng = np.random.default_rng(0)
+    conc = np.exp(rng.normal(0, 0.4, 12))                 # one concentration per sample
+    a = 100 * conc + rng.normal(0, 3, 12)
+    b = 40 * conc + rng.normal(0, 3, 12)
+    cov = signal_covariation([a, b], sigma=3.0)
+    assert cov['r_min'] > 0.8 and cov['n_signals'] == 2 and cov['n_samples'] == 12
+    assert covariation_confirms(cov)
+
+
+def test_signals_of_different_molecules_do_not():
+    from processing.quant_cascade import covariation_confirms, signal_covariation
+    rng = np.random.default_rng(1)
+    a = 100 * np.exp(rng.normal(0, 0.4, 12))
+    b = 40 * np.exp(rng.normal(0, 0.4, 12))
+    cov = signal_covariation([a, b], sigma=3.0)
+    assert not covariation_confirms(cov)
+
+
+def test_a_signal_that_does_not_vary_has_nothing_to_correlate():
+    from processing.quant_cascade import covariation_confirms, signal_covariation
+    flat = np.full(12, 50.0)
+    cov = signal_covariation([flat, np.arange(12.0)], sigma=1.0)
+    assert cov['variation'] == 0.0 and not covariation_confirms(cov)
+
+
+def test_the_variation_must_stand_over_the_noise():
+    from processing.quant_cascade import covariation_confirms, signal_covariation
+    rng = np.random.default_rng(2)
+    x = rng.normal(0, 1, 12)
+    cov = signal_covariation([x, x + rng.normal(0, 0.05, 12)], sigma=10.0)
+    assert cov['r_min'] > 0.9 and cov['variation'] < 1 and not covariation_confirms(cov)
+
+
+def test_one_signal_or_too_few_samples_is_not_read():
+    from processing.quant_cascade import signal_covariation
+    assert signal_covariation([np.arange(12.0)], sigma=1.0) is None
+    assert signal_covariation([np.arange(5.0), np.arange(5.0)], sigma=1.0) is None
+    assert signal_covariation([np.arange(12.0), np.arange(12.0)], sigma=0) is None
+
+
+def test_the_measure_is_kept_on_the_row_but_does_not_raise_it_unless_asked(monkeypatch):
+    import processing.quant_engine as qe
+    from processing.quant_engine import _identity_evidence
+    assert qe.CASCADE_COVARIATION_RAISES is False
+    res = {'score': 0.3, 'covar': {'r_min': 0.95, 'r_median': 0.95, 'variation': 9.0,
+                                   'n_signals': 2, 'n_samples': 12}}
+    assert _identity_evidence(cascade=res)[0] == 1
+    monkeypatch.setattr(qe, 'CASCADE_COVARIATION_RAISES', True)
+    level, why = _identity_evidence(cascade=res)
+    assert level == 2 and 'move together' in why
+    # never past the cascade's own ceiling, and never down
+    assert _identity_evidence(cascade={'score': 0.65, 'covar': res['covar']})[0] == 2
+    assert _identity_evidence(cascade={'score': 0.3, 'covar': {
+        'r_min': -0.5, 'r_median': -0.5, 'variation': 9.0,
+        'n_signals': 2, 'n_samples': 12}})[0] == 1
+
+
+def test_a_cascade_row_carries_its_covariation():
+    missed = _met('missed', 'Missed', [_signal(1.0, 's', 2), _signal(3.0, 's', 2)])
+    rng = np.random.default_rng(3)
+    cols = []
+    for k in range(12):
+        f = float(np.exp(rng.normal(0, 0.4)))
+        y = (_line(1.0, 150.0 * f) + _line(3.0, 150.0 * f)
+             + rng.normal(0, SIGMA, PPM.size))
+        cols.append(y)
+    X = np.column_stack(cols)
+    rows = {r['hmdb_id']: r for r in quantify(
+        candidates=[], peaks_by_rank={}, ppm=PPM, intensities=X, samples_info=[],
+        included=list(range(12)), groups={'G': list(range(12))}, dj_gold_hz=0.2,
+        noise_sigma=SIGMA, linewidth_ppm=LW, deconvolve=False,
+        cascade=True, metabolites=[missed], field_mhz=FIELD)}
+    cov = rows['missed']['_cascade']['covar']
+    assert cov and cov['r_min'] > 0.8 and cov['n_samples'] == 12
+
+
+# ── each signal of a column finds its own place (ADR-065) ─────────────────
+
+def _two_singlets():
+    met = _met('m1', 'Analyte', [_signal(1.0, 's', 1), _signal(3.0, 's', 1)])
+    col, = build_columns([met], field_mhz=FIELD, linewidth_ppm=LW, drift_ppm=0.0)
+    return col
+
+
+def test_a_signal_off_its_listing_moves_to_where_it_stands():
+    from processing.quant_cascade import part_offsets
+    col = _two_singlets()
+    off = 0.75 * LW
+    trace = _line(1.0, 200.0) + _line(3.0 + off, 200.0)
+    d = part_offsets(col, PPM, trace, 0.0, LW)
+    assert d[0] == 0.0
+    assert d[1] == pytest.approx(off, abs=0.15 * LW)
+
+
+def test_a_signal_where_it_is_listed_stays_put():
+    from processing.quant_cascade import part_offsets
+    col = _two_singlets()
+    assert part_offsets(col, PPM, _line(1.0, 200.0) + _line(3.0, 200.0), 0.0, LW) == [0.0, 0.0]
+
+
+def test_no_signal_moves_further_than_its_reach():
+    from processing.quant_cascade import CASCADE_PART_REACH_LW, part_offsets
+    col = _two_singlets()
+    trace = _line(1.0, 200.0) + _line(3.0 + 3.0 * LW, 200.0)
+    d = part_offsets(col, PPM, trace, 0.0, LW)
+    assert all(abs(x) <= CASCADE_PART_REACH_LW * LW + 1e-12 for x in d)
+
+
+def test_the_offsets_ride_on_the_column_s_own_slide():
+    from processing.quant_cascade import part_offsets
+    col = _two_singlets()
+    off = 0.5 * LW
+    trace = _line(1.0 + 2 * LW, 200.0) + _line(3.0 + 2 * LW + off, 200.0)
+    d = part_offsets(col, PPM, trace, 2 * LW, LW)
+    assert d[0] == 0.0 and d[1] == pytest.approx(off, abs=0.15 * LW)
+
+
+def test_an_offset_column_keeps_its_identity_and_leaves_the_listing_alone():
+    from processing.quant_cascade import with_offsets
+    col = _two_singlets()
+    moved = with_offsets(col, [0.0, 0.002])
+    assert moved.mid == col.mid and moved.nh_total == col.nh_total
+    assert moved.parts[1][0].shift_ppm == pytest.approx(col.parts[1][0].shift_ppm + 0.002)
+    assert col.parts[1][0].shift_ppm == pytest.approx(0.0)
+    assert with_offsets(col, [0.0, 0.0]) is col
+
+
+def test_the_cascade_measures_an_analyte_whose_signals_moved_apart():
+    """A doublet listed at 3.0 that stands 0.75 linewidths off in the
+    extract: measured with its signals where they stand, its amount is
+    right and the row says how far each moved."""
+    missed = _met('missed', 'Missed', [_signal(1.0, 'd', 3, J), _signal(3.0, 'd', 3, J)])
+    off = 0.75 * LW
+    X = _study([(1.0, 120.0, DOUBLET), (3.0 + off, 120.0, DOUBLET)])
+    rows = {r['hmdb_id']: r for r in quantify(
+        candidates=[], peaks_by_rank={}, ppm=PPM, intensities=X, samples_info=[],
+        included=[0, 1, 2], groups={'G': [0, 1, 2]}, dj_gold_hz=0.2,
+        noise_sigma=SIGMA, linewidth_ppm=LW, deconvolve=False,
+        cascade=True, metabolites=[missed], field_mhz=FIELD)}
+    c = rows['missed']['_cascade']
+    placed = [c['shift_ppm'] + x for x in c['part_offsets']]
+    assert placed[0] == pytest.approx(0.0, abs=0.2 * LW)
+    assert placed[1] == pytest.approx(off, abs=0.2 * LW)
+    assert c['disagreement'] < 0.1

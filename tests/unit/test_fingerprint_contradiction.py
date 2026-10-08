@@ -317,3 +317,18 @@ def test_detections_noise_is_used_when_given():
     assert stats['noise'] == pytest.approx(5.0 * NOISE)
     c = met['_fingerprint_contradictions'][0]
     assert c['expected_snr'] == pytest.approx(40.0, rel=0.15)
+
+
+def test_a_neighbour_on_the_tallest_match_does_not_set_the_scale():
+    """Creatinine's methyl at 3.034 sits on creatine's, 25 times its own size:
+    read from that peak, creatinine's 4.04 singlet "should" stand at hundreds
+    and stands at its true height, well clear of the noise -- and creatinine
+    was marked Bad on a signal matched 0.1 mppm from the drift. Each matched
+    peak is an upper bound on the amount; the lowest of them that is a real
+    peak sets it."""
+    y = _spectrum((3.034, 2500.0), (4.042, 60.0))
+    peaks = [{'rank': 1, 'ppm': 3.034, 'snr': 2500.0},
+             {'rank': 2, 'ppm': 4.042, 'snr': 60.0}]
+    met = _met('creatinine', [(1, 3.034, 's', 3), (2, 4.042, 's', 2)],
+               [(3.034, 's', 3), (4.042, 's', 2)])
+    assert _run(y, peaks, [met]) == 0

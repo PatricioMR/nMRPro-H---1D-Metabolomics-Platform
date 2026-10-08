@@ -45,8 +45,13 @@ SINGLET_UNSUPPORTED = 'singlet_unsupported'
 WINDOW_TAKEN = 'window_taken'
 OFF_THE_STUDY = 'off_the_study'
 FIT_MISPLACED = 'fit_misplaced'
+ANALYST_REJECTED = 'analyst_rejected'
 
 REJECTION_TEXT = {
+    ANALYST_REJECTED:
+        'Not quantified: rejected by the analyst in the deconvolution review. '
+        'It is left out of the election, of the joint fit and of the cascade, '
+        'and the other analytes were measured without it.',
     LOST_COMPETITION:
         'Not quantified: lost the competition — every peak this analyte claims '
         'was won by another with better evidence.',
