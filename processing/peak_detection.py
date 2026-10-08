@@ -96,6 +96,22 @@ def peak_measures(ppm, corrected_2d, start_idx, end_idx, noise_std, index=None):
             'index': apex, 'ppm': float(ppm[apex])}
 
 
+def broad_removed_fractions(x, baseline_window, areas):
+    """Per sample, the share of the raw area inside a window that the baseline
+    model removed: ``|∫baseline| / (|∫baseline| + signal area)``. 0 = nothing
+    removed, →1 = the window was almost entirely broad component.
+    ``baseline_window`` is points x samples over the window ``x``."""
+    B = np.asarray(baseline_window, dtype=float)
+    if B.ndim == 1:
+        B = B.reshape(-1, 1)
+    fracs = []
+    for s in range(B.shape[1]):
+        a_base = abs(float(np.trapezoid(B[:, s], x)))
+        denom = a_base + float(areas[s])
+        fracs.append(a_base / denom if denom > 1e-30 else 0.0)
+    return np.array(fracs)
+
+
 def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
                                method="auto", baseline_level=0.0):
     """
@@ -1434,13 +1450,9 @@ def detect_peaks(ppm, intensities, noise_std=None, min_snr=3.0,
             # baseline model. 0 = nothing removed, →1 = the window was almost
             # entirely broad component.
             if baseline_correct and len(x_region) > 1:
-                fracs = []
-                for s in range(n_samples):
-                    a_base = abs(float(np.trapezoid(
-                        baseline_2d[start_idx:end_idx + 1, s], x_region)))
-                    denom = a_base + areas[s]
-                    fracs.append(a_base / denom if denom > 1e-30 else 0.0)
-                peak['broad_removed_frac_per_sample'] = np.array(fracs)
+                fracs = broad_removed_fractions(
+                    x_region, baseline_2d[start_idx:end_idx + 1], areas)
+                peak['broad_removed_frac_per_sample'] = fracs
                 peak['broad_removed_frac'] = float(np.mean(fracs))
             else:
                 peak['broad_removed_frac_per_sample'] = np.zeros(n_samples)

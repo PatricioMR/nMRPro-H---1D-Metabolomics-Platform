@@ -10,7 +10,11 @@ Panel A : sortable table — Rank, PPM, Start, End, Width, SNR, Quality, Overlap
           • Filters carry live per-grade counts; the summary line reports how
             many of the total are currently shown.
           • Ctrl+1 = Good, Ctrl+2 = Average, Ctrl+3 = Poor
-          • Save button (bottom-left) writes changes back to peak_stage.peaks
+          • Edits act on peak_stage.peaks itself (no separate save)
+          • ✂ Split: click the valley in the plot -- one window holding two
+            signals becomes two (processing/signal_edit.py); ➕ New signal:
+            right-drag a window detection missed. Both are undone from the
+            right-click menu.
 Panel B : signal region mini-plot
           • Drawn on the spectrum the numbers were measured on (the baseline-
             corrected one; Raw is a switch), read from the application each
@@ -25,13 +29,14 @@ Panel B : signal region mini-plot
 import tkinter as tk
 
 from app_paths import DECONVOLUTION_ENABLED
-from tkinter import ttk
+from tkinter import messagebox, ttk
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.widgets import SpanSelector
 from .peak_sample_view import PeakSampleView
 from processing.peak_detection import foot_line_area, peak_measures
+from processing import signal_edit
 from processing.signal_quality import (
     SIGNAL_GOOD, SIGNAL_AVERAGE, SIGNAL_POOR)
 from gui.utils.quality_palette import (
@@ -180,6 +185,32 @@ class PeakListWindow:
                 command=lambda s=status: self._set_status(s)
             ).pack(side=tk.LEFT, padx=3)
 
+        # Hand edits of the list itself: a window holding two signals is cut
+        # in two, a signal detection missed is drawn. Both are armed here and
+        # finished on the plot.
+        edit_row = ttk.Frame(frame_a)
+        edit_row.pack(fill=tk.X, padx=4, pady=(0, 2))
+        ttk.Label(edit_row, text="Edit signals:",
+                  font=("Arial", 8)).pack(side=tk.LEFT, padx=(0, 6))
+        tk.Button(edit_row, text="✂ Split signal", font=("Arial", 8),
+                  padx=6, pady=2,
+                  command=lambda: self._arm_edit('split')
+                  ).pack(side=tk.LEFT, padx=3)
+        tk.Button(edit_row, text="➕ New signal", font=("Arial", 8),
+                  padx=6, pady=2,
+                  command=lambda: self._arm_edit('new')
+                  ).pack(side=tk.LEFT, padx=3)
+        self._edit_hint = ttk.Label(edit_row, text="", font=("Arial", 8),
+                                    foreground="#b45309")
+        self._edit_hint.pack(side=tk.LEFT, padx=6)
+        self._edit_mode = None
+
+        # Annotation and quantification read the list as it was when they
+        # ran: after an edit their results describe windows that changed.
+        self._stale_lbl = ttk.Label(frame_a, text="", font=("Arial", 8),
+                                    foreground="#b91c1c", wraplength=520)
+        self._stale_lbl.pack(anchor=tk.W, padx=4)
+
 
         # ── Panel B ───────────────────────────────────────────────────────────
         frame_b = ttk.Frame(paned)
@@ -230,6 +261,8 @@ class PeakListWindow:
         self.plot_canvas.get_tk_widget().bind("<MouseWheel>", self._on_scroll_win)
         self.plot_canvas.get_tk_widget().bind("<Button-4>",   self._on_scroll_up)
         self.plot_canvas.get_tk_widget().bind("<Button-5>",   self._on_scroll_down)
+        self.plot_canvas.mpl_connect('button_press_event', self._on_plot_click)
+        self.win.bind('<Escape>', lambda e: self._arm_edit(None))
 
 
         # Bind R for quick reset
@@ -289,14 +322,17 @@ class PeakListWindow:
                 corr = raw
         return raw, corr
 
+    def _noise(self):
+        """Detection's noise σ, the one every SNR in the list is divided by."""
+        stage = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
+        return getattr(stage, 'noise_std', None)
+
     def _remeasure(self, peak):
         """Measure a signal again on its (moved) boundaries, on the corrected
         matrix, with detection's own arithmetic. The grade is not recomputed."""
         _raw, corr = self._refresh_data()
-        stage = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
-        noise = getattr(stage, 'noise_std', None)
         m = peak_measures(self.ppm, corr, peak['start_idx'], peak['end_idx'],
-                          noise, index=peak.get('index'))
+                          self._noise(), index=peak.get('index'))
         peak.update(area=m['area'], area_per_sample=m['area_per_sample'],
                     height=m['height'], mean_intensity=m['mean_intensity'],
                     snr=m['snr'], index=m['index'], ppm=m['ppm'])
@@ -459,6 +495,11 @@ class PeakListWindow:
                 txt = '—'
         if peak.get('boundaries_edited') and not manual:
             txt += ' · orig. bounds'
+        origin = peak.get('manual_origin')
+        if origin == signal_edit.ORIGIN_SPLIT:
+            txt += f" · ✂ from #{peak.get('split_from_rank')}"
+        elif origin == signal_edit.ORIGIN_ADDED:
+            txt += ' · ➕ by hand'
         return ('⚓ ' + txt) if peak.get('is_anchor_line', False) else txt
 
     @staticmethod
@@ -727,6 +768,16 @@ class PeakListWindow:
             command=lambda: self._set_status_on(peak, STATUS_UNDEFINED))
         menu.add_command(label='✗ Mark Poor',
             command=lambda: self._set_status_on(peak, STATUS_POOR))
+        origin = peak.get('manual_origin')
+        if origin == signal_edit.ORIGIN_SPLIT:
+            menu.add_separator()
+            menu.add_command(
+                label=f"↩ Undo split (merge back into #{peak.get('split_from_rank')})",
+                command=lambda: self._undo_split(peak))
+        elif origin == signal_edit.ORIGIN_ADDED:
+            menu.add_separator()
+            menu.add_command(label='🗑 Remove this added signal',
+                             command=lambda: self._remove_added(peak))
         try: menu.tk_popup(event.x_root, event.y_root)
         finally: menu.grab_release()
 
@@ -950,11 +1001,11 @@ class PeakListWindow:
                         and abs(area_shown / listed - 1.0) < 0.02)
                 self.ax.text(
                     0.02, 0.88,
-                    f"Area of the shaded region: {area_shown:.4g}  "
-                    f"({'corrected' if corrected_view else 'raw'}, mean of the "
+                    f"Area of the shaded region: {area_shown:.4g}\n"
+                    f"({'corrected' if corrected_view else 'raw'}, mean of "
                     f"{len(shown_samples)} samples shown)\n"
                     f"Area column: {listed:.4g}"
-                    f"{'' if same else '  (differs: groups hidden, raw view or boundaries edited)'}",
+                    f"{'' if same else chr(10) + '(differs: groups hidden, raw view or boundaries edited)'}",
                     transform=self.ax.transAxes, ha='left', va='top',
                     fontsize=7, color='#444444', zorder=5,
                     bbox=dict(fc='white', alpha=0.75, lw=0))
@@ -1093,6 +1144,11 @@ class PeakListWindow:
         self.ax.tick_params(labelsize=8)
         self.ax.grid(True, alpha=0.25, linestyle=':')
         self.ax.set_facecolor('#fafafa')
+        # Captions and legends live inside the axes; counted by tight_layout,
+        # a long caption in a narrow panel squeezed the plot to a sliver.
+        for art in (*self.ax.texts, self.ax.get_legend()):
+            if art is not None:
+                art.set_in_layout(False)
         try:
             self.fig.tight_layout()
         except Exception:
@@ -1126,18 +1182,22 @@ class PeakListWindow:
             button=3,   # right-click drag changes boundaries
         )
 
+    def _span_indices(self, x_min, x_max):
+        """Window ``(lo, hi)`` indices of a dragged ppm span, low index first."""
+        idx_a = int(np.argmin(np.abs(self.ppm - min(x_min, x_max))))
+        idx_b = int(np.argmin(np.abs(self.ppm - max(x_min, x_max))))
+        return (idx_a, idx_b) if idx_a <= idx_b else (idx_b, idx_a)
+
     def _on_span_selected(self, x_min, x_max):
-        if self._current_peak is None or abs(x_max - x_min) < 0.001:
+        if abs(x_max - x_min) < 0.001:
+            return
+        if self._edit_mode == 'new':
+            self._add_signal(*self._span_indices(x_min, x_max))
+            return
+        if self._current_peak is None:
             return
         peak = self._current_peak
-
-        # Axis is inverted: x_max = left (higher ppm), x_min = right (lower ppm)
-        new_lo = min(x_min, x_max)
-        new_hi = max(x_min, x_max)
-        idx_a  = int(np.argmin(np.abs(self.ppm - new_lo)))
-        idx_b  = int(np.argmin(np.abs(self.ppm - new_hi)))
-        if idx_a > idx_b:
-            idx_a, idx_b = idx_b, idx_a
+        idx_a, idx_b = self._span_indices(x_min, x_max)
 
         peak['start_ppm'] = float(self.ppm[idx_a])
         peak['end_ppm']   = float(self.ppm[idx_b])
@@ -1150,6 +1210,92 @@ class PeakListWindow:
         self._refresh_row(peak)
         # Defer redraw so SpanSelector finishes its own event cleanup first
         self.win.after(50, lambda: self._plot_peak(peak))
+
+    # ── Hand edits: split / new signal ────────────────────────────────────────
+
+    _EDIT_HINTS = {
+        'split': "Click on the plot where the two signals meet (Esc cancels)",
+        'new':   "Right-drag over the new signal's window (Esc cancels)",
+    }
+
+    def _arm_edit(self, mode):
+        """Arm (or with None, cancel) a hand edit finished on the plot."""
+        if mode == 'split' and self._current_peak is None:
+            messagebox.showinfo('Split signal', 'Select a signal first.',
+                                parent=self.win)
+            return
+        self._edit_mode = mode
+        self._edit_hint.config(text=self._EDIT_HINTS.get(mode, ''))
+
+    def _on_plot_click(self, event):
+        if (self._edit_mode != 'split' or event.button != 1
+                or event.inaxes is not self.ax or event.xdata is None
+                or self._pk_toolbar.mode):
+            return
+        peak = self._current_peak
+        _raw, corr = self._refresh_data()
+        lo, hi = signal_edit.window_of(peak)
+        idx = int(np.argmin(np.abs(self.ppm - event.xdata)))
+        cut = signal_edit.valley_near(corr.mean(axis=1), idx, lo, hi)
+        if cut is None:
+            messagebox.showwarning(
+                'Split signal',
+                f"Click inside signal #{peak['rank']}'s window, at least "
+                f"{signal_edit.MIN_WINDOW_POINTS} points from its edges.",
+                parent=self.win)
+            return
+        self._apply_edit(lambda raw, c: signal_edit.split_signal(
+            self.peaks, peak, cut, self.ppm, raw, c, self._noise()),
+            'Split signal')
+
+    def _add_signal(self, lo, hi):
+        self._apply_edit(lambda raw, c: signal_edit.add_signal(
+            self.peaks, lo, hi, self.ppm, raw, c, self._noise()),
+            'New signal')
+
+    def _undo_split(self, peak):
+        self._apply_edit(lambda raw, c: signal_edit.undo_split(self.peaks, peak),
+                         'Undo split')
+
+    def _remove_added(self, peak):
+        def _remove(raw, c):
+            signal_edit.remove_added_signal(self.peaks, peak)
+            return None
+        self._apply_edit(_remove, 'Remove signal')
+
+    def _apply_edit(self, edit, title):
+        """Run one list edit on the current spectra; a refusal is shown, not
+        swallowed. The signal it returns is selected afterwards."""
+        raw, corr = self._refresh_data()
+        try:
+            shown = edit(raw, corr)
+        except ValueError as e:
+            messagebox.showwarning(title, str(e), parent=self.win)
+            return
+        self._arm_edit(None)
+        self._signals_changed(shown)
+
+    def _signals_changed(self, select=None):
+        """The list grew or shrank: redraw it, the main overlay, and say that
+        annotation and quantification still describe the previous list."""
+        self.win.title(f"Signal List  ({len(self.peaks)} signals)")
+        self._stale_lbl.config(
+            text="Signals edited: Annotation and Quantification results are "
+                 "from the previous list -- run them again.")
+        stage = (getattr(self.app, 'stages', {}) or {}).get('peak_detection')
+        if stage is not None:
+            stage.color_peaks(force=True)
+        self._populate()
+        if select is None:
+            self._current_peak = None
+            children = self.tree.get_children()
+            if children:
+                self.tree.selection_set(children[0])
+                self._on_select()
+            return
+        self.scroll_to_rank(select['rank'])
+        self._current_peak = select
+        self._plot_peak(select)
 
     # ── Scroll zoom ───────────────────────────────────────────────────────────
 

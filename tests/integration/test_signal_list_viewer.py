@@ -180,3 +180,62 @@ def test_a_manual_mark_is_not_called_an_old_grade(listed):
     peak['boundaries_edited'] = True
     peak['status'] = 'Good'
     assert 'orig. bounds' not in win._quality_text(peak)
+
+
+class _Click:
+    def __init__(self, ax, x):
+        self.button, self.inaxes, self.xdata = 1, ax, x
+
+
+def test_split_cuts_the_selected_window_in_two_and_undo_merges_it(listed):
+    win, peak, app, X = listed
+    win._current_peak = peak
+    s, e = peak['start_idx'], peak['end_idx']
+    win._arm_edit('split')
+    win._on_plot_click(_Click(win.ax, float(PPM[peak['index'] + 60])))
+    assert len(win.peaks) == 2 and win._edit_mode is None
+    piece = next(p for p in win.peaks if p is not peak)
+    assert peak['rank'] == 1 and piece['rank'] == 2
+    assert {peak['start_idx'], piece['end_idx']} == {s, e}
+    assert len(win.tree.get_children()) == 2
+    assert '✂ from #1' in win._quality_text(piece)
+    assert 'run them again' in win._stale_lbl.cget('text')
+    win._undo_split(piece)
+    assert win.peaks == [peak]
+    assert (peak['start_idx'], peak['end_idx']) == (s, e)
+
+
+def test_a_click_without_split_armed_changes_nothing(listed):
+    win, peak, app, X = listed
+    win._current_peak = peak
+    win._on_plot_click(_Click(win.ax, float(PPM[peak['index'] + 60])))
+    assert len(win.peaks) == 1
+
+
+def test_new_signal_is_drawn_by_a_right_drag_and_refused_over_another(
+        listed, monkeypatch):
+    import gui.widgets.peak_list_window as plw
+    warned = []
+    monkeypatch.setattr(plw.messagebox, 'showwarning',
+                        lambda *a, **k: warned.append(a))
+    win, peak, app, X = listed
+    win._current_peak = peak
+    win._arm_edit('new')
+    win._on_span_selected(1.98, 2.02)               # over signal #1
+    assert len(win.peaks) == 1 and warned
+    win._on_span_selected(0.98, 1.02)
+    assert len(win.peaks) == 2 and win._edit_mode is None
+    added = win.peaks[-1]
+    assert added['manual_origin'] == 'added' and added['rank'] == 2
+    win._remove_added(added)
+    assert win.peaks == [peak]
+
+
+def test_the_axes_keep_the_panel_width_whatever_the_captions_say(listed):
+    """tight_layout counted the captions drawn in axes coordinates as part of
+    the axes: in a narrow panel the plot collapsed to a sliver beside them."""
+    win, peak, app, X = listed
+    for w_in in (4.8, 3.6):
+        win.fig.set_size_inches(w_in, 4.5)
+        win._plot_peak(peak)
+        assert win.ax.get_position().width > 0.6, w_in
