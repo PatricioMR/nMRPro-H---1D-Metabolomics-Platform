@@ -55,7 +55,13 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pytest', '_pytest', 'PyInstaller'],
+    # torch & co. are not used by the application, but collect_all of
+    # scipy/sklearn/pandas lists their array_api_compat adapters, and with
+    # torch installed PyInstaller imported it to analyse it -- an access
+    # violation in torch's DLL loader that stopped the v0.55 build.
+    excludes=['pytest', '_pytest', 'PyInstaller',
+              'torch', 'torchvision', 'torchaudio', 'tensorflow',
+              'tensorboard', 'jax', 'cupy', 'dask'],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
