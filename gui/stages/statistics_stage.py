@@ -13,12 +13,37 @@ from gui.stages._quant_adapter import reported_values
 
 # ---------- helpers ----------------------------------------------------------
 
+# A metabolite with not-detected samples in this share of the study or more is
+# left out of the multivariate models; the rest have their n.d. at 1/5 of
+# their minimum (processing.missing_values, as MetaboAnalyst). MetaboAnalyst's
+# R default is 20 %; in a study with groups a metabolite often vanishes in one
+# of them, and at 20 % the Mice study kept 29 of 45, RawMG 21 of 32 and
+# NMR_Murilo 42 of 50 -- at 50 %, 38, 25 and 49. ADR-070.
+ND_LEAVE_OUT_PCT = 50.0
+
+
 def _get_quantification_matrix(app):
     """
     Build a (n_samples, n_features) matrix from the app state.
     Priority: quantification results → Good-annotated peaks → None.
-    Returns (X, sample_names, feature_labels, group_labels).
+    Returns (X, sample_names, feature_labels, group_labels), over the samples
+    the study holds -- blanks and samples switched off are not in it
+    (processing.sample_selection, the rule detection, annotation and
+    quantification already follow).
     """
+    X, names, feats, groups = _all_samples_matrix(app)
+    if X is None:
+        return X, names, feats, groups
+    from processing.sample_selection import included_sample_indices
+    keep = included_sample_indices(getattr(app, 'samples_info', []) or [], X.shape[0])
+    if len(keep) == X.shape[0]:
+        return X, names, feats, groups
+    return (X[keep], [names[i] for i in keep], feats, [groups[i] for i in keep])
+
+
+def _all_samples_matrix(app):
+    """Every sample's row, blanks included: ``_get_quantification_matrix``
+    without the selection."""
     quant_stage = (getattr(app, 'stages', {}) or {}).get('quantification')
     ann_stage   = (getattr(app, 'stages', {}) or {}).get('annotation')
     si          = getattr(app, 'samples_info', []) or []
@@ -319,6 +344,7 @@ class StatisticsStage:
 
         # ── Scaling ───────────────────────────────────────────────────────────
         self._build_scaling_frame(parent, _SEC, _RB)
+        self._build_missing_frame(parent, _SEC, _RB)
 
         # ── Filters ───────────────────────────────────────────────────────────
         ff = ttk.LabelFrame(parent, text='Filters', **_SEC)
@@ -335,6 +361,30 @@ class StatisticsStage:
         self._filter_status_lbl = ttk.Label(
             ff, text='', font=('Arial', 7), foreground='#666')
         self._filter_status_lbl.pack(anchor=tk.W, padx=4, pady=(0, 2))
+
+    def _build_missing_frame(self, parent, _SEC, _RB):
+        """How a not-detected sample (n.d.) enters a multivariate model --
+        MetaboAnalyst's processing (processing.missing_values)."""
+        mf = ttk.LabelFrame(parent, text='Missing values (n.d.)', **_SEC)
+        mf.pack(fill=tk.X, pady=(0, 4))
+        if not hasattr(self, '_missing_var'):
+            self._missing_var = tk.StringVar(value='lod')
+        if not hasattr(self, '_missing_pct_var'):
+            self._missing_pct_var = tk.DoubleVar(value=ND_LEAVE_OUT_PCT)
+        if not hasattr(self, '_missing_grp_var'):
+            self._missing_grp_var = tk.BooleanVar(value=False)
+        ttk.Radiobutton(mf, text='Replace by LoD (1/5 of min)',
+                        variable=self._missing_var, value='lod').pack(**_RB)
+        row = ttk.Frame(mf)
+        row.pack(fill=tk.X, padx=14)
+        ttk.Label(row, text='Leave out if n.d. in ≥', font=('Arial', 8)).pack(side=tk.LEFT)
+        ttk.Spinbox(row, from_=0, to=100, increment=5, width=4,
+                    textvariable=self._missing_pct_var).pack(side=tk.LEFT, padx=2)
+        ttk.Label(row, text='% of samples', font=('Arial', 8)).pack(side=tk.LEFT)
+        ttk.Checkbutton(mf, text='…in every group (kept if one group passes)',
+                        variable=self._missing_grp_var).pack(anchor=tk.W, padx=14)
+        ttk.Radiobutton(mf, text='Exclude metabolites with any n.d.',
+                        variable=self._missing_var, value='exclude').pack(**_RB)
 
     def _build_scaling_frame(self, parent, _SEC, _RB):
         """Scaling/normalization controls. Shared by Statistics and Pathway
@@ -487,6 +537,7 @@ class StatisticsStage:
         # Same scaling/normalization controls as Statistics — values persist and
         # are applied to the per-metabolite significance test below.
         self._build_scaling_frame(parent, _SEC, _RB)
+        self._build_missing_frame(parent, _SEC, _RB)
 
         ttk.Label(parent,
                   text='ORA (Fisher) on metabolites significant\n'
@@ -1254,8 +1305,15 @@ class StatisticsStage:
         _nd = getattr(self, '_nan_dropped', None)
         if _nd:
             _names = ', '.join(_nd[:4]) + (', …' if len(_nd) > 4 else '')
-            parts.append(f'{len(_nd)} metabolite(s) with n.d. left out of this '
-                         f'model (nothing imputed): {_names}')
+            _why = ('with an n.d.' if getattr(self, '_missing_var', None) is not None
+                    and self._missing_var.get() == 'exclude'
+                    else 'with too many n.d.')
+            parts.append(f'{len(_nd)} metabolite(s) {_why} left out of this '
+                         f'model: {_names}')
+        _ni = getattr(self, '_nd_imputed', 0)
+        if _ni:
+            parts.append(f'{_ni} n.d. value(s) replaced by their metabolite\'s '
+                         f'LoD (1/5 of its minimum, as MetaboAnalyst)')
         lbl = getattr(self, '_filter_status_lbl', None)
         if lbl:
             try:
@@ -1401,10 +1459,9 @@ class StatisticsStage:
             messagebox.showinfo('No data', 'No sample data available.', parent=self.frame)
             return
 
-        X, feature_labels = self._remove_nan(X, feature_labels)
+        X, feature_labels = self._remove_nan(X, feature_labels, group_labels)
 
-        si = getattr(self.app, 'samples_info', []) or []
-        all_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
+        all_names = list(sample_names)
         while len(all_names) < X.shape[0]:
             all_names.append(f'S{len(all_names)}')
         all_names = all_names[:X.shape[0]]
@@ -1965,14 +2022,15 @@ class StatisticsStage:
         # The per-feature methods test what each group holds and read a NaN as
         # a sample without a number; the multivariate ones need every cell.
         X, feature_labels = self._remove_nan(
-            X, feature_labels,
+            X, feature_labels, group_labels,
             complete=method not in ('Volcano', 'Metabolic Profile',
                                     'Box / Violin'))
         if X.shape[1] < 2:
             messagebox.showwarning(
                 'No data',
-                'Not enough features without a not-detected sample (n.d.). '
-                'Nothing is imputed: a model needs a number in every sample.',
+                'Fewer than two metabolites are left once those with too '
+                'many not-detected samples (n.d.) are taken out. Lower the '
+                "share in 'Missing values (n.d.)', or count it per group.",
                 parent=self.frame)
             return
 
@@ -2170,7 +2228,7 @@ class StatisticsStage:
             X = X[:, keep]
             feature_labels = [feature_labels[i] for i in keep]
 
-        X, feature_labels = self._remove_nan(X, feature_labels)
+        X, feature_labels = self._remove_nan(X, feature_labels, group_labels)
         if X.shape[1] < 2:
             messagebox.showwarning('No data',
                 'Not enough valid metabolites after filtering.', parent=self.frame)
@@ -2569,23 +2627,49 @@ class StatisticsStage:
 
     # ── NaN cleanup ──────────────────────────────────────────────────────────
 
-    def _remove_nan(self, X, feature_labels, *, complete=True):
-        """Leave out the features a model cannot read, and impute nothing.
+    def _remove_nan(self, X, feature_labels, groups=None, *, complete=True):
+        """Give a model a number in every cell, the way MetaboAnalyst does
+        (processing.missing_values).
 
-        A not-detected sample is NaN, and a NaN filled with the column mean is
-        a number nobody measured, pulling every group toward a shared mean.
-        With ``complete`` (the multivariate methods, which need every cell)
-        a feature with a NaN in any sample is left out of this run and named
-        beside the filters; without it (the per-feature methods, which test
-        what each group holds) only the all-NaN features go. The analyst
-        decides what a not-detected sample is worth, outside this program.
+        With ``complete`` (the multivariate methods): a metabolite with
+        ``_missing_pct_var`` % or more not-detected samples (n.d.) -- in every
+        group, with ``_missing_grp_var`` -- is left out; each remaining n.d.
+        becomes 1/5 of that metabolite's minimum positive value (its "LoD").
+        'Exclude' in ``_missing_var`` leaves out every metabolite with an n.d.
+        instead, imputing nothing. Never the column mean: that invents a
+        measurement and pulls the groups toward each other. Without
+        ``complete`` (the per-feature methods, which read an n.d. as a sample
+        without a number) only the all-n.d. metabolites go.
         """
+        from processing.missing_values import (
+            impute_lod, remove_missing_by_percent)
         X = np.array(X, dtype=float)
         feature_labels = list(feature_labels)
-        keep = (~np.any(np.isnan(X), axis=0) if complete
-                else ~np.all(np.isnan(X), axis=0))
-        dropped = [f for f, k in zip(feature_labels, keep) if not k]
-        self._nan_dropped = dropped if complete else []
+        self._nan_dropped, self._nd_imputed = [], 0
+        if not complete:
+            keep = ~np.all(np.isnan(X), axis=0)
+            return X[:, keep], [f for f, k in zip(feature_labels, keep) if k]
+        def _opt(name, default):
+            var = getattr(self, name, None)
+            try:
+                return var.get() if var is not None else default
+            except Exception:        # an emptied spinbox reads as an error
+                return default
+        mode = _opt('_missing_var', 'lod')
+        if mode == 'exclude':
+            keep = ~np.any(np.isnan(X), axis=0)
+        else:
+            try:
+                pct = float(_opt('_missing_pct_var', ND_LEAVE_OUT_PCT)) / 100.0
+            except (TypeError, ValueError):
+                pct = ND_LEAVE_OUT_PCT / 100.0
+            grp = bool(_opt('_missing_grp_var', False))
+            keep = remove_missing_by_percent(X, groups, percent=pct,
+                                             group_wise=grp)
+            X[:, keep], self._nd_imputed = impute_lod(
+                X[:, keep], groups, group_wise=grp)
+            keep &= ~np.any(np.isnan(X), axis=0)
+        self._nan_dropped = [f for f, k in zip(feature_labels, keep) if not k]
         self._update_filter_status()
         return X[:, keep], [f for f, k in zip(feature_labels, keep) if k]
 
@@ -3811,12 +3895,10 @@ class StatisticsStage:
         y, unique_groups = _group_to_int(group_labels)
 
         # Re-fetch raw (unscaled) concentrations — pie charts need absolute values.
-        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
+        X_raw, _sn, feat_raw, gl_raw = _get_quantification_matrix(self.app)
         if X_raw is not None:
             X_raw, feat_raw = self._remove_nan(X_raw, feat_raw, complete=False)
             if self._excluded_samples:
-                _si = getattr(self.app, 'samples_info', []) or []
-                _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
                 _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
                 X_raw  = X_raw[_kr, :]
                 gl_raw = [gl_raw[i] for i in _kr]
@@ -4400,7 +4482,7 @@ class StatisticsStage:
         st        = self._box_style
 
         # Fetch raw concentrations and apply the active sample/metabolite filters
-        X_raw, _, feat_raw, gl_raw = _get_quantification_matrix(self.app)
+        X_raw, _sn, feat_raw, gl_raw = _get_quantification_matrix(self.app)
         if X_raw is None:
             ax = self._fig.add_subplot(111)
             ax.text(0.5, 0.5, 'No quantification data available.',
@@ -4416,8 +4498,6 @@ class StatisticsStage:
         X_raw    = X_raw[:, _valid]
         feat_raw = [f for f, v in zip(feat_raw, _valid) if v]
         if self._excluded_samples:
-            _si = getattr(self.app, 'samples_info', []) or []
-            _sn = [s.get('name', f'S{i}') for i, s in enumerate(_si)]
             _kr = [i for i, n in enumerate(_sn) if n not in self._excluded_samples]
             X_raw  = X_raw[_kr, :]
             gl_raw = [gl_raw[i] for i in _kr]

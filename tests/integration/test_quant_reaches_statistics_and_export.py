@@ -82,6 +82,22 @@ def test_the_per_sample_fields_are_indexed_by_sample(field):
             f'position means sample')
 
 
+def test_the_statistics_matrix_leaves_the_blanks_and_switched_off_samples_out():
+    """The rule detection, annotation and quantification follow
+    (processing.sample_selection): a blank's n.d. would otherwise count
+    against every metabolite in the missing-value filter."""
+    from gui.stages.statistics_stage import _get_quantification_matrix as build
+    rows, samples = _rows()
+    samples = [dict(s) for s in samples]
+    samples[-1]['excluded'] = True
+    X, names, _f, groups = build(_FakeApp(rows, samples))
+    blanks = [s.get('name') for s in samples if str(s.get('type')).upper() == 'BLK']
+    assert blanks, 'the fixture holds a blank'
+    assert not set(blanks) & set(names)
+    assert samples[-1].get('name') not in names
+    assert X.shape[0] == len(names) == len(groups)
+
+
 def test_a_sample_that_was_not_measured_is_nan_and_not_zero():
     """A zero would enter a group mean as a real measurement of nothing."""
     rows, _ = _rows()
@@ -118,10 +134,11 @@ def test_the_statistics_matrix_is_built_from_the_quantified_rows():
     rows, samples = _rows()
     X, names, features, groups = build_feature_matrix(_FakeApp(rows, samples))
     assert X is not None, 'quantification produced nothing statistics could read'
-    assert X.shape == (len(samples), len(features))
+    # the blank is not a sample of the study (processing.sample_selection)
+    assert X.shape == (len(samples) - 1, len(features))
     assert set(features) >= {'L-Alanine', 'L-Lactic acid'}
-    assert names == ['B1', 'S1', 'S2', 'S3']
-    assert groups == ['BLK', 'A', 'A', 'B']
+    assert names == ['S1', 'S2', 'S3']
+    assert groups == ['A', 'A', 'B']
 
 
 def test_the_matrix_carries_the_concentrations_in_sample_order():
@@ -130,9 +147,9 @@ def test_the_matrix_carries_the_concentrations_in_sample_order():
     rows, samples = _rows()
     X, _, features, _ = build_feature_matrix(_FakeApp(rows, samples))
     col = X[:, features.index('L-Alanine')]
-    assert np.isnan(col[0])
-    assert col[2] / col[1] == pytest.approx(2.0, rel=0.05)
-    assert col[3] / col[1] == pytest.approx(3.0, rel=0.05)
+    # the blank is not in the matrix: rows are the 1x, 2x and 3x samples
+    assert col[1] / col[0] == pytest.approx(2.0, rel=0.05)
+    assert col[2] / col[0] == pytest.approx(3.0, rel=0.05)
 
 
 def test_rows_with_no_number_stay_out_of_the_matrix():
@@ -201,10 +218,10 @@ def test_a_not_detected_sample_is_nan_in_the_statistics_matrix():
     rows, samples = _rows()
     _with_not_detected(rows)
     X, _, features, _ = build(_FakeApp(rows, samples))
-    col = X[:, features.index('L-Alanine')]
-    assert col[1] == 1.0
-    assert np.isnan(col[2]), 'detected False: the number the fit gave is not data'
-    assert np.isnan(col[3]), 'a zero is nothing found'
+    col = X[:, features.index('L-Alanine')]      # blank left out: sample i is row i-1
+    assert col[0] == 1.0
+    assert np.isnan(col[1]), 'detected False: the number the fit gave is not data'
+    assert np.isnan(col[2]), 'a zero is nothing found'
 
 
 def test_a_low_confidence_row_still_reaches_the_statistics():
@@ -224,14 +241,55 @@ class _FakeStats:
         self.statuses += 1
 
 
-def test_the_multivariate_methods_leave_out_incomplete_features_and_impute_nothing():
+def test_the_multivariate_methods_follow_metaboanalyst():
+    """An n.d. becomes 1/5 of its metabolite's minimum; a metabolite with
+    n.d. in 20 % of the samples or more is left out; never the mean."""
+    from gui.stages.statistics_stage import StatisticsStage
+    X = np.array([[1.0, 5.0, np.nan], [2.0, np.nan, 7.0], [3.0, 7.0, np.nan],
+                  [4.0, 8.0, 9.0], [5.0, 9.0, 9.5], [6.0, 10.0, 10.0]])
+    fake = _FakeStats()
+    out, labels = StatisticsStage._remove_nan(fake, X, ['a', 'b', 'c'],
+                                              ['g1'] * 3 + ['g2'] * 3)
+    # the application's share is 50 %: b (1 of 6 n.d.) and c (2 of 6) stay
+    assert labels == ['a', 'b', 'c'] and fake._nan_dropped == []
+    assert out[1, 1] == pytest.approx(5.0 / 5)
+    assert out[0, 2] == pytest.approx(7.0 / 5)
+    assert fake._nd_imputed == 3
+    # at MetaboAnalyst's own 20 %, c (33 %) goes
+    fake = _FakeStats()
+    fake._missing_pct_var = _Var(20.0)
+    out, labels = StatisticsStage._remove_nan(fake, X, ['a', 'b', 'c'],
+                                              ['g1'] * 3 + ['g2'] * 3)
+    assert labels == ['a', 'b'] and fake._nan_dropped == ['c']
+
+
+def test_counted_per_group_a_metabolite_one_group_holds_stays():
+    from gui.stages.statistics_stage import StatisticsStage
+    import tkinter as tk
+    X = np.array([[np.nan], [np.nan], [np.nan], [3.0], [4.0], [5.0]])
+    fake = _FakeStats()
+    fake._missing_grp_var = _Var(True)
+    out, labels = StatisticsStage._remove_nan(fake, X, ['x'],
+                                              ['ctrl'] * 3 + ['lps'] * 3)
+    assert labels == ['x'] and out[0, 0] == pytest.approx(3.0 / 5)
+
+
+def test_exclude_leaves_out_every_metabolite_with_an_nd_and_fills_nothing():
     from gui.stages.statistics_stage import StatisticsStage
     X = np.array([[1.0, 5.0, np.nan], [2.0, 6.0, 7.0], [3.0, 7.0, 8.0]])
     fake = _FakeStats()
+    fake._missing_var = _Var('exclude')
     out, labels = StatisticsStage._remove_nan(fake, X, ['a', 'b', 'c'])
-    assert labels == ['a', 'b'] and out.shape == (3, 2)
-    assert fake._nan_dropped == ['c']
-    assert np.array_equal(out, X[:, :2]), 'nothing was filled in'
+    assert labels == ['a', 'b'] and fake._nan_dropped == ['c']
+    assert np.array_equal(out, X[:, :2])
+
+
+class _Var:
+    def __init__(self, v):
+        self.v = v
+
+    def get(self):
+        return self.v
 
 
 def test_the_per_feature_methods_keep_the_nan_and_drop_only_the_empty():
