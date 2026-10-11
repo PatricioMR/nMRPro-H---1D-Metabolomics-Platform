@@ -402,27 +402,7 @@ class PeakListWindow:
         if getattr(self, '_filt_poor',  None) and self._filt_poor.get():
             _allowed.add(STATUS_POOR)
 
-        # Build metabolite lookup: one label per peak, best candidate wins.
-        # The winner must match the Annotation Results window, so this reuses
-        # the same canonical selection (select_metabolite_per_rank) instead of
-        # a divergent composite_score-only tiebreak.
-        _met_by_rank = {}  # rank → metabolite name
-        _ann = getattr(self.app, 'stages', {}).get('annotation', None) if self.app else None
-        if _ann:
-            _metabolites = getattr(_ann, '_metabolites', None)
-            if _metabolites:
-                from gui.stages._annotation_helpers import select_metabolite_per_rank
-                _qm_peak = getattr(_ann, '_quality_marks', {}) or {}
-                _met_by_rank = select_metabolite_per_rank(
-                    _metabolites, manual_quality=_qm_peak)
-            else:
-                # Fallback: raw results list (no ΔJ filtering possible)
-                _last = getattr(_ann, '_last_results_args', None) or {}
-                for _r in _last.get('results', []):
-                    _pr = _r.get('peak_rank')
-                    if _pr is not None and _pr not in _met_by_rank:
-                        _met_by_rank[_pr] = _r.get('name', _r.get('metabolite', ''))
-
+        labels = self._signal_labels()
         n_shown = 0
         for p in self._sorted_peaks():
             if self._effective_grade(p) not in _allowed:
@@ -433,9 +413,7 @@ class PeakListWindow:
             tag = ('sub_peak' if is_sub
                    else f'grade_{self._effective_grade(p)}')
             area_val = p.get('area', 0) or 0
-            met_name = (p.get('assigned_metabolite')
-                        or p.get('metabolite')
-                        or _met_by_rank.get(p.get('rank'), '—'))
+            met_name = labels.get(p.get('rank'), '—')
             self.tree.insert('', tk.END, iid=str(p['rank']), tags=(tag,),
                              values=(
                                  p['rank'],
@@ -450,6 +428,27 @@ class PeakListWindow:
                              ))
         self._apply_status_colors()
         self._refresh_counts(n_shown)
+
+    def _signal_labels(self):
+        """rank -> analyte for the column: the quantification's result once
+        it ran, the annotation's choice before (gui.stages._signal_labels)."""
+        from gui.stages._signal_labels import (
+            NO_LABEL, quantified_rows, signal_labels)
+        stages = (getattr(self.app, 'stages', {}) or {}) if self.app else {}
+        ann = stages.get('annotation')
+        quant = stages.get('quantification')
+        rows = getattr(quant, '_quant_results', None) if quant else None
+        metabolites = getattr(ann, '_metabolites', None) if ann else None
+        labels = signal_labels(
+            self.peaks, quant_rows=rows, metabolites=metabolites,
+            manual_quality=(getattr(ann, '_quality_marks', {}) or {}) if ann else {})
+        if ann and not metabolites and not quantified_rows(rows):
+            # raw results list only: no delta-J filtering possible
+            for r in (getattr(ann, '_last_results_args', None) or {}).get('results', []):
+                pr = r.get('peak_rank')
+                if labels.get(pr) == NO_LABEL:
+                    labels[pr] = r.get('name', r.get('metabolite', ''))
+        return labels
 
     def _refresh_counts(self, n_shown):
         """Filter labels carry their own count; the summary carries the total."""
@@ -562,18 +561,7 @@ class PeakListWindow:
         iid = str(peak['rank'])
         if not self.tree.exists(iid):
             return
-        ann = (getattr(self.app, 'stages', {}) or {}).get('annotation')
-        # Same canonical single-winner logic as _populate
-        _metabolites_rr = getattr(ann, '_metabolites', None)
-        _met_by_rank = {}
-        if _metabolites_rr:
-            from gui.stages._annotation_helpers import select_metabolite_per_rank
-            _qm_peak_rr = getattr(ann, '_quality_marks', {}) or {}
-            _met_by_rank = select_metabolite_per_rank(
-                _metabolites_rr, manual_quality=_qm_peak_rr)
-        met_name = (peak.get('assigned_metabolite')
-                    or peak.get('metabolite')
-                    or _met_by_rank.get(peak.get('rank'), '—'))
+        met_name = self._signal_labels().get(peak.get('rank'), '—')
         self.tree.item(iid, values=(
             peak['rank'],
             f"{peak['ppm']:.4f}",

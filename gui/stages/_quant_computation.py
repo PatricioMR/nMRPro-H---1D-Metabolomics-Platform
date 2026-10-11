@@ -22,7 +22,7 @@ import os
 from ._quant_adapter import (
     blank_indices, dilution_and_correction, identity_columns as _identity_columns,
     quantify_project, reported_values, sample_groups, standard_vector)
-from app_paths import DECONVOLUTION_ENABLED
+from controllers.analysis_defaults import QUANTIFICATION
 from gui.project_vars import collect_vars
 from processing.quant_concentration import (
     pqn_group_divergence_of_rows, pqn_group_note)
@@ -570,8 +570,8 @@ class _QuantCompMixin:
         # leave every number exactly where the engine put it before the
         # balance existed -- otherwise the two settings cannot be compared.
         _dv = getattr(self, 'deconv_var', None)
-        _deconv = (DECONVOLUTION_ENABLED if _dv is None
-                   else bool(_dv.get()) and DECONVOLUTION_ENABLED)
+        _deconv = (QUANTIFICATION['split_shared'] if _dv is None
+                   else bool(_dv.get()))
         # Complex multiplets by shape fit (ADR-013) are the analyst's choice
         # too; off, they are reported as not quantified and nothing else
         # in the table moves.
@@ -776,69 +776,24 @@ class _QuantCompMixin:
     # ── Peak List labels ─────────────────────────────────────────────────────
 
     def _update_peak_list_labels(self):
-        """After quantification, relabel each quantified peak in the Peak List
-        with the metabolite that actually won it for integration.
+        """Redraw the Peak List, whose analyte column follows the quantified
+        rows (gui.stages._signal_labels).
 
-        Annotation Results is intentionally NOT touched — it keeps its own
-        score-based ownership (_assignment_sort_key). Only the Peak List follows
-        the quantification winner, written as 'assigned_metabolite' (the highest
-        priority field in PeakListWindow._populate). The '_quant_assigned' marker
-        lets a later run clear only the labels this method set, never an
-        annotation- or user-provided assignment.
+        Labels the earlier versions of this method wrote onto the peaks
+        ('_quant_assigned') are dropped, so a project saved by one of them
+        does not keep naming signals after analytes the quantification
+        turned down.
 
         Must run on the main thread (called from _finish_ui) because it refreshes
         a tkinter window.
         """
-        try:
-            peaks = (self.peak_stage.peaks or []) if self.peak_stage else []
-            if not peaks:
-                return
-            pk_by_rank = {p['rank']: p for p in peaks if p.get('rank') is not None}
-
-            # Clear labels written by a previous quantification run only.
-            for p in peaks:
-                if p.pop('_quant_assigned', False):
-                    p.pop('assigned_metabolite', None)
-
-            rank_to_name = {}
-            for r in (self._quant_results or []):
-                if r.get('_is_is'):
-                    continue
-                name = r.get('metabolite')
-                if not name:
-                    continue
-                pr = r.get('_peak_rank')
-                if pr is not None and pr in pk_by_rank:
-                    rank_to_name[pr] = name
-                # Multiplet member peaks: every detected peak inside the winning
-                # hit's predicted-line window belongs to the same metabolite,
-                # mirroring the greedy claim in _run so the Peak List shows the
-                # full multiplet under one analyte.
-                for h in r.get('_hits', []):
-                    _pls = [float(l['ppm']) for l in (h.get('predicted_lines') or [])
-                            if 'ppm' in l]
-                    if len(_pls) < 2:
-                        continue
-                    _pk = pk_by_rank.get(pr, {})
-                    _w = float(_pk.get('width_ppm', _pk.get('width_at_half', 0.008)) or 0.008)
-                    _mar = max(_w * 0.7, 0.010)
-                    _lo, _hi = min(_pls) - _mar, max(_pls) + _mar
-                    for _orank, _op in pk_by_rank.items():
-                        if _lo <= float(_op.get('ppm', -999)) <= _hi:
-                            rank_to_name.setdefault(_orank, name)
-
-            for _orank, _nm in rank_to_name.items():
-                _p = pk_by_rank.get(_orank)
-                if _p is not None:
-                    _p['assigned_metabolite'] = _nm
-                    _p['_quant_assigned'] = True
-
-            plw = getattr(self.app, '_peak_list_win', None)
-            if plw is not None and plw.win.winfo_exists():
-                plw.peaks = self.peak_stage.peaks
-                plw._populate()
-        except Exception as _pll_err:
-            print(f'[Quant] peak-list relabel skipped: {_pll_err}')
+        for p in ((self.peak_stage.peaks or []) if self.peak_stage else []):
+            if p.pop('_quant_assigned', False):
+                p.pop('assigned_metabolite', None)
+        plw = getattr(self.app, '_peak_list_win', None)
+        if plw is not None and plw.win.winfo_exists():
+            plw.peaks = self.peak_stage.peaks
+            plw._populate()
 
     # ── VIP scores ───────────────────────────────────────────────────────────
 
