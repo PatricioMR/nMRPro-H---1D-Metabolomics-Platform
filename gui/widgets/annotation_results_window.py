@@ -929,6 +929,8 @@ class AnnotationResultsWindow:
                         " FROM shifts_1h s WHERE bmrb_id = ?"
                         f" ORDER BY {_fp_meas['ppm']} DESC", (mid,))
                     rows = [dict(r) for r in cur.fetchall()]
+                    from processing import spin_patterns as _spin
+                    _spin.apply(rows, self._get_field_mhz(), name=met.get('name'))
                     # The search relabels an 'm' whose pattern the DB measured
                     # as a pattern multiplet; the fingerprint must agree, or
                     # the unresolved-multiplet sweep below drops the row and

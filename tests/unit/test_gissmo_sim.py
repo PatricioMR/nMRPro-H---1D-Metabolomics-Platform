@@ -3,7 +3,7 @@ system's four lines, and every system's protons."""
 import numpy as np
 import pytest
 
-from validation.gissmo_sim import _lines, load_systems, render, stick_spectrum
+from processing.spin_system import _lines, load_systems, render, stick_spectrum
 
 
 def test_an_ab_system_is_the_textbook_one():
@@ -60,7 +60,7 @@ def test_uncoupled_fragments_solve_apart_as_they_would_together():
 def test_a_compound_in_two_forms_counts_its_protons_once():
     # GISSMO fits both glucose anomers into one entry at full weight each;
     # weighted by their equilibrium shares, the molecule has 7 C-H protons
-    from validation.gissmo_sim import load_systems
+    from processing.spin_system import load_systems
     glc = load_systems()['D-Glucose']
     p, i = stick_spectrum(glc, 600.0)
     assert i.sum() == pytest.approx(7.0)

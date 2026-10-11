@@ -56,6 +56,37 @@ class TestCandidates:
                              quality_marks={('A', 1): 'good'})[0]
         assert c.evidence['manual_quality'] == 'good'
 
+    def test_a_manual_good_mark_overrides_the_searchs_bad(self):
+        c = build_candidates(
+            [_met('A', 'Ala', [_mp(1, annotation_quality='bad')])], PEAKS,
+            quality_marks={('A', 1): 'good'})
+        assert len(c) == 1 and c[0].evidence['manual_quality'] == 'good'
+
+    @staticmethod
+    def _pattern(**kw):
+        return _mp(1, type='m*', pattern_fit={'snr': 30.0, 'explained': 0.9},
+                   peak_ppm=1.47, study_linewidth_hz=1.5,
+                   pattern_field_mhz=600.0, **kw)
+
+    def test_an_unmarked_complex_multiplet_goes_to_the_remainders(self):
+        pool = []
+        out = build_candidates([_met('G', 'Glu', [self._pattern()])], PEAKS,
+                               pool=pool)
+        assert out == [] and len(pool) == 1
+
+    def test_a_complex_multiplet_marked_good_competes_on_its_peak(self):
+        # Glutamate, citrate and serine marked Good on the Mice ISS study were
+        # still sent to the remainders, and with the rank dropped first the
+        # mark never reached the evidence
+        pool = []
+        out = build_candidates([_met('G', 'Glu', [self._pattern()])], PEAKS,
+                               quality_marks={('G', 1): 'good'}, pool=pool)
+        assert pool == [] and len(out) == 1
+        c = out[0]
+        assert c.peak_rank == 1
+        assert c.evidence['manual_quality'] == 'good'
+        assert c.evidence['shape_fit'] is not None
+
     def test_the_display_name_travels_as_payload(self):
         c = build_candidates([_met('A', 'Ala', [_mp(1)])], PEAKS)[0]
         assert c.payload['name'] == 'Ala'
@@ -163,3 +194,33 @@ class TestWholeProject:
             samples_info=[{'label': 'G'}])
         concs = rows[0]['_concs_per_sample']
         assert len(concs) == 1 and np.isfinite(concs[0])
+
+
+class TestComplexMultipletsCompeting:
+    """quant_engine.M_STAR_COMPETE_MIN_GOOD: an m* of an analyte with enough
+    confirmed m* signals competes for its peak; off, none does (ADR-024)."""
+
+    @staticmethod
+    def _met(n_good):
+        mps = [_mp(r, type='m*', annotation_quality='good' if r <= n_good else 'bad',
+                   pattern_fit={'snr': 30.0}, peak_ppm=1.47, study_linewidth_hz=1.5,
+                   pattern_field_mhz=600.0) for r in (1, 2)]
+        return _met('G', 'Glu', mps)
+
+    def test_off_no_complex_multiplet_competes(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'M_STAR_COMPETE_MIN_GOOD', None)
+        assert build_candidates([self._met(2)], PEAKS, pool=[]) == []
+
+    def test_with_enough_confirmed_ones_they_compete_on_their_peaks(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'M_STAR_COMPETE_MIN_GOOD', 2)
+        out = build_candidates([self._met(2)], PEAKS, pool=[])
+        assert sorted(c.peak_rank for c in out) == [1, 2]
+        assert all(c.evidence['mstar_compete'] for c in out)
+
+    def test_one_confirmed_is_not_enough(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'M_STAR_COMPETE_MIN_GOOD', 2)
+        assert build_candidates([self._met(1)], PEAKS, pool=[]) == []
+

@@ -1,4 +1,4 @@
-# validation/gissmo_sim.py
+# processing/spin_system.py
 """A 1H spectrum at any field from a GISSMO spin system.
 
 GISSMO stores, per compound, the chemical shifts (ppm) and scalar couplings
@@ -36,8 +36,10 @@ from itertools import combinations
 import numpy as np
 
 
-SYSTEMS_JSON = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            'data', 'gissmo_spin_systems.json')
+from app_paths import asset_path
+
+# Bundled with the application (data/ ships with the installer).
+SYSTEMS_JSON = asset_path('data', 'gissmo_spin_systems.json')
 
 
 def load_systems(path=SYSTEMS_JSON) -> dict:

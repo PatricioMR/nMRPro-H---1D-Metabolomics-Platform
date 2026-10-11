@@ -91,7 +91,29 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
     d = defaults(overrides)
     ppm = np.asarray(ppm, dtype=float)
     raw = np.asarray(raw, dtype=float)
-    if aligned_first:
+    model = BaselineModel(enabled=d['baseline_model'],
+                          method=d['baseline_method'],
+                          params={'niter': d['baseline_niter']}
+                          if d['baseline_method'] == 'snip'
+                          else {'lam': d['baseline_lam']})
+    if aligned_first == 'valley':
+        # the dialog's valley-bounded segments, lags read on the corrected
+        # copy, onto the sample that agrees most with the rest
+        from processing.peak_alignment import valley_segment_align
+        _c0 = np.asarray(BaselineCache().corrected(ppm, raw, model,
+                                                   already_corrected=False),
+                         dtype=float)
+        _sig = region_noise(ppm, raw, d['noise_region'])
+        if _sig is None:
+            from processing.peak_detection import estimate_noise_minimum_segment
+            _sig = float(np.median([estimate_noise_minimum_segment(_c0[:, s])
+                                    for s in range(_c0.shape[1])]))
+        raw, _rec = valley_segment_align(
+            ppm, raw, noise_sigma=_sig, shift_on=_c0,
+            reference_columns=[int(s['index']) for s in samples_info
+                               if str(s.get('type', 'Sample')).upper()
+                               not in ('BLK', 'BLANK')])
+    elif aligned_first:
         from processing.peak_alignment import icoshift_align
         with contextlib.redirect_stdout(io.StringIO()):
             raw, _shifts, _segs = icoshift_align(
@@ -99,11 +121,6 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
                 max_shift_ppm=ALIGN_MAX_SHIFT_PPM)
         raw = np.asarray(raw, dtype=float)
 
-    model = BaselineModel(enabled=d['baseline_model'],
-                          method=d['baseline_method'],
-                          params={'niter': d['baseline_niter']}
-                          if d['baseline_method'] == 'snip'
-                          else {'lam': d['baseline_lam']})
     corr = np.asarray(BaselineCache().corrected(ppm, raw, model,
                                                 already_corrected=False),
                       dtype=float)
@@ -186,7 +203,8 @@ def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
             local_baseline=d['local_baseline'],
             proton_correction=d['proton_correction'],
             align=d['align'], subtract_blanks=d['subtract_blanks'],
-            excluded_regions=excluded, deconvolve=False,
+            excluded_regions=excluded,
+            deconvolve=d['split_shared'],
             quantify_shapes=d['quantify_shapes'],
             resolve_shared=d['resolve_shared'],
             singlet_min_snr=d['singlet_min_snr'],

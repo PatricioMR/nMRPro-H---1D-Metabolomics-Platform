@@ -612,12 +612,11 @@ class VisualizationStage(BaseStage):
         # _toggle_mode references rf and ic_frame defined below;
         # safe because it is only called after those widgets are created.
         def _toggle_mode():
-            if mode_var.get() == 'single':
-                ic_frame.pack_forget()
-                rf.pack(fill=tk.X, padx=6, pady=6, after=mode_frame)
-            else:
-                rf.pack_forget()
-                ic_frame.pack(fill=tk.X, padx=6, pady=4, after=mode_frame)
+            for _f in (rf, ic_frame, vs_frame):
+                _f.pack_forget()
+            _shown = {'single': rf, 'icoshift': ic_frame,
+                      'valley': vs_frame}[mode_var.get()]
+            _shown.pack(fill=tk.X, padx=6, pady=4, after=mode_frame)
 
         mode_frame = ttk.LabelFrame(sf_l, text="Alignment Mode", padding=6)
         mode_frame.pack(fill=tk.X, padx=6, pady=(6, 2))
@@ -626,6 +625,9 @@ class VisualizationStage(BaseStage):
                         command=_toggle_mode).pack(anchor=tk.W)
         ttk.Radiobutton(mode_frame, text="Segment-wise  (icoshift)",
                         variable=mode_var, value='icoshift',
+                        command=_toggle_mode).pack(anchor=tk.W)
+        ttk.Radiobutton(mode_frame, text="Per signal  (valley segments)",
+                        variable=mode_var, value='valley',
                         command=_toggle_mode).pack(anchor=tk.W)
         ttk.Label(mode_frame,
                   text="icoshift corrects non-uniform δ (ppm) drift across the spectrum.",
@@ -661,6 +663,22 @@ class VisualizationStage(BaseStage):
         max_shift_var = tk.StringVar(value="0.030")
         ttk.Entry(ic2, textvariable=max_shift_var, width=8).pack(side=tk.LEFT, padx=4)
 
+        # valley-segment parameters (processing.peak_alignment)
+        vs_frame = ttk.LabelFrame(sf_l, text="Per-signal Parameters", padding=6)
+        ttk.Label(vs_frame,
+                  text="Each signal moves on its own (pH, ions): segments end "
+                       "where every sample is at baseline and move by whole "
+                       "points, so no peak is cut or stretched.",
+                  font=("Arial", 8), foreground="gray", wraplength=210).pack(anchor=tk.W)
+        vs1 = ttk.Frame(vs_frame);  vs1.pack(fill=tk.X, pady=2)
+        ttk.Label(vs1, text="Max shift ± ppm:", width=15).pack(side=tk.LEFT)
+        vs_shift_var = tk.StringVar(value="0.015")
+        ttk.Entry(vs1, textvariable=vs_shift_var, width=8).pack(side=tk.LEFT, padx=4)
+        vs2 = ttk.Frame(vs_frame);  vs2.pack(fill=tk.X, pady=2)
+        ttk.Label(vs2, text="Max segment ppm:", width=15).pack(side=tk.LEFT)
+        vs_seg_var = tk.StringVar(value="0.060")
+        ttk.Entry(vs2, textvariable=vs_seg_var, width=8).pack(side=tk.LEFT, padx=4)
+
         sf2 = ttk.LabelFrame(sf_l, text="Reference Sample", padding=6)
         sf2.pack(fill=tk.X, padx=6, pady=4)
         ttk.Label(sf2,
@@ -668,7 +686,10 @@ class VisualizationStage(BaseStage):
                   font=("Arial", 8), foreground="gray").pack(anchor=tk.W)
         sample_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
         ref_var = tk.StringVar(value=sample_names[0] if sample_names else '')
-        ttk.Combobox(sf2, textvariable=ref_var, values=sample_names,
+        # per signal: anything not a sample name picks the sample that agrees
+        # most with the rest
+        ttk.Combobox(sf2, textvariable=ref_var,
+                     values=['Auto (most representative)'] + sample_names,
                      state='readonly', width=26).pack(anchor=tk.W, pady=4)
 
         status_lbl = ttk.Label(sf_l, text="", font=("Arial", 8),
@@ -863,11 +884,98 @@ class VisualizationStage(BaseStage):
             t.start()
             dlg.after(100, _poll, t)
 
+        def _preview_valley():
+            import threading as _threading
+            try:
+                ms_ppm = float(vs_shift_var.get())
+                seg_ppm = float(vs_seg_var.get())
+            except ValueError:
+                status_lbl.config(text="Invalid values.", foreground="red")
+                return
+            if ms_ppm <= 0 or seg_ppm <= 0:
+                status_lbl.config(text="Max shift and segment > 0.",
+                                  foreground="red")
+                return
+            ref_idx = next((i for i, s in enumerate(si)
+                            if s.get('name') == ref_var.get()), None)
+            non_blank = [i for i, s in enumerate(si)
+                         if str(s.get('type', 'Sample')).upper()
+                         not in ('BLK', 'BLANK')] or None
+            sigma = getattr(getattr(self.app, 'peak_stage', None),
+                            'noise_std', None)
+            _start_progress("Aligning each signal…")
+            _result = {}
+
+            def _worker():
+                try:
+                    from processing.peak_alignment import valley_segment_align
+                    from processing.peak_detection import (
+                        estimate_noise_minimum_segment)
+                    corr = np.asarray(self.app.corrected_intensities(),
+                                      dtype=float)
+                    sig = sigma or float(np.median(
+                        [estimate_noise_minimum_segment(corr[:, k])
+                         for k in range(corr.shape[1])]))
+                    aligned, rec = valley_segment_align(
+                        ppm_arr, all_int, noise_sigma=sig, ref_idx=ref_idx,
+                        reference_columns=non_blank, shift_on=corr,
+                        max_shift_ppm=ms_ppm, max_seg_ppm=seg_ppm)
+                    _result.update(aligned=aligned, rec=rec)
+                except Exception as exc:
+                    _result['error'] = str(exc)
+
+            def _done():
+                _stop_progress()
+                if 'error' in _result:
+                    status_lbl.config(text=f"Error: {_result['error']}",
+                                      foreground="red")
+                    return
+                aligned, rec = _result['aligned'], _result['rec']
+                mppm = rec['shifts_pts'].astype(float) * rec['ppm_per_point']
+                _state.update(aligned=aligned, shift_pts=None,
+                              shift_ppm=list(np.max(np.abs(mppm), axis=0)))
+                ax.clear()
+                ax.set_facecolor('#f8f8f8')
+                cmap = plt.cm.get_cmap('tab10', n_s)
+                for s in range(min(n_s, 5)):
+                    ax.plot(ppm_arr, all_int[:, s], color=cmap(s), lw=0.6,
+                            alpha=0.22, ls='--')
+                    ax.plot(ppm_arr, aligned[:, s], color=cmap(s), lw=0.9,
+                            alpha=0.85,
+                            label=si[s]['name'] if s < len(si) else f'S{s}')
+                ax.invert_xaxis()
+                ax.set_xlabel('δ (ppm)', fontsize=8)
+                ax.tick_params(labelsize=7)
+                ax.legend(fontsize=7, loc='upper right', framealpha=0.6)
+                ref_name = (si[rec['ref_idx']].get('name')
+                            if rec['ref_idx'] < len(si) else rec['ref_idx'])
+                n_seg = len(rec['segments_ppm'])
+                ax.set_title(f'per signal  ({n_seg} segments, onto {ref_name})'
+                             f'  Dashed = before  |  Solid = after', fontsize=8)
+                fig.tight_layout()
+                canvas.draw()
+                moved = np.abs(mppm[mppm != 0]) * 1000
+                med = float(np.median(moved)) if moved.size else 0.0
+                status_lbl.config(
+                    text=(f"✓ {n_seg} segments onto {ref_name}  |  moved "
+                          f"{100 * moved.size / mppm.size:.0f}%  |  median "
+                          f"{med:.1f} mppm, max "
+                          f"{1000 * float(np.abs(mppm).max()):.1f} mppm"),
+                    foreground="green")
+
+            def _poll(t):
+                if t.is_alive():
+                    dlg.after(100, _poll, t)
+                else:
+                    dlg.after(0, _done)
+
+            t = _threading.Thread(target=_worker, daemon=True)
+            t.start()
+            dlg.after(100, _poll, t)
+
         def _preview():
-            if mode_var.get() == 'single':
-                _preview_single()
-            else:
-                _preview_icoshift()
+            {'single': _preview_single, 'icoshift': _preview_icoshift,
+             'valley': _preview_valley}[mode_var.get()]()
 
         def _apply():
             if _state['aligned'] is None:

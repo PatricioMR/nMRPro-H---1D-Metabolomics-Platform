@@ -66,6 +66,13 @@ class TestWhoMayCompete:
         assert set(out.winners) == {'B'}
         assert out.rejected['A'] == UNVERIFIED_MULTIPLET
 
+    def test_a_manual_good_mark_lets_an_unverified_multiplet_compete(self):
+        """The analyst verified what the lines could not."""
+        out = elect([_c('A', 10, n_found=2, n_exp=3, mult='t', dj=None,
+                        manual_quality='good'),
+                     _c('B', 10)], dj_gold_hz=GOLD)
+        assert set(out.winners) == {'A'}
+
     def test_an_ambiguous_rank_has_no_winner(self):
         out = elect([_c('A', 10), _c('B', 10)],
                     ambiguous_ranks={10}, dj_gold_hz=GOLD)

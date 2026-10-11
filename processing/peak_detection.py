@@ -235,12 +235,30 @@ def separate_overlapping_peaks(intensity, peak_indices, ppm, noise_std=None,
         # Hit the spectrum edge without grounding → lowest point seen.
         return run_min_idx, bool(run_min_val <= thr)
 
+    def _own_top(apex):
+        """The smoothed copy's top of THIS line: uphill from the apex, never
+        across a dip, at most half a window away. The tallest point of the
+        window was used before, and on a doublet whose other line is taller
+        and within the window that was the other line's top: walking out
+        from it the left foot stopped in the valley between the two, at the
+        apex itself, and the line was measured 0 high, graded Poor and
+        barred from annotation. On the Mice ISS skin study at 600 MHz that
+        was valine's 1.052 line (SNR 50), glutamine's 2.458/2.470 and 33 of
+        83 Poor peaks with a grading SNR of 0."""
+        j = apex
+        while abs(j - apex) < max(_win, 1):
+            nb = [k for k in (j - 1, j + 1) if 0 <= k < n]
+            k = max(nb, key=lambda k: float(walk_ref[k]))
+            if float(walk_ref[k]) <= float(walk_ref[j]):
+                break
+            j = k
+        return j
+
     for apex in sorted_indices:
         # from the smoothed copy's own top: one point off it on a tall line
         # is uphill by more than the margin, and the walk would call the
         # apex its own valley (DSS, SNR 870, went to height 0 and was lost)
-        _lo, _hi = max(0, apex - _win), min(n, apex + _win + 1)
-        top = _lo + int(np.argmax(walk_ref[_lo:_hi]))
+        top = _own_top(apex)
         lf, lg = _walk(top, -1)
         rf, rg = _walk(top, +1)
         lf, rf = min(lf, apex), max(rf, apex)

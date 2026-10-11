@@ -20,7 +20,6 @@ Split into focused modules:
 """
 import tkinter as tk
 
-from app_paths import DECONVOLUTION_ENABLED
 from tkinter import ttk, filedialog, messagebox
 import numpy as np
 
@@ -346,16 +345,15 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # box is the same question -- should windows two analytes sit in be
         # split between them -- answered by the engine that now does it, so it
         # keeps the variable and the saved projects keep working.
-        self.deconv_var = tk.BooleanVar(value=DECONVOLUTION_ENABLED)
+        self.deconv_var = tk.BooleanVar(value=QUANTIFICATION['split_shared'])
         self._j_resolve_cb = ttk.Checkbutton(
             mf2, text='Split windows two analytes share',
             variable=self.deconv_var,
             command=self._on_deconv_change)
         self._j_resolve_status_lbl = ttk.Label(
             mf2, text='(not run yet)', font=('Arial', 7), foreground='gray')
-        if DECONVOLUTION_ENABLED:
-            self._j_resolve_cb.pack(side=tk.LEFT)
-            self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
+        self._j_resolve_cb.pack(side=tk.LEFT)
+        self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
 
         # Complex multiplets (m*, ADR-013) are a method still being built.
         # A shape never competes for a peak. On, with the shape resolution

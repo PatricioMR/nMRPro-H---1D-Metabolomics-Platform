@@ -35,7 +35,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from validation import mixture_bench as mb
-from validation.gissmo_sim import SYSTEMS_JSON
+from processing.spin_system import SYSTEMS_JSON
 
 XML_DIR = os.path.join(os.path.expanduser('~'), 'OneDrive', 'Documentos',
                        'NMR Databases', 'gissmo')

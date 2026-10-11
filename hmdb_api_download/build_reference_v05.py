@@ -13,7 +13,7 @@ Each correction here is the molecule's stoichiometry, and each was checked
 two ways: the structure, and the compound's GISSMO spin system -- one spin
 per proton, fitted to the same BMRB spectrum (Dashti H et al., Anal Chem
 2017;89:12201-12208) -- whose spins were assigned to the signal nearest
-them (``validation/gissmo_sim``). A row changes only where the two agree
+them (``processing/spin_system``). A row changes only where the two agree
 and the compound's total is unchanged or becomes its molecular count.
 
 Nothing is overwritten without a trace: the listed count before the change

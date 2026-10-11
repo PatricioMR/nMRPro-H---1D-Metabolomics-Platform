@@ -1867,8 +1867,17 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         # and identified only where a free apex, its own amount and its
         # whole shape agree. Fitted alone and elected unopposed it was
         # worth 41 false positives on the mixture bench.
-        _complex = [c for c in candidates if _is_complex(c)]
-        candidates = [c for c in candidates if not _is_complex(c)]
+        # ...unless the analyst marked it Good: the gate was measured on the
+        # automatic path, and a manual mark is the one thing that overrides
+        # the search (quantification.eligible_metabolite_ids). Marked Good
+        # on glutamate's, citrate's and serine's signals the Mice ISS study
+        # still reported them "m*, competes for no peak".
+        _complex = [c for c in candidates
+                    if _is_complex(c) and not (_manual_good(c)
+                                               or _mstar_competes(c))]
+        candidates = [c for c in candidates
+                      if not _is_complex(c) or _manual_good(c)
+                      or _mstar_competes(c)]
         _pooled = {id(c) for c in residual_pool}
         residual_pool += [c for c in _complex if id(c) not in _pooled]
         # an analyte whose every signal is a shape has a row either way:
@@ -2531,6 +2540,10 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             info['reselect_cap'] = True
             level = 2
             dots = _DOTS[level]
+        if _mstar_competes(info['signal']) and level > 1:
+            info['mstar_cap'] = True
+            level = 1
+            dots = _DOTS[level]
         if info.get('manual_override') is not None and level > 1:
             level = 1
             dots = _DOTS[level]
@@ -3013,7 +3026,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _interference_reason(info)
                             + _joint_fit_reason(info)
                             + _own_drift_reason(info)
-                            + _reselect_reason(info)
+                            + _reselect_reason(info) + _mstar_reason(info)
                             + _manual_override_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)
@@ -3225,6 +3238,17 @@ def _manual_override_reason(info) -> list:
             "behind it."]
 
 
+def _mstar_reason(info) -> list:
+    """Said of a row held at one dot because a complex multiplet won it."""
+    if not info.get('mstar_cap'):
+        return []
+    return ["Won its peak as a complex multiplet (m*): the annotation found "
+            "the whole measured pattern on at least "
+            f"{M_STAR_COMPETE_MIN_GOOD} of its m* signals. One dot: a pattern "
+            "of many lines finds a match by chance more often than a doublet "
+            "does."]
+
+
 def _reselect_reason(info) -> list:
     """Said of a row held at two dots because its peak was chosen against the
     study's reference drift."""
@@ -3300,6 +3324,30 @@ def _baseline_reason(info) -> list:
     return ['the trace runs under the local baseline on %d%% of the window; '
             'that part counted nothing (only area above the baseline is '
             'integrated)' % round(100 * float(share))]
+
+
+# A complex multiplet competes for a peak when its analyte has at least this
+# many m* signals the annotation confirmed (whole measured pattern found),
+# and its row is then held to one dot. None: never, as ADR-024 had it. On
+# the Mice ISS skin study, with the peaks matched where they are, 13
+# plausible analytes had only m* signals confirmed -- glutamate, citrate,
+# phenylalanine among them -- and none could be reported. With the stored
+# shapes it made the Mice study worse; with the shapes solved from the spin
+# system at the study's field (processing.spin_patterns) it is on: GISSMO
+# tube of 100 found 233 -> 237, strangers 85 -> 75, two dots or more
+# 194/20 -> 196/20; Mice two-dot strangers 3 -> 0 (ADR-074).
+M_STAR_COMPETE_MIN_GOOD = 2
+
+
+
+
+def _mstar_competes(cand) -> bool:
+    return bool((cand.evidence or {}).get('mstar_compete'))
+
+
+def _manual_good(cand) -> bool:
+    """The analyst's Good mark, or an analyte accepted in the review."""
+    return str((cand.evidence or {}).get('manual_quality') or '').lower() == 'good'
 
 
 def _is_complex(cand) -> bool:

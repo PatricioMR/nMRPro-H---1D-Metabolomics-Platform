@@ -65,6 +65,16 @@ QUANTIFICATION = {
     # 23%, and false positives from 7 to 6.
     'quantify_shapes': True,
     'resolve_shared': True,
+    # The windows' balance (quant_engine._resolve_shared, ADR-010/011):
+    # every contested window one equation, solved together. It resolves
+    # few (Mice ISS: 2 of 109 contested windows) but says which winners
+    # stand on a shared window nobody resolves, and their confidence drops
+    # for it. Over three seeds of the GISSMO tube of 100, with m* judged by
+    # its spin system (ADR-074): found 237 -> 241, strangers 75 -> 73, two
+    # dots or more 196/20 -> 192/13, p90 73% -> 79%; tube of 18 strangers
+    # 29 -> 23 (ADR-075). Was tied to app_paths.DECONVOLUTION_ENABLED,
+    # which also hides the unfinished deconvolution stages.
+    'split_shared': True,
     # Overlapping analytes fitted together, with free components for the
     # peaks no quantified analyte explains (processing.quant_joint_fit).
     # Over three seeds of the reference bench, against integration:

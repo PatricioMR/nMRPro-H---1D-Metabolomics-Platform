@@ -5,7 +5,7 @@ The reference bench (``mixture_bench``, ``crowded_bench``) draws each
 analyte from the very profiles the annotation searches for -- the inverse
 crime: the answer is shaped like the question. Here each pure spectrum is
 the GISSMO spin system of the compound solved at the study's field
-(``gissmo_sim``), exact to second order, and only then summed:
+(``processing.spin_system``), exact to second order, and only then summed:
 
     A mixture spectrum is the linear sum of its components' pure spectra,
     each scaled by concentration. Muncey HJ, Jones R, De Iorio M, Ebbels
@@ -54,7 +54,7 @@ from validation import mixture_bench as mb
 from validation.crowded_bench import CACHE_DIR, _CACHED_SOURCES, pool_draw
 from validation.fresh_run import (
     defaults, prepare, quantify_prepared, score, tables)
-from validation.gissmo_sim import (
+from processing.spin_system import (
     SYSTEMS_JSON, load_systems, render, stick_spectrum)
 
 FIELDS = {500: 500.13, 600: 600.13}
@@ -119,6 +119,23 @@ def crowded_tube(n, seed):
 # --signal-shift-mppm; part of every cache key.
 SIGNAL_SHIFT = 0.0
 
+# Each chemical environment of a compound moves from SAMPLE TO SAMPLE, by its
+# own sensitivity to what differs between the samples (pH, ionic strength,
+# Ca2+): offset = SAMPLE_SHIFT * k * z, k ~ N(0, 1) per environment (fixed in
+# the tube) and z per sample, centred +0.7 in group A and -0.7 in B with a
+# spread of 0.7 inside each group. The Mice ISS skin extract is the case
+# measured: glycine 3.567 in one group and 3.561 in the other, acetate 1.926
+# and 1.917, aromatic imidazoles up to 20 mppm apart, while lactate moves
+# 2 mppm. The rigid per-sample drift below (sigma 1.5 mppm, every compound
+# alike) never tested this. 0: off. --sample-shift-mppm; part of every
+# cache key.
+SAMPLE_SHIFT = 0.0
+
+# What detection is handed: the tube as built (None), or aligned first by
+# 'valley' (processing.peak_alignment.valley_segment_align) or 'icoshift'.
+# --align-first; part of the detection cache key.
+ALIGN_FIRST = None
+
 
 def _spread_signals(sys_, sigma, rng):
     """A copy of a GISSMO system whose distinct shifts each moved by a normal
@@ -149,26 +166,45 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
     rng = np.random.default_rng(seed)
     shift_rng = np.random.default_rng(seed + 7_000_003)
     signal_rng = np.random.default_rng(seed + 9_000_011)
+    sample_rng = np.random.default_rng(seed + 13_000_027)
+    z = np.array([(0.7 if info['label'] == 'A' else -0.7)
+                  + float(sample_rng.normal(0.0, 0.7)) for info in mb.SAMPLES])
     comps, truth = [], {}
     for name, conc, factor in composition:
         mid, _sigs = mb._db_signals(con, name)
         sys_ = (_spread_signals(systems[name], SIGNAL_SHIFT, signal_rng)
                 if SIGNAL_SHIFT else systems[name])
-        sp, si = stick_spectrum(sys_, field)
         own = float(shift_rng.normal(0.0, ref_shift)) if ref_shift else 0.0
-        comps.append((sp + own, si * mb.AREA_UNIT, mid))
+        if SAMPLE_SHIFT:
+            # one spin system per sample, each environment moved by its own
+            # sensitivity times the sample's state
+            env = np.round(np.asarray(sys_['ppm'], dtype=float), 5)
+            k = {v: float(sample_rng.normal(0.0, 1.0)) for v in np.unique(env)}
+            per = []
+            for zs in z:
+                moved = dict(sys_)
+                moved['ppm'] = (np.asarray(sys_['ppm'], dtype=float)
+                                + np.array([SAMPLE_SHIFT * k[v] * zs for v in env]))
+                sp, si = stick_spectrum(moved, field)
+                per.append((sp + own, si * mb.AREA_UNIT))
+            comps.append((per, None, mid))
+        else:
+            sp, si = stick_spectrum(sys_, field)
+            comps.append((sp + own, si * mb.AREA_UNIT, mid))
         truth[mid] = {'name': name, 'A': conc, 'B': conc * factor}
     _m, lac = mb._db_signals(con, 'L-lactic acid')
     sigma = (float(mb.compound_trace(PPM, lac, 4.0, shift=0.0).max())
              / (mb.NOISE_LACTATE_SNR * snr_gain))
     cols = []
-    for info in mb.SAMPLES:
+    for j, info in enumerate(mb.SAMPLES):
         grp = info['label']
         shift = (mb.DRIFT_PPM if drift is None else drift) + rng.normal(0.0, 0.0015)
         y = rng.normal(0.0, sigma, PPM.size)
         y += mb._lorentz_area(PPM, mb.STANDARD_PPM + rng.normal(0, 0.0003),
                               mb.STANDARD_MM * mb.STANDARD_NH * mb.AREA_UNIT, lw)
         for sp, si, mid in comps:
+            if si is None:
+                sp, si = sp[j]
             c = truth[mid][grp] * float(np.exp(rng.normal(0.0, 0.12)))
             y += c * render(PPM, sp + shift, si, lw, field)
         for _name, conc, fsigs in mb.FOREIGN:
@@ -186,7 +222,8 @@ def _composition(size, seed):
 def _shift_tag(ref_shift, drift=None) -> str:
     return ((f'_rs{1000 * ref_shift:.0f}' if ref_shift else '')
             + (f'_dr{1000 * drift:.0f}' if drift is not None else '')
-            + (f'_ss{1000 * SIGNAL_SHIFT:.0f}' if SIGNAL_SHIFT else ''))
+            + (f'_ss{1000 * SIGNAL_SHIFT:.0f}' if SIGNAL_SHIFT else '')
+            + (f'_sm{1000 * SAMPLE_SHIFT:.0f}' if SAMPLE_SHIFT else ''))
 
 
 def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
@@ -208,6 +245,11 @@ def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
     return X, truth
 
 
+def _spin_on() -> bool:
+    from processing import spin_patterns
+    return bool(spin_patterns.SPIN_PATTERNS)
+
+
 def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
              drift=None):
     """Detection and annotation of the tube, kept until their code changes."""
@@ -215,7 +257,9 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
                     drift=drift)
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     h = hashlib.sha1(f'{size}|{field}|{seed}|{snr_b0}|{_data_tag()}'
-                     f'{_shift_tag(ref_shift, drift)}'.encode())
+                     f'{_shift_tag(ref_shift, drift)}'
+                     f'{"|align=" + ALIGN_FIRST if ALIGN_FIRST else ""}'
+                     f'{"|spin" if _spin_on() else ""}'.encode())
     d = defaults()
     for k in sorted(d):
         h.update(f'{k}={d[k]!r};'.encode())
@@ -230,7 +274,8 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
     mb.MHZ = field
     with contextlib.redirect_stdout(io.StringIO()):
         prep = prepare(PPM, X, mb.SAMPLES, db_path=mb.DB_DEFAULT,
-                       field_mhz=field, log=lambda *a: None)
+                       field_mhz=field, aligned_first=ALIGN_FIRST or False,
+                       log=lambda *a: None)
     with open(path, 'wb') as f:
         pickle.dump(prep, f, protocol=pickle.HIGHEST_PROTOCOL)
     return prep, truth
@@ -301,11 +346,16 @@ def main():
                     help='each compound offset from its listing, normal, in mppm')
     ap.add_argument('--signal-shift-mppm', type=float, default=0.0,
                     help='each chemical environment offset on its own, normal, in mppm')
+    ap.add_argument('--sample-shift-mppm', type=float, default=0.0,
+                    help='each environment moved per sample by its own sensitivity')
+    ap.add_argument('--align-first', choices=('valley', 'icoshift'), default=None)
     ap.add_argument('--drift-mppm', type=float, default=None,
                     help='the study-wide shift every compound shares (default 8)')
     a = ap.parse_args()
-    global SIGNAL_SHIFT
+    global SIGNAL_SHIFT, SAMPLE_SHIFT, ALIGN_FIRST
     SIGNAL_SHIFT = a.signal_shift_mppm / 1000.0
+    SAMPLE_SHIFT = a.sample_shift_mppm / 1000.0
+    ALIGN_FIRST = a.align_first
     res, core = [], []
     for size in a.sizes:
         for fk in a.fields:

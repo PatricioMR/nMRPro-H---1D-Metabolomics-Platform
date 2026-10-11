@@ -33,8 +33,9 @@ import numpy as np
 OUT_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'bench_runs')
 
 
-def _path(out, label, tube, shift, seed, field):
-    return os.path.join(out, f'{label}_{tube}_{field}_{shift:g}_{seed}.pkl')
+def _path(out, label, tube, shift, seed, field, sample_shift=0.0):
+    tag = f'_sm{sample_shift:g}' if sample_shift else ''
+    return os.path.join(out, f'{label}_{tube}_{field}_{shift:g}{tag}_{seed}.pkl')
 
 
 def _legacy(gb):
@@ -49,15 +50,31 @@ def _legacy(gb):
     gb._shift_tag = lambda *args, **kw: tag(*args, **kw) + '_adr069off'
 
 
+def _apply_sets(sets):
+    """``module.NAME=literal`` assignments, for a variant measured
+    before it becomes a default."""
+    import ast
+    import importlib
+    for item in sets or ():
+        target, value = item.split('=', 1)
+        mod, name = target.rsplit('.', 1)
+        setattr(importlib.import_module(mod), name, ast.literal_eval(value))
+
+
 def _one(job):
     """One run in a worker process."""
-    out, label, tube, shift, seed, field, legacy = job
+    out, label, tube, shift, seed, field, legacy, sample_shift, align, mstar, sets = job
     from validation import gissmo_bench as gb
     from validation import mixture_bench as mb
     from validation.fresh_run import quantify_prepared
     if legacy:
         _legacy(gb)
     gb.SIGNAL_SHIFT = shift / 1000.0
+    gb.SAMPLE_SHIFT = sample_shift / 1000.0
+    gb.ALIGN_FIRST = align
+    from processing import quant_engine as qe
+    qe.M_STAR_COMPETE_MIN_GOOD = mstar
+    _apply_sets(sets)
     t0 = time.time()
     prep, truth = gb.prepared(gb.FIELDS[field], seed, tube)
     mb.MHZ = gb.FIELDS[field]
@@ -67,7 +84,7 @@ def _one(job):
                                  standard_nh=mb.STANDARD_NH,
                                  standard_conc=mb.STANDARD_MM,
                                  standard_name='DSS', diagnostics=diag)
-    path = _path(out, label, tube, shift, seed, field)
+    path = _path(out, label, tube, shift, seed, field, sample_shift)
     with open(path + '.tmp', 'wb') as f:
         pickle.dump({'rows': rows, 'truth': truth,
                      'coverage': diag.get('coverage')}, f)
@@ -77,9 +94,11 @@ def _one(job):
 
 def run(a):
     os.makedirs(a.out, exist_ok=True)
-    jobs = [(a.out, a.label, t, sh, s, a.field, a.legacy)
+    jobs = [(a.out, a.label, t, sh, s, a.field, a.legacy, a.sample_shift,
+             a.align_first, a.mstar_min_good, tuple(a.set or ()))
             for sh in a.shifts for t in a.tubes for s in a.seeds
-            if not os.path.exists(_path(a.out, a.label, t, sh, s, a.field))]
+            if not os.path.exists(_path(a.out, a.label, t, sh, s, a.field,
+                                        a.sample_shift))]
     if not jobs:
         print('nothing to run')
         return
@@ -91,7 +110,7 @@ def run(a):
     with ProcessPoolExecutor(max_workers=a.jobs) as ex:
         futs = [ex.submit(_one, j) for j in jobs]
         for f in as_completed(futs):
-            (_o, _l, t, sh, s, _f, _g), secs = f.result()
+            (_o, _l, t, sh, s, _f, _g, _m, _a, _ms, _st), secs = f.result()
             print(f'done tube {t} scatter {sh:g} seed {s} in {secs:.0f} s '
                   f'({time.time() - t0:.0f} s elapsed)', flush=True)
 
@@ -124,7 +143,7 @@ def report(a):
                 dots = {3: [0, 0], 2: [0, 0], 1: [0, 0]}
                 errs = []
                 for s in a.seeds:
-                    p = _path(a.out, label, t, sh, s, a.field)
+                    p = _path(a.out, label, t, sh, s, a.field, a.sample_shift)
                     if not os.path.exists(p):
                         continue
                     n += 1
@@ -168,6 +187,16 @@ def main():
     ap.add_argument('--field', type=int, default=600)
     ap.add_argument('--jobs', type=int, default=4)
     ap.add_argument('--out', default=OUT_DEFAULT)
+    ap.add_argument('--sample-shift', type=float, default=0.0,
+                    help='mppm each environment moves from sample to sample '
+                         '(gissmo_bench.SAMPLE_SHIFT)')
+    ap.add_argument('--align-first', choices=('valley', 'icoshift'),
+                    default=None, help='align the tube before detection')
+    ap.add_argument('--set', action='append', default=[],
+                    help='module.NAME=value (Python literal) set in every worker, '
+                         'e.g. processing.quant_shared.LISTING_FROM_STUDY=True')
+    ap.add_argument('--mstar-min-good', type=int, default=None,
+                    help='quant_engine.M_STAR_COMPETE_MIN_GOOD for the run')
     ap.add_argument('--legacy', action='store_true',
                     help='the engine before ADR-069, for comparison')
     a = ap.parse_args()

@@ -291,6 +291,10 @@ def search_database(*, db_path, db_type, peaks_to_search, annotatable_peaks,
                     f" ORDER BY {_meas['ppm']}",
                     (g_lo, g_hi))
                 db_entries = [dict(r) for r in cur.fetchall()]
+                # complex multiplets shaped by their spin system at this
+                # field (processing.spin_patterns, off by default)
+                from processing import spin_patterns as _spin
+                _spin.apply(db_entries, mhz)
                 db_label = 'BMRB' if id_col == 'bmrb_id' else 'HMDB'
                 for e in db_entries:
                     e['match_type'] = 'shift'

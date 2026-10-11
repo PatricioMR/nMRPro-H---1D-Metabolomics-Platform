@@ -131,6 +131,13 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
             continue
         _eligible = eligible_ids is None or mid in eligible_ids
         _contradicted = bool(met.get('_fingerprint_contradictions'))
+        from processing import quant_engine as _qe
+        _mstar_min = _qe.M_STAR_COMPETE_MIN_GOOD
+        _mstar_good = sum(
+            1 for _m in met.get('matched_peaks', []) or ()
+            if _m.get('peak_rank') is not None
+            and str(_m.get('type') or _m.get('multiplicity') or '').lower()
+            .strip() == 'm*' and _m.get('annotation_quality') == 'good')
         for mp in met.get('matched_peaks', []) or ():
             rank = mp.get('peak_rank')
             _manual_bad = ((qm.get((mid, rank)) or qm.get((met.get('id'), rank)))
@@ -142,8 +149,19 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
             # offered to the spectrum's remainders like any refused signal
             # (quant_shared.resolve_residuals), and identified only where a
             # free apex, its own amount and its whole shape agree.
-            _to_pool = ((not _eligible) or mp.get('annotation_quality') == 'bad'
-                        or _is_pattern)
+            # The analyst's Good mark on this signal overrides all three: it
+            # is the one judgement the search does not have.
+            _manual_good = ((qm.get((mid, rank)) or qm.get((met.get('id'), rank)))
+                            == 'good')
+            # a confirmed m* of an analyte with enough of them competes
+            # (quant_engine.M_STAR_COMPETE_MIN_GOOD, held to one dot)
+            _mstar = bool(_mstar_min and _is_pattern and rank is not None
+                          and _eligible
+                          and mp.get('annotation_quality') == 'good'
+                          and _mstar_good >= int(_mstar_min))
+            _to_pool = not (_manual_good or _mstar) and (
+                (not _eligible) or mp.get('annotation_quality') == 'bad'
+                or _is_pattern)
             if _to_pool and (pool is None or _manual_bad or _contradicted):
                 continue
             _target = pool if _to_pool else out
@@ -172,7 +190,10 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'apex_rel': [l.get('rel_intensity', 1.0) for l
                                  in (mp.get('predicted_lines') or ())],
                 }
-            if _shape is not None and _target is out:
+            # ...except the one the analyst marked Good on its peak: that peak
+            # is this signal, so it is claimed, and the shape still measures it
+            if (_shape is not None and _target is out
+                    and not (_manual_good or _mstar)):
                 rank, lines = None, []
             _target.append(Candidate(
                 met_id=mid,
@@ -210,6 +231,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'eligible': _eligible,
                     'manual_quality': (qm.get((mid, rank))
                                        or qm.get((met.get('id'), rank))),
+                    'mstar_compete': _mstar,
                     'score': mp.get('composite_score',
                                     mp.get('multiplet_score', 0.0)),
                     # Divided by the listed protons, the stoichiometry --

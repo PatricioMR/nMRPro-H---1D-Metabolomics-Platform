@@ -551,6 +551,9 @@ def icoshift_align(ppm, all_intensities, ref_idx=None,
     """
     Segment-wise (icoshift) spectral alignment.
 
+    Savorani F, Tomasi G, Engelsen SB. icoshift: A versatile tool for the
+    rapid alignment of 1D NMR spectra. J Magn Reson 2010;202:190-202.
+
     Divides the spectrum into `n_segments` equal-width segments and aligns
     each segment independently using circular cross-correlation.  The
     per-segment integer shifts are interpolated across the full spectrum and
@@ -617,3 +620,211 @@ def icoshift_align(ppm, all_intensities, ref_idx=None,
             src_idx, idx_axis, all_intensities[:, s_idx].astype(float))
 
     return aligned, shifts_pts, seg_centers_ppm
+
+
+# ── Valley-bounded segment alignment ─────────────────────────────────────────
+#
+# icoshift with intervals chosen by the spectrum rather than by a ruler, and
+# the long ones split recursively, as in RSPA:
+#   Savorani F, Tomasi G, Engelsen SB. icoshift: A versatile tool for the rapid
+#   alignment of 1D NMR spectra. J Magn Reson 2010;202:190-202 (user intervals).
+#   Veselkov KA, Lindon JC, Ebbels TMD, et al. Recursive segment-wise peak
+#   alignment of biological 1H NMR spectra for improved metabolic biomarker
+#   recovery. Anal Chem 2009;81:56-66.
+#
+# Why: in a tissue extract every ionisable group moves with each sample's pH
+# and ionic strength, each by its own amount. On the Mice ISS skin study
+# glycine stood at 3.567 ppm in one group and 3.561 in the other, acetate at
+# 1.926 and 1.917: in the mean trace each singlet reads as a doublet, the
+# second half is a peak nobody owns, and a stranger is named on it. Equal
+# segments cut peaks at their edges, and the mean -- the usual reference --
+# is itself doubled.
+
+def representative_sample(matrix, columns=None):
+    """The column that correlates best, by median, with the others: a real
+    spectrum to align onto, not a mean of two populations of positions."""
+    arr = np.asarray(matrix, dtype=float)
+    cols = list(range(arr.shape[1])) if columns is None else list(columns)
+    if len(cols) <= 2:
+        return cols[0]
+    c = np.corrcoef(arr[:, cols].T)
+    np.fill_diagonal(c, np.nan)
+    return cols[int(np.nanargmax(np.nanmedian(c, axis=1)))]
+
+
+def _smooth(y, half=4):
+    k = np.ones(2 * half + 1) / (2 * half + 1)
+    return np.convolve(y, k, mode='same')
+
+
+def _split_at_valleys(ref_s, a, b, max_pts, depth):
+    """Split [a, b) at its deepest valley while it is wider than ``max_pts``
+    and the valley is real (under ``depth`` of the lower of the two maxima
+    beside it): one blob is never cut, its lines move together."""
+    if b - a <= max_pts:
+        return [(a, b)]
+    lo, hi = a + (b - a) // 5, b - (b - a) // 5
+    seg = ref_s[lo:hi]
+    if seg.size < 3:
+        return [(a, b)]
+    interior = np.flatnonzero((seg[1:-1] <= seg[:-2])
+                              & (seg[1:-1] <= seg[2:])) + 1
+    if interior.size == 0:
+        return [(a, b)]
+    m = lo + int(interior[np.argmin(seg[interior])])
+    left, right = float(ref_s[a:m].max()), float(ref_s[m:b].max())
+    if ref_s[m] > depth * min(left, right):
+        return [(a, b)]
+    return (_split_at_valleys(ref_s, a, m, max_pts, depth)
+            + _split_at_valleys(ref_s, m, b, max_pts, depth))
+
+
+def valley_segments(ref, noise_sigma, *, step_ppm, max_seg_ppm=0.06,
+                    floor_k=3.0, depth=0.05):
+    """Segments that tile the axis, every boundary where the reference is
+    at its baseline or in a deep valley.
+
+    Runs over ``floor_k`` sigma are the clusters, and the gap between two
+    is cut at its middle, so each cluster carries the baseline around it. A
+    cluster wider than ``max_seg_ppm`` is split at its deepest valley,
+    recursively, only where that valley falls under ``depth`` of the
+    smaller neighbour. Read on the envelope of the samples, two copies of
+    one peak displaced by up to 15 mppm leave a valley no lower than 8% of
+    them (linewidth 3 mppm), two lines of a 7 Hz doublet at 600 MHz 13%:
+    ``depth`` 0.05 cuts neither, and two singlets 0.05 ppm apart (<1%)
+    apart. Returns ``[(start, end)]`` index pairs.
+    """
+    ref_s = _smooth(np.asarray(ref, dtype=float))
+    n = ref_s.size
+    on = ref_s > floor_k * float(noise_sigma)
+    if not on.any():
+        return [(0, n)]
+    d = np.diff(on.astype(np.int8))
+    starts = list(np.flatnonzero(d == 1) + 1)
+    ends = list(np.flatnonzero(d == -1) + 1)
+    if on[0]:
+        starts.insert(0, 0)
+    if on[-1]:
+        ends.append(n)
+    max_pts = max(4, int(round(max_seg_ppm / step_ppm)))
+    pieces = []
+    for a, b in zip(starts, ends):
+        pieces += _split_at_valleys(ref_s, a, b, max_pts, depth)
+    cuts = ([0] + [(pieces[i][1] + pieces[i + 1][0]) // 2
+                   for i in range(len(pieces) - 1)] + [n])
+    return [(cuts[i], cuts[i + 1]) for i in range(len(cuts) - 1)
+            if cuts[i + 1] > cuts[i]]
+
+
+def _best_lag(ref_seg, samp, a, b, max_lag, edge_max):
+    """Whole-point lag L maximising the correlation of ``samp[a+L:b+L]``
+    with the reference segment; 0 when nothing beats staying put.
+
+    A lag whose source window starts or ends above ``edge_max`` would cut a
+    peak in two and carry half of it into the segment, so it is not taken."""
+    n = samp.size
+    lags = np.arange(-max_lag, max_lag + 1)
+    lags = lags[(a + lags >= 0) & (b + lags <= n)]
+    r = ref_seg - ref_seg.mean()
+    rn = float(np.sqrt((r * r).sum()))
+    if rn == 0 or lags.size == 0 or not (lags == 0).any():
+        return 0
+    win = np.lib.stride_tricks.sliding_window_view(
+        samp[a + lags[0]:b + lags[-1]], b - a)
+    w = win - win.mean(axis=1, keepdims=True)
+    wn = np.sqrt((w * w).sum(axis=1))
+    with np.errstate(invalid='ignore', divide='ignore'):
+        corr = (w @ r) / (wn * rn)
+    corr = np.where(np.isfinite(corr), corr, -np.inf)
+    e = min(3, max(1, (b - a) // 4))
+    clean = ((win[:, :e].mean(axis=1) <= edge_max)
+             & (win[:, -e:].mean(axis=1) <= edge_max))
+    corr = np.where(clean | (lags == 0), corr, -np.inf)
+    best = int(np.argmax(corr))
+    if corr[int(np.flatnonzero(lags == 0)[0])] >= corr[best] - 1e-9:
+        return 0
+    return int(lags[best])
+
+
+def valley_segment_align(ppm, matrix, *, noise_sigma, ref_idx=None,
+                         reference_columns=None, max_shift_ppm=0.015,
+                         max_seg_ppm=0.06, floor_k=3.0, shift_on=None):
+    """Align each sample onto a reference, one valley-bounded segment at a
+    time, by whole points.
+
+    A segment moves as a block, so the area of every peak inside it is what
+    it was: nothing is resampled or stretched, as the equal-segment warp
+    does. Boundaries sit on baseline or in a deep valley, so joining moved
+    pieces leaves no step a detector could take for a peak. A segment where
+    the sample shows nothing over ``floor_k`` sigma stays where it is: an
+    analyte absent from a sample is never dragged onto noise.
+
+    The boundaries are read on the envelope of the samples (the highest of
+    them at each point), not on the reference alone: a boundary in the
+    reference's baseline can stand inside another sample's displaced peak,
+    and moving the segment would then copy half of that peak into it.
+
+    ``shift_on`` is the matrix the lags are measured on (a baseline-corrected
+    copy, say); they are applied to ``matrix``. ``reference_columns`` limits
+    the choice of reference, and the envelope, to those columns (the
+    non-blank samples, say).
+
+    Returns ``(aligned, record)``: the reference column and, per segment, its
+    ppm bounds and every sample's lag, so the move can be reported, audited
+    and undone.
+    """
+    ppm = np.asarray(ppm, dtype=float)
+    arr = np.asarray(matrix, dtype=float)
+    if arr.ndim == 1:
+        arr = arr.reshape(-1, 1)
+    meas = arr if shift_on is None else np.asarray(shift_on, dtype=float)
+    if meas.ndim == 1:
+        meas = meas.reshape(-1, 1)
+    n_s = arr.shape[1]
+    cols = (list(range(n_s)) if reference_columns is None
+            else list(reference_columns))
+    step = abs(float(ppm[1] - ppm[0]))
+    if ref_idx is None:
+        ref_idx = representative_sample(meas, cols)
+    ref = meas[:, ref_idx]
+    envelope = np.max(np.column_stack([_smooth(meas[:, c]) for c in cols]),
+                      axis=1)
+    segs = valley_segments(envelope, noise_sigma, step_ppm=step,
+                           max_seg_ppm=max_seg_ppm, floor_k=floor_k)
+    max_lag = max(1, int(round(max_shift_ppm / step)))
+    floor = floor_k * float(noise_sigma)
+    lags = np.zeros((len(segs), n_s), dtype=int)
+    out = arr.copy()
+    # the axis continued by its end values, so the segments at the two ends
+    # can move both ways
+    pad = ((max_lag, max_lag), (0, 0))
+    meas_p, arr_p = np.pad(meas, pad, mode='edge'), np.pad(arr, pad, mode='edge')
+    for s in range(n_s):
+        if s == ref_idx:
+            continue
+        smooth_s = _smooth(meas[:, s])
+        for i, (a, b) in enumerate(segs):
+            top = float(smooth_s[a:b].max())
+            if top <= floor:
+                continue
+            lag = _best_lag(ref[a:b], meas_p[:, s], a + max_lag, b + max_lag,
+                            max_lag, edge_max=max(floor, 0.15 * top))
+            if lag:
+                lags[i, s] = lag
+                out[a:b, s] = arr_p[a + max_lag + lag:b + max_lag + lag, s]
+        # where two neighbours moved differently the join can step by the
+        # noise; bridged over a few points so detection does not read an edge
+        for i in range(1, len(segs)):
+            if lags[i, s] != lags[i - 1, s]:
+                c = segs[i][0]
+                lo, hi = max(0, c - 3), min(arr.shape[0] - 1, c + 2)
+                out[lo:hi + 1, s] = np.linspace(out[lo, s], out[hi, s],
+                                                hi - lo + 1)
+    record = {
+        'method': 'valley_segments', 'ref_idx': int(ref_idx),
+        'max_shift_ppm': float(max_shift_ppm),
+        'max_seg_ppm': float(max_seg_ppm), 'ppm_per_point': step,
+        'segments_ppm': [(float(ppm[a]), float(ppm[b - 1])) for a, b in segs],
+        'shifts_pts': lags,
+    }
+    return out, record

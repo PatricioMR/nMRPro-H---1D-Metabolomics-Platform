@@ -102,8 +102,17 @@ WIDTH_PER_SAMPLE = False
 # ppm: three dots 33 -> 37 real there, but an unknown peak twice as tall
 # 0.8 linewidth beside a known singlet then takes 25% of it (+3% at 1.0).
 # The bench holds no compound outside the library; a real sample does.
-PART_SHIFT_REACH_LW = 1.0
-PART_SHIFT_STEPS = 9
+#
+# 2.0 since 2026-10-11 (ADR-076): in a real extract every signal stands off
+# listing + drift by its own amount -- the Mice ISS skin study a median 5.4
+# mppm, a linewidth 4.3 -- and at 1.0 the fit called a real shape misplaced.
+# GISSMO tube of 100, three seeds, each environment moved 5 mppm: found 213
+# -> 215, strangers 114 -> 107, two dots or more 153/49 -> 166/37, three
+# dots 14/3 -> 32/5; without the scatter 241/73 -> 242/80, two dots or more
+# 192/13 -> 194/14. 3.0 found more in the scatter (227) but strangers 94 in
+# the plain tube. Steps keep the 0.25-linewidth grid.
+PART_SHIFT_REACH_LW = 2.0
+PART_SHIFT_STEPS = 17
 PART_SHIFT_PASSES = 2
 # How far a neighbour's amount may move from the group's while one signal
 # is being placed: the cascade's own tolerance for an analyte it did not

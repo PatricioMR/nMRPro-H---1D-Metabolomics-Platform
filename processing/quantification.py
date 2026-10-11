@@ -232,7 +232,11 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
         if c.peak_rank is not None and c.peak_rank in amb:
             rejected.setdefault(c.met_id, AMBIGUOUS_RANK)
             continue
-        if not is_competitor(c.evidence):
+        # a manual Good mark is the analyst verifying what the lines could
+        # not: it competes, and ranks first (candidate_key)
+        _manual = str((c.evidence or {}).get('manual_quality') or '').lower() == 'good'
+        if (not is_competitor(c.evidence) and not _manual
+                and not (c.evidence or {}).get('mstar_compete')):
             rejected.setdefault(c.met_id, UNVERIFIED_MULTIPLET)
             continue
         eligible.append(c)

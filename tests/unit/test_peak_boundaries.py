@@ -142,3 +142,26 @@ def test_a_dip_of_a_few_percent_on_a_tall_top_is_not_a_valley():
     p = separate_overlapping_peaks(y, [apex], ppm, noise_std=0.005)[0]
     assert p['start_idx'] < 10000 - 40 and p['end_idx'] > 10000 + 40
     assert p['height'] > 0.5 * float(y.max())
+
+
+def test_a_doublet_line_beside_a_taller_one_keeps_its_own_foot():
+    """The smoothed top was the tallest point within half a linewidth -- a
+    linewidth read off the tallest lines of the study, broad on a
+    per-sample maximum. On a doublet whose other line is taller and within
+    that window, the walk started from the other line, stopped in the valley
+    between them and put the left foot on the apex itself: valine's 1.052
+    line (SNR 50) on the Mice ISS study was measured 0 high and graded Poor."""
+    # the study's proportions: lines ~21 points wide, the doublet's two 49
+    # apart, the tallest lines of the study ~110 points wide
+    ppm = np.linspace(0.0, 1.0, 20000)
+    pt = 1.0 / 19999
+    broad = sum(_g(ppm, c, 200.0, 47 * pt) for c in (0.15, 0.25, 0.85))
+    small, tall = 0.5000, 0.5000 + 49 * pt
+    y = broad + _g(ppm, small, 6.0, 9 * pt) + _g(ppm, tall, 10.0, 9 * pt)
+    apices = [int(np.argmin(np.abs(ppm - c)))
+              for c in (0.15, 0.25, small, tall, 0.85)]
+    seps = separate_overlapping_peaks(y, apices, ppm, noise_std=0.01)
+    p = min(seps, key=lambda q: abs(q['ppm'] - small))
+    assert p['start_idx'] < p['index']
+    assert p['height'] > 0.3 * float(y[p['index']])
+    assert p['signal_quality'] != 'Poor'

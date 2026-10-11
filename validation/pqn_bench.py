@@ -18,7 +18,7 @@ from scipy import stats
 from validation import gissmo_bench as gb
 from validation import mixture_bench as mb
 from validation.fresh_run import prepare, quantify_prepared, score
-from validation.gissmo_sim import load_systems, render, stick_spectrum
+from processing.spin_system import load_systems, render, stick_spectrum
 
 size = sys.argv[1]
 scen = sys.argv[2].split(',')
