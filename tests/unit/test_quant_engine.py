@@ -452,3 +452,38 @@ class TestFittedPosition:
                                      / (PART_SHIFT_STEPS - 1))
         # one step off is inside, two is not
         assert step < FITTED_POSITION_STEPS * step < 2 * step
+
+
+class TestOffDriftSinglet:
+    """A singlet beyond the position bar has no evidence left (ADR-077)."""
+
+    @staticmethod
+    def _cand(mult, quality=None):
+        from types import SimpleNamespace
+        return SimpleNamespace(evidence={'multiplicity': mult,
+                                         'manual_quality': quality})
+
+    def test_a_singlet_is_withdrawn(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'OFF_DRIFT_SINGLET_WITHDRAWN', True)
+        assert qe.off_drift_singlet_withdrawn(self._cand('s'))
+
+    def test_a_multiplet_keeps_its_shape_and_stays(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'OFF_DRIFT_SINGLET_WITHDRAWN', True)
+        assert not qe.off_drift_singlet_withdrawn(self._cand('d'))
+        assert not qe.off_drift_singlet_withdrawn(self._cand('m*'))
+
+    def test_the_analysts_good_mark_stands(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'OFF_DRIFT_SINGLET_WITHDRAWN', True)
+        assert not qe.off_drift_singlet_withdrawn(self._cand('s', 'good'))
+
+    def test_off_it_holds_the_singlet_at_one_dot(self, monkeypatch):
+        from processing import quant_engine as qe
+        monkeypatch.setattr(qe, 'OFF_DRIFT_SINGLET_WITHDRAWN', False)
+        assert not qe.off_drift_singlet_withdrawn(self._cand('s'))
+
+    def test_the_withdrawn_row_says_why(self):
+        from processing.quantification import REJECTION_TEXT, SINGLET_OFF_DRIFT
+        assert 'only evidence of identity' in REJECTION_TEXT[SINGLET_OFF_DRIFT]

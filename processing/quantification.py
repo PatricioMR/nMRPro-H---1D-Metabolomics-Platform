@@ -45,6 +45,7 @@ SINGLET_UNSUPPORTED = 'singlet_unsupported'
 WINDOW_TAKEN = 'window_taken'
 OFF_THE_STUDY = 'off_the_study'
 FIT_MISPLACED = 'fit_misplaced'
+SINGLET_OFF_DRIFT = 'singlet_off_drift'
 ANALYST_REJECTED = 'analyst_rejected'
 
 REJECTION_TEXT = {
@@ -97,6 +98,13 @@ REJECTION_TEXT = {
         'analyte none of whose listed signals stands where the study '
         'stands is being read off the table rather than off the spectrum. '
         'Widen the Delta-ppm band if this study really drifts that far.',
+    SINGLET_OFF_DRIFT:
+        'Not quantified: a singlet, whose only evidence of identity is where '
+        "it stands, measured on a peak further from this study's drift "
+        'than the signals the study confirmed by their coupling ever stand. '
+        'Nothing else says it is this analyte: most likely the peak is '
+        "another compound's. A candidate, not an identification. Mark it "
+        'Good to quantify it anyway.',
     WINDOW_TAKEN:
         'Not quantified: the signals other quantified analytes list inside '
         'this window, at the amounts they were measured at, account for the '

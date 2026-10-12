@@ -862,7 +862,14 @@ CASCADE_SCORE_INTERCEPT = -0.78118
 # at two dots, 18: 22/0 -> 30/0, 50: 67/8 -> 73/13; with a common drift of 13
 # and 4 of scatter, 18: 19/5 -> 27/6, 50: 44/15 -> 58/18. Three dots untouched
 # (cascade rows are never three) and the number found does not change.
-CASCADE_SCORE_MIN = 0.15
+# 0.2 instead of 0.15 (ADR-077, 2026-10-11): the engine since then (spin-system
+# m*, joint fit reach of two linewidths) leaves the strangers lower. Over the
+# analytes the cascade took in, three seeds, real / strangers at 0.15 -> 0.2:
+# tube of 18 16/13 -> 16/7, 50 67/33 -> 67/24, 100 135/46 -> 131/41; scattered
+# 5 mppm 18 29/19 -> 29/9, 50 71/60 -> 68/49, 100 134/79 -> 130/67. A model
+# refitted on these rows (leaving one regime out at a time) ranked them no
+# better (AUC within 0.03), so the weights stay.
+CASCADE_SCORE_MIN = 0.2
 CASCADE_SCORE_TWO = 0.6
 CASCADE_BY_SCORE = True
 

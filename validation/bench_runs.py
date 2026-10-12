@@ -73,7 +73,9 @@ def _one(job):
     gb.SAMPLE_SHIFT = sample_shift / 1000.0
     gb.ALIGN_FIRST = align
     from processing import quant_engine as qe
-    qe.M_STAR_COMPETE_MIN_GOOD = mstar
+    if mstar is not None:
+        # 0 turns complex multiplets competing off; absent, the engine's own
+        qe.M_STAR_COMPETE_MIN_GOOD = mstar or None
     _apply_sets(sets)
     t0 = time.time()
     prep, truth = gb.prepared(gb.FIELDS[field], seed, tube)
@@ -196,7 +198,8 @@ def main():
                     help='module.NAME=value (Python literal) set in every worker, '
                          'e.g. processing.quant_shared.LISTING_FROM_STUDY=True')
     ap.add_argument('--mstar-min-good', type=int, default=None,
-                    help='quant_engine.M_STAR_COMPETE_MIN_GOOD for the run')
+                    help='quant_engine.M_STAR_COMPETE_MIN_GOOD for the run (0: off); '
+                         'absent: the engine default')
     ap.add_argument('--legacy', action='store_true',
                     help='the engine before ADR-069, for comparison')
     a = ap.parse_args()

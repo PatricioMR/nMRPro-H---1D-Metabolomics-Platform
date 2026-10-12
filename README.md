@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.54%20Alpha-orange">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.7%20Alpha-orange">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
@@ -66,7 +66,9 @@ with the result.
 > **Status: Alpha.** The shipped pipeline (stages 1–5 below) is the one that was
 > validated end to end. Overlap deconvolution (JG-Deconv, full-spectrum MCR) is
 > implemented and tested but switched off (`DECONVOLUTION_ENABLED` in
-> [`app_paths.py`](app_paths.py)) until it has its own validation.
+> [`app_paths.py`](app_paths.py)) until it has its own validation. The balance of
+> shared windows used by quantification is a default of its own
+> (`QUANTIFICATION['split_shared']`, on).
 
 ---
 
@@ -107,6 +109,7 @@ them; the full list is in [References](#references).
 |---|---|---|
 | Import | Bruker processed data (`1r`, `procs`, `acqus`) at any folder depth; CSV/TXT | [`data/bruker_loader.py`](data/bruker_loader.py), [`data/loader.py`](data/loader.py) |
 | Alignment | Global integer shift that brings the reference singlet (DSS / TSP / TMSP) of the blank samples to 0 ppm, applied to every sample. Deterministic, reversible, no peak distortion and no inter-segment discontinuities | [`processing/peak_alignment.py`](processing/peak_alignment.py) |
+| Per-signal alignment | Optional: the spectrum is cut at the valleys of the envelope of all samples and each segment is aligned on its own (icoshift intervals; Savorani 2010), so signals that move differently from sample to sample — pH, ionic strength — are aligned without splitting a peak. The record of every shift is kept | [`processing/peak_alignment.py`](processing/peak_alignment.py) |
 | Region alignment | Shift of a chosen region, kept as an edit that can be reverted and is recorded; vacated edges are not zero-filled | [`gui/widgets/region_alignment_window.py`](gui/widgets/region_alignment_window.py) |
 | Digital Shim | Reference deconvolution (FIDDLE): the time-domain signal of the whole spectrum is divided by that of a clean reference line and multiplied by an ideal line shape, with Wiener regularisation. Integrated areas are conserved. Morris 1988; Gibbs & Morris 1991; Morris, Barjat & Horne 1997 | [`processing/digital_shim.py`](processing/digital_shim.py) |
 | Baseline | arPLS (Baek 2015), SNIP (Ryan 1988) or rolling ball. Off by default; the integration step reads a local baseline from where the cluster of signals ends, not from the window's feet | [`processing/baseline_correction.py`](processing/baseline_correction.py), [`processing/baseline_model.py`](processing/baseline_model.py) |
@@ -174,7 +177,14 @@ is not judged line by line but by the reference's own profile, broadened to the
 study's line width. The largest copy of the shape that fits *under* the measured
 trace is taken, because other analytes add intensity and never remove it; the
 fit is judged on its apexes, by SNR and by the fraction of the region it
-explains. Code: [`processing/pattern_shape.py`](processing/pattern_shape.py).
+explains. For compounds with a GISSMO spin system, the pattern of every
+complex multiplet (`m`, `m*`) is **solved at the study's own field** instead of
+taken from a reference spectrum recorded at another one: second-order patterns
+change shape with the field, and a quarter of the stored ones correlated below
+0.76 with their own spin system at 600 MHz (Dashti 2017). A complex multiplet
+confirmed on at least two good lines competes for its peak, at one dot.
+Code: [`processing/pattern_shape.py`](processing/pattern_shape.py),
+[`processing/spin_patterns.py`](processing/spin_patterns.py).
 
 **Cascade for what the election missed.** A metabolite spread thin over several
 signals can lose every one of them to a neighbour. The cascade builds one column
@@ -183,6 +193,10 @@ proton counts, at the listed positions plus the study's drift) and selects
 metabolites by forward selection with a non-negative refit (orthogonal matching
 pursuit + NNLS). One amplitude per metabolite couples all its signals, so the
 reference's relative intensities act as a constraint rather than a line count.
+A metabolite the cascade takes in is reported only when a logistic model over
+what the cascade measured (apex SNR, agreement between its own signals, share of
+its listing left free, slide) scores it at 0.2 or more; below, it is listed as a
+candidate without a number.
 Code: [`processing/quant_cascade.py`](processing/quant_cascade.py).
 This follows the simultaneous-template fitting of BATMAN (Hao 2012), Bayesil
 (Ravanbakhsh 2015), ASICS (Tardivel 2017) and COLMAR1d.
@@ -200,6 +214,12 @@ confidence = min(identity, shape, quantity)
   otherwise (1);
 - *quantity* — area ≥ 3 × LOQ (3), otherwise (2, never lower: a small amount
   says the number is imprecise, not that the assignment is wrong).
+
+**Position.** A metabolite whose quantified signal stands further from the
+study's common drift than 4.5 × the lower quartile of the confirmed signals'
+own distance is held at ●: most likely the peak is another compound's. A
+**singlet** in that state is withdrawn instead: position is the only evidence a
+singlet has, and it failed.
 
 The levels follow the reporting tiers of the Metabolomics Standards Initiative
 (Sumner 2007). The precision each level was *measured* to have is printed in the
@@ -222,7 +242,9 @@ area. Metabolites whose shapes overlap are **fitted together, sample by sample**
 detected peak no quantified analyte accounts for — the "unknown" term the
 published methods all carry). A fit that holds a shape against the limit of its
 allowed shift, or fits a different signal from the elected one, is refused
-(`FIT_MISPLACED`) instead of reported.
+(`FIT_MISPLACED`) instead of reported. Each signal of an analyte may settle up
+to two line widths from where the reference lists it: in an extract every
+environment moves on its own with pH and ionic strength.
 Code: [`processing/quant_joint_fit.py`](processing/quant_joint_fit.py),
 [`processing/quant_shared.py`](processing/quant_shared.py).
 
@@ -295,20 +317,21 @@ composition**, solved from experimentally fitted spin systems.
   3 random draws each, at 500 and 600 MHz.
 - **What is measured:** whether each reported metabolite is in the tube
   (precision per confidence level), how many of the tube's metabolites are
-  identified at ●● or better (recall), and the error of the reported
-  concentration against the true one.
+  identified at all (found) and at ●● or better (recall), how many reported
+  metabolites are not in the tube (false per run, all levels), and the error of
+  the reported concentration against the true one.
 
-Software v0.54, database `BMRB_Metabolomics_Mammalian_v05`, 3 seeds per row
+Software v0.7, database `BMRB_Metabolomics_Mammalian_v05`, 3 seeds per row
 ([`data/quality_reference.json`](data/quality_reference.json)):
 
-| Field | Tube | Peaks detected | Recall ≥ ●● | ●●● precision (real / false) | ●● precision | ● precision | Median error | P90 error |
-|---|---|---|---|---|---|---|---|---|
-| 500 MHz | 18 | 88 | 67% | 100% (15 / 0) | 84% | 30% | 15% | 63% |
-| 500 MHz | 50 | 191 | 60% | 100% (34 / 0) | 84% | 33% | 19% | 57% |
-| 500 MHz | 100 | 287 | 62% | 97% (32 / 1) | 89% | 32% | 20% | 78% |
-| 600 MHz | 18 | 97 | 80% | 100% (13 / 0) | 100% | 18% | 11% | 45% |
-| 600 MHz | 50 | 207 | 71% | 100% (34 / 0) | 85% | 28% | 15% | 49% |
-| 600 MHz | 100 | 304 | 63% | 97% (35 / 1) | 89% | 40% | 19% | 67% |
+| Field | Tube | Peaks detected | Found | Recall ≥ ●● | ●●● precision (real / false) | ●● precision | ● precision | False per run | Median error | P90 error |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 500 MHz | 18 | 87 | 94% | 83% | 100% (16 / 0) | 97% | 30% | 5.0 | 10% | 31% |
+| 500 MHz | 50 | 189 | 82% | 63% | 100% (39 / 0) | 92% | 40% | 16.0 | 13% | 52% |
+| 500 MHz | 100 | 282 | 76% | 59% | 93% (38 / 3) | 85% | 51% | 25.0 | 21% | 83% |
+| 600 MHz | 18 | 97 | 94% | 81% | 100% (18 / 0) | 100% | 35% | 4.3 | 7% | 25% |
+| 600 MHz | 50 | 205 | 89% | 63% | 100% (39 / 0) | 95% | 48% | 15.0 | 11% | 46% |
+| 600 MHz | 100 | 301 | 78% | 60% | 96% (44 / 2) | 90% | 49% | 23.7 | 18% | 92% |
 
 The PDF prints the row whose peak count is closest to the project's own, and
 says so when the project is denser than the densest tube.
@@ -376,6 +399,8 @@ PyInstaller (`nmrpro_h.spec`) followed by Inno Setup (`installer/nmrpro_h.iss`)
    frequency, run, review candidates and confidence marks.
 4. **Quantification** — choose the internal standard (and PQN if the study
    warrants it), run; read concentrations with their limits and confidence.
+   From here on the Signal List names each signal after the metabolite that was
+   quantified on it.
 5. **Statistics** — choose groups and test, view PCA/PLS-DA/OPLS-DA, export CSV
    and the PDF report.
 
@@ -429,6 +454,7 @@ round-trips have integration tests.
 - Ryan CG, Clayton E, Griffin WL, Sie SH, Cousens DR. SNIP, a statistics-sensitive background treatment for the quantitative analysis of PIXE spectra. *Nucl Instrum Methods B* 1988;34:396–402.
 - Cobas JC, Bernstein MA, Martín-Pastor M, Tahoces PG. A new general-purpose fully automatic baseline-correction procedure for 1D and 2D NMR data. *J Magn Reson* 2006;183:145–151.
 - Posener DW. Precision in measuring resonance spectra. *J Magn Reson* 1974;14:121.
+- Savorani F, Tomasi G, Engelsen SB. icoshift: a versatile tool for the rapid alignment of 1D NMR spectra. *J Magn Reson* 2010;202:190–202.
 
 **Identification and quantification**
 - Sumner LW et al. Proposed minimum reporting standards for chemical analysis (MSI). *Metabolomics* 2007;3:211–221.
@@ -476,7 +502,7 @@ The name NMRPro-H was chosen so as not to collide with NMRPipe
 
 A manuscript describing NMRPro-H is in preparation. Until it is published,
 please cite the software and the release you used (for example
-*NMRPro-H v0.54 Alpha*, tag `v0.54`).
+*NMRPro-H v0.7 Alpha*, tag `v0.7`).
 
 ## Acknowledgements
 

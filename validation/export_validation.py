@@ -7,8 +7,8 @@ the software reported for it, and the tables.
 Reads the GISSMO bench's caches (``validation/out/cache``): the tubes of the
 quality table (500 and 600 MHz, 18/50/100 analytes, seeds 0-2, every compound
 moving as a block) and, when present, the stress runs with every chemical
-environment scattered 5 mppm on its own (600 MHz, ``validation.bench_runs``
-label ``atual``). Writes:
+environment scattered 5 mppm on its own (600 MHz, the ``validation.bench_runs``
+label given by ``--stress-label``, run with the application's defaults). Writes:
 
     espectros/<regime>/<campo>/tubo<n>_semente<s>.csv   ppm + 12 samples
     verdade/<regime>/<campo>/tubo<n>_semente<s>.csv     true mM per group and per sample
@@ -75,7 +75,7 @@ def _quant_hash_of_quality_rows():
     return max(full, key=lambda h: max(hashes[h])) if full else None
 
 
-def load_run(regime, field, n, seed, qhash):
+def load_run(regime, field, n, seed, qhash, stress_label='atual'):
     """``(X, truth, rows)`` of one run, or None when it is not cached."""
     tag = '' if REGIMES[regime] == 0 else f'_ss{REGIMES[regime]:.0f}'
     tube = os.path.join(CACHE, f'gissmo_{n}_{field}{tag}_s{seed}_{gb._data_tag()}.pkl')
@@ -86,7 +86,7 @@ def load_run(regime, field, n, seed, qhash):
             return None
         rows = pickle.load(open(rows_p, 'rb'))
     else:
-        rows_p = os.path.join(RUNS, f'atual_{n}_{field}_{REGIMES[regime]:g}_{seed}.pkl')
+        rows_p = os.path.join(RUNS, f'{stress_label}_{n}_{field}_{REGIMES[regime]:g}_{seed}.pkl')
         if not (os.path.exists(tube) and os.path.exists(rows_p)):
             return None
         rows = pickle.load(open(rows_p, 'rb'))['rows']
@@ -145,6 +145,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument('out')
+    ap.add_argument('--stress-label', default='atual',
+                    help='bench_runs label of the scattered runs (same engine '
+                         'and defaults as the quality table)')
     ap.add_argument('--check', action='store_true',
                     help='verify the per-sample truth replay on one tube first')
     a = ap.parse_args()
@@ -161,7 +164,7 @@ def main():
             for n in TUBES:
                 runs = []
                 for seed in SEEDS:
-                    got = load_run(regime, field, n, seed, qhash)
+                    got = load_run(regime, field, n, seed, qhash, a.stress_label)
                     if got is None:
                         continue
                     X, truth, rows = got

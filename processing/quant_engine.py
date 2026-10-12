@@ -68,7 +68,8 @@ from processing.quantification import (
     AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, FIT_MISPLACED,
     LOST_COMPETITION, NO_MEASURABLE_WINDOW,
     OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
-    SHAPES_OFF, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect, is_competitor)
+    SHAPES_OFF, SINGLET_OFF_DRIFT, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect,
+    is_competitor)
 from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, PATTERN_MULT, PPM_BAND_PPM, dj_band, in_study as _in_study,
     is_singlet_like, normalize_mult, ppm_band, study_drift)
@@ -651,6 +652,20 @@ POSITION_SCATTER_K = 4.5
 # at three unchanged (three: none).
 FITTED_POSITION_STEPS = 1.5
 FITTED_OTHERS_STEPS = 1.0
+
+# A SINGLET held at one dot by the position bar has no evidence of identity
+# left: position is all a singlet has (ADR-042), and the bar says its peak
+# stands where the study's own analytes never do. Withdrawn as a candidate
+# (SINGLET_OFF_DRIFT) instead of reported at one dot; a multiplet keeps its
+# shape and stays, at one dot. The peak goes back to the cascade, which may
+# take the same analyte in on the rest of its listing or another one there.
+# GISSMO bench, 600 MHz, three seeds, with CASCADE_SCORE_MIN 0.2 (ADR-077),
+# found / strangers: tube of 18 51/25 -> 51/15, 50 132/72 -> 133/41, 100
+# 242/80 -> 240/57 (two dots 144/13 -> 149/10); scattered 5 mppm: 18 50/41
+# -> 50/34, 50 117/90 -> 111/75, 100 215/107 -> 214/98 (two dots 134/32 ->
+# 137/37). Holding its amount in the cascade's model instead kept the two
+# dots as they were and cut 36 more strangers, for 12 more real ones lost.
+OFF_DRIFT_SINGLET_WITHDRAWN = True
 # Whether a SINGLET the amount was measured on may be released the same way.
 # A singlet has no lines to be pulled apart by a neighbour: the fit puts it on
 # whatever peak stands nearest, and its other signals are only ever placed
@@ -2495,6 +2510,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         per_proton_areas.pop(mid, None)
 
     rows = []
+    _withdrawn: dict = {}
     for mid, info in measured.items():
         nh = info['nh']
         areas = {s: v * nh for s, v in per_proton_areas[mid].items()}
@@ -2571,6 +2587,11 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
             info['position_cap'] = (abs(float(_off)), _bar)
             level = min(level, 1)
             dots = _DOTS[level]
+            if off_drift_singlet_withdrawn(info['signal']):
+                _withdrawn[mid] = (
+                    f' Here the peak stands {1000 * abs(float(_off)):.1f} mppm'
+                    f' from the drift; the confirmed signals sit within '
+                    f'{1000 * _bar:.1f}.')
         info['identity_level'] = ident
         info['identity_why'] = ident_why
         info['confidence_axes'] = {
@@ -2588,6 +2609,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                          correction))
         if info.get('fit_refused'):
             _as_candidate(rows[-1], info['fit_refused'], by_group)
+        elif mid in _withdrawn:
+            _withdraw_off_drift(rows[-1], _withdrawn[mid])
 
     # What the integration subtracted, so a report can draw the very region
     # the number came from: with a local baseline the area is between the
@@ -3226,6 +3249,19 @@ def _as_candidate(row, why, by_group) -> None:
     row['_status_reasons'] = [text] + list(row.get('_status_reasons') or ())
 
 
+def _withdraw_off_drift(row, why) -> None:
+    """Turn the row of a singlet beyond the position bar into a candidate
+    (SINGLET_OFF_DRIFT): not quantified, no confidence, the reason first."""
+    row['_not_quantified'] = True
+    row['_rejection'] = SINGLET_OFF_DRIFT
+    row['_confidence'] = 0
+    row['status'] = STATUS_NONE
+    row['conc_mm'] = float('nan')
+    row['cv_by_group'] = {}
+    row['_status_reasons'] = ([REJECTION_TEXT[SINGLET_OFF_DRIFT] + why]
+                              + list(row.get('_status_reasons') or ()))
+
+
 def _manual_override_reason(info) -> list:
     """Said of a row quantified because the analyst marked it Good, over a
     refusal of the engine."""
@@ -3343,6 +3379,17 @@ M_STAR_COMPETE_MIN_GOOD = 2
 
 def _mstar_competes(cand) -> bool:
     return bool((cand.evidence or {}).get('mstar_compete'))
+
+
+def off_drift_singlet_withdrawn(cand) -> bool:
+    """Whether an analyte whose measured signal is beyond the position bar
+    is withdrawn rather than held at one dot: a singlet, which has nothing
+    but its position (OFF_DRIFT_SINGLET_WITHDRAWN), unless the analyst marked
+    it Good."""
+    ev = cand.evidence or {}
+    return bool(OFF_DRIFT_SINGLET_WITHDRAWN
+                and is_singlet_like(ev.get('multiplicity') or ev.get('type') or 's')
+                and not _manual_good(cand))
 
 
 def _manual_good(cand) -> bool:
