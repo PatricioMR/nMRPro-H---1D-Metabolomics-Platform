@@ -18,6 +18,7 @@ import os
 
 from .base_stage import BaseStage
 from ._annotation_helpers import _pick_database
+from processing.spectral_regions import WATER_REGION
 
 
 class CosyAnnotationStage(BaseStage):
@@ -88,8 +89,8 @@ class CosyAnnotationStage(BaseStage):
         self.exclude_water_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(wf, text='Exclude water',
                         variable=self.exclude_water_var).pack(side=tk.LEFT)
-        self.water_lo_var = tk.DoubleVar(value=4.70)
-        self.water_hi_var = tk.DoubleVar(value=4.90)
+        self.water_lo_var = tk.DoubleVar(value=WATER_REGION[0])
+        self.water_hi_var = tk.DoubleVar(value=WATER_REGION[1])
         ttk.Entry(wf, textvariable=self.water_lo_var, width=5).pack(
             side=tk.LEFT, padx=(6, 1))
         ttk.Label(wf, text='–').pack(side=tk.LEFT)

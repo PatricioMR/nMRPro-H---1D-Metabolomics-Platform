@@ -21,6 +21,7 @@ import threading
 import time
 
 from .base_stage import BaseStage
+from processing.spectral_regions import WATER_REGION
 
 
 def _split_at_gaps(lo, hi, multiplet_spans, max_width):
@@ -347,8 +348,8 @@ class FullSpectrumMCRStage(BaseStage):
         self.exclude_water_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(wf, text='Exclude water region',
                         variable=self.exclude_water_var).pack(side=tk.LEFT)
-        self.water_lo_var = tk.DoubleVar(value=4.70)
-        self.water_hi_var = tk.DoubleVar(value=4.90)
+        self.water_lo_var = tk.DoubleVar(value=WATER_REGION[0])
+        self.water_hi_var = tk.DoubleVar(value=WATER_REGION[1])
         ttk.Entry(wf, textvariable=self.water_lo_var, width=5).pack(
             side=tk.LEFT, padx=(6, 1))
         ttk.Label(wf, text='–').pack(side=tk.LEFT)

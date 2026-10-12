@@ -27,6 +27,7 @@ if certifi is not None:
 
 from processing.signal_quality import SIGNAL_GOOD, normalize_tiers
 from controllers.analysis_defaults import ANNOTATION
+from processing.spectral_regions import WATER_REGION
 from .base_stage import BaseStage
 from ._annotation_search import _AnnotationSearchMixin
 
@@ -111,8 +112,8 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self._exclude_water_cb = ttk.Checkbutton(
             wf, text='Exclude water region', variable=self.exclude_water_var)
         self._exclude_water_cb.pack(side=tk.LEFT)
-        self.water_lo_var = tk.DoubleVar(value=4.70)
-        self.water_hi_var = tk.DoubleVar(value=4.90)
+        self.water_lo_var = tk.DoubleVar(value=WATER_REGION[0])
+        self.water_hi_var = tk.DoubleVar(value=WATER_REGION[1])
         self._water_lo_entry = ttk.Entry(wf, textvariable=self.water_lo_var, width=5)
         self._water_lo_entry.pack(side=tk.LEFT, padx=(6, 1))
         ttk.Label(wf, text='–').pack(side=tk.LEFT)

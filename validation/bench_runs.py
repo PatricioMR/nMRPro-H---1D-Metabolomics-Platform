@@ -89,7 +89,8 @@ def _one(job):
     path = _path(out, label, tube, shift, seed, field, sample_shift)
     with open(path + '.tmp', 'wb') as f:
         pickle.dump({'rows': rows, 'truth': truth,
-                     'coverage': diag.get('coverage')}, f)
+                     'coverage': diag.get('coverage'),
+                     'n_peaks': len(prep['peaks'])}, f)
     os.replace(path + '.tmp', path)
     return job, time.time() - t0
 

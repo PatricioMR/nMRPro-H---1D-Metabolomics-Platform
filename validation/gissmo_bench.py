@@ -215,8 +215,36 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
     return np.column_stack(cols), truth
 
 
+def random_tube(n, seed):
+    """``[(name, conc, factor)]``: ``n`` compounds drawn at random from every
+    one GISSMO simulates among the reference's (the 18 of the reference
+    study and the crowded bench's pool alike), each at a log-uniform amount
+    in ``CONC_RANGE_MM`` and the same in both groups. A draw of its own for
+    every (n, seed): tubes of different sizes share no composition, so the
+    replicates of one size measure what changing the analytes does."""
+    from validation.crowded_bench import CONC_RANGE_MM
+    systems = load_systems()
+    names = [nm for nm, _c, _f in mb.PANEL if nm in systems]
+    names += [nm for nm, _c in pool_draw(mb.DB_DEFAULT, seed=0)
+              if nm in systems and nm not in names]
+    names.sort()
+    if n > len(names):
+        raise ValueError(f'GISSMO simulates only {len(names)} compounds')
+    rng = np.random.default_rng(50_000 + 1_000 * int(seed) + int(n))
+    pick = rng.choice(len(names), size=n, replace=False)
+    lo, hi = np.log(CONC_RANGE_MM[0]), np.log(CONC_RANGE_MM[1])
+    concs = np.exp(rng.uniform(lo, hi, size=n))
+    return [(names[i], float(round(c, 3)), 1.0) for i, c in zip(pick, concs)]
+
+
 def _composition(size, seed):
-    return c600_tube(seed) if size == 'c600' else crowded_tube(int(size), seed)
+    """'c600', a crowded tube ('18', '50', ...: the reference study's 18
+    first) or a random one ('r18', 'r150', ...: ``random_tube``)."""
+    if size == 'c600':
+        return c600_tube(seed)
+    if str(size).startswith('r'):
+        return random_tube(int(str(size)[1:]), seed)
+    return crowded_tube(int(size), seed)
 
 
 def _shift_tag(ref_shift, drift=None) -> str:

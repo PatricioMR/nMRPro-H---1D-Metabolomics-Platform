@@ -302,7 +302,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # Always on: against an internal or external standard the division
         # by nH is not optional (quant_concentration.concentrations), so
         # there is no box. Kept as a variable for the code that reads it.
-        self.proton_corr_var = tk.BooleanVar(value=True)
+        self.proton_corr_var = tk.BooleanVar(value=QUANTIFICATION['proton_correction'])
 
         # What the areas are measured on. Two choices that used to be two
         # boxes: a linear baseline under each window, and the project's

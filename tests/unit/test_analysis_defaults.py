@@ -41,6 +41,19 @@ WIRED = [
      'baseline_model'),
     ('quantification_stage.py', 'joint_fit_var', 'QUANTIFICATION',
      'joint_fit'),
+    ('peak_detection_stage.py', 'baseline_method_var', 'DETECTION',
+     'baseline_method'),
+    ('peak_detection_stage.py', 'baseline_lam_var', 'DETECTION', 'baseline_lam'),
+    ('peak_detection_stage.py', 'baseline_niter_var', 'DETECTION',
+     'baseline_niter'),
+    ('peak_detection_stage.py', 'shoulder_k_var', 'DETECTION', 'shoulder_k'),
+    ('quantification_stage.py', 'integ_var', 'QUANTIFICATION', 'integration'),
+    ('quantification_stage.py', 'proton_corr_var', 'QUANTIFICATION',
+     'proton_correction'),
+    ('quantification_stage.py', 'deconv_var', 'QUANTIFICATION', 'split_shared'),
+    ('quantification_stage.py', 'icoshift_var', 'QUANTIFICATION', 'align'),
+    ('quantification_stage.py', 'blk_sub_var', 'QUANTIFICATION',
+     'subtract_blanks'),
 ]
 
 
@@ -56,6 +69,34 @@ def test_the_widget_starts_from_the_shared_default(fname, var, table, key):
 def test_the_noise_region_is_the_shared_one():
     src = (STAGES / 'peak_detection_stage.py').read_text(encoding='utf-8')
     assert "self.default_noise_region = tuple(DETECTION['noise_region'])" in src
+
+
+def test_the_water_window_is_the_one_detection_excludes():
+    """Annotation, COSY and full-spectrum MCR start from the same window
+    detection excludes (processing.spectral_regions.WATER_REGION)."""
+    from processing.spectral_regions import DEFAULT_EXCLUDED_REGIONS, WATER_REGION
+    assert WATER_REGION in DEFAULT_EXCLUDED_REGIONS
+    for fname in ('annotation_stage.py', 'cosy_annotation_stage.py',
+                  'fullspectrum_mcr_stage.py'):
+        src = (STAGES / fname).read_text(encoding='utf-8')
+        assert 'self.water_lo_var = tk.DoubleVar(value=WATER_REGION[0])' in src, fname
+        assert 'self.water_hi_var = tk.DoubleVar(value=WATER_REGION[1])' in src, fname
+
+
+def test_the_engine_runs_as_the_published_table_was_measured():
+    """data/quality_reference.json (the report's validation page and the
+    README's table) was produced with nothing but these defaults. A lab that
+    opens a new analysis gets the same engine; changing one of these is a
+    change of the validated method and needs the table regenerated."""
+    from processing import quant_cascade, quant_engine, quant_joint_fit, spin_patterns
+    assert spin_patterns.SPIN_PATTERNS is True                     # ADR-074
+    assert quant_engine.M_STAR_COMPETE_MIN_GOOD == 2               # ADR-074
+    assert quant_joint_fit.PART_SHIFT_REACH_LW == 2.0              # ADR-076
+    assert quant_engine.PART_SHIFT_REACH_LW == 2.0
+    assert quant_engine.OFF_DRIFT_SINGLET_WITHDRAWN is True        # ADR-077
+    assert quant_cascade.CASCADE_SCORE_MIN == 0.2                  # ADR-077
+    assert quant_engine.CASCADE_SCORE_MIN == 0.2
+    assert QUANTIFICATION['split_shared'] is True                  # ADR-075
 
 
 def test_every_key_the_bench_reads_exists():
