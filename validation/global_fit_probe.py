@@ -208,9 +208,9 @@ def run_tube(a):
 
 
 def run_mice(a):
-    import pickle
+    from data import project_file
     from processing.baseline_model import BaselineCache, BaselineModel
-    st = pickle.load(open(a.project, 'rb'))
+    st = project_file.read(a.project)
     ppm = np.asarray(st['ppm'], float)
     X = np.load(a.npy) if a.npy else np.asarray(st['all_intensities'], float)
     C = np.asarray(BaselineCache().corrected(

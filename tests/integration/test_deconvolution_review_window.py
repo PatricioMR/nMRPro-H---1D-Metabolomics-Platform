@@ -17,8 +17,8 @@ def real_app():
     try:
         from gui.app import App
         app = App()
-    except tk.TclError:
-        pytest.skip('no display')
+    except tk.TclError as e:
+        pytest.skip(f'no display: {e}')
     except Exception as e:
         pytest.skip(f'the application cannot be built here: {e}')
     app.root.withdraw()
@@ -237,15 +237,14 @@ def test_with_no_results_it_says_what_it_will_show_and_offers_to_run(real_app, m
 
 
 def test_the_decisions_are_kept_in_the_project(real_app, window, tmp_path, monkeypatch):
-    import pickle
+    from data import project_file
     from gui import project_manager as pmm
     monkeypatch.setattr(pmm.messagebox, 'showwarning', lambda *a, **k: None)
     window.q._deconv_overrides = {'cand': {'decision': 'accept'}}
     mgr = real_app._project_mgr
     path = str(tmp_path / 'p.nmrproj')
     assert mgr.save_project(path)
-    with open(path, 'rb') as f:
-        state = pickle.load(f)
+    state = project_file.read(path)
     assert state['qnt']['deconv_overrides'] == {'cand': {'decision': 'accept'}}
     window.q._deconv_overrides = {}
     mgr._restore_state(state)

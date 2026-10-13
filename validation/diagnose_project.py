@@ -18,13 +18,13 @@ import argparse
 import contextlib
 import io
 import os
-import pickle
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
+from data import project_file
 from gui.stages._annotation_helpers import ambiguous_peak_ranks
 from gui.stages._quant_adapter import quantify_project
 from processing.spectral_regions import parse_regions
@@ -58,7 +58,7 @@ def run(path, *, noise=None, field_mhz=None, tolerance=None,
     table it drew the peaks from is measuring the engine on the easy case.
     The truth stays with whoever built the study.
     """
-    st = pickle.load(open(path, 'rb'))
+    st = project_file.read(path)
     ppm = np.asarray(st['ppm'], dtype=float)
     # The project's baseline model, applied as the application applies it.
     # quantify_project wants the corrected matrix: handing it the raw one

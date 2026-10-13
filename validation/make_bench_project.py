@@ -20,13 +20,13 @@ what concentration, so the answer is at hand without reading this code.
 from __future__ import annotations
 
 import os
-import pickle
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
+from data import project_file
 from validation import mixture_bench as mb
 
 DEFAULT_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out',
@@ -115,8 +115,7 @@ def main():
     out = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_OUT
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
     state, truth, sigma, foreign = build()
-    with open(out, 'wb') as f:
-        pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+    project_file.save(out, state, keep_backup=False)
     sheet = os.path.splitext(out)[0] + '_truth.txt'
     with open(sheet, 'w', encoding='utf-8') as f:
         f.write(answer_sheet(truth, sigma, foreign))

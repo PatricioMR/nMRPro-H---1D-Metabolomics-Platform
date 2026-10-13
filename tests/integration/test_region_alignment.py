@@ -19,8 +19,8 @@ def real_app():
     try:
         from gui.app import App
         app = App()
-    except tk.TclError:
-        pytest.skip('no display')
+    except tk.TclError as e:
+        pytest.skip(f'no display: {e}')
     except Exception as e:
         pytest.skip(f'the application cannot be built here: {e}')
     app.root.withdraw()
@@ -145,7 +145,7 @@ def test_the_analyst_is_told_what_the_edit_leaves_stale(real_app, window):
 
 
 def test_the_record_travels_with_the_project(real_app, window, tmp_path, monkeypatch):
-    import pickle
+    from data import project_file
     from gui import project_manager as pmm
     monkeypatch.setattr(pmm.messagebox, 'showwarning', lambda *a, **k: None)
     win, X, vis = window
@@ -153,8 +153,7 @@ def test_the_record_travels_with_the_project(real_app, window, tmp_path, monkeyp
     mgr = real_app._project_mgr
     path = str(tmp_path / 'p.nmrproj')
     assert mgr.save_project(path)
-    with open(path, 'rb') as f:
-        state = pickle.load(f)
+    state = project_file.read(path)
     assert state['region_alignments'] == real_app.region_alignments
     real_app.region_alignments = []
     mgr._restore_state(state)

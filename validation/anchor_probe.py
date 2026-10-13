@@ -47,6 +47,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
+from data import project_file
 from validation.global_fit_probe import library, quiet_sigma, render
 
 LETTERS = {'d', 't', 'q', 'dd', 'dt', 'td', 'ddd', 'quint', 'sext', 'sept',
@@ -197,7 +198,7 @@ def main():
     else:
         from processing.baseline_model import BaselineCache, BaselineModel
         d = pickle.load(open(a.prep_path, 'rb'))['prep']
-        st = pickle.load(open(a.project, 'rb'))
+        st = project_file.read(a.project)
         ppm = d['ppm']; X = d['raw']
         C = np.asarray(BaselineCache().corrected(
             ppm, X, BaselineModel.from_dict(st['baseline_model']),

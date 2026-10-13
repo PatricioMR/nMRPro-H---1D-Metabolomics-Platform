@@ -16,7 +16,6 @@ import argparse
 import contextlib
 import io
 import os
-import pickle
 import sys
 import time
 
@@ -24,6 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
+from data import project_file
 from gui.stages._annotation_helpers import ambiguous_peak_ranks
 from gui.stages._quant_adapter import quantify_project
 from processing.baseline_model import BaselineCache, BaselineModel
@@ -47,7 +47,7 @@ def _f(v, default):
 def run_project(path, diagnostics):
     """The project's own detection and annotation, quantified with the
     defaults a new user gets."""
-    st = pickle.load(open(path, 'rb'))
+    st = project_file.read(path)
     ppm = np.asarray(st['ppm'], dtype=float)
     raw = np.asarray(st['all_intensities'], dtype=float)
     _bl = st.get('baseline_model')

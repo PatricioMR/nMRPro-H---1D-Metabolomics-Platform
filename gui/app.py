@@ -1742,7 +1742,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         process actually exits (autosave 'after' jobs and TkAgg figure managers
         otherwise keep the interpreter alive after the window closes)."""
         mgr = getattr(self, '_project_mgr', None)
-        if mgr is not None and getattr(mgr, '_dirty', False):
+        if mgr is not None and mgr.has_unsaved_changes():
             resp = messagebox.askyesnocancel(
                 'Unsaved Changes',
                 'Save changes to the current project before closing?')
@@ -1751,10 +1751,10 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             if resp:                  # Yes → save; abort close if save failed
                 if not mgr.save_or_saveas():
                     return
-        # Stop autosave + cancel its pending Tk 'after' callback
+        # Stop autosave, finish a write in progress, remove the autosave
         try:
             if mgr is not None:
-                mgr._stop_autosave()
+                mgr.shutdown()
         except Exception:
             pass
         # Close matplotlib figures (TkAgg managers can outlive the root)
@@ -1770,6 +1770,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
     def run(self):
         self._init_project_manager()
+        self._project_mgr.start()
         self.root.protocol('WM_DELETE_WINDOW', self._on_closing)
         self.root.mainloop()
         # Guarantee the process terminates even if a stray non-daemon thread or

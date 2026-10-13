@@ -1,7 +1,7 @@
 # tests/unit/test_project_serialization.py
 """Test project save/load roundtrip without a real GUI."""
 import os
-import pickle
+from data import project_file
 import tempfile
 import numpy as np
 import pytest
@@ -64,32 +64,26 @@ def _make_state(with_quality_marks=True):
     return state
 
 
-class TestPickleRoundtrip:
+class TestProjectFileRoundtrip:
     def test_save_and_load(self, tmp_path):
         state = _make_state()
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         assert loaded['version'] == 3
 
     def test_ppm_array_preserved(self, tmp_path):
         state = _make_state()
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         np.testing.assert_array_equal(loaded['ppm'], state['ppm'])
 
     def test_quality_marks_preserved(self, tmp_path):
         state = _make_state(with_quality_marks=True)
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         qm = loaded['ann']['quality_marks']
         assert qm[('HMDB0000042', 1)] == 'good'
         assert qm[('HMDB0000161', 2)] == 'bad'
@@ -97,20 +91,16 @@ class TestPickleRoundtrip:
     def test_child_quality_marks_preserved(self, tmp_path):
         state = _make_state(with_quality_marks=True)
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         cqm = loaded['ann']['child_quality_marks']
         assert cqm[('HMDB0000042', 3.03)] == 'good'
 
     def test_results_count_preserved(self, tmp_path):
         state = _make_state()
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         results = loaded['ann']['last_results_args']['results']
         assert len(results) == 2
 
@@ -118,10 +108,8 @@ class TestPickleRoundtrip:
         """Simulate what _restore_state does after loading."""
         state = _make_state(with_quality_marks=True)
         path  = str(tmp_path / 'test.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
 
         # Simulate restore: re-apply quality_marks to result dicts
         qm      = loaded['ann']['quality_marks']
@@ -175,10 +163,8 @@ class TestPerSampleReadingsSurviveReload:
         state = _make_state()
         state['ann']['last_results_args']['results'].append(self._result())
         path = str(tmp_path / 'per_sample.nmrproj')
-        with open(path, 'wb') as f:
-            pickle.dump(state, f, protocol=5)
-        with open(path, 'rb') as f:
-            loaded = pickle.load(f)
+        project_file.save(path, state)
+        loaded = project_file.read(path)
         return next(r for r in loaded['ann']['last_results_args']['results']
                     if r.get('per_sample_consensus'))
 
@@ -231,10 +217,8 @@ class TestCeilingsSurviveTheProject:
         state['qnt']['quant_results'] = [row]
         path = str(tmp_path / 'a.nmrproj')
         for _ in range(2):
-            with open(path, 'wb') as f:
-                pickle.dump(state, f, protocol=5)
-            with open(path, 'rb') as f:
-                state = pickle.load(f)
+            project_file.save(path, state)
+            state = project_file.read(path)
         got = reported_cells(state['qnt']['quant_results'][0], 4)
         assert [k for _v, k in got] == [k for _v, k in want]
         np.testing.assert_allclose([v for v, _k in got], [v for v, _k in want])

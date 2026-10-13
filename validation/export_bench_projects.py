@@ -19,13 +19,13 @@ Writes, per tube size, ``MixtureBench_<n>.nmrproj`` and a
 from __future__ import annotations
 
 import os
-import pickle
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 
+from data import project_file
 from processing.baseline_model import BaselineModel
 from processing.spectral_regions import format_regions
 from validation import mixture_bench as mb
@@ -174,8 +174,7 @@ def main():
         folder = os.path.join(out_dir, f'{n} sample')
         os.makedirs(folder, exist_ok=True)
         proj = os.path.join(folder, f'MixtureBench_{n}.nmrproj')
-        with open(proj, 'wb') as f:
-            pickle.dump(state, f, protocol=pickle.HIGHEST_PROTOCOL)
+        project_file.save(proj, state, keep_backup=False)
         sheet = os.path.join(folder, f'MixtureBench_{n}_truth.txt')
         with open(sheet, 'w', encoding='utf-8') as f:
             f.write(answer_sheet(truth, sigma, foreign))

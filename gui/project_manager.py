@@ -2,8 +2,9 @@
 """
 NMRAnalysis Project Manager.
 
-Saves and restores the full application state to a .nmrproj file (pickle).
-Auto-saves every 5 minutes when a project is open.
+Saves and restores the full application state to a .nmrproj file (format and
+compression: data.project_file). Auto-saves every 5 minutes to a companion
+file, in the background, and offers it back when it is newer.
 
 Saved state:
   - EVERY variable of every stage and of the app (gui.project_vars), found by
@@ -17,21 +18,24 @@ Saved state:
   - Annotation stage (db_path, results)
   - UI state (active stage, axes settings, plot settings)
 """
+import hashlib
 import os
 import pickle
 import threading
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 from processing.spectral_regions import (
     format_regions, parse_regions)
 
-from app_paths import APP_VERSION
+from app_paths import APP_VERSION, user_data_dir
+from data import project_file
 from gui.project_vars import (
     apply_vars, collect_vars, diff_vars, engine_fingerprint)
 
-PROJECT_EXT   = '.nmrproj'
-AUTOSAVE_SECS = 300  # 5 minutes
+PROJECT_EXT     = '.nmrproj'
+AUTOSAVE_SUFFIX = '.autosave'
+AUTOSAVE_SECS   = 300  # 5 minutes
 
 
 def _safe_var(obj, attr):
@@ -56,8 +60,14 @@ class ProjectManager:
     def __init__(self, app):
         self.app          = app
         self._project_path = None   # current open project file
-        self._dirty        = False  # unsaved changes
+        self._dirty        = False  # a change content comparison cannot see
         self._autosave_job = None
+        self._saved_digest     = None   # content of the project file
+        self._saved_content    = None   # the same, without the stage on screen
+        self._autosaved_digest = None   # content of the last autosave
+        self._recovery_path    = None   # autosave of a session never saved
+        self._writer        = None      # the autosave thread
+        self._writer_result = None
 
     # ── Path helpers ──────────────────────────────────────────────────────────
 
@@ -89,10 +99,13 @@ class ProjectManager:
             # What wrote it, so a project opened on another version can say so.
             'software':        {'version': APP_VERSION,
                                 'engine': engine_fingerprint()},
-            # Every variable of the app and of each stage, by name.
-            'vars':            {'app': collect_vars(app),
-                                **{name: collect_vars(st)
-                                   for name, st in app.stages.items()}},
+            # Every variable of the app and of each stage, by name. One a stage
+            # has not built yet is still the project's: its saved value waits
+            # in _pending_vars and is saved again from there.
+            'vars':            {name: {**(getattr(obj, '_pending_vars', None) or {}),
+                                       **collect_vars(obj)}
+                                for name, obj in {'app': app,
+                                                  **app.stages}.items()},
             # Raw data
             'ppm':             app.ppm,
             'ppm_calibration': getattr(app, '_ppm_calibration', None),
@@ -496,13 +509,13 @@ class ProjectManager:
             try:
                 ann._db_path = ann_state.get('db_path') or getattr(ann, '_db_path', None)
 
-                if ann_state.get('last_results_args'):
-                    ann._last_results_args = ann_state['last_results_args']
+                # Replaced even when empty, like the quantification results.
+                ann._last_results_args = ann_state.get('last_results_args')
+                if ann._last_results_args:
                     try: app.btn_annot_shortcut.config(state='normal')
                     except Exception: pass
 
-                if ann_state.get('annotations'):
-                    ann.annotations = ann_state['annotations']
+                ann.annotations = ann_state.get('annotations') or {}
 
                 _set_var(ann, 'tolerance_var', ann_state.get('tolerance'))
                 if ann_state.get('spectrometer_mhz'):
@@ -541,8 +554,8 @@ class ProjectManager:
                 if ann_state.get('mcr_r2_threshold') is not None:
                     ann.mcr_r2_threshold = ann_state['mcr_r2_threshold']
 
-                if ann_state.get('metabolites'):
-                    ann._metabolites = ann_state['metabolites']
+                ann._metabolites = ann_state.get('metabolites') or None
+                if ann._metabolites:
                     # Re-apply quality marks into the saved metabolites' matched_peaks
                     # so the results window shows correct colours without re-scoring.
                     for met in ann._metabolites:
@@ -613,9 +626,11 @@ class ProjectManager:
         qnt       = app.stages.get('quantification')
         if qnt_state and qnt:
             try:
+                # Always replaced: a project without results must not show the
+                # ones of the project open before it.
                 results = qnt_state.get('quant_results', [])
+                qnt._quant_results = results
                 if results:
-                    qnt._quant_results = results
                     try:
                         qnt.btn_csv.config(state='normal')
                         qnt.btn_metaboanalyst.config(state='normal')
@@ -679,6 +694,9 @@ class ProjectManager:
                         qnt._ext_is_label.config(text=_lbl_txt, foreground=_fg)
                     except Exception:
                         pass
+                # Saved since v7 but never put back: the first save after
+                # opening lost which options the results came from.
+                qnt._last_run_settings = qnt_state.get('last_run_settings')
                 if qnt_state.get('last_norm_mode') is not None:
                     qnt._last_norm_mode = qnt_state['last_norm_mode']
                 if qnt_state.get('last_ref_areas') is not None:
@@ -694,9 +712,13 @@ class ProjectManager:
                 if qnt_state.get('last_non_blk') is not None:
                     qnt._last_non_blk_indices = qnt_state['last_non_blk']
                 # Repopulate the results table so it's visible immediately
-                if results:
-                    try: qnt._populate_tree()
-                    except Exception: pass
+                try:
+                    if results:
+                        qnt._populate_tree()
+                    elif getattr(qnt, '_tree', None) is not None:
+                        qnt._tree.delete(*qnt._tree.get_children())
+                except Exception:
+                    pass
             except Exception as _e:
                 print(f'  quantification restore: {_e}')
 
@@ -855,33 +877,55 @@ class ProjectManager:
 
     # ── File operations ───────────────────────────────────────────────────────
 
-    def _write_project(self, path, state):
-        """Write ``state`` so that a failed save leaves the old project as it
-        was: to a file beside it, read back and checked, then moved over it.
-        The previous version is kept as ``.bak`` for one save."""
-        tmp = f'{path}.tmp'
+    def _snapshot(self):
+        return project_file.snapshot(self._collect_state())
+
+    @staticmethod
+    def _content_digest(state):
+        """The digest of what the analysis is. Which stage is on screen is
+        saved but looking around is not a change, and the variables are
+        compared on their own (``_vars_changed``). Each part is pickled apart:
+        the bytes of one pickle depend on which objects two parts share, and
+        that changes with what the windows did, not with the analysis."""
+        h = hashlib.blake2b(digest_size=16)
+        for k in sorted(state, key=str):
+            if k in ('active_stage', 'vars'):
+                continue
+            v = state[k]
+            parts = (sorted(v.items(), key=lambda kv: str(kv[0]))
+                     if isinstance(v, dict) else [(None, v)])
+            for sk, sv in parts:
+                h.update(repr((k, sk)).encode())
+                h.update(pickle.dumps(sv, protocol=5))
+        return h.hexdigest()
+
+    @staticmethod
+    def _vars_changed(saved, now):
+        """A variable that was saved and now reads otherwise. One a panel
+        built after the save has its default and is not a change."""
+        return any(k in now.get(name, {}) and now[name][k] != v
+                   for name, sv in saved.items() for k, v in sv.items())
+
+    def _mark_saved(self, snap, state):
+        self._saved_digest = snap.digest
+        self._saved_content = (self._content_digest(state),
+                               dict(state.get('vars') or {}))
+
+    def has_unsaved_changes(self):
+        """Whether closing now would lose something: the session differs from
+        the project file as last saved or opened. Compared by content, so
+        running a stage counts without every stage having to say so."""
+        if self._project_path is None and getattr(self.app, 'ppm', None) is None:
+            return False
+        if self._dirty or self._saved_content is None:
+            return True
         try:
-            with open(tmp, 'wb') as f:
-                pickle.dump(state, f, protocol=5)
-                f.flush()
-                os.fsync(f.fileno())
-            with open(tmp, 'rb') as f:
-                back = pickle.load(f)
-            if (back.get('vars') != state.get('vars')
-                    or back.get('version') != state.get('version')):
-                raise IOError('the file written does not read back the same')
+            state = self._collect_state()
+            digest, saved_vars = self._saved_content
+            return (self._content_digest(state) != digest
+                    or self._vars_changed(saved_vars, state.get('vars') or {}))
         except Exception:
-            try:
-                os.remove(tmp)
-            except OSError:
-                pass
-            raise
-        if os.path.exists(path):
-            try:
-                os.replace(path, f'{path}.bak')
-            except OSError:
-                pass
-        os.replace(tmp, path)
+            return True
 
     def save_project(self, path=None):
         """Save to path. If None, opens Save-As dialog."""
@@ -895,69 +939,118 @@ class ProjectManager:
                 return False
 
         try:
+            self.app.status_label.config(text='Saving project…', foreground='blue')
+            self.app.root.update_idletasks()
+        except Exception:
+            pass
+        try:
             state = self._collect_state()
-            self._write_project(path, state)
-            self.project_path = path
-            self._dirty       = False
-            # Begin (or restart) autosave now that a project path exists.
-            # Previously autosave only started on open_project, so a freshly
-            # created+saved project never auto-saved.
-            self._start_autosave()
-            self.app.root.after(
-                0, lambda: self.app.status_label.config(
-                    text=f'Project saved: {os.path.basename(path)}',
-                    foreground='green'))
-            return True
+            snap = project_file.snapshot(state)
+            size = project_file.write(path, snap)
         except Exception as e:
             messagebox.showerror('Save Error',
                                  f'Could not save project:\n{e}')
             return False
+        # The project now holds what the autosaves held.
+        self._discard_autosaves()
+        self.project_path = path
+        self._dirty        = False
+        self._mark_saved(snap, state)
+        self._start_autosave()
+        self.app.root.after(
+            0, lambda: self.app.status_label.config(
+                text=f'Project saved: {os.path.basename(path)} '
+                     f'({size / 1e6:.1f} MB)',
+                foreground='green'))
+        return True
 
     def open_project(self, path=None):
         """Open a project file, restoring full state."""
-        if self._dirty:
+        if self.has_unsaved_changes():
             resp = messagebox.askyesnocancel(
-                'Alterações não guardadas',
-                'O projeto atual tem alterações não guardadas.\n'
-                'Deseja guardar antes de abrir outro projeto?\n\n'
-                '  Sim      → Guardar e continuar\n'
-                '  Não      → Abrir sem guardar (as alterações serão perdidas)\n'
-                '  Cancelar → Voltar sem abrir')
-            if resp is None:        # Cancelar → abortar
+                'Unsaved Changes',
+                'The current project has unsaved changes.\n'
+                'Save them before opening another project?\n\n'
+                '  Yes    → save and continue\n'
+                '  No     → open without saving (the changes are lost)\n'
+                '  Cancel → go back')
+            if resp is None:
                 return False
-            if resp:                # Sim → guardar; abortar se falhar
-                if not self.save_or_saveas():
-                    return False
+            if resp and not self.save_or_saveas():
+                return False
 
         if path is None:
             path = filedialog.askopenfilename(
                 title='Open Project',
                 filetypes=[('NMR Project', f'*{PROJECT_EXT}'),
+                           ('Autosave', f'*{AUTOSAVE_SUFFIX}'),
                            ('All files', '*.*')])
             if not path:
                 return False
 
+        # Opening an autosave directly is recovering it into its project.
+        project = (path[:-len(AUTOSAVE_SUFFIX)]
+                   if path.endswith(AUTOSAVE_SUFFIX) else path)
+        source = path
+        if source == project:
+            auto = project + AUTOSAVE_SUFFIX
+            if (os.path.exists(auto)
+                    and os.path.getmtime(auto) > os.path.getmtime(project)):
+                resp = messagebox.askyesnocancel(
+                    'Autosave found',
+                    f'{os.path.basename(project)} has an autosave newer than '
+                    f'the saved project:\n\n'
+                    f'  saved     {_when(project)}\n'
+                    f'  autosave  {_when(auto)}\n\n'
+                    '  Yes    → open the autosave (save to keep it in the project)\n'
+                    '  No     → open the project as last saved\n'
+                    '  Cancel → go back')
+                if resp is None:
+                    return False
+                if resp:
+                    source = auto
+        recovered = source != project
+        return self._load(source, project_path=(
+            project if os.path.exists(project) or recovered else None),
+            recovered=recovered)
+
+    def _load(self, source, *, project_path, recovered):
         try:
             self.app.status_label.config(
                 text='Loading project…', foreground='blue')
             self.app.root.update_idletasks()
-
-            with open(path, 'rb') as f:
-                state = pickle.load(f)
-
+            state = project_file.read(source)
+            # The session being left was saved or declined a moment ago; the
+            # autosave being recovered stays until the project is saved.
+            self._discard_autosaves(keep=source)
             self._restore_state(state)
-            self.project_path = path
-            self._dirty       = False
-            self.app.status_label.config(
-                text=f'Project opened: {os.path.basename(path)}',
-                foreground='green')
-            self._start_autosave()
-            return True
         except Exception as e:
             import traceback; traceback.print_exc()
             messagebox.showerror('Open Error',
                                  f'Could not open project:\n{e}')
             return False
+        self.project_path = project_path
+        self._dirty = recovered
+        self._saved_digest = self._saved_content = None
+        if not recovered:
+            try:
+                state = self._collect_state()
+                self._mark_saved(project_file.snapshot(state), state)
+            except Exception:
+                pass
+        if recovered:
+            msg = (f'Recovered autosave of {os.path.basename(project_path)} — '
+                   'save to keep it' if project_path else
+                   'Recovered unsaved work — save it as a project to keep it')
+            colour = 'darkorange'
+        else:
+            msg = f'Project opened: {os.path.basename(source)}'
+            colour = 'green'
+            if not project_file.is_current_format(source):
+                msg += ' (older, larger format: saving converts it)'
+        self.app.status_label.config(text=msg, foreground=colour)
+        self._start_autosave()
+        return True
 
     def save_or_saveas(self):
         """Save to current path, or Save-As if no project open."""
@@ -966,6 +1059,30 @@ class ProjectManager:
         return self.save_project()
 
     # ── Auto-save ─────────────────────────────────────────────────────────────
+    # Every AUTOSAVE_SECS the session goes to a companion file, never over the
+    # project: saving stays the analyst's checkpoint. A project saved by name
+    # autosaves beside it (<name>.nmrproj.autosave), offered when it is opened
+    # and newer; work never saved autosaves to the recovery folder, offered
+    # when the application starts. The state is frozen on the GUI thread and
+    # compressed and written on another, so the window does not stop.
+
+    def start(self):
+        """Begin autosaving and offer what a session that ended without
+        saving left behind."""
+        self._start_autosave()
+        self.app.root.after(500, self.offer_recovery)
+
+    def _autosave_target(self):
+        if self._project_path:
+            return self._project_path + AUTOSAVE_SUFFIX
+        if getattr(self.app, 'ppm', None) is None:
+            return None
+        if self._recovery_path is None:
+            self._recovery_path = os.path.join(
+                recovery_dir(),
+                f'untitled-{time.strftime("%Y%m%d-%H%M%S")}'
+                f'{PROJECT_EXT}{AUTOSAVE_SUFFIX}')
+        return self._recovery_path
 
     def _start_autosave(self):
         self._stop_autosave()
@@ -984,16 +1101,134 @@ class ProjectManager:
             AUTOSAVE_SECS * 1000, self._autosave_tick)
 
     def _autosave_tick(self):
-        if self._project_path:
-            # Save to a .autosave companion file
-            autosave_path = self._project_path + '.autosave'
+        try:
+            self.autosave_now()
+        finally:
+            self._schedule_autosave()
+
+    def autosave_now(self):
+        """Write the session to its autosave file in the background, when it
+        differs from what is already on disk. Returns the writing thread, or
+        None when there was nothing to write."""
+        if self._writer is not None and self._writer.is_alive():
+            return None
+        target = self._autosave_target()
+        if target is None:
+            return None
+        try:
+            snap = self._snapshot()
+        except Exception as e:
+            self._autosave_failed(e)
+            return None
+        if snap.digest in (self._saved_digest, self._autosaved_digest):
+            return None
+
+        def work():
             try:
-                state = self._collect_state()
-                with open(autosave_path, 'wb') as f:
-                    pickle.dump(state, f, protocol=5)
-                self.app.status_label.config(
-                    text=f'Auto-saved  {time.strftime("%H:%M")}',
-                    foreground='gray')
+                size = project_file.write(target, snap, keep_backup=False)
+                self._writer_result = (snap.digest, size, None)
             except Exception as e:
-                print(f'  autosave failed: {e}')
-        self._schedule_autosave()  # reschedule
+                self._writer_result = (snap.digest, 0, e)
+
+        self._writer_result = None
+        self._writer = threading.Thread(target=work, name='autosave', daemon=True)
+        self._writer.start()
+        self._poll_writer()
+        return self._writer
+
+    def _poll_writer(self):
+        if self._writer is not None and self._writer.is_alive():
+            self.app.root.after(200, self._poll_writer)
+            return
+        res, self._writer_result = self._writer_result, None
+        if res is None:
+            return
+        digest, size, err = res
+        if err is not None:
+            self._autosave_failed(err)
+            return
+        self._autosaved_digest = digest
+        try:
+            self.app.status_label.config(
+                text=f'Auto-saved {time.strftime("%H:%M")} ({size / 1e6:.1f} MB)',
+                foreground='gray')
+        except Exception:
+            pass
+
+    def _autosave_failed(self, err):
+        print(f'  autosave failed: {err}')
+        try:
+            self.app.status_label.config(
+                text=f'Autosave failed: {err}', foreground='red')
+        except Exception:
+            pass
+
+    def _wait_for_writer(self):
+        if self._writer is not None:
+            self._writer.join()
+            self._poll_writer()
+
+    def _discard_autosaves(self, keep=None):
+        """Remove the autosave of this session: called when the project file
+        or an explicit choice of the analyst has superseded it."""
+        self._wait_for_writer()
+        paths = [self._recovery_path]
+        if self._project_path:
+            paths.append(self._project_path + AUTOSAVE_SUFFIX)
+        for p in filter(None, paths):
+            if keep and os.path.abspath(p) == os.path.abspath(keep):
+                continue
+            for f in (p, p + '.tmp'):
+                try:
+                    os.remove(f)
+                except OSError:
+                    pass
+        self._recovery_path = None
+        self._autosaved_digest = None
+
+    def shutdown(self):
+        """The session ends saved or with its changes declined: stop
+        autosaving and leave no autosave behind to be offered again."""
+        self._stop_autosave()
+        self._discard_autosaves()
+
+    def offer_recovery(self):
+        """Offer the work of a session that ended without saving. The newest
+        first; what is declined is deleted, what is postponed stays."""
+        for path in recovery_files():
+            resp = messagebox.askyesnocancel(
+                'Recover unsaved work',
+                'A session that was never saved as a project left this '
+                f'autosave ({_when(path)}).\n\n'
+                '  Yes    → open it (then save it as a project)\n'
+                '  No     → delete it\n'
+                '  Cancel → keep it for later')
+            if resp is None:
+                return
+            if resp:
+                if self._load(path, project_path=None, recovered=True):
+                    self._recovery_path = path
+                return
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+def recovery_dir():
+    path = os.path.join(user_data_dir(), 'recovery')
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def recovery_files():
+    """Autosaves of sessions never saved as a project, newest first."""
+    d = recovery_dir()
+    files = [os.path.join(d, f) for f in os.listdir(d)
+             if f.endswith(AUTOSAVE_SUFFIX)]
+    return sorted(files, key=os.path.getmtime, reverse=True)
+
+
+def _when(path):
+    return time.strftime('%Y-%m-%d %H:%M', time.localtime(os.path.getmtime(path)))
+
