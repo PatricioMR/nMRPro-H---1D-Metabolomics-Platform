@@ -108,7 +108,7 @@ def promote_singlets(metabolites, peaks, *, params, manual_marks=None):
     empty — so "alone and uncontested" was satisfied most completely by the
     signals that were not there at all. They were promoted to Good and made
     anchors, and then won the quantification election over the same
-    metabolite's signals that did have peaks. Every censored analyte on the
+    metabolite's signals that did have peaks. Every peakless winner on the
     reference study reached that state this way: sodium fumarate, guanine,
     trimethylamine, histamine, L-histidine and L-carnosine each won on a
     peakless singlet while their own detected multiplets sat marked bad.

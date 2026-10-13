@@ -237,11 +237,33 @@ def random_tube(n, seed):
     return [(names[i], float(round(c, 3)), 1.0) for i, c in zip(pick, concs)]
 
 
+# Group B against group A, by the compound's place in the tube: nearly absent
+# in B (x0.05), up three times in B, induced in B (A holds 5% of what B does),
+# unchanged. B keeps the amounts of the tube, so no compound is taken to a
+# concentration no extract has. This is the tube for asking what happens to an
+# analyte that falls under the detection limit in one group and stands in the
+# other.
+CONTRAST_FACTORS = (0.05, 3.0, 20.0, 1.0)
+
+
+def contrast_tube(composition):
+    """``composition`` with the contrast of ``CONTRAST_FACTORS`` cycled over
+    its compounds: ``[(name, amount in A, B/A)]``."""
+    out = []
+    for i, (nm, c, _f) in enumerate(composition):
+        f = CONTRAST_FACTORS[i % len(CONTRAST_FACTORS)]
+        out.append((nm, round(c / f, 4) if f > 3.0 else c, f))
+    return out
+
+
 def _composition(size, seed):
     """'c600', a crowded tube ('18', '50', ...: the reference study's 18
-    first) or a random one ('r18', 'r150', ...: ``random_tube``)."""
+    first), a random one ('r18', 'r150', ...: ``random_tube``) or a crowded
+    one with contrast between the groups ('k100': ``contrast_tube``)."""
     if size == 'c600':
         return c600_tube(seed)
+    if str(size).startswith('k'):
+        return contrast_tube(crowded_tube(int(str(size)[1:]), seed))
     if str(size).startswith('r'):
         return random_tube(int(str(size)[1:]), seed)
     return crowded_tube(int(size), seed)

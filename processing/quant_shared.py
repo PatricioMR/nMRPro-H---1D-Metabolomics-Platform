@@ -651,15 +651,13 @@ def _lines_of(ev) -> list:
 
 
 def _note_share_kept(rec, before) -> None:
-    """How much of its window an analyte kept after the split, and whether
-    what the others took is a quantity at all.
+    """How much of its window an analyte kept after the split.
 
     ``share_kept`` is the ratio; ``share_given`` is what the others took,
-    in the same area units as the window's own limit of quantification.
-    A window whose co-claimants come out of the balance with less than
-    that window can quantify is shared in name only: the number rests on
-    nobody else's concentration, whatever the length of the claimant
-    list, which on a crowded reference spectrum is every window there is.
+    in area units. A window whose co-claimants took a small enough part of
+    it is shared in name only: the number rests on nobody else's
+    concentration, whatever the length of the claimant list, which on a
+    crowded reference spectrum is every window there is.
     """
     after = rec.get('area_median')
     ok = (before is not None and np.isfinite(before) and float(before) > 0

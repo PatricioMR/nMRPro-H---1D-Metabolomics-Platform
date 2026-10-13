@@ -334,10 +334,13 @@ def test_the_standard_reads_back_its_own_concentration(run):
 
 def test_the_blank_is_measured_but_holds_nothing(run):
     """It must not be dropped from the table, and must not carry signal."""
+    from gui.stages._quant_adapter import reported_cells
     _, _, by = run
     for name in TRUTH:
-        det = by[name]['_detected_per_sample']
-        assert det[0] is not True, f'{name} was detected in the blank'
+        row = by[name]
+        n = len(row['_concs_per_sample'])
+        assert reported_cells(row, n)[0][1] != 'measured', (
+            f'{name} was measured in the blank')
 
 
 def test_drift_is_what_this_pipeline_is_sensitive_to(run):

@@ -208,6 +208,33 @@ def _solve(A, t):
     return x, float(rnorm) ** 2 + float(Ra[n, n]) ** 2
 
 
+# A sample fits only the columns its group's reference holds. Each sample
+# solved alone, over ~140 candidate columns, gives a peak to analyte A in one
+# replicate and to analyte B in its neighbour: non-negative least squares is
+# sparse, and which of two alternatives wins moves with the noise. On the
+# Murilo triplicates (ADR-080) that was 197 cells where an analyte read zero
+# in one replicate and positive in its mates, in windows 26 noises tall.
+# The reference is the mean trace of the replicates, solved once; the columns
+# it leaves at zero are out of every one of those replicates' fits, so they
+# answer the same question. The group's mean and not the study's: a
+# study-wide mean dilutes an analyte only some groups hold and erased five
+# of RawMG's 21 (guanidinoacetate, positive in 17 of 32 samples, among them).
+# A pull toward the reference's amplitudes (ridge) was tried and left 169 of
+# the 197 cells. An analyte a group's mean does not hold is absent from every
+# replicate of that group, consistently.
+REFERENCE_SUPPORT = True
+
+
+def _solve_on_support(A, t, keep):
+    """``_solve`` over the columns ``keep`` (indices); the others are zero."""
+    if keep.size == 0 or keep.size == A.shape[1]:
+        return _solve(A, t)
+    x_sub, r2 = _solve(A[:, keep], t)
+    x = np.zeros(A.shape[1])
+    x[keep] = x_sub
+    return x, r2
+
+
 def _part_vec(comp, nh, ppm, union):
     """One signal's curve over the group's union, area = its protons, at the
     component's current offset. The same shape ``Column.part_curves``
@@ -336,8 +363,27 @@ def _groups(nodes):
     return list(out.values())
 
 
+def _reference_groups(groups, included):
+    """The sample sets that each follow one reference: a group of replicates
+    (two or more of them included), and the samples outside any such group
+    together. With no groups, the whole study."""
+    inc = [int(s) for s in included]
+    if not groups:
+        return [inc]
+    out, seen = [], set()
+    for idxs in groups.values():
+        members = [int(i) for i in idxs if int(i) in inc]
+        if len(members) >= 2:
+            out.append(members)
+            seen.update(members)
+    rest = [s for s in inc if s not in seen]
+    if len(rest) >= 2:
+        out.append(rest)
+    return out
+
+
 def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
-                  weight=None, baseline=None):
+                  weight=None, baseline=None, groups=None):
     """Fit the overlapping analytes together, per sample.
 
     ``columns`` is the cascade's ``Column`` for every quantified analyte.
@@ -350,6 +396,11 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     ``residual`` is the median over the samples of the share of the
     group's trace the fit leaves unexplained -- how much of the region
     neither the library nor the free components account for.
+
+    ``groups`` is ``{label: [sample, ...]}``, the replicates. Each group
+    follows its own reference (REFERENCE_SUPPORT), so an analyte only some
+    groups hold is not erased by the others that dilute it in a study-wide
+    mean.
 
     ``baseline`` (the shape of ``X``, ``quant_integration.cluster_baseline``)
     is subtracted before anything is fitted: fixed, not fitted, because a
@@ -444,11 +495,20 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
         amps = {columns[k].mid: {} for k in cols_in}
         resid = []
         chosen = {}
+        support_of = {}
+        if REFERENCE_SUPPORT and len(included) > 1:
+            for members in _reference_groups(groups, included):
+                ref = X[np.ix_(union, members)].mean(axis=1)
+                fits = [_solve(A, ref) for A in designs]
+                keep = np.flatnonzero(
+                    fits[int(np.argmin([f[1] for f in fits]))][0] > 0)
+                support_of.update({s: keep for s in members})
         for s in included:
             t = X[union, s]
             best = None
             for i_d, A in enumerate(designs):
-                x_, r2 = _solve(A, t)
+                x_, r2 = (_solve(A, t) if s not in support_of else
+                          _solve_on_support(A, t, support_of[s]))
                 if best is None or r2 < best[0]:
                     best = (r2, x_, i_d)
             r2, x, i_d = best

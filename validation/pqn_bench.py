@@ -101,8 +101,8 @@ def cv_by_group(v):
 
 
 def reported(row):
-    from gui.stages._quant_adapter import reported_values
-    return np.asarray(reported_values(row, n)[0], float)
+    from gui.stages._quant_adapter import statistics_values
+    return np.asarray(statistics_values(row, n), float)
 
 
 results = {}

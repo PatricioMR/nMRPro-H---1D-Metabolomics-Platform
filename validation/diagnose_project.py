@@ -160,15 +160,11 @@ def diagnose(rows, truth, log=print):
         _weak = 0
         for n, c in sorted(false, key=lambda v: -v[1]):
             r = _by.get(n) or {}
-            loq = r.get('_loq_mm')
-            under = (loq is not None and np.isfinite(loq) and c < float(loq))
-            _weak += int(bool(r.get('_confidence') == 1 or under))
+            _weak += int(r.get('_confidence') == 1)
             log(f'  {n[:30]:30s} {c:7.3f} mM  id/conf '
                 f'{r.get("_identity_level")}/{r.get("_confidence")}  '
-                f'{"under its own LOQ" if under else "":17s} '
                 f'{str(r.get("_identity_why") or "")[:44]}')
-        log(f'  -> {_weak} of {len(false)} are at one dot or under their own '
-            f'limit of quantification')
+        log(f'  -> {_weak} of {len(false)} are at one dot')
     return found, missed, false
 
 

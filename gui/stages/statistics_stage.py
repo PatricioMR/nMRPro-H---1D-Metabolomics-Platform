@@ -9,7 +9,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import numpy as np
 
-from gui.stages._quant_adapter import reported_values
+from gui.stages._quant_adapter import statistics_values
 
 # ---------- helpers ----------------------------------------------------------
 
@@ -46,6 +46,10 @@ def _all_samples_matrix(app):
     without the selection."""
     quant_stage = (getattr(app, 'stages', {}) or {}).get('quantification')
     ann_stage   = (getattr(app, 'stages', {}) or {}).get('annotation')
+    _censor_var = getattr(
+        (getattr(app, 'stages', {}) or {}).get('statistics'),
+        '_censor_var', None)
+    censored    = True if _censor_var is None else bool(_censor_var.get())
     si          = getattr(app, 'samples_info', []) or []
     sample_names = [s.get('name', f'S{i}') for i, s in enumerate(si)]
     group_labels = [s.get('label', s.get('group', 'Unknown')) for s in si]
@@ -72,10 +76,12 @@ def _all_samples_matrix(app):
                 continue
             if not met.get('_concs_per_sample'):
                 continue
-            # Not-detected samples are NaN, never a noise-derived number or a
-            # zero: a value written where the analyte was not seen is a
-            # measurement that does not exist.
-            col, _nd = reported_values(met, n_s)
+            # A cell that is not a measurement -- only a ceiling -- is NaN
+            # here unless the analyst asked to keep the table's numbers: a
+            # ceiling put in as an amount moves a fold change by 2.5 to 4
+            # times (ADR-081). NaN goes through the missing-value step as
+            # any other.
+            col = statistics_values(met, n_s, censored=censored)
             feature_labels.append(
                 met.get('metabolite') or met.get('name') or '?')
             X_cols.append(col)
@@ -373,6 +379,11 @@ class StatisticsStage:
             self._missing_pct_var = tk.DoubleVar(value=ND_LEAVE_OUT_PCT)
         if not hasattr(self, '_missing_grp_var'):
             self._missing_grp_var = tk.BooleanVar(value=False)
+        if not hasattr(self, '_censor_var'):
+            self._censor_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(
+            mf, text='Ceilings count as n.d.',
+            variable=self._censor_var).pack(anchor=tk.W, padx=4)
         ttk.Radiobutton(mf, text='Replace by LoD (1/5 of min)',
                         variable=self._missing_var, value='lod').pack(**_RB)
         row = ttk.Frame(mf)

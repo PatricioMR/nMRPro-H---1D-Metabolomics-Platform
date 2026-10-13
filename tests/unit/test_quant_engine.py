@@ -487,3 +487,19 @@ class TestOffDriftSinglet:
     def test_the_withdrawn_row_says_why(self):
         from processing.quantification import REJECTION_TEXT, SINGLET_OFF_DRIFT
         assert 'only evidence of identity' in REJECTION_TEXT[SINGLET_OFF_DRIFT]
+
+
+class TestLateCascadeScore:
+    """What the cascade takes in past its free steps must score higher to be
+    reported (ADR-078)."""
+
+    def test_a_late_entry_meets_the_late_bar(self, monkeypatch):
+        from processing import quant_cascade as qc, quant_engine as qe
+        monkeypatch.setattr(qc, 'CASCADE_LATE_SCORE_MIN', 0.4)
+        assert qe._cascade_score_min({'step': qc.CASCADE_FREE_STEPS + 1}) == 0.4
+        assert qe._cascade_score_min({'step': qc.CASCADE_FREE_STEPS}) == qc.CASCADE_SCORE_MIN
+
+    def test_off_every_entry_meets_the_same_bar(self, monkeypatch):
+        from processing import quant_cascade as qc, quant_engine as qe
+        monkeypatch.setattr(qc, 'CASCADE_LATE_SCORE_MIN', None)
+        assert qe._cascade_score_min({'step': 999}) == qc.CASCADE_SCORE_MIN

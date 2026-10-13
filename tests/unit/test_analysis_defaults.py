@@ -95,7 +95,9 @@ def test_the_engine_runs_as_the_published_table_was_measured():
     assert quant_engine.PART_SHIFT_REACH_LW == 2.0
     assert quant_engine.OFF_DRIFT_SINGLET_WITHDRAWN is True        # ADR-077
     assert quant_cascade.CASCADE_SCORE_MIN == 0.2                  # ADR-077
-    assert quant_engine.CASCADE_SCORE_MIN == 0.2
+    assert quant_cascade.CASCADE_LATE_MIN_SNR == 12.0              # ADR-078
+    assert quant_cascade.CASCADE_LATE_SCORE_MIN == 0.4
+    assert quant_cascade.CAP_RATIO == 3.0
     assert QUANTIFICATION['split_shared'] is True                  # ADR-075
 
 

@@ -232,20 +232,16 @@ def test_it_uses_the_window_endpoints_as_the_baseline():
     assert snr[0] == pytest.approx(100.0, rel=0.05)
 
 
-def test_quantification_measures_its_snr_against_the_same_noise_as_its_limits():
+def test_quantification_measures_its_snr_against_the_blanks_noise():
     """Two answers to "how loud is the noise" put an SNR of 3149 beside a
     concentration of 0.008 mM."""
     import inspect
 
     from processing import quant_engine as qe
-    src = inspect.getsource(qe._window_limits)
-    # The blank's sigma for both -- an SNR measured against one noise beside
-    # a limit built on another is two answers to the same question. It is
-    # the blank's because that is what a limit is defined from, and because
-    # a ratio that changed with the neighbours would say an analyte got
-    # fainter when something appeared next to it.
+    src = inspect.getsource(qe._window_snr)
+    # The blank's sigma: a ratio that changed with the neighbours would say
+    # an analyte got fainter when something appeared next to it.
     assert 'window_snr(ppm, intensities, lo, hi, noise_sigma' in src
-    assert 'detection_limits(noise_sigma' in src
     # And one place measures how crowded the window is, so a second window
     # -- a shared one, split between claimants -- cannot reach its own
     # answer by another route.

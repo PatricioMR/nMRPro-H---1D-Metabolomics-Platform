@@ -213,15 +213,13 @@ def main():
                         ])
                         if q:
                             cps = r.get('_concs_per_sample') or []
-                            det = r.get('_detected_per_sample') or []
                             for i, s in enumerate(names):
                                 tv = per.get(mid, [None] * len(names))[i] if t else None
                                 sample_rows.append([
                                     regime, field, n, seed, mid,
                                     (t or {}).get('name') or r.get('metabolite'),
                                     s, s[0], tv if tv is not None else 0.0,
-                                    cps[i] if i < len(cps) else '',
-                                    ('sim' if det[i] else 'não') if i < len(det) else ''])
+                                    cps[i] if i < len(cps) else ''])
                     print(f'{regime} {field} MHz tubo {n} semente {seed}', flush=True)
                 if runs:
                     st = tube_stats(n, lambda _n, runs=runs: runs)
@@ -241,7 +239,7 @@ def main():
               'medido_B_mM_mediana', 'erro_A', 'erro_B', 'erro_mediano',
               'via', 'snr', 'motivo_sem_numero']
     S_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'semente', 'hmdb_id', 'nome',
-              'amostra', 'grupo', 'verdade_mM', 'medido_mM', 'detectado']
+              'amostra', 'grupo', 'verdade_mM', 'medido_mM']
     R_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'sementes', 'encontrados_%',
               '3_reais', '3_falsos', '3_precisao_%', '2_reais', '2_falsos',
               '2_precisao_%', '1_reais', '1_falsos', '1_precisao_%',

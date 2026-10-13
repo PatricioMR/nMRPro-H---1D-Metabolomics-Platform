@@ -153,8 +153,8 @@ def test_the_matrix_carries_the_concentrations_in_sample_order():
 
 
 def test_rows_with_no_number_stay_out_of_the_matrix():
-    """A censored analyte has a bound, not a measurement, and a bound in a
-    statistical model is a fabricated value."""
+    """A row the engine did not quantify has no measurement, and a number
+    for it in a statistical model is a fabricated value."""
     from gui.stages.statistics_stage import _get_quantification_matrix as build_feature_matrix
     rows, samples = _rows()
     rows.append({'metabolite': 'Ghost', '_not_quantified': True,
@@ -176,16 +176,31 @@ def test_the_export_reads_concentrations_and_not_sample_indices():
     assert as_list != list(range(len(samples)))
 
 
-def test_a_sample_the_analyte_was_not_seen_in_is_marked_not_detected():
-    """The CSV writes 'n.d.' there rather than a number. A window over noise
-    integrates to a perfectly plausible concentration, and writing it would put
-    a measurement where the analyte was not seen."""
+def test_the_blank_is_not_a_sample_of_the_study():
+    """It holds the buffer, not the analyte: no number in the table."""
+    from gui.stages._quant_adapter import reported_cells
     rows, samples = _rows()
     row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
-    det = row['_detected_per_sample']
-    assert len(det) == len(samples)
-    assert det[0] is not True, 'the blank holds nothing'
-    assert all(d is True for d in det[1:])
+    cells = reported_cells(row, len(samples))
+    assert np.isnan(cells[0][0]), 'the blank holds nothing'
+    assert all(k == 'measured' for _v, k in cells[1:])
+
+
+def test_every_sample_of_the_study_has_a_number_for_a_quantified_analyte():
+    """The study proved the analyte, so no sample of it reads 'n.d.': the
+    engine's amount where it has one, a ceiling where it has none. The
+    blank is not in the study and is not measured."""
+    from gui.stages._quant_adapter import reported_cells
+    rows, samples = _rows()
+    for r in rows:
+        if r.get('_not_quantified') or r.get('_is_is') or r.get('_is_lipid_index'):
+            continue
+        assert '_ceiling_per_sample' in r and r.get('_included'), r['metabolite']
+        cells = reported_cells(r, len(samples))
+        for i in r['_included']:
+            value, kind = cells[i]
+            assert value > 0 and kind in ('measured', 'ceiling'), (
+                r['metabolite'], i, cells[i])
 
 
 def test_the_internal_standard_is_not_a_variable_in_the_model():
@@ -203,9 +218,8 @@ def test_the_internal_standard_is_not_a_variable_in_the_model():
 # ── Not detected is NaN: the statistics and both exports ─────────────────────
 
 def _with_not_detected(rows):
-    """The first analyte not detected in sample S2 (index 2), a zero in S3."""
+    """The first analyte with a zero in S3 (index 3)."""
     row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
-    row['_detected_per_sample'] = [False, True, False, True]
     row['_concs_per_sample'] = [float('nan'), 1.0, 2.0, 0.0]
     row['_confidence'] = 1
     row['_by_cascade'] = True
@@ -219,9 +233,13 @@ def test_a_not_detected_sample_is_nan_in_the_statistics_matrix():
     _with_not_detected(rows)
     X, _, features, _ = build(_FakeApp(rows, samples))
     col = X[:, features.index('L-Alanine')]      # blank left out: sample i is row i-1
-    assert col[0] == 1.0
-    assert np.isnan(col[1]), 'detected False: the number the fit gave is not data'
-    assert np.isnan(col[2]), 'a zero is nothing found'
+    assert col[0] == 1.0 and col[1] == 2.0
+    assert np.isnan(col[2]), 'a ceiling is not an amount'
+    # asked to keep the table's numbers, the statistics read them all
+    from gui.stages._quant_adapter import statistics_values
+    row = next(r for r in rows if r['hmdb_id'] == 'HMDB0000161')
+    kept = statistics_values(row, 4, censored=False)
+    assert kept[2] == 2.0 and kept[3] > 0, 'a ceiling is a number in the table'
 
 
 def test_a_low_confidence_row_still_reaches_the_statistics():
@@ -343,9 +361,13 @@ def test_the_csv_marks_not_detected_and_carries_the_confidence(tmp_path, monkeyp
     ala = next(r for r in table if r[0] == 'L-Alanine')
     assert ala[head.index('Confidence')] == '1'
     assert ala[head.index('Origin')] == 'Cascade estimate'
-    # the four sample columns are the last four
-    assert ala[-4:] == ['n.d.', ala[-3], 'n.d.', 'n.d.']
-    assert ala[-3] != 'n.d.'
+    # the four sample columns are the last four: the blank is not measured, S1 and
+    # S2 carry their numbers, S3's zero is a ceiling, '<value': the most the
+    # sample can hold
+    assert ala[-4] == 'NA' and ala[-3] == '1.0000' and ala[-2] == '2.0000'
+    assert ala[-1].startswith('<') and float(ala[-1][1:]) > 0
+    assert ala[head.index('Ceiling_samples')] == 'S3'
+    assert not any('LOD' in h for h in head)
 
 
 def test_metaboanalyst_gets_na_for_not_detected_and_the_confidence_beside_it(
@@ -357,11 +379,17 @@ def test_metaboanalyst_gets_na_for_not_detected_and_the_confidence_beside_it(
     assert table[0] == ['Sample', 'S1', 'S2', 'S3'], 'the blank is not a column'
     assert table[1] == ['Label', 'A', 'A', 'B']
     ala = next(r for r in table[2:] if r[0] == 'L-Alanine')
-    assert ala[1] != 'NA' and ala[2] == 'NA' and ala[3] == 'NA'
+    # a model sees measurements only: a ceiling is NA
+    assert ala[1] != 'NA' and ala[2] != 'NA' and ala[3] == 'NA'
     ann = _read(str(tmp_path / 'out_annotations.csv'))
     assert ann[0][:3] == ['Feature', 'HMDB_ID', 'Confidence']
+    head = ann[0]
     arow = next(r for r in ann if r[0] == 'L-Alanine')
-    assert arow[2] == '1' and arow[3] == 'Cascade estimate' and arow[5] == '1'
+    assert arow[2] == '1' and arow[3] == 'Cascade estimate'
+    assert arow[head.index('N_measured')] == '2'
+    assert not any('LOD' in h for h in head)
+    assert arow[head.index('N_ceiling')] == '1'
+    assert arow[head.index('Ceiling_samples')] == 'S3'
 
 
 def test_metaboanalyst_leaves_out_a_sample_the_analyst_excluded(tmp_path, monkeypatch):

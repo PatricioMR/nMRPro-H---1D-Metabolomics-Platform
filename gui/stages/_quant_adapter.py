@@ -27,7 +27,7 @@ from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
     baseline_anchors, integrate_sample, lorentzian_captured_fraction)
 from processing.quant_concentration import standard_per_proton
-from processing.quant_detection_limit import (
+from processing.quant_predicted_window import (
     project_drift, project_noise)
 from processing.quant_snr import noise_level, representative_snr, window_snr
 from processing.spectral_regions import measure_linewidth_ppm
@@ -463,7 +463,7 @@ def manual_good_ids(quality_marks):
 # slice. One boundary converts, here, because this module is the only one that
 # knows both shapes.
 _PER_SAMPLE_FIELDS = ('_concs_per_sample', '_areas_per_sample',
-                      '_snr_per_sample', '_detected_per_sample')
+                      '_snr_per_sample', '_ceiling_per_sample')
 
 
 def _as_sample_list(mapping, n_samples):
@@ -485,38 +485,91 @@ def _as_sample_list(mapping, n_samples):
     return out
 
 
-def reported_values(row, n_samples):
-    """``(values, not_detected)`` -- the concentration the analyst is given
-    for each of ``n_samples`` samples, and which of the others are 'n.d.'.
+# What a cell of the table is. MEASURED: the engine's amount. CEILING: the
+# engine found nothing in the sample (a zero, or no amplitude) and the cell
+# holds the integral of the analyte's reference window there -- everything
+# under it, the neighbours' tails too, so an upper bound, not a quantity (on
+# the virtual bench 90 % of these stood at or above the true amount).
+# NOT_DETECTED: a sample of the study with no number at all (the integral
+# found nothing above the baseline either, or a row with no ceiling).
+# NOT_MEASURED: the sample is not in the study (a blank, an excluded one).
+MEASURED = 'measured'
+CEILING = 'ceiling'
+NOT_DETECTED = 'n.d.'
+NOT_MEASURED = 'NA'
 
-    A value is a number only where the analyte was detected and its amount is
-    positive. The fit and the integral give every sample a number whatever the
-    data hold, a zero is the engine saying it found nothing, and a number
-    written where an analyte was not seen puts a measurement where there is
-    none (Helsel 2006, Chemosphere 65:2434). Those samples are NaN, flagged
-    ``not_detected``; a sample the analyte was never measured in (a blank,
-    an excluded sample) is NaN and not flagged: 'NA', not 'n.d.'. Whatever
-    reads the table -- the statistics, both exports -- reads it from here.
-    """
+
+def _sample_concs(row, n_samples):
+    """``[concentration]`` for ``n_samples`` samples, NaN where the engine
+    has no number."""
     concs = list(row.get('_concs_per_sample') or [])
-    det = list(row.get('_detected_per_sample') or [])
-    values, not_detected = [], []
+    out = []
     for i in range(int(n_samples)):
         c = concs[i] if i < len(concs) else float('nan')
-        d = det[i] if i < len(det) else float('nan')
         try:
-            c = float(c)
+            out.append(float(c))
         except (TypeError, ValueError):
-            c = float('nan')
-        if isinstance(d, (bool, np.bool_)) and not d:
-            values.append(float('nan')); not_detected.append(True)
-        elif not np.isfinite(c):
-            values.append(float('nan')); not_detected.append(False)
-        elif c <= 0:
-            values.append(float('nan')); not_detected.append(True)
+            out.append(float('nan'))
+    return out
+
+
+def reported_cells(row, n_samples):
+    """``[(value, kind)]`` -- what the table holds for each of ``n_samples``
+    samples, and what kind of number it is.
+
+    The engine's amount where it has a positive one (MEASURED), and where it
+    has none, the CEILING its row carries. Writing the engine's zero there
+    would say the analyte is absent from a sample of a study that proved it;
+    writing a bare number would say it was measured. The kind says which.
+    Where not even the integral of the window holds anything, the cell is
+    NOT_DETECTED.
+    """
+    ceil = list(row.get('_ceiling_per_sample') or [])
+    inc = row.get('_included')
+    inc = None if inc is None else {int(i) for i in inc}
+    cells = []
+    for i, c in enumerate(_sample_concs(row, n_samples)):
+        if np.isfinite(c) and c > 0:
+            cells.append((c, MEASURED))
+            continue
+        ceiling = float(ceil[i]) if i < len(ceil) and ceil[i] == ceil[i] else 0.0
+        in_study = i in inc if inc is not None else np.isfinite(c)
+        if not in_study:
+            cells.append((float('nan'), NOT_MEASURED))
+        elif ceiling > 0:
+            cells.append((ceiling, CEILING))
         else:
-            values.append(c); not_detected.append(False)
-    return values, not_detected
+            cells.append((float('nan'), NOT_DETECTED))
+    return cells
+
+
+def reported_values(row, n_samples):
+    """``(values, not_detected)`` -- the number the table holds for each of
+    ``n_samples`` samples (``reported_cells``), and which of the others are
+    'n.d.'. A ceiling is a number here; whether it enters a model as one is
+    the statistics' choice (``statistics_values``). Whatever reads the table
+    -- the statistics, both exports -- reads it from here."""
+    cells = reported_cells(row, n_samples)
+    return ([v for v, _k in cells], [k == NOT_DETECTED for _v, k in cells])
+
+
+def upper_bound_cells(row, n_samples):
+    """``[bool]``: samples whose number is a ceiling, not an amount."""
+    return [k == CEILING for _v, k in reported_cells(row, n_samples)]
+
+
+def statistics_values(row, n_samples, censored=True):
+    """The column a model reads. With ``censored`` (the default) a cell that
+    is not a measurement -- a ceiling -- is NaN,
+    and the statistics treat it as any other missing value (filter, then 1/5
+    of the metabolite's minimum, ``processing.missing_values``): a ceiling put
+    in as an amount was +220 to +260 % on the virtual bench where an analyte
+    stands at a twentieth of its other group, and moved a fold change by 2.5
+    to 4 times. Without it the table's numbers go in as they are."""
+    cells = reported_cells(row, n_samples)
+    if not censored:
+        return [v for v, _k in cells]
+    return [v if k == MEASURED else float('nan') for v, k in cells]
 
 
 def identity_columns(row):
@@ -700,15 +753,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         proton_correction=proton_correction,
         align=align,
         blank_indices=blanks if subtract_blanks else None,
-        # For the analytes detection found nothing for: the study's own noise,
-        # linewidth and drift, so the bound reported is this experiment's and
-        # not a constant.
+        # The study's own noise, linewidth and drift, so what is read off a
+        # window is this experiment's and not a constant.
         #
         # The caller's sigma comes first because a detected peak carries no
         # 'noise' key -- detection keeps one noise_std for the spectrum, on the
-        # stage. Relying on the per-peak fallback made project_noise return NaN
-        # and every censored analyte fell back to "no measurable window",
-        # which turned the whole limit-of-detection path into a no-op.
+        # stage; the per-peak fallback made project_noise return NaN.
         noise_sigma=(float(noise_sigma)
                      if noise_sigma not in (None, 0)
                      else project_noise(peaks)),
@@ -721,7 +771,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         linewidth_ppm=_lw,
         drift_ppm=project_drift(metabolites),
         # Detection was told to ignore these; nothing measured there is the
-        # analyte's, so no limit can be read from them either.
+        # analyte's.
         excluded_regions=excluded_regions,
         deconvolve=deconvolve,
         quantify_shapes=quantify_shapes,

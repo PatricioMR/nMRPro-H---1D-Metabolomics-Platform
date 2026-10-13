@@ -54,7 +54,6 @@ class TestMeasureShape:
         assert a[1] / a[0] == pytest.approx(2.0, rel=0.08)
         assert a[2] / a[0] == pytest.approx(4.0, rel=0.08)
         assert out['snr'][2] == pytest.approx(400.0, rel=0.08)
-        assert all(out['detected'].values())
         assert out['captured'] is None and out['shape'] is True
         lo, hi = out['window']
         assert lo < ORIGIN - 9.0 / FIELD and hi > ORIGIN + 8.0 / FIELD
@@ -67,11 +66,11 @@ class TestMeasureShape:
                             noise_sigma=SIGMA)
         assert out['areas'][0] == pytest.approx(200.0 * area_m, rel=0.08)
 
-    def test_a_sample_without_the_analyte_is_not_detected(self):
+    def test_a_sample_without_the_analyte_reads_at_the_noise(self):
         X = _study([300.0, 0.0])
         out = measure_shape(_shape_ev(), PPM, X, included=[0, 1],
                             noise_sigma=SIGMA)
-        assert out['detected'][0] and not out['detected'][1]
+        assert out['snr'][0] > 100.0
         assert out['snr'][1] < 3.0
 
     def test_the_lines_serve_without_a_profile(self):

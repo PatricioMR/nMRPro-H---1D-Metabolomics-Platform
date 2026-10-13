@@ -5,8 +5,10 @@ import pytest
 from processing.quant_cascade import build_columns
 from scipy.optimize import nnls
 
+from processing import quant_joint_fit as jf
 from processing.quant_joint_fit import (
-    _solve, free_components, joint_measure, refine_part_shifts)
+    _reference_groups, _solve, _solve_on_support, free_components,
+    joint_measure, refine_part_shifts)
 
 MHZ = 500.0
 LW = 2.6 / MHZ
@@ -174,3 +176,79 @@ def test_a_signal_with_nothing_under_it_stays_where_it_is_listed():
     union = np.flatnonzero((PPM > 3.0) & (PPM < 3.8))
     out = refine_part_shifts(cols, None, PPM, t[union], union, LW)
     assert out[('A', 1)] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_the_solve_on_a_support_is_the_reduced_problem_with_zeros_elsewhere():
+    rng = np.random.default_rng(4)
+    A = np.abs(rng.normal(size=(500, 6)))
+    t = A[:, [0, 2]] @ np.array([3.0, 1.0]) + rng.normal(0, 0.1, 500)
+    keep = np.array([0, 2, 4])
+    x, r2 = _solve_on_support(A, t, keep)
+    x_sub, r2_sub = _solve(A[:, keep], t)
+    assert np.allclose(x[keep], x_sub) and r2 == pytest.approx(r2_sub)
+    assert np.all(x[[1, 3, 5]] == 0.0)
+    # the whole set, or an empty one, is the plain solve
+    for k in (np.arange(6), np.array([], dtype=int)):
+        assert np.allclose(_solve_on_support(A, t, k)[0], _solve(A, t)[0])
+
+
+def test_replicates_answer_the_same_question_of_the_reference(monkeypatch):
+    """B's best fit is positive in the replicates that carry a bump at its
+    line and zero in the ones that carry a dip, so solved alone B reads
+    47, 0, 47, 0 -- present, absent, present, absent -- from one analyte.
+    The reference (the mean trace, where bump and dip cancel) does not hold
+    B, and then no replicate fits it."""
+    a = _met('A', [(3.250, 's', 3, None), (3.900, 's', 3, None)])
+    b = _met('B', [(3.253, 's', 3, None), (3.600, 's', 3, None)])
+    cols = _cols(a, b)
+    base = _trace(cols, {'A': 1000.0, 'B': 0.0})
+    bump = _lorentz(3.253, 600.0)
+    X = np.column_stack([base + bump, base - bump] * 2)
+    got = {}
+    for flag in (False, True):
+        monkeypatch.setattr(jf, 'REFERENCE_SUPPORT', flag)
+        out = joint_measure(cols, [], PPM, X, range(4), sigma=2.0,
+                            linewidth_ppm=LW)
+        got[flag] = [out['B']['amplitudes'][s] for s in range(4)]
+    assert got[False][0] > 0 and got[False][1] == 0, 'the flip this guards'
+    assert got[True] == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_a_study_of_one_sample_has_no_reference_to_follow(monkeypatch):
+    a = _met('A', [(3.250, 's', 3, None), (3.900, 's', 3, None)])
+    b = _met('B', [(3.253, 's', 3, None), (3.600, 's', 3, None)])
+    cols = _cols(a, b)
+    X = _trace(cols, {'A': 1000.0, 'B': 300.0}).reshape(-1, 1)
+    out = joint_measure(cols, [], PPM, X, range(1), sigma=2.0, linewidth_ppm=LW)
+    assert out['B']['amplitudes'][0] == pytest.approx(300.0, rel=0.05)
+
+
+def test_each_group_of_replicates_follows_its_own_reference(monkeypatch):
+    """The bump sits in one group and the dip in the other. Followed by the
+    study's mean they cancel and B is erased from every sample, an analyte
+    one group holds with it. Each group's own mean keeps B where the group
+    has it, in all its replicates, and drops it where it does not."""
+    a = _met('A', [(3.250, 's', 3, None), (3.900, 's', 3, None)])
+    b = _met('B', [(3.253, 's', 3, None), (3.600, 's', 3, None)])
+    cols = _cols(a, b)
+    base = _trace(cols, {'A': 1000.0, 'B': 0.0})
+    bump = _lorentz(3.253, 600.0)
+    X = np.column_stack([base + bump, base - bump, base + bump, base - bump])
+    study = joint_measure(cols, [], PPM, X, range(4), sigma=2.0,
+                          linewidth_ppm=LW)
+    assert [study['B']['amplitudes'][s] for s in range(4)] == [0.0] * 4
+    grouped = joint_measure(cols, [], PPM, X, range(4), sigma=2.0,
+                            linewidth_ppm=LW,
+                            groups={'bump': [0, 2], 'dip': [1, 3]})
+    amps = [grouped['B']['amplitudes'][s] for s in range(4)]
+    assert amps[0] > 0 and amps[2] > 0 and amps[1] == 0 and amps[3] == 0
+    assert amps[0] == pytest.approx(amps[2], rel=1e-6)
+
+
+def test_the_reference_groups_are_replicates_and_the_rest_together():
+    assert _reference_groups(None, [0, 1, 2]) == [[0, 1, 2]]
+    got = _reference_groups({'a': [0, 1], 'b': [2], 'c': [3, 4, 9]},
+                            [0, 1, 2, 3, 4, 5, 6])
+    assert [0, 1] in got and [3, 4] in got
+    assert [2, 5, 6] in got, 'a lone sample and the ungrouped share one'
+    assert _reference_groups({'a': [0]}, [0, 1]) == [[0, 1]]

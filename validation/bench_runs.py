@@ -61,6 +61,15 @@ def _apply_sets(sets):
         setattr(importlib.import_module(mod), name, ast.literal_eval(value))
 
 
+def _below_normal():
+    """Worker initializer: below-normal priority, so the machine stays usable
+    while a batch runs."""
+    if sys.platform == 'win32':
+        import ctypes
+        ctypes.windll.kernel32.SetPriorityClass(
+            ctypes.windll.kernel32.GetCurrentProcess(), 0x00004000)
+
+
 def _one(job):
     """One run in a worker process."""
     out, label, tube, shift, seed, field, legacy, sample_shift, align, mstar, sets = job
@@ -110,7 +119,7 @@ def run(a):
     for var in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
         os.environ[var] = str(threads)
     t0 = time.time()
-    with ProcessPoolExecutor(max_workers=a.jobs) as ex:
+    with ProcessPoolExecutor(max_workers=a.jobs, initializer=_below_normal) as ex:
         futs = [ex.submit(_one, j) for j in jobs]
         for f in as_completed(futs):
             (_o, _l, t, sh, s, _f, _g, _m, _a, _ms, _st), secs = f.result()

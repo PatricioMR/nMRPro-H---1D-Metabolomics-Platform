@@ -185,7 +185,7 @@ class TestASingletWithNoPeakIsNotAloneItIsAbsent:
     uncontested" was therefore satisfied most completely by the signals that
     were not in the spectrum at all — they became Good, and anchors.
 
-    Every censored analyte on the reference study reached that state this way.
+    Every peakless winner on the reference study reached that state this way.
     Sodium fumarate, guanine, trimethylamine, histamine, L-histidine and
     L-carnosine each won the quantification election on a peakless singlet
     marked Good, while the same metabolite's detected multiplets sat marked

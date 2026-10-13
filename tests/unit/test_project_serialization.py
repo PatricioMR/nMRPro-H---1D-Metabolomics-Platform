@@ -213,3 +213,28 @@ class TestPerSampleReadingsSurviveReload:
         before = (r['delta_j_hz'], r['ppm_diff'])
         apply_per_sample_consensus(r, params=params)
         assert (r['delta_j_hz'], r['ppm_diff']) == pytest.approx(before)
+
+
+class TestCeilingsSurviveTheProject:
+    def test_what_the_table_holds_is_the_same_after_save_and_load(self, tmp_path):
+        """Save, load, save, load: a cell's number and its kind come back as
+        they were -- the ceiling and the samples of the study travel with the
+        row, nothing is recomputed on opening."""
+        from gui.stages._quant_adapter import reported_cells
+        row = {'metabolite': 'X', 'hmdb_id': 'X',
+               '_concs_per_sample': [1.0, 2.0, 0.0, float('nan')],
+               '_detected_per_sample': [True, False, False, False],
+               '_ceiling_per_sample': [0.0, 0.0, 0.5, 0.1],
+               '_included': [0, 1, 2, 3]}
+        want = reported_cells(row, 4)
+        state = _make_state()
+        state['qnt']['quant_results'] = [row]
+        path = str(tmp_path / 'a.nmrproj')
+        for _ in range(2):
+            with open(path, 'wb') as f:
+                pickle.dump(state, f, protocol=5)
+            with open(path, 'rb') as f:
+                state = pickle.load(f)
+        got = reported_cells(state['qnt']['quant_results'][0], 4)
+        assert [k for _v, k in got] == [k for _v, k in want]
+        np.testing.assert_allclose([v for v, _k in got], [v for v, _k in want])

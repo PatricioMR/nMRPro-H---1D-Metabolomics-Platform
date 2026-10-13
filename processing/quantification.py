@@ -47,6 +47,13 @@ OFF_THE_STUDY = 'off_the_study'
 FIT_MISPLACED = 'fit_misplaced'
 SINGLET_OFF_DRIFT = 'singlet_off_drift'
 ANALYST_REJECTED = 'analyst_rejected'
+EXCLUDED_REGION = 'excluded_region'
+
+# The reason of a winner quantified on its predicted window, with no peak.
+WINDOW_INTEGRAL_TEXT = (
+    'No peak was detected in the predicted region: the amount is what the '
+    'window integrates above a local baseline there. It may hold a '
+    "neighbour's tail or noise; read the region before using it.")
 
 REJECTION_TEXT = {
     ANALYST_REJECTED:
@@ -133,6 +140,11 @@ REJECTION_TEXT = {
         'Not quantified: nothing detected — every signal the database predicts '
         'for this analyte was searched for and none was found. There is no '
         'peak to measure and none to compete with.',
+    EXCLUDED_REGION:
+        'Not quantified: the predicted signal falls in a region excluded from '
+        'the spectrum. Detection does not look there, and nothing measured '
+        'there belongs to the analyte -- in the water window it is the '
+        'residual solvent.',
 }
 
 

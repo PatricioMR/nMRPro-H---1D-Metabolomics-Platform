@@ -77,7 +77,12 @@ CASCADE_MAX_STEPS = 150
 # kept 36 against 88. The cap of 60 steps this replaces held the tubes of
 # 50 and 100 at 60 on every seed.
 CASCADE_FREE_STEPS = 60
-CASCADE_LATE_MIN_SNR = 25.0
+# 12 instead of 25 since 2026-10-12 (ADR-078), with the late ones reported
+# only from CASCADE_LATE_SCORE_MIN: the faint real analytes of a crowded tube
+# lose the greedy race to strangers in the first 60 steps and an SNR bar
+# shuts them out for good; an identity bar on what is reported keeps the
+# strangers that come in with them out of the table.
+CASCADE_LATE_MIN_SNR = 12.0
 SHIFT_STEPS = 7             # within +- SHIFT_REACH_LW linewidths
 SHIFT_REACH_LW = 0.5
 # Past the fine reach, a coarser grid out to this many linewidths: in a real
@@ -626,8 +631,10 @@ def _is_apex(r, i, half) -> bool:
 
 def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
             min_snr=CASCADE_MIN_SNR, max_steps=CASCADE_MAX_STEPS,
-            cap_ratio=CAP_RATIO) -> CascadeResult:
+            cap_ratio=None) -> CascadeResult:
     """Forward selection over ``cols`` on one trace (see the module)."""
+    if cap_ratio is None:
+        cap_ratio = CAP_RATIO
     ppm = np.asarray(ppm, dtype=float)
     t_full = np.asarray(trace, dtype=float)
     weight = np.ones(ppm.size) if weight is None else np.asarray(weight, dtype=float)
@@ -870,6 +877,16 @@ CASCADE_SCORE_INTERCEPT = -0.78118
 # refitted on these rows (leaving one regime out at a time) ranked them no
 # better (AUC within 0.03), so the weights stay.
 CASCADE_SCORE_MIN = 0.2
+# What an analyte the cascade took in past CASCADE_FREE_STEPS must score to
+# be reported; None: CASCADE_SCORE_MIN, as for the others. With the late bar
+# at 12, GISSMO 600 MHz, three seeds, found / strangers (two dots or more):
+# tube of 100 233/71 -> 244/66 (181/17 -> 187/9), scattered 5 mppm 205/104 ->
+# 207/99 (151/40 -> 154/39); tube of 50 133/45 -> 134/46, scattered 116/70 ->
+# 117/74. Quantification of the analytes found either way: standard median
+# 17% -> 15%, p90 91% -> 81%; scattered median 23% -> 28% (the late columns,
+# misplaced there, take area from their neighbours). Rows the new bar
+# admitted scored 15 real / 7 strangers from 0.4, 7 / 17 below it.
+CASCADE_LATE_SCORE_MIN = 0.4
 CASCADE_SCORE_TWO = 0.6
 CASCADE_BY_SCORE = True
 

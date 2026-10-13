@@ -82,7 +82,8 @@ def warm_gissmo(fields, jobs):
     for var in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
         os.environ[var] = threads
     todo = [(f, n, s) for f in fields for n in TUBES for s in SEEDS]
-    with ProcessPoolExecutor(max_workers=jobs) as ex:
+    from validation.bench_runs import _below_normal
+    with ProcessPoolExecutor(max_workers=jobs, initializer=_below_normal) as ex:
         for f, n, s in ex.map(_warm, todo):
             print(f'  {f:.0f} MHz tube {n} seed {s}', flush=True)
 

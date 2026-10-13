@@ -14,6 +14,7 @@ neither call site could see it.
 What stays: VIP scores, the manual per-sample region update, the tree refresh,
 and the exports — display and analysis over results that already exist.
 """
+import tkinter as tk
 from tkinter import filedialog, messagebox
 import numpy as np
 import csv
@@ -21,7 +22,8 @@ import os
 
 from ._quant_adapter import (
     blank_indices, dilution_and_correction, identity_columns as _identity_columns,
-    quantify_project, reported_values, sample_groups, standard_vector)
+    CEILING, NOT_DETECTED, reported_cells, quantify_project, sample_groups,
+    standard_vector, statistics_values)
 from controllers.analysis_defaults import QUANTIFICATION
 from gui.project_vars import collect_vars
 from processing.quant_concentration import (
@@ -66,38 +68,6 @@ def _dbg(f, *args):
     if f is None:
         return
     print(*args, file=f)
-# ─────────────────────────────────────────────────────────────────────────────
-
-
-def _per_sample_snr(p, all_int, n_s):
-    """Per-sample SNR at a detected peak's integration window.
-
-    Integration in the quant pipeline uses ONE fixed window per analyte for
-    every sample.  In a sample where the analyte is weak/absent the window
-    still integrates noise, so a reported area/concentration on its own cannot
-    distinguish "present but small" from "not there".  This returns the SNR of
-    the peak window in EACH sample (length ``n_s``) so callers can flag samples
-    below the detection limit instead of silently reporting noise as signal.
-
-    Returns
-    -------
-    (snr_list, noise_lvl)
-        ``snr_list`` has one float per sample (NaN when noise is unknown);
-        ``noise_lvl`` is the absolute noise level used (or None).
-    """
-    if p is None or all_int is None or n_s <= 0:
-        return [float('nan')] * max(n_s, 0), None
-    lo_i = min(p.get('start_idx', 0), p.get('end_idx', 0))
-    hi_i = max(p.get('start_idx', 0), p.get('end_idx', 0))
-    noise_lvl = p.get('noise', None)
-    if (not noise_lvl or noise_lvl <= 0) and p.get('snr', 0) > 0:
-        peak_max_all = float(np.max(np.mean(all_int[lo_i:hi_i + 1, :], axis=1)))
-        noise_lvl = peak_max_all / p['snr'] if p['snr'] else None
-    if not noise_lvl or noise_lvl <= 0:
-        return [float('nan')] * n_s, noise_lvl
-    snr_list = [float(np.max(all_int[lo_i:hi_i + 1, s])) / noise_lvl
-                for s in range(n_s)]
-    return snr_list, noise_lvl
 # ─────────────────────────────────────────────────────────────────────────────
 
 from ._quant_helpers import (
@@ -170,9 +140,7 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'external_IS  : {ext_is}')
 
         ok = [r for r in rows if not r.get('_not_quantified') and not r.get('_is_is')]
-        censored = [r for r in rows if r.get('_censored')]
-        nq = [r for r in rows
-              if r.get('_not_quantified') and not r.get('_censored')]
+        nq = [r for r in rows if r.get('_not_quantified')]
         _dbg(f, '')
         _dbg(f, '=' * 70)
         _dbg(f, f'SUMMARY TABLE  ({len(ok)} quantified, sorted by mean mM)')
@@ -210,37 +178,6 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
                     f'  {is_row.get("ppm", 0):>7.4f}'
                     f'  {is_row["conc_mm"]:>9.4f}'
                     f'   recovery={rec:.1f}%')
-
-        if censored:
-            _dbg(f, '')
-            _dbg(f, '── BELOW THE LIMIT ──────────────────────────────────')
-            _dbg(f, '  Bounds, not measurements. An analyte here was looked '
-                    'for where the')
-            _dbg(f, '  database predicts it and not found; the limit is what '
-                    'this experiment')
-            _dbg(f, '  could have seen there.')
-            _dbg(f, '')
-            _dbg(f, f'  {"Metabolite":<30s}  {"region (ppm)":>16}'
-                    f'  {"LOD mM":>10}  {"LOQ mM":>10}  verdict')
-            _dbg(f, '  ' + '-' * 84)
-            for r in sorted(censored, key=lambda r: (r.get('_censored', ''),
-                                                     r.get('metabolite', ''))):
-                w = r.get('_multiplet_window') or (float('nan'),) * 2
-                _dbg(f, f'  {str(r.get("metabolite", "?"))[:30]:<30s}'
-                        f'  {w[0]:7.4f}-{w[1]:<7.4f}'
-                        f'  {r.get("_lod_mm", float("nan")):>10.4g}'
-                        f'  {r.get("_loq_mm", float("nan")):>10.4g}'
-                        f'  {r.get("status", "")}')
-            _n_ov = sum(1 for r in censored
-                        if r.get('_censored') == 'unresolved')
-            if _n_ov:
-                _dbg(f, '')
-                _dbg(f, f'  {_n_ov} marked overlap?: area well above the '
-                        'quantification limit with')
-                _dbg(f, '  no peak detected in the window. Something is there '
-                        'that detection could')
-                _dbg(f, '  not resolve. Look at those regions before trusting '
-                        'their neighbours.')
 
         resolved = [r for r in rows if r.get('_deconv')]
         sd = (diagnostics or {}).get('shape_deconvolution')
@@ -408,15 +345,6 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
 
 class _QuantCompMixin:
     """Mixin — mixed into QuantificationStage.  Uses self.* freely."""
-
-    def _detection_min_snr(self):
-        """SNR threshold used by peak detection — reused to flag, per sample,
-        whether an analyte is actually above the detection limit. Falls back to
-        the pipeline default (3.0) when the peak-detection stage is unavailable."""
-        try:
-            return float(self.app.stages['peak_detection'].min_snr_var.get())
-        except Exception:
-            return 3.0
 
     # ── Core quantification ───────────────────────────────────────────────────
 
@@ -613,8 +541,8 @@ class _QuantCompMixin:
             align=align,
             subtract_blanks=subtract_blanks,
             # The spectrum's noise as detection estimated it. It lives on the
-            # detection stage, not on the peaks, and without it no analyte can
-            # be given a detection limit.
+            # detection stage, not on the peaks, and without it no SNR can be
+            # read.
             noise_sigma=getattr(self.peak_stage, 'noise_std', None),
             excluded_regions=_excl or (),
             deconvolve=_deconv,
@@ -707,15 +635,10 @@ class _QuantCompMixin:
                          if not _r.get('_is_is')]
             _n_nq = sum(1 for _r in _analytes if _r.get('_not_quantified'))
             _n_ok = len(_analytes) - _n_nq
-            # Censored analytes are counted apart from both. They are neither
-            # a result nor a failure: the experiment looked and reported what
-            # it could have seen, which is a different thing from not looking.
-            _n_cens = sum(1 for _r in _analytes if _r.get('_censored'))
-            _n_nq -= _n_cens
             _note = (f' PQN×{self._pqn_factor:.3f}'
                      if _norm_f == 'IS+PQN' else '')
             self.run_status.config(
-                text=(f'{_n_ok} quantified  ·  {_n_cens} < LOQ  ·  '
+                text=(f'{_n_ok} quantified  ·  '
                       f'{_n_nq} not [{_norm_f}{_note}]'),
                 foreground='green')
             for _b in ('btn_csv', 'btn_metaboanalyst', 'btn_pdf'):
@@ -728,8 +651,6 @@ class _QuantCompMixin:
             _plural = '' if _n_ok == 1 else 's'
             _msg = (f'{_n_ok} metabolite{_plural} identified and '
                     f'quantified successfully')
-            if _n_cens:
-                _msg += f'  ·  {_n_cens} below the limit of quantification'
             if _n_nq:
                 _msg += f'  ·  {_n_nq} not quantified'
             self._status_ok(_msg)
@@ -815,7 +736,7 @@ class _QuantCompMixin:
         # quantified before a sample was added). Pad/truncate each to exactly n_s
         # so the matrix is rectangular — a ragged list raises "inhomogeneous shape"
         # under numpy and silently skipped all VIP scores.
-        rows = [reported_values(r, n_s)[0] for r in results]
+        rows = [statistics_values(r, n_s) for r in results]
         X = np.array(rows, dtype=float).T
 
         blk_idx = set(getattr(self, '_last_blk_indices', []))
@@ -1105,7 +1026,8 @@ class _QuantCompMixin:
                             for h in (f'CI95lo_{g}', f'CI95hi_{g}')]
                 quality_cols = (['ChemShift(ppm)', 'Width(ppm)', 'SNR', 'R2', 'Score',
                                  'IntegMode', 'Status', 'Norm',
-                                 'Confidence', 'Origin', 'IdentityBasis']
+                                 'Confidence', 'Origin', 'IdentityBasis',
+                                 'Ceiling_samples']
                                 + cv_hdrs + ci_hdrs)
 
                 def _fmt(v):
@@ -1152,6 +1074,13 @@ class _QuantCompMixin:
                             _lo, _hi = _ci_g.get(g, (float('nan'), float('nan')))
                             ci_vals += [_fmt(_lo), _fmt(_hi)]
 
+                        # Where the fit found nothing the cell is a ceiling
+                        # -- the most the sample can hold -- written '<value'
+                        # and the sample named.
+                        _cells = reported_cells(r, n_s)
+                        _ceil = [snames[i] for i, (_v, k) in enumerate(_cells)
+                                 if k == CEILING]
+
                         qual_row = [
                             _fmt(ppm_val),
                             _fmt(width_val),
@@ -1162,15 +1091,16 @@ class _QuantCompMixin:
                             status,
                             norm_mode_lbl,
                             *_identity_columns(r),
+                            '; '.join(_ceil),
                         ] + cv_vals + ci_vals
 
-                        # 'n.d.' where the analyte was not detected (or its
-                        # amount is not positive): a number there would be a
-                        # measurement that does not exist. 'NA' where it was
-                        # never measured (a blank, an excluded sample).
-                        _vals, _nd = reported_values(r, n_s)
-                        sample_vals = ['n.d.' if nd else _fmt(v)
-                                       for v, nd in zip(_vals, _nd)]
+                        # 'n.d.' only where nothing, not even a ceiling, can
+                        # be said; 'NA' where the sample was never measured
+                        # (a blank, an excluded sample).
+                        sample_vals = [
+                            'n.d.' if k == NOT_DETECTED else
+                            ('<' + _fmt(v) if k == CEILING else _fmt(v))
+                            for v, k in _cells]
 
                         w.writerow([r['metabolite'], hmdb_id] + qual_row + sample_vals)
 
@@ -1208,8 +1138,14 @@ class _QuantCompMixin:
                     if (r.get('_is_is') or r.get('_is_lipid_index')
                             or r.get('_not_quantified')):
                         continue
-                    _vals, _nd = reported_values(r, n_s)
-                    vals = [_vals[i] for i in _non_blk_idx]
+                    # The model MetaboAnalyst runs sees only measurements:
+                    # a ceiling is NA, and its own missing-value step fills
+                    # it, as ours does.
+                    _cells = reported_cells(r, n_s)
+                    _stat = statistics_values(r, n_s)
+                    vals = [_stat[i] for i in _non_blk_idx]
+                    ceil = [names[k] for k, i in enumerate(_non_blk_idx)
+                            if _cells[i][1] == CEILING]
                     # MetaboAnalyst needs one name per feature
                     name = str(r['metabolite'])
                     if name in _seen:
@@ -1223,7 +1159,7 @@ class _QuantCompMixin:
                                             for v in vals])
                     _annot.append([name, r.get('hmdb_id', ''), conf, origin, basis,
                                    sum(1 for v in vals if np.isfinite(v)),
-                                   len(vals)])
+                                   len(vals), len(ceil), '; '.join(ceil)])
                 with open(path, 'w', newline='', encoding='utf-8') as f:
                     w = csv.writer(f)
                     # MetaboAnalyst format: row1=Sample+names, row2=Label+groups
@@ -1237,7 +1173,8 @@ class _QuantCompMixin:
                 with open(_ann_path, 'w', newline='', encoding='utf-8') as f:
                     w = csv.writer(f)
                     w.writerow(['Feature', 'HMDB_ID', 'Confidence', 'Origin',
-                                'IdentityBasis', 'N_detected', 'N_samples'])
+                                'IdentityBasis', 'N_measured', 'N_samples',
+                                'N_ceiling', 'Ceiling_samples'])
                     w.writerows(_annot)
                 self._status_ok(f'MetaboAnalyst → {os.path.basename(path)}')
                 _note = (f'\n{len(_no_value)} metabolite(s) left out: not '
@@ -1246,7 +1183,9 @@ class _QuantCompMixin:
                     'Export',
                     f'Saved:\n{path}\n\nConfidence of every feature (1 = a '
                     f'candidate to check, 3 = confirmed):\n{_ann_path}\n\n'
-                    f'n.d. samples are NA.{_note}')
+                    f'Cells holding only a ceiling are NA (a model sees '
+                    f'measurements only); they are named in '
+                    f'Ceiling_samples.{_note}')
             except Exception as e:
                 messagebox.showerror('Export Error', str(e))
 

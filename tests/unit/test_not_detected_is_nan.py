@@ -1,50 +1,43 @@
-"""A sample the analyte was not detected in is NaN wherever the table is read.
+"""A sample the engine found no amount in is NaN wherever the table is read.
 
-The fit and the integral hand every sample a number whatever the data hold, a
-zero is the engine saying it found nothing, and a number written where an
-analyte was not seen puts a measurement where there is none (Helsel 2006,
-Chemosphere 65:2434). So what the analyst is given -- the statistics, the CSV,
-the MetaboAnalyst file -- reads every value through ``reported_values``, and
+A zero is the engine saying it found nothing, and a number written where it
+found none puts a measurement where there is none (Helsel 2006, Chemosphere
+65:2434). What the analyst is given -- the statistics, the CSV, the
+MetaboAnalyst file -- reads every value through ``reported_values``, and
 nothing in the statistics fills a NaN with the column's mean.
 """
 import numpy as np
 import pytest
 
-from gui.stages._quant_adapter import identity_columns, reported_values
+from gui.stages._quant_adapter import (
+    CEILING, MEASURED, NOT_DETECTED, NOT_MEASURED, identity_columns,
+    reported_cells, reported_values, statistics_values, upper_bound_cells)
+from processing.quant_engine import _ceilings
 from gui.stages._quant_helpers import _pls_vip
-from processing.quant_cascade import Column
-from processing.quant_engine import _fit_detected
 
 NAN = float('nan')
 
 
-def test_a_value_is_a_number_only_where_the_analyte_was_detected():
-    row = {'_concs_per_sample': [1.0, 2.0, 3.0, NAN, 0.0],
-           '_detected_per_sample': [True, False, True, True, True]}
-    vals, nd = reported_values(row, 5)
-    assert vals[0] == 1.0 and vals[2] == 3.0
-    assert np.isnan(vals[1]) and nd[1], 'detected False: n.d.'
-    assert np.isnan(vals[3]) and not nd[3], 'never measured: NA, not n.d.'
-    assert np.isnan(vals[4]) and nd[4], 'a zero is nothing found, not a measurement'
+def test_a_positive_amount_is_reported_and_a_zero_is_nothing_found():
+    row = {'_concs_per_sample': [1.0, 2.0, NAN, 0.0]}
+    vals, nd = reported_values(row, 4)
+    assert vals[:2] == [1.0, 2.0] and nd[:2] == [False, False]
+    assert np.isnan(vals[2]) and not nd[2], 'never measured: NA, not n.d.'
+    assert np.isnan(vals[3]) and nd[3], 'a zero is nothing found, not a measurement'
 
 
-def test_a_row_with_no_detection_record_keeps_its_positive_numbers():
-    row = {'_concs_per_sample': [1.0, 2.0], '_detected_per_sample': [NAN, NAN]}
-    vals, nd = reported_values(row, 2)
-    assert vals == [1.0, 2.0] and nd == [False, False]
+def test_an_old_projects_detection_record_changes_nothing():
+    """Rows saved before the limits were removed carry a per-sample detection
+    verdict; a positive amount is the measurement whatever it says."""
+    row = {'_concs_per_sample': [1.0, 2.0],
+           '_detected_per_sample': [True, False]}
+    assert reported_cells(row, 2) == [(1.0, MEASURED), (2.0, MEASURED)]
 
 
 def test_a_short_vector_is_padded_with_na():
     vals, nd = reported_values({'_concs_per_sample': [1.0]}, 3)
     assert vals[0] == 1.0 and np.isnan(vals[1]) and np.isnan(vals[2])
     assert nd == [False, False, False]
-
-
-def test_numpy_booleans_count_as_detection_verdicts():
-    row = {'_concs_per_sample': [1.0, 2.0],
-           '_detected_per_sample': [np.True_, np.False_]}
-    vals, nd = reported_values(row, 2)
-    assert vals[0] == 1.0 and np.isnan(vals[1]) and nd[1]
 
 
 def test_the_exports_carry_the_identity_of_every_row():
@@ -92,39 +85,49 @@ def test_all_features_incomplete_gives_nothing():
     assert np.all(np.isnan(_pls_vip(X, y, n_components=1)))
 
 
-# ── the cascade's fit is held to the noise sample by sample ──────────────────
+# ── the study proved the analyte: every sample has a number, of some kind ────
 
-FWHM = 2.6 / 600.0
-PPM = np.linspace(4.0, 1.0, 30000)
-
-
-class _Comp:
-    def __init__(self, c):
-        self.lo, self.hi, self.shift_ppm = c - 0.03, c + 0.03, 0.0
-        self.width_scale, self.lines, self.c = 1.0, [c], c
-
-    def model(self, x, shift, width):
-        g = FWHM * width / 2.0
-        return g ** 2 / ((x - self.c - shift) ** 2 + g ** 2)
+def _row(**kw):
+    base = {'_concs_per_sample': [1.0, 2.0, 0.0, NAN, NAN, 0.0],
+            '_ceiling_per_sample': [0.0, 0.0, 0.5, 0.1, 0.3, 0.0],
+            '_included': [0, 1, 2, 3, 5]}
+    base.update(kw)
+    return base
 
 
-def _column():
-    col = Column('m', 'm')
-    col.parts.append((_Comp(2.0), 1.0))
-    return col
+def test_every_sample_of_the_study_has_a_number_and_the_kind_says_which():
+    cells = reported_cells(_row(), 6)
+    assert cells[0] == (1.0, MEASURED)
+    assert cells[1] == (2.0, MEASURED)
+    assert cells[2] == (0.5, CEILING), 'a zero becomes the most it can hold'
+    assert cells[3] == (0.1, CEILING), 'no amplitude at all: the same'
+    assert np.isnan(cells[4][0]) and cells[4][1] == NOT_MEASURED,         'a sample outside the study is not measured, whatever its ceiling'
+    assert np.isnan(cells[5][0]) and cells[5][1] == NOT_DETECTED,         'nothing in the window either: n.d., not a number'
+    assert upper_bound_cells(_row(), 6) == [False, False, True, True, False, False]
 
 
-def test_the_cascades_fit_is_detected_only_where_it_stands_above_the_noise():
-    col = _column()
-    top = max(v.max() for _i, v in col.part_curves(PPM, 0.0))
-    noise = 10.0
-    # amplitude x the signal's height per unit amplitude over the noise
-    amps = {0: 10.0 * noise / top, 1: 1.0 * noise / top, 2: 0.0}
-    got = _fit_detected(col, PPM, {'shift_ppm': 0.0, 'per_proton': amps}, noise)
-    assert got == {0: True, 1: False, 2: False}
+def test_a_row_without_a_ceiling_still_ends_in_nd_for_a_zero():
+    cells = reported_cells(_row(_ceiling_per_sample=None), 6)
+    assert cells[2][1] == NOT_DETECTED and np.isnan(cells[2][0])
 
 
-def test_without_a_noise_or_a_column_nothing_is_claimed():
-    res = {'shift_ppm': 0.0, 'per_proton': {0: 1.0}}
-    assert _fit_detected(_column(), PPM, res, None) == {}
-    assert _fit_detected(None, PPM, res, 10.0) == {}
+def test_a_sample_of_the_study_without_a_number_is_nd_not_na():
+    """NA says the sample is not in the study. A sample that is, and where
+    the engine has no amount and no ceiling, is n.d. -- on the Mice study 47
+    such cells read NA once the detection-limit floor stopped hiding them."""
+    cells = reported_cells(_row(_ceiling_per_sample=None), 6)
+    assert cells[3][1] == NOT_DETECTED, 'in the study, no amplitude'
+    assert cells[4][1] == NOT_MEASURED, 'not in the study'
+
+
+def test_the_statistics_read_measurements_only_unless_asked_otherwise():
+    got = statistics_values(_row(), 6)
+    assert got[:2] == [1.0, 2.0]
+    assert np.isnan(got[2]) and np.isnan(got[3])
+    kept = statistics_values(_row(), 6, censored=False)
+    assert kept[:4] == [1.0, 2.0, 0.5, 0.1]
+
+
+def test_the_ceiling_is_the_window_integral_and_nothing_below_it():
+    got = _ceilings({0: 0.4, 1: 0.0, 2: NAN, 3: -1.0, 4: None})
+    assert got == {0: 0.4}

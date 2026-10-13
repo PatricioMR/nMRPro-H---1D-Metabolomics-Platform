@@ -838,25 +838,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             if r.get('_not_quantified'):
                 conf_tag = 'nq'
                 conc_s = 'n.q.'
-                # A censored row is not a failure to measure: it is an upper
-                # bound, and the bound is the informative part. Without the
-                # number the analyst cannot tell an absence that means
-                # something from a measurement that was never sensitive
-                # enough, and those say opposite things about the sample.
-                _cens = r.get('_censored')
-                if _cens:
-                    # Poor quality, coloured like any other poor row. Reading
-                    # as a special case invited the analyst to treat it as a
-                    # third kind of result; it is a weak one, and the reason
-                    # says which kind of weakness.
-                    conf_tag = 'conf1'
-                    _bound = (r.get('_lod_mm') if _cens == 'below_lod'
-                              else r.get('_loq_mm'))
-                    if _bound is not None and np.isfinite(_bound):
-                        conc_s = (f'< {_bound:.4f}' if _is_mm
-                                  else f'< {_bound:.3e}')
-                    else:
-                        conc_s = 'n.q.'
             else:
                 conf_tag = f'conf{_conf}'
             peak_rank = r.get('_peak', {})

@@ -71,7 +71,7 @@ from processing.pattern_shape import (  # noqa: E402
 from processing.peak_detection import (  # noqa: E402
     detect_peaks, estimate_noise_minimum_segment)
 from processing.per_sample_signal import signal_across_samples  # noqa: E402
-from processing.quant_detection_limit import project_drift  # noqa: E402
+from processing.quant_predicted_window import project_drift  # noqa: E402
 from processing.quantification import eligible_metabolite_ids  # noqa: E402
 from processing.spectral_regions import (  # noqa: E402
     DEFAULT_EXCLUDED_REGIONS, measure_linewidth_ppm)

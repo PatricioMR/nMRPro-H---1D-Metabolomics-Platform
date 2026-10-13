@@ -29,7 +29,7 @@ import numpy as np
 
 from processing.baseline_model import broad_removed_fraction
 from processing.quant_cascade import (
-    CASCADE_BY_SCORE, CASCADE_SCORE_MIN, CASCADE_SCORE_TWO, cascade_score,
+    CASCADE_BY_SCORE, CASCADE_SCORE_TWO, cascade_score,
     MAX_SIGNAL_DISAGREEMENT, MIN_FREE_TO_QUANTIFY, build_columns,
     cascade_missed, exclusion_weight, fit_curve_record, others_removed,
     COVAR_HALF_WIDTH_LW, COVAR_MAX_SIGNALS, COVAR_MIN_SNR, covariation_confirms,
@@ -43,12 +43,9 @@ from processing.quant_deconvolution import (
     solve_windows, subtract_neighbours)
 from processing.quant_joint_fit import (
     PART_SHIFT_REACH_LW, PART_SHIFT_STEPS, joint_measure)
-from processing.quant_detection_limit import (
-    INTERFERENCE_NOTE,
-    BELOW_LOD, BELOW_LOQ, EXCLUDED_REGION, K_LOD, STRONG_ABOVE_LOQ,
-    UNRESOLVED, censor, censor_text, detection_limits, drift_offsets,
-    integration_noise, local_noise_sigma, predicted_window, strength_band,
-    window_is_excluded)
+from processing.quant_predicted_window import (
+    INTERFERENCE_NOTE, drift_offsets, integration_noise, local_noise_sigma,
+    predicted_window, window_is_excluded)
 from processing.quant_integration import (
     MIN_TRUSTED_CAPTURE, cluster_baseline,
     integrate_across_samples, integrate_sample, integrate_signal,
@@ -65,8 +62,9 @@ from processing.quant_shared import (
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, FIT_MISPLACED,
-    LOST_COMPETITION, NO_MEASURABLE_WINDOW,
+    AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, EXCLUDED_REGION,
+    FIT_MISPLACED, LOST_COMPETITION, NO_MEASURABLE_WINDOW, NOT_DETECTED,
+    WINDOW_INTEGRAL_TEXT,
     OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
     SHAPES_OFF, SINGLET_OFF_DRIFT, SINGLET_UNSUPPORTED, WINDOW_TAKEN, elect,
     is_competitor)
@@ -82,18 +80,6 @@ STATUS_STRONG = '●●●'
 STATUS_FAIR = '●●○'
 STATUS_WEAK = '●○○'
 STATUS_NONE = 'n.q.'
-
-# Every censored row reads as weak confidence in the Conf column, and its
-# reason says which kind of weakness. The column answers one question -- how
-# much is this worth -- and putting a second vocabulary in it ("< LOQ",
-# "overlap?") made the reader translate between two scales to compare two rows.
-# The bound itself still travels, in the concentration column and the reason.
-STATUS_CENSORED = {
-    BELOW_LOD: STATUS_WEAK,
-    BELOW_LOQ: STATUS_WEAK,
-    UNRESOLVED: STATUS_WEAK,
-    EXCLUDED_REGION: STATUS_WEAK,
-}
 
 
 def _cv_percent(values):
@@ -559,15 +545,15 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     return 1, 'no signal of it was confirmed'
 
 
-def _confidence(signal, strength=None, shared=False, *, identity=None,
+def _confidence(signal, shared=False, *, identity=None,
                 dj_gold_hz=None) -> tuple[int, str]:
     """What the result is worth: the worst of its identity, its shape and
-    its size.
+    whether its window is its own.
 
-    Three independent things can spoil a number and none makes up for
-    another. A textbook multiplet measured at the quantification limit is
-    a confident identity and an imprecise quantity; a towering singlet
-    with a rival on its peak is the reverse. Averaging them would let
+    Independent things can spoil a number and none makes up for another. A
+    textbook multiplet with a rival in its window is a confident identity
+    and a number resting on the rival's; a towering singlet with nothing
+    else of its listing seen is the reverse. Averaging them would let
     either hide the other, so the lowest stands.
 
     ``identity`` is ``_identity_evidence`` -- what the rest of the
@@ -585,21 +571,12 @@ def _confidence(signal, strength=None, shared=False, *, identity=None,
     This is about the amount, not the identity: an analyte whose identity
     is confirmed and whose window is shared keeps its identity level,
     which the row carries separately (``_identity_why``).
-
-    ``strength`` is the band from ``strength_band`` -- 3 when the area
-    clears the quantification limit by the agreed factor, 2 otherwise. It
-    never reaches 1: an analyte whose peak was identified and whose
-    contest it won is not made doubtful by being scarce, and being under
-    the limit says the quantity is small, not that the assignment was
-    wrong.
     """
     level = _structural_evidence(signal, dj_gold_hz)
     if level is None:                 # a singlet: its shape says nothing
         level = 3
     if identity is not None:
         level = min(level, int(identity))
-    if strength is not None:
-        level = min(level, int(strength))
     if shared:
         level = min(level, SHARED_MAX_CONFIDENCE)
     return level, _DOTS[level]
@@ -1052,25 +1029,23 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
     return windows, by_key, reasons, counts
 
 
-def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
-                   linewidth_ppm, segments=None):
-    """The SNR, the detection limits and the interference of one window.
+def _window_snr(ppm, intensities, lo, hi, *, included, noise_sigma,
+                linewidth_ppm):
+    """The SNR and the interference of one window.
 
     One noise for the whole of quantification. The SNR column used to
     reconstruct its own from the peak's recorded ratio, which disagreed with
-    the limits beside it by a factor of two and, over a baseline offset,
-    produced an SNR of 3149 for an analyte at 0.008 mM.
+    the window's by a factor of two and, over a baseline offset, produced an
+    SNR of 3149 for an analyte at 0.008 mM.
 
-    That one noise is the BLANK's -- the scatter of a signal-free region --
-    for both the ratio and the limits, which is what Currie's framework and
-    the qNMR convention define them from. How crowded the window's
-    surroundings are is measured too, as a ratio to that blank, and
-    returned beside them: it is interference, it costs accuracy rather than
-    detectability, and it is the analyst's to see. Putting it inside the
-    limit instead marked taurine -- second most concentrated analyte of the
-    reference study, group signal-to-noise 639 -- as too weak to quantify.
+    That one noise is the blank's -- the scatter of a signal-free region.
+    How crowded the window's surroundings are is measured too, as a ratio to
+    that blank, and returned beside it: it is interference, it costs
+    accuracy, and it is the analyst's to see. Putting it inside the noise
+    instead read taurine -- second most concentrated analyte of the
+    reference study, group signal-to-noise 639 -- at a window SNR of 3.5.
 
-    Returns ``(snr, lod_area, loq_area, interference)``.
+    Returns ``(snr, interference)``.
     """
     snr = window_snr(ppm, intensities, lo, hi, noise_sigma, included=included)
     _around = local_noise_sigma(ppm, intensities, lo, hi,
@@ -1078,16 +1053,7 @@ def _window_limits(ppm, intensities, lo, hi, *, included, noise_sigma,
                                 global_sigma=noise_sigma)
     interference = (float(_around) / float(noise_sigma)
                     if _around and noise_sigma else float('nan'))
-    _p = np.asarray(ppm, dtype=float)
-    # The points the integration summed: the segments', where the signal was
-    # measured on pieces -- the noise on an area grows with the points in it.
-    _in = np.zeros(_p.shape, dtype=bool)
-    for a, b in (segments or [(lo, hi)]):
-        _in |= (_p >= min(a, b)) & (_p <= max(a, b))
-    n_pts = int(_in.sum())
-    dppm = float(abs(_p[1] - _p[0])) if _p.size > 1 else 0.0
-    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
-    return snr, lod_a, loq_a, interference
+    return snr, interference
 
 
 def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
@@ -1151,7 +1117,7 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
         if nh <= 0:
             continue
         lo, hi = w['window']
-        snr, lod_a, loq_a, interference = _window_limits(
+        snr, interference = _window_snr(
             ppm, intensities, lo, hi, included=included,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
         areas = {int(s_i): float(v) * nh for s_i, v in by_sample.items()}
@@ -1163,12 +1129,9 @@ def _resolve_shared(candidates, peaks_by_rank, ppm, intensities, *,
             'signal': cand, 'nh': nh, 'snr': snr,
             'interference': interference,
             'captured': float((w.get('fractions') or {}).get(mid, 1.0)),
-            'detected': {s_i: bool(np.isfinite(v) and v >= K_LOD)
-                         for s_i, v in snr.items()},
             'lines': [float(pk.get('ppm', 0.0)) for pk in own],
             'weights': pascal_weights(len(own)),
-            'lod_area': lod_a, 'loq_area': loq_a, 'area_median': med,
-            'strength': strength_band(med, loq_a),
+            'area_median': med,
             'window': (lo, hi), 'areas': areas,
             'width_ppm': abs(hi - lo), 'shifts': w.get('shifts'),
             'blank_area': w.get('blank_area', float('nan')),
@@ -1453,7 +1416,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             included=included, groups=groups, noise_sigma=noise_sigma,
             linewidth_ppm=linewidth_ppm,
             # the study's drift as annotation measured it (the median
-            # shift of the matched signals), not the detection limits'
+            # shift of the matched signals), not the predicted windows'
             # search half-width that ``drift_ppm`` carries
             drift_ppm=float(study_drift(metabolites) or 0.0),
             field_mhz=field_mhz, excluded_regions=excluded_regions,
@@ -1600,7 +1563,8 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                      else max_disagreement)
         if CASCADE_BY_SCORE:
             res['score'] = cascade_score(res, linewidth_ppm)
-            _crowded = res['score'] < CASCADE_SCORE_MIN and mid not in accepted
+            _crowded = (res['score'] < _cascade_score_min(res)
+                        and mid not in accepted)
         else:
             _crowded = ((float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY
                          or (np.isfinite(_dis) and _dis > _bar))
@@ -1628,8 +1592,6 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                 1.001 * CASCADE_FINE_REACH_LW * float(linewidth_ppm)
             row = _cascade_row(mid, res, conc, by_group, good, areas, pqn,
                                former=former)
-            row['_detected_per_sample'] = _fit_detected(
-                cols.get(mid), ppm, res, noise_sigma)
             if float(res.get('free_share') or 1.0) < MIN_FREE_TO_QUANTIFY:
                 row['_status_reasons'].insert(0, (
                     f"Most of this analyte's signal lies where analytes already "
@@ -1645,6 +1607,7 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                     residual_of=lambda sel, _m=mid: others_removed(
                         _resid['Y'], ppm, sel, found, cols, _m))
         row['_local_baseline'] = bool(local_baseline)
+        row['_included'] = sorted(int(i) for i in incl)
         if former is not None:
             out[out.index(former)] = row
         else:
@@ -1652,21 +1615,27 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
     return out
 
 
-def _fit_detected(col, ppm, res, noise_sigma) -> dict:
-    """``{sample: bool}``: whether the cascade's fit stands ``K_LOD`` noises
-    above the noise in each sample -- its tallest signal at the amplitude the
-    fit found there. The fit gives every sample a positive amplitude whatever
-    the data hold, so without this an analyte the cascade took in would carry
-    a number in samples that show nothing of it. Empty without a noise."""
-    if col is None or not noise_sigma:
-        return {}
-    top = max((float(v.max()) for _i, v in col.part_curves(
-        np.asarray(ppm, dtype=float), float(res.get('shift_ppm') or 0.0))),
-        default=0.0)
-    if top <= 0:
-        return {}
-    return {int(s): bool(float(a) * top / float(noise_sigma) >= K_LOD)
-            for s, a in (res.get('per_proton') or {}).items()}
+def _cascade_score_min(res) -> float:
+    """The score an analyte the cascade took in must reach to be reported:
+    a stricter one past the free steps (quant_cascade.CASCADE_LATE_SCORE_MIN),
+    where the cascade takes fainter columns."""
+    from processing import quant_cascade as _qc
+    late = _qc.CASCADE_LATE_SCORE_MIN
+    if late is not None and int(res.get('step') or 0) > _qc.CASCADE_FREE_STEPS:
+        return float(late)
+    return float(_qc.CASCADE_SCORE_MIN)
+
+
+def _ceilings(conc_integral) -> dict:
+    """``{sample: mM}``: the most an analyte can be said to hold in each
+    sample, for the cells where the fit gives it nothing.
+
+    ``conc_integral`` is the amount the integral of the analyte's reference
+    window gives in each sample. Everything under the window counts -- the
+    neighbours' tails too -- so it is an upper bound, never a measurement.
+    Cells whose integral is not positive are absent: nothing there to bound."""
+    return {int(s): float(c) for s, c in conc_integral.items()
+            if c is not None and np.isfinite(c) and c > 0}
 
 
 # The cascade measures whether an analyte's own signals move together across
@@ -1748,14 +1717,11 @@ def _cascade_row(mid, res, conc, by_group, good, areas, pqn, *, former=None) -> 
         '_concs_by_group': by_group,
         '_pqn_factors': dict(pqn),
         '_snr_per_sample': {},
-        '_detected_per_sample': {},
         '_peak_align_shifts': None,
         '_blk_mean_area': float('nan'),
         '_is_singlet': len(sig) == 1 and is_singlet_like(sig[0][1]),
         '_multiplicity': sig[0][1] if sig else None,
         '_ann_score': 0.0,
-        '_lod_mm': None,
-        '_loq_mm': None,
         '_status_reasons': [_cascade_reason(res)] + (
             ['Before the cascade: ' + ' '.join(was)] if was else []),
         '_hits': [],
@@ -1983,30 +1949,20 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         if captured:
             out['areas'] = {s_i: a / captured
                             for s_i, a in out['areas'].items()}
-        snr, lod_a, loq_a, interference = _window_limits(
+        snr, interference = _window_snr(
             ppm, intensities, lo, hi, included=included,
-            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
-            segments=out.get('segments'))
+            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
         med_area = (float(np.median(list(out['areas'].values())))
                     if out['areas'] else float('nan'))
-        # Which samples actually show this signal, at the same ratio the
-        # detection limit is defined by. The CSV reports the others as 'n.d.'
-        # rather than as a concentration: a window over noise integrates to a
-        # perfectly plausible number, and writing it would put a measurement
-        # where the analyte was not seen.
-        detected = {s_i: bool(np.isfinite(v) and v >= K_LOD)
-                    for s_i, v in snr.items()}
         measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
                          'interference': interference,
-                         'captured': captured, 'detected': detected,
+                         'captured': captured,
                          'lines': [float(p.get('ppm', 0.0)) for p in lines],
                          'pattern_lines': list(_ppms),
                          'missing_lines': _missing,
                          'pattern_share': _share,
                          'weights': _weights,
-                         'lod_area': lod_a, 'loq_area': loq_a,
-                         'area_median': med_area,
-                         'strength': strength_band(med_area, loq_a), **out}
+                         'area_median': med_area, **out}
         per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
 
     # ── The signal on each group's mean ─────────────────────────────────
@@ -2131,15 +2087,6 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 'noise_sigma': noise_sigma,
                 'area_median': (float(np.median(list(_t['areas'].values())))
                                 if _t['areas'] else float('nan')),
-                # No limit of its own: the window is the owner's. The
-                # strength axis is about the size of the area against that
-                # limit and ``strength_band`` gives only 2 or 3; writing 1
-                # here said "this identification is weak" on the axis that
-                # answers "this quantity is small", and pushed glutamate --
-                # three of its signals confirmed -- to one dot. What is
-                # weak about a remainder is the window, and the window is
-                # already somebody else's: the shared cap says so.
-                'lod_area': float('nan'), 'loq_area': float('nan'),
                 'snr': {},
             }
             per_proton_areas[_cm] = {s_i: a / _nh
@@ -2208,7 +2155,6 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                      else None)
             measured[mid] = {**measured[mid], 'areas': info['areas'],
                              'shared_with': info['shared_with'],
-                             'strength': info['strength'],
                              'share_kept': _kept,
                              'area_median': info['area_median']}
         elif election.rejected.get(mid) == LOST_COMPETITION:
@@ -2449,7 +2395,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
                 _cols, sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
                 weight=exclusion_weight(ppm, excluded_regions),
-                baseline=cluster_base)
+                baseline=cluster_base, groups=groups)
             _jcol_of = {c.mid: c for c in _jcols}
             for mid, r in _jf.items():
                 if mid not in measured:
@@ -2499,11 +2445,6 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 _nh = float(measured[mid]['nh'])
                 measured[mid]['areas'] = {s: v * _nh
                                           for s, v in r['amplitudes'].items()}
-                # a sample where the fit found nothing is not one the analyte
-                # was detected in, whatever its window held of the neighbours
-                measured[mid]['detected'] = {
-                    s: bool(d and float(r['amplitudes'].get(s, 0.0)) > 0.0)
-                    for s, d in (measured[mid].get('detected') or {}).items()}
 
     for mid in _misplaced:
         measured.pop(mid, None)
@@ -2525,28 +2466,18 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         good = [v for v in conc.values() if np.isfinite(v) and v > 0]
         ident, ident_why = _identity_evidence(
             **_identity_of(info, ppm_band_ppm, _drift_residual))
-        # Sharing costs a dot when the others actually took something: a
-        # quantity this window could have quantified. Below its own limit
-        # of quantification what they took is not a quantity, so the
-        # number does not rest on their concentrations.
-        _given = info.get('share_given')
-        _kept = info.get('share_kept')
-        _loq = info.get('loq_area')
-        # Two ways of being immaterial, and either is enough. What the
-        # others took is below what this window could have quantified, so
-        # it is not a quantity; or it is a small enough part of the
+        # Sharing costs a dot when the others actually took something. What
+        # they took is immaterial when it is a small enough part of the
         # analyte's own area that its number does not rest on theirs --
-        # lactate gave 6% of its window away, and a neighbour wrong by
-        # half would move it by 3%.
-        _material = (_given is None
-                     or ((_loq is None or not np.isfinite(_loq)
-                          or float(_given) >= float(_loq))
-                         and (_kept is None
-                              or float(_kept) < SHARE_KEPT_ALONE)))
+        # lactate gave 6% of its window away, and a neighbour wrong by half
+        # would move it by 3%.
+        _kept = info.get('share_kept')
+        _material = (info.get('share_given') is None or _kept is None
+                     or float(_kept) < SHARE_KEPT_ALONE)
         _really_shared = rests_on_shared_window(info, _material)
         level, dots = _confidence(
-            info['signal'], info.get('strength'),
-            shared=_really_shared, identity=ident, dj_gold_hz=dj_gold_hz)
+            info['signal'], shared=_really_shared, identity=ident,
+            dj_gold_hz=dj_gold_hz)
         _mp = ((info['signal'].payload or {}).get('mp')
                if isinstance(info['signal'].payload, dict) else None) or {}
         if _mp.get('reselected') and level > 2:
@@ -2597,16 +2528,24 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         info['confidence_axes'] = {
             'identity': ident,
             'shape': _structural_evidence(info['signal'], dj_gold_hz),
-            'strength': info.get('strength'),
             'shared': _really_shared,
             'share_kept': info.get('share_kept'),
             'position_off': (info['position_cap'][0]
                              if info.get('position_cap') else None),
         }
         rows.append(_row(mid, info, conc, by_group, good, level, dots,
-                         pqn_factors, standard, standard_conc,
-                         bool(external_standard_samples), dilution,
-                         correction))
+                         pqn_factors))
+        # What the integral of the reference window gives in every sample:
+        # the ceiling of a cell the fit leaves at zero. Before the fit it
+        # replaced, the joint fit keeps it ('integrated').
+        _pp = ((info.get('joint_fit') or {}).get('integrated')
+               or {s_: a / nh for s_, a in info['areas'].items()})
+        rows[-1]['_ceiling_per_sample'] = _ceilings(
+            concentrations({s_: v * nh for s_, v in _pp.items()}, nh,
+                           standard=standard, standard_conc=standard_conc,
+                           external=bool(external_standard_samples),
+                           dilution=dilution, correction=correction,
+                           proton_correction=proton_correction))
         if info.get('fit_refused'):
             _as_candidate(rows[-1], info['fit_refused'], by_group)
         elif mid in _withdrawn:
@@ -2617,6 +2556,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # trace and the line joining the window's ends, not down to zero.
     for r in rows:
         r['_local_baseline'] = bool(local_baseline)
+        r['_included'] = sorted(int(i) for i in included)
 
     names = {c.met_id: ((c.payload or {}).get('name') if isinstance(
         c.payload, dict) else None) or c.met_id for c in (candidates or ())}
@@ -2639,18 +2579,18 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         rows.append(_rejected_row(mid, reason, shared_reasons.get(mid),
                                   beaten=election.beaten.get(mid),
                                   names=names))
-    # A winner with no detected line is not a failure to measure — it is a
-    # measurement of an upper bound, and reporting it as one is the whole of
-    # processing.quant_detection_limit.
+    # A winner with no detected line is measured on the window its reference
+    # predicts, at one dot (_window_integral_row).
     for mid in unmeasurable:
-        rows.append(_censored_row(
+        rows.append(_window_integral_row(
             election.winners[mid], ppm, intensities, included=included,
             standard=standard, standard_conc=standard_conc,
             noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
-            drift_ppm=drift_ppm, local_baseline=local_baseline,
+            drift_ppm=drift_ppm,
             external=bool(external_standard_samples),
             dilution=dilution, correction=correction,
-            excluded_regions=excluded_regions))
+            excluded_regions=excluded_regions, groups=groups,
+            pqn_factors=pqn_factors, proton_correction=proton_correction))
 
     for mid, (reason, detail) in (withdrawn or {}).items():
         rows.append(_rejected_row(mid, reason, detail=detail))
@@ -2693,35 +2633,29 @@ def _fingerprint_detail(verdicts, snr=None) -> str:
     return (' ' + '; '.join(bits) + '.') if bits else ''
 
 
-def _censored_row(cand, ppm, intensities, *, included, standard,
-                  standard_conc, noise_sigma, linewidth_ppm, drift_ppm,
-                  local_baseline, external=False, dilution=None,
-                  correction=None, excluded_regions=()) -> dict:
-    """An analyte the experiment could not see, reported as the bound it is.
+def _window_integral_row(cand, ppm, intensities, *, included, standard,
+                         standard_conc, noise_sigma, linewidth_ppm, drift_ppm,
+                         external=False, dilution=None, correction=None,
+                         excluded_regions=(), groups=None, pqn_factors=None,
+                         proton_correction=True) -> dict:
+    """A winner with no detected peak, quantified on the window its
+    reference predicts: one dot, and the reason says what the number is.
 
-    The limits travel through the same chain as any concentration -- divided by
-    nH, referenced to the standard -- because a limit in area units cannot be
-    compared with the numbers in the table, and a limit nobody can compare is
-    not a limit.
+    The window is integrated against a local baseline whatever the run's
+    integration setting says: with no peak to bound it, the background under
+    a predicted window is the part of its area that is surely not the
+    analyte. Measured on a 197-point window, pure noise sitting on an offset
+    of +2 sigma integrated to three times what the noise alone gives.
 
-    The window is always integrated against a local baseline here, whatever the
-    run's integration setting says. Currie's limits describe the NET signal --
-    what stands above the background -- so comparing an integral that still
-    contains the background against a limit built from noise alone compares two
-    different quantities. Measured on a 197-point window: pure noise sitting on
-    an offset of +2 sigma, with no peak in it at all, integrates to three times
-    the quantification limit and is reported as an unresolved signal. Every one
-    of the reference study's 28 censored analytes came back that way.
-
-    The run's own ``local_baseline`` flag is a different decision: it governs
-    how a quantified area is measured, where it costs a known ~5% on the ratio
-    between two analytes. Here there is no choice to make.
+    Not quantified: a window in an excluded region (what is measured there is
+    the solvent), and a window whose integral is not positive in a single
+    sample (nothing there above the baseline).
     """
     ev = cand.evidence or {}
     mid = cand.met_id
     win = predicted_window(ev.get('predicted_ppms'),
                            linewidth_ppm=linewidth_ppm, drift_ppm=drift_ppm)
-    if win is None or noise_sigma is None or not np.isfinite(noise_sigma):
+    if win is None:
         return _rejected_row(mid, NO_MEASURABLE_WINDOW)
     lo, hi = win
     ppm = np.asarray(ppm, dtype=float)
@@ -2734,19 +2668,14 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     dppm = float(abs(ppm[1] - ppm[0])) if ppm.size > 1 else 0.0
 
     # Where the analyte may have drifted to, tried one position at a time and
-    # the best kept. Widening the window to cover the range instead would pay
-    # for the whole range in noise, while a signal only ever occupies one
-    # window's worth of it — on the reference study that made every limit
-    # twice what the spectrum supports.
+    # the best kept: a signal only ever occupies one window's worth of the
+    # range, and widening the window to cover it integrates the rest too.
     idx = list(included if included is not None else range(arr.shape[1]))
     best_area, areas, best_off = float('-inf'), {}, 0.0
     for off in drift_offsets(drift_ppm, linewidth_ppm):
         here = {}
         for s_i in idx:
             if 0 <= s_i < arr.shape[1]:
-                # Signed: the limit is built from noise that goes both
-                # ways, and the quantified area's clip at the baseline
-                # would put every noise window above it.
                 a = integrate_sample(ppm, arr[:, s_i], lo + off, hi + off,
                                      local_baseline=True, clip=False)
                 if a is not None:
@@ -2759,100 +2688,76 @@ def _censored_row(cand, ppm, intensities, *, included, standard,
     if not areas:
         return _rejected_row(mid, NO_MEASURABLE_WINDOW)
     lo, hi = lo + best_off, hi + best_off
-    area = best_area
 
     # An excluded region holds no analyte by construction: what is measured
-    # there is the suppressed solvent. It gets neither a limit nor a verdict
-    # about signal — a limit would report the solvent as the analyte's bound,
-    # and an "unresolved" would report it as a buried analyte.
+    # there is the suppressed solvent.
     if window_is_excluded(lo, hi, excluded_regions):
         row = _rejected_row(mid, EXCLUDED_REGION)
         row.update({
             'ppm': float((lo + hi) / 2.0),
-            'status': STATUS_CENSORED[EXCLUDED_REGION],
-            '_status_reasons': [censor_text(EXCLUDED_REGION, float('nan'),
-                                            float('nan'))],
-            '_censored': EXCLUDED_REGION,
             '_multiplet_window': [float(lo), float(hi)],
             '_hits': [cand.payload] if cand.payload is not None else [],
         })
         return row
 
-    # The blank's noise, as everywhere: a limit is a property of the method,
-    # not of whichever neighbours this analyte happens to have. How crowded
-    # the region is is a separate statement -- see local_noise_sigma.
-    lod_a, loq_a = detection_limits(noise_sigma, dppm, n_pts)
-    _around = local_noise_sigma(ppm, arr, lo, hi,
-                                linewidth_ppm=linewidth_ppm,
-                                global_sigma=noise_sigma)
-    interference = (float(_around) / float(noise_sigma)
-                    if _around and noise_sigma else float('nan'))
-    verdict = censor(area, lod_a, loq_a)
-
     nh = signal_nh(ev.get('protons'))
-    lod_mm, loq_mm = (_as_concentration(v, nh, standard, standard_conc,
-                                        external=external,
-                                        dilution=dilution,
-                                        correction=correction)
-                      for v in (lod_a, loq_a))
-
-    row = _rejected_row(mid, verdict)
+    pf = pqn_factors or {}
+    pos = {s: max(a, 0.0) / float(pf.get(s, 1.0)) for s, a in areas.items()}
+    conc = concentrations(pos, nh, standard=standard,
+                          standard_conc=standard_conc, external=external,
+                          dilution=dilution, correction=correction,
+                          proton_correction=proton_correction)
+    good = [v for v in conc.values() if np.isfinite(v) and v > 0]
+    if not good:
+        return _rejected_row(
+            mid, NOT_DETECTED,
+            detail=(' The window the database predicts holds nothing above '
+                    'the local baseline in any sample.'))
+    by_group = {g: [conc[s] for s in idxs
+                    if s in conc and np.isfinite(conc[s]) and conc[s] > 0]
+                for g, idxs in (groups or {}).items()}
+    _around = local_noise_sigma(ppm, arr, lo, hi, linewidth_ppm=linewidth_ppm,
+                                global_sigma=noise_sigma)
+    step = (integration_noise(noise_sigma, dppm, n_pts)
+            if noise_sigma else float('nan'))
+    row = _rejected_row(mid, None)
+    row.pop('_rejection', None)
     row.update({
         'ppm': float((lo + hi) / 2.0),
-        'raw_area': area,
-        'corr_area': area,
-        'snr': (area / (lod_a / K_LOD)
-                if np.isfinite(area) and lod_a and np.isfinite(lod_a)
+        'n_peaks': 0,
+        'raw_area': float(np.mean(list(pos.values()))),
+        'corr_area': float(np.mean(list(pos.values()))),
+        'conc_mm': float(np.mean(good)),
+        'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
+        'snr': (best_area / step if np.isfinite(step) and step > 0
                 else float('nan')),
-        'status': STATUS_CENSORED[verdict],
-        '_status_reasons': [censor_text(verdict, lod_mm, loq_mm)],
-        '_censored': verdict,
-        '_lod_mm': lod_mm,
-        '_loq_mm': loq_mm,
+        'status': _DOTS[1],
+        '_confidence': 1,
+        '_identity_level': 1,
+        '_identity_why': ('Won its peak by the annotation but no peak was '
+                          'detected in its window: one dot, whatever the rest.'),
+        '_not_quantified': False,
+        '_window_integral': True,
+        '_status_reasons': [WINDOW_INTEGRAL_TEXT],
         '_noise_sigma': float(noise_sigma) if noise_sigma else float('nan'),
-        # How much louder than the blank this window's surroundings are.
-        # Not a limit: interference, which costs accuracy, not detectability.
-        '_interference': interference,
+        '_interference': (float(_around) / float(noise_sigma)
+                          if _around and noise_sigma else float('nan')),
         '_multiplet_window': [float(lo), float(hi)],
         '_nh': float(nh),
-        '_areas_per_sample': areas,
+        '_areas_per_sample': pos,
+        '_concs_per_sample': conc,
+        '_concs_by_group': by_group,
+        '_pqn_factors': dict(pf),
+        '_snr_per_sample': {s: (a / step if np.isfinite(step) and step > 0
+                                else float('nan'))
+                            for s, a in areas.items()},
         '_ann_score': float(ev.get('score') or 0.0),
         '_hits': [cand.payload] if cand.payload is not None else [],
         '_is_singlet': ev.get('multiplicity') == 's',
+        '_included': sorted(int(i) for i in idx),
+        '_local_baseline': True,
     })
     return row
-
-
-def _as_concentration(area, nh, standard, standard_conc, *, external=False,
-                      dilution=None, correction=None) -> float:
-    """One area in the same units the table's concentrations are in.
-
-    Through ``concentrations``, the same function every quantified row uses,
-    rather than a second expression that says the same thing. It said almost
-    the same thing: it left out the dilution and the correction factor, so a
-    study that applied either had its limits on a different scale from the
-    numbers they were meant to be compared with -- and a limit that cannot be
-    compared is not a limit.
-
-    The study's typical factor is the median across samples: a bound describes
-    the run, not one injection of it.
-    """
-    if not np.isfinite(area):
-        return float('nan')
-    per_sample = concentrations({0: float(area)}, nh, standard=(
-        {0: float(np.median([v for v in standard.values()
-                             if v and np.isfinite(v) and v > 0]))}
-        if standard else None),
-        standard_conc=standard_conc, external=external,
-        dilution={0: _median_factor(dilution)},
-        correction={0: _median_factor(correction)})
-    return float(per_sample.get(0, float('nan')))
-
-
-def _median_factor(factors) -> float:
-    v = [float(x) for x in (factors or {}).values()
-         if x is not None and np.isfinite(x) and x > 0]
-    return float(np.median(v)) if v else 1.0
 
 
 def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
@@ -2907,17 +2812,9 @@ def _standard_row(areas, nh, conc_nominal, name, ppm_pos, snr, groups,
     return row
 
 
-def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
-         standard=None, standard_conc=0.0, external=False, dilution=None,
-         correction=None) -> dict:
+def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
     lo, hi = info['window']
     sig = info['signal']
-    nh_ = info['nh']
-    lod_mm, loq_mm = (_as_concentration(info.get(k), nh_, standard,
-                                        standard_conc, external=external,
-                                        dilution=dilution,
-                                        correction=correction)
-                      for k in ('lod_area', 'loq_area'))
     return {
         'hmdb_id': mid,
         'metabolite': mid,
@@ -2928,8 +2825,8 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         'conc_mm': float(np.mean(good)) if good else float('nan'),
         'cv_by_group': {g: _cv_percent(v) for g, v in by_group.items()},
         # The SNR shown is the signal's on the group the figure draws
-        # (best cosine, then highest SNR); the per-sample window SNR the
-        # limits are built on stays in _snr_per_sample.
+        # (best cosine, then highest SNR); the per-sample window SNR stays
+        # in _snr_per_sample.
         'snr': (info['group_evidence'][info['best_group']]['snr']
                 if info.get('best_group') else
                 representative_snr(info.get('snr'))),
@@ -3002,18 +2899,11 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_concs_by_group': by_group,
         '_pqn_factors': pqn_factors,
         '_snr_per_sample': info.get('snr', {}),
-        '_detected_per_sample': info.get('detected', {}),
         '_peak_align_shifts': info.get('shifts') or None,
         '_blk_mean_area': info.get('blank_area', float('nan')),
         '_is_singlet': (sig.evidence or {}).get('multiplicity') == 's',
         '_multiplicity': (sig.evidence or {}).get('multiplicity'),
         '_ann_score': float((sig.evidence or {}).get('score') or 0.0),
-        # Every quantified analyte carries its own limits now. Without them
-        # nobody could tell a number ten times the limit from one at 1.1x, and
-        # the confidence had no way to say which it was.
-        '_lod_mm': lod_mm,
-        '_loq_mm': loq_mm,
-        '_strength': info.get('strength'),
         '_captured_fraction': info.get('captured'),
         '_neighbour_share': info.get('neighbour_share', 0.0),
         '_shared_with': list(info.get('shared_with') or ()),
@@ -3023,8 +2913,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
         '_identity_level': info.get('identity_level'),
         # Each axis of the confidence, so a row can say which one held it
         # back: the shape of the signal measured, the identity the rest of
-        # the listing gives it, the size of the area against the
-        # quantification limit, and whether the window is its own.
+        # the listing gives it, and whether the window is its own.
         '_confidence_axes': info.get('confidence_axes'),
         # How much of a shared window the split left this analyte: 1.0 when
         # the other claimants took nothing, so the number rests on nobody.
@@ -3052,8 +2941,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors,
                             + _reselect_reason(info) + _mstar_reason(info)
                             + _manual_override_reason(info)
                             + _position_reason(info)
-                            + _shape_reason(info)
-                            + _weak_reason(info, loq_mm)),
+                            + _shape_reason(info)),
         '_hits': [sig.payload] if sig.payload is not None else [],
         # Whether this number came out of a window held with other analytes,
         # and how much of its own signal that window held. The overlap
@@ -3439,18 +3327,6 @@ def _shape_reason(info) -> list:
             f'shares -- the shape explains {100 * float(ex):.0f}% of it.']
 
 
-def _weak_reason(info, loq_mm) -> list:
-    """Said when the area does not clear the quantification limit by the
-    agreed factor. The identity is not in question here — only the precision.
-    """
-    if info.get('strength', 3) >= 3:
-        return []
-    return [f'Weak signal: the measured area does not reach '
-            f'{STRONG_ABOVE_LOQ:.0f}x the limit of quantification '
-            f'({loq_mm:.4g} mM). The analyte was identified and won its peak; '
-            f'it is the quantity that is small, and the number less precise.']
-
-
 def _shared_reason(info) -> list:
     """What the reader needs to know about an area that was shared."""
     with_ = list(info.get('shared_with') or ())
@@ -3510,7 +3386,6 @@ def _rejected_row(mid, reason, shared_reason=None, *, beaten=None,
         '_concs_by_group': {},
         '_pqn_factors': {},
         '_snr_per_sample': {},
-        '_detected_per_sample': {},
         '_peak_align_shifts': None,
         '_blk_mean_area': float('nan'),
         '_is_singlet': False,

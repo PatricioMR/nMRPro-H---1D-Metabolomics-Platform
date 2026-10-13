@@ -15,11 +15,6 @@ overlapped apex, and can stand higher than the analyte alone would: the
 number is an upper bound there, and the fraction of the region the shape
 explains (``pattern_fit['explained']``) travels with it as the reason.
 
-Detection limits follow the amplitude: a shape whose amplitude is K_LOD
-noise sigmas is at the limit, and its area at that amplitude is the limit
-in area units, converted to concentration through the same chain as every
-other area.
-
 Targeted profiling: Weljie et al., Anal. Chem. 2006, 78, 4430. One-sided
 amplitude: Lawson & Hanson, Solving Least Squares Problems, 1974 (NNLS).
 """
@@ -29,7 +24,6 @@ import numpy as np
 
 from processing.pattern_shape import (
     _amplitude, lines_model, parse_profile, profile_model)
-from processing.quant_detection_limit import K_LOD, K_LOQ, strength_band
 from processing.quant_integration import subtract_blank
 
 # Beyond the shape's last line, in linewidths, the window ends.
@@ -125,7 +119,6 @@ def measure_shape(ev, ppm, intensities, *, included=None, noise_sigma,
             blank_area = float(np.mean(list(blanks.values())))
             areas = subtract_blank(areas, blanks)
     snr = {s: a / sigma for s, a in amps.items()}
-    lod_a, loq_a = K_LOD * sigma * a_shape, K_LOQ * sigma * a_shape
     med = float(np.median(list(areas.values()))) if areas else float('nan')
     fit = (ev or {}).get('shape_fit') or {}
     return {
@@ -135,11 +128,7 @@ def measure_shape(ev, ppm, intensities, *, included=None, noise_sigma,
         'shifts': {},
         'blank_area': blank_area,
         'snr': snr,
-        'detected': {s: bool(v >= K_LOD) for s, v in snr.items()},
-        'lod_area': lod_a,
-        'loq_area': loq_a,
         'area_median': med,
-        'strength': strength_band(med, loq_a),
         'lines': [float(v) for v in (fit.get('apex_ppms') or ())],
         'weights': [float(v) for v in (fit.get('apex_rel') or ())],
         # the shape's area is known exactly: nothing to correct, nothing

@@ -425,7 +425,8 @@ def baseline_and_signal(seg, *, local_baseline=True, clip=True, x=None,
     integration subtracts (the local line, or zero) and what is left above
     it, clipped at zero -- the part that is area. ``clip=False`` keeps the
     signed difference, for the one reader that needs noise to stay
-    symmetric (the detection limit). ``x``/``levels`` draw the line through
+    symmetric (a predicted window with no peak in it,
+    ``quant_engine._window_integral_row``). ``x``/``levels`` draw the line through
     the anchors (``local_baseline_line``)."""
     seg = np.asarray(seg, dtype=float)
     base = (local_baseline_line(seg, x=x, levels=levels) if local_baseline
@@ -504,9 +505,9 @@ def integrate_sample(ppm, y, lo, hi, *, local_baseline=True, segments=None,
     pure noise integrates to a small positive number (about 0.4 sigma per
     point) instead of about zero, and ``below_baseline_share`` says how
     much of the window that rule silenced, so the row can show it. That
-    cost is why the detection limit reads the signed integral
-    (``clip=False``): Currie's limits are built from noise that goes both
-    ways, and a clipped noise window would stand above them every time.
+    cost is why a predicted window with no peak in it reads the signed
+    integral (``clip=False``): there noise goes both ways, and a clipped
+    noise window would come out positive in every sample.
 
     Returns None when the window holds too few points to integrate.
     """

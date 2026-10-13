@@ -87,7 +87,7 @@ def row_evidence(row) -> dict:
     return {
         'dots': int(row.get('_confidence') or 0),
         'identity': ax.get('identity'), 'shape': ax.get('shape'),
-        'strength': ax.get('strength'), 'shared': bool(ax.get('shared')),
+        'shared': bool(ax.get('shared')),
         'cascade': bool(row.get('_by_cascade')),
         'residual': bool(row.get('_by_residual')),
         'joint': bool(row.get('_joint_fit')),

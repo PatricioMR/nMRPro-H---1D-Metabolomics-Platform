@@ -66,43 +66,14 @@ def test_the_message_is_in_english_like_the_rest_of_the_interface():
     assert 'quantified successfully' in src
 
 
-def test_censored_analytes_are_counted_apart_from_both():
-    """Neither a result nor a failure. The experiment looked and reported what
-    it could have seen, which is not the same as not looking."""
+def test_the_message_counts_results_and_refusals_only():
+    """Quantified or not: there is no third kind of row to count."""
     src = _finish_ui_src()
-    assert "_r.get('_censored')" in src
-    assert '_n_nq -= _n_cens' in src
-
-
-def test_the_message_names_the_limit_they_are_below():
-    src = _finish_ui_src()
-    assert 'below the limit of quantification' in src
-
-
-def test_the_conf_column_speaks_one_vocabulary():
-    """It answered "how much is this worth" for most rows and "which limit did
-    it miss" for the censored ones, so comparing two rows meant translating
-    between two scales. The limit still travels, in the concentration column
-    and in the reason."""
-    from processing.quant_engine import STATUS_CENSORED, STATUS_WEAK
-    assert set(STATUS_CENSORED.values()) == {STATUS_WEAK}
-
-
-def test_a_censored_row_is_coloured_like_any_other_poor_one():
-    """Reading as a special case invited treating it as a third kind of
-    result. It is a weak one."""
-    import inspect
-
-    from gui.stages import quantification_stage as qs
-    src = inspect.getsource(qs.QuantificationStage._populate_tree)
-    i = src.index("_cens = r.get('_censored')")
-    assert "conf_tag = 'conf1'" in src[i:i + 500]
-    assert 'censored' not in inspect.getsource(
-        qs.QuantificationStage).split('tag_configure')[0][-200:]
+    assert '_n_cens' not in src
+    assert 'limit of quantification' not in src
 
 
 def test_the_reasons_are_in_english_like_the_interface():
-    from processing.quant_detection_limit import CENSOR_TEXT
-    from processing.quantification import REJECTION_TEXT
-    for text in list(REJECTION_TEXT.values()) + list(CENSOR_TEXT.values()):
+    from processing.quantification import REJECTION_TEXT, WINDOW_INTEGRAL_TEXT
+    for text in list(REJECTION_TEXT.values()) + [WINDOW_INTEGRAL_TEXT]:
         assert 'ã' not in text and 'ç' not in text, text

@@ -2002,7 +2002,7 @@ class AnnotationResultsWindow:
         if self.ppm is None or self.mean_intensity is None:
             return
         from processing.annotation_detectability import search_half_width
-        from processing.quant_detection_limit import project_drift
+        from processing.quant_predicted_window import project_drift
         from processing.spectral_regions import measure_linewidth_ppm
 
         from processing.spectral_regions import parse_regions
