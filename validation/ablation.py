@@ -65,8 +65,6 @@ VARIANTS = (
      ('processing.quant_engine.OFF_DRIFT_SINGLET_WITHDRAWN=False',), {}),
     ('q_cascade', 'Quantification', 'Residual cascade (analytes the election missed)',
      (), {'cascade': False}),
-    ('q_score', 'Reporting', 'Identity score decides who is reported',
-     ('processing.identity_score.IDENTITY_SCORE_MIN=None',), {}),
 )
 
 
@@ -94,7 +92,6 @@ PROCESSES = (
     ('Quantification', 'Own-peak columns', "An analyte's columns stand at the peak the election matched, not at listing plus common drift.", '', 'q_owndrift'),
     ('Quantification', 'Amount consistency', 'Signals of one analyte must agree on one amount; singlets off the study drift are withdrawn.', '', 'q_offdrift'),
     ('Quantification', 'Residual cascade', 'Analytes the election missed are sought in what the model leaves unexplained (greedy pursuit + NNLS, scored).', 'Pati et al., Asilomar 1993 (OMP)', 'q_cascade'),
-    ('Reporting', 'Identity score', 'Logistic model over 44 recorded features (annotation, quantification, PQN-normalised covariation) decides who is reported.', 'Dieterle et al., Anal Chem 2006;78:4281 (PQN)', 'q_score'),
     ('Reporting', 'Confidence dots', 'One to three dots from identity and quantity evidence.', '', ''),
 )
 
@@ -227,27 +224,6 @@ def summary(vid, tube):
             'real_1': dots[1][0], 'false_1': dots[1][1]}
 
 
-def score_rows(vid='full', tube='100'):
-    """Every scored row of ``tube``: its identity score, real or stranger,
-    and what became of it."""
-    out = []
-    for s in SEEDS:
-        p = _path(vid, tube, s)
-        if not os.path.exists(p):
-            continue
-        d = pickle.load(open(p, 'rb'))
-        for x in d['rows']:
-            sc = x.get('_identity_score')
-            if sc is None or x.get('_is_is'):
-                continue
-            out.append({'seed': s, 'analyte': x.get('metabolite') or x['hmdb_id'],
-                        'kind': 'real' if x['hmdb_id'] in d['truth'] else 'false',
-                        'score': round(float(sc), 4),
-                        'reported': int(not x.get('_not_quantified')),
-                        'dots': int(x.get('_confidence') or 0)})
-    return out
-
-
 def measured_rows(vid='full'):
     """Every real analyte the variant reported: true against measured, the
     median over each group's samples."""
@@ -289,15 +265,6 @@ def impact_rows(rows, tube='100'):
             for r in rows if r['variant'] != 'full' and r['tube'] == tube]
 
 
-def score_bins(scores, width=0.05):
-    n = int(round(1 / width))
-    out = [{'bin_from': round(i * width, 2), 'bin_to': round((i + 1) * width, 2),
-            'real': 0, 'false': 0} for i in range(n)]
-    for r in scores:
-        out[min(n - 1, int(r['score'] / width))][r['kind']] += 1
-    return out
-
-
 def method_rows():
     return [
         ('Simulator', 'GISSMO spin systems (data/gissmo_spin_systems.json), rendered at 600 MHz'),
@@ -335,9 +302,8 @@ def write_csv(a):
                              'tube': t, **r})
     procs = [{'step': i, 'stage': p[0], 'process': p[1], 'what_it_does': p[2],
               'reference': p[3], 'ablation': p[4]} for i, p in enumerate(PROCESSES, 1)]
-    sc, mv = score_rows(), measured_rows()
+    mv = measured_rows()
     tables = {'processes': procs, 'ablation': rows, 'impact_tube100': impact_rows(rows),
-              'score_distribution': sc, 'score_bins_tube100': score_bins(sc),
               'measured_vs_true_standard': mv}
     for name, t in tables.items():
         _write(os.path.join(a.out, f'{name}.csv'), t)

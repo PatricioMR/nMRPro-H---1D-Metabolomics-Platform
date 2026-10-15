@@ -105,8 +105,6 @@ def test_an_accepted_analyte_is_quantified_over_a_contradiction_at_one_dot():
 
 
 def test_an_accepted_cascade_candidate_gets_its_number(monkeypatch):
-    # the cascade's own bar, as it stands when the identity score does not decide
-    monkeypatch.setattr('processing.identity_score.IDENTITY_SCORE_MIN', None)
     import processing.quant_cascade as qc
     # a bar no identification clears: every cascade row is "no number"
     monkeypatch.setattr(qc, 'CASCADE_SCORE_MIN', 0.999)
