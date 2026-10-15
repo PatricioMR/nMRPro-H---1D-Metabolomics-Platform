@@ -126,7 +126,10 @@ def check_replay(field=600, seed=0, n=18):
     X0, _t = pickle.load(open(os.path.join(
         CACHE, f'gissmo_{n}_{field}_s{seed}_{gb._data_tag()}.pkl'), 'rb'))
     X1, _t1 = gb.build(FIELDS[field], seed, gb._composition(str(n), seed))
-    return bool(np.array_equal(X0, X1))
+    # Not bit for bit: a tube built under another BLAS thread count sums in
+    # another order (1e-13 relative); a draw out of step moves it by the
+    # signal itself.
+    return bool(np.allclose(X0, X1, rtol=0.0, atol=1e-9 * float(np.abs(X0).max())))
 
 
 def _err(meas, true):
