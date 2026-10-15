@@ -136,6 +136,59 @@ def _err(meas, true):
     return (meas / true - 1.0) if meas is not None and true else None
 
 
+def run_tables(rows, truth, per, names):
+    """One run's two tables, without the run's own columns: every real
+    analyte and every reported one (``A_HEAD[4:]``), and the reported ones
+    sample by sample (``S_HEAD[4:]``). ``per`` is ``sample_truth``."""
+    analytes, samples = [], []
+    by_id = {r['hmdb_id']: r for r in rows if not r.get('_is_is')}
+    for mid in sorted(set(truth) | {m for m, r in by_id.items()
+                                    if not r.get('_not_quantified')}):
+        r = by_id.get(mid)
+        t = truth.get(mid)
+        q = r is not None and not r.get('_not_quantified')
+        g = (r or {}).get('_concs_by_group') or {}
+        mA = float(np.median(g['A'])) if q and g.get('A') else None
+        mB = float(np.median(g['B'])) if q and g.get('B') else None
+        eA = _err(mA, (t or {}).get('A'))
+        eB = _err(mB, (t or {}).get('B'))
+        e = [x for x in (eA, eB) if x is not None]
+        analytes.append([
+            mid, (t or {}).get('name') or (r or {}).get('metabolite'),
+            'sim' if t else 'não', 'sim' if q else 'não',
+            int(r.get('_confidence') or 0) if q else '',
+            (r or {}).get('status', '') if q else '',
+            (t or {}).get('A', ''), (t or {}).get('B', ''),
+            mA if mA is not None else '', mB if mB is not None else '',
+            eA if eA is not None else '', eB if eB is not None else '',
+            float(np.median(e)) if e else '',
+            (('cascata' if r.get('_by_cascade') else 'eleição') if q else ''),
+            (r or {}).get('snr', '') if q else '',
+            ('' if q else ((r or {}).get('_status_reasons') or
+                           ['sem linha: todos os sinais marcados Bad'])[0]),
+        ])
+        if q:
+            cps = r.get('_concs_per_sample') or []
+            for i, s in enumerate(names):
+                tv = per.get(mid, [None] * len(names))[i] if t else None
+                mv = cps[i] if i < len(cps) else None
+                ev = _err(mv, tv) if mv is not None and np.isfinite(mv) else None
+                samples.append([mid, (t or {}).get('name') or r.get('metabolite'),
+                                s, s[0], tv if tv is not None else 0.0,
+                                mv if mv is not None else '',
+                                ev if ev is not None else ''])
+    return analytes, samples
+
+
+A_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'semente', 'hmdb_id', 'nome',
+          'presente_no_tubo', 'quantificado', 'confianca_bolinhas', 'status',
+          'verdade_A_mM', 'verdade_B_mM', 'medido_A_mM_mediana',
+          'medido_B_mM_mediana', 'erro_A', 'erro_B', 'erro_mediano',
+          'via', 'snr', 'motivo_sem_numero']
+S_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'semente', 'hmdb_id', 'nome',
+          'amostra', 'grupo', 'verdade_mM', 'medido_mM', 'erro']
+
+
 def write_csv(path, header, rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'w', newline='', encoding='utf-8') as f:
@@ -186,43 +239,9 @@ def main():
                               ([mid, t['name'], t['A'], t['B']]
                                + [f'{v:.6g}' for v in per.get(mid, [])]
                                for mid, t in truth.items()))
-                    by_id = {r['hmdb_id']: r for r in rows if not r.get('_is_is')}
-                    for mid in sorted(set(truth) | {m for m, r in by_id.items()
-                                                    if not r.get('_not_quantified')}):
-                        r = by_id.get(mid)
-                        t = truth.get(mid)
-                        q = r is not None and not r.get('_not_quantified')
-                        g = (r or {}).get('_concs_by_group') or {}
-                        mA = float(np.median(g['A'])) if q and g.get('A') else None
-                        mB = float(np.median(g['B'])) if q and g.get('B') else None
-                        eA = _err(mA, (t or {}).get('A'))
-                        eB = _err(mB, (t or {}).get('B'))
-                        e = [x for x in (eA, eB) if x is not None]
-                        analyte_rows.append([
-                            regime, field, n, seed, mid,
-                            (t or {}).get('name') or (r or {}).get('metabolite'),
-                            'sim' if t else 'não', 'sim' if q else 'não',
-                            int(r.get('_confidence') or 0) if q else '',
-                            (r or {}).get('status', '') if q else '',
-                            (t or {}).get('A', ''), (t or {}).get('B', ''),
-                            mA if mA is not None else '', mB if mB is not None else '',
-                            eA if eA is not None else '', eB if eB is not None else '',
-                            float(np.median(e)) if e else '',
-                            (('cascata' if r.get('_by_cascade') else 'eleição')
-                             if q else ''),
-                            (r or {}).get('snr', '') if q else '',
-                            ('' if q else ((r or {}).get('_status_reasons') or
-                                           ['sem linha: todos os sinais marcados Bad'])[0]),
-                        ])
-                        if q:
-                            cps = r.get('_concs_per_sample') or []
-                            for i, s in enumerate(names):
-                                tv = per.get(mid, [None] * len(names))[i] if t else None
-                                sample_rows.append([
-                                    regime, field, n, seed, mid,
-                                    (t or {}).get('name') or r.get('metabolite'),
-                                    s, s[0], tv if tv is not None else 0.0,
-                                    cps[i] if i < len(cps) else ''])
+                    a_rows, s_rows = run_tables(rows, truth, per, names)
+                    analyte_rows += [[regime, field, n, seed, *r] for r in a_rows]
+                    sample_rows += [[regime, field, n, seed, *r] for r in s_rows]
                     print(f'{regime} {field} MHz tubo {n} semente {seed}', flush=True)
                 if runs:
                     st = tube_stats(n, lambda _n, runs=runs: runs)
@@ -236,13 +255,6 @@ def main():
                                     round(st['false_per_run'], 1),
                                     round(100 * st['error_median'], 1),
                                     round(100 * st['error_p90'], 1)])
-    A_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'semente', 'hmdb_id', 'nome',
-              'presente_no_tubo', 'quantificado', 'confianca_bolinhas', 'status',
-              'verdade_A_mM', 'verdade_B_mM', 'medido_A_mM_mediana',
-              'medido_B_mM_mediana', 'erro_A', 'erro_B', 'erro_mediano',
-              'via', 'snr', 'motivo_sem_numero']
-    S_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'semente', 'hmdb_id', 'nome',
-              'amostra', 'grupo', 'verdade_mM', 'medido_mM']
     R_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'sementes', 'encontrados_%',
               '3_reais', '3_falsos', '3_precisao_%', '2_reais', '2_falsos',
               '2_precisao_%', '1_reais', '1_falsos', '1_precisao_%',

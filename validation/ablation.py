@@ -8,6 +8,8 @@ enter gissmo_bench's cache key); the others quantify the cached preparation.
 
     python -m validation.ablation run --jobs 8
     python -m validation.ablation csv          # CSVs + Ablation_NMRPro-H.xlsx
+    python -m validation.ablation csv --export-dir "<validation folder>"
+        # also <folder>/Ablacao: every run's tables, as a real study's
 
 Runs land in out/bench_runs/ablation as bench_runs' pickles, so an
 interrupted batch resumes where it stopped.
@@ -288,6 +290,75 @@ def _write(path, rows):
         w.writerows(rows)
 
 
+def export_runs(dest, workbook):
+    """``dest``/Ablacao, made anew: every run's analytes and samples in the
+    validation export's own tables (export_validation.run_tables), the
+    summary, the workbook, the version and a LEIA-ME."""
+    import shutil
+    import subprocess
+    from app_paths import APP_VERSION
+    from validation import export_validation as ev
+    root = os.path.join(dest, 'Ablacao')
+    if os.path.isdir(root):
+        shutil.rmtree(root)
+    names = ev._sample_names()
+    truths = {}
+    n_runs = 0
+    for vid, _stage, _what, _s, _d in VARIANTS:
+        for t in TUBES:
+            for s in SEEDS:
+                p = _path(vid, t, s)
+                if not os.path.exists(p):
+                    continue
+                d = pickle.load(open(p, 'rb'))
+                if (t, s) not in truths:
+                    truths[t, s] = ev.sample_truth(FIELD, s, int(t), 'padrao')
+                a_rows, s_rows = ev.run_tables(d['rows'], d['truth'], truths[t, s], names)
+                run = os.path.join(root, 'corridas', vid, f'tubo{int(t):03d}_semente{s}')
+                ev.write_csv(os.path.join(run, 'resultados_por_analito.csv'), ev.A_HEAD[4:], a_rows)
+                ev.write_csv(os.path.join(run, 'concentracoes_por_amostra.csv'), ev.S_HEAD[4:], s_rows)
+                n_runs += 1
+    shutil.copy(os.path.join(OUT_DEFAULT, 'engine_anatomy', 'ablation.csv'),
+                os.path.join(root, 'resumo_ablacao.csv'))
+    shutil.copy(workbook, os.path.join(root, os.path.basename(workbook)))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo,
+                            capture_output=True, text=True).stdout.strip()
+    with open(os.path.join(root, 'versao.txt'), 'w', encoding='utf-8') as f:
+        f.write(f'software: {APP_VERSION}\ncommit: {commit}\n'
+                f'corridas: {n_runs}\n')
+    variants = '\n'.join(f'| `{v}` | {st} | {w} |' for v, st, w, _s, _d in VARIANTS)
+    with open(os.path.join(root, 'LEIA-ME.md'), 'w', encoding='utf-8') as f:
+        f.write(f"""# Ablação do motor do {APP_VERSION}
+
+Cada variante desliga **um** mecanismo do motor e roda de novo os mesmos tubos simulados do regime padrão da validação (GISSMO, {FIELD} MHz, tubos de {', '.join(TUBES)} analitos, sementes {', '.join(map(str, SEEDS))}, 12 amostras em dois grupos, concentração variando 12% entre amostras). A variante `full` é o motor inteiro. Os espectros e a verdade por amostra são os de `../espectros/padrao/{FIELD}MHz` e `../verdade/padrao/{FIELD}MHz`.
+
+| variante | etapa | mecanismo desligado |
+|---|---|---|
+{variants}
+
+## Arquivos
+
+| arquivo | conteúdo |
+|---|---|
+| `corridas/<variante>/tuboNNN_sementeS/resultados_por_analito.csv` | cada analito presente e cada reportado: verdade A/B, medido (mediana do grupo), erro, bolinhas, via (eleição ou cascata), SNR e o motivo quando não recebeu número |
+| `corridas/<variante>/tuboNNN_sementeS/concentracoes_por_amostra.csv` | cada analito reportado, amostra a amostra: verdade, medido e erro (medido/verdade − 1; vazio quando o analito não está no tubo) |
+| `resumo_ablacao.csv` | achados, falsos, erro e reais/falsos por bolinha, por variante e tubo (3 sementes somadas) |
+| `{os.path.basename(workbook)}` | as mesmas tabelas em abas, com a lista dos processos do motor |
+| `versao.txt` | versão, commit e número de corridas |
+
+## Como reproduzir
+
+```
+python -m validation.ablation run --jobs 8
+python -m validation.ablation csv --export-dir "<pasta da validação>"
+```
+
+Esta pasta é apagada e refeita a cada exportação.
+""")
+    print(f'{n_runs} runs exported to {root}')
+
+
 def write_csv(a):
     """The results, once: a CSV per table (the dashboard's datasets) and the
     same tables as sheets of one workbook."""
@@ -314,8 +385,10 @@ def write_csv(a):
         with open(ref, encoding='utf-8') as f:
             ex = list(csv.reader(f))
         sheets.append(('extract_reference', ex[0], ex[1:]))
-    for d in [a.out] + list(a.xlsx_dir or ()):
-        _xlsx(os.path.join(d, 'Ablation_NMRPro-H.xlsx'), sheets)
+    workbook = os.path.join(a.out, 'Ablation_NMRPro-H.xlsx')
+    _xlsx(workbook, sheets)
+    if a.export_dir:
+        export_runs(a.export_dir, workbook)
     print(', '.join(f'{k} {len(v)}' for k, v in tables.items()))
 
 
@@ -326,7 +399,7 @@ def main():
     ap.add_argument('--jobs', type=int, default=6)
     ap.add_argument('--variants', nargs='*')
     ap.add_argument('--out', default=os.path.join(OUT_DEFAULT, 'engine_anatomy'))
-    ap.add_argument('--xlsx-dir', nargs='*', help='more folders to write the workbook to')
+    ap.add_argument('--export-dir', help='validation folder: writes <folder>/Ablacao anew')
     a = ap.parse_args()
     {'run': run, 'csv': write_csv}[a.what](a)
 
