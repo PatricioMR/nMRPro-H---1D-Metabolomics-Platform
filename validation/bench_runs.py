@@ -33,8 +33,8 @@ import numpy as np
 OUT_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'bench_runs')
 
 
-def _path(out, label, tube, shift, seed, field, sample_shift=0.0):
-    tag = f'_sm{sample_shift:g}' if sample_shift else ''
+def _path(out, label, tube, shift, seed, field, sample_shift=0.0, ref_shift=0.0):
+    tag = (f'_sm{sample_shift:g}' if sample_shift else '') + (f'_rs{ref_shift:g}' if ref_shift else '')
     return os.path.join(out, f'{label}_{tube}_{field}_{shift:g}{tag}_{seed}.pkl')
 
 
@@ -61,6 +61,16 @@ def _apply_sets(sets):
         setattr(importlib.import_module(mod), name, ast.literal_eval(value))
 
 
+def _prep_sets(sets) -> str:
+    """The ``--set`` assignments on a module detection or annotation runs
+    (crowded_bench._CACHED_SOURCES): those change the cached preparation,
+    the others only the quantification computed afresh."""
+    from validation.crowded_bench import _CACHED_SOURCES
+    cached = {os.path.splitext(p)[0].replace('/', '.') for p in _CACHED_SOURCES}
+    return ';'.join(s for s in sets or ()
+                    if s.split('=', 1)[0].rsplit('.', 1)[0] in cached)
+
+
 def _below_normal():
     """Worker initializer: below-normal priority, so the machine stays usable
     while a batch runs."""
@@ -72,7 +82,7 @@ def _below_normal():
 
 def _one(job):
     """One run in a worker process."""
-    out, label, tube, shift, seed, field, legacy, sample_shift, align, mstar, sets = job
+    out, label, tube, shift, seed, field, legacy, sample_shift, align, mstar, sets, ref_shift = job
     from validation import gissmo_bench as gb
     from validation import mixture_bench as mb
     from validation.fresh_run import quantify_prepared
@@ -86,8 +96,9 @@ def _one(job):
         # 0 turns complex multiplets competing off; absent, the engine's own
         qe.M_STAR_COMPETE_MIN_GOOD = mstar or None
     _apply_sets(sets)
+    gb.PREP_SETTINGS = _prep_sets(sets)
     t0 = time.time()
-    prep, truth = gb.prepared(gb.FIELDS[field], seed, tube)
+    prep, truth = gb.prepared(gb.FIELDS[field], seed, tube, ref_shift=ref_shift / 1000.0)
     mb.MHZ = gb.FIELDS[field]
     diag: dict = {}
     with contextlib.redirect_stdout(io.StringIO()):
@@ -95,7 +106,7 @@ def _one(job):
                                  standard_nh=mb.STANDARD_NH,
                                  standard_conc=mb.STANDARD_MM,
                                  standard_name='DSS', diagnostics=diag)
-    path = _path(out, label, tube, shift, seed, field, sample_shift)
+    path = _path(out, label, tube, shift, seed, field, sample_shift, ref_shift)
     with open(path + '.tmp', 'wb') as f:
         pickle.dump({'rows': rows, 'truth': truth,
                      'coverage': diag.get('coverage'),
@@ -107,10 +118,10 @@ def _one(job):
 def run(a):
     os.makedirs(a.out, exist_ok=True)
     jobs = [(a.out, a.label, t, sh, s, a.field, a.legacy, a.sample_shift,
-             a.align_first, a.mstar_min_good, tuple(a.set or ()))
+             a.align_first, a.mstar_min_good, tuple(a.set or ()), a.ref_shift)
             for sh in a.shifts for t in a.tubes for s in a.seeds
             if not os.path.exists(_path(a.out, a.label, t, sh, s, a.field,
-                                        a.sample_shift))]
+                                        a.sample_shift, a.ref_shift))]
     if not jobs:
         print('nothing to run')
         return
@@ -155,7 +166,7 @@ def report(a):
                 dots = {3: [0, 0], 2: [0, 0], 1: [0, 0]}
                 errs = []
                 for s in a.seeds:
-                    p = _path(a.out, label, t, sh, s, a.field, a.sample_shift)
+                    p = _path(a.out, label, t, sh, s, a.field, a.sample_shift, a.ref_shift)
                     if not os.path.exists(p):
                         continue
                     n += 1
@@ -202,6 +213,9 @@ def main():
     ap.add_argument('--sample-shift', type=float, default=0.0,
                     help='mppm each environment moves from sample to sample '
                          '(gissmo_bench.SAMPLE_SHIFT)')
+    ap.add_argument('--ref-shift', type=float, default=0.0,
+                    help='mppm each compound stands off its listing, the same in '
+                         'every sample (gissmo_bench.build ref_shift)')
     ap.add_argument('--align-first', choices=('valley', 'icoshift'),
                     default=None, help='align the tube before detection')
     ap.add_argument('--set', action='append', default=[],

@@ -1620,6 +1620,9 @@ def _cascade_score_min(res) -> float:
     a stricter one past the free steps (quant_cascade.CASCADE_LATE_SCORE_MIN),
     where the cascade takes fainter columns."""
     from processing import quant_cascade as _qc
+    from processing import identity_score as _ids
+    if _ids.opens_gates():
+        return 0.0          # the identity score decides who stays
     late = _qc.CASCADE_LATE_SCORE_MIN
     if late is not None and int(res.get('step') or 0) > _qc.CASCADE_FREE_STEPS:
         return float(late)
@@ -3261,6 +3264,15 @@ def _baseline_reason(info) -> list:
 # tube of 100 found 233 -> 237, strangers 85 -> 75, two dots or more
 # 194/20 -> 196/20; Mice two-dot strangers 3 -> 0 (ADR-074).
 M_STAR_COMPETE_MIN_GOOD = 2
+
+
+def mstar_compete_min_good():
+    """M_STAR_COMPETE_MIN_GOOD, or one confirmed m* signal when the identity
+    score decides who stays (processing.identity_score)."""
+    from processing import identity_score as _ids
+    if _ids.opens_gates() and M_STAR_COMPETE_MIN_GOOD is not None:
+        return min(M_STAR_COMPETE_MIN_GOOD, 1)
+    return M_STAR_COMPETE_MIN_GOOD
 
 
 

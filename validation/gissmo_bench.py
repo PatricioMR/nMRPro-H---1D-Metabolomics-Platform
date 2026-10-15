@@ -131,10 +131,26 @@ SIGNAL_SHIFT = 0.0
 # cache key.
 SAMPLE_SHIFT = 0.0
 
+# How much each compound's amount varies from sample to sample (sd of its
+# log), and a dilution every compound of a sample shares (sd of its log). The
+# bench drew 12% and no dilution; the studies vary far more -- within a group
+# the median analyte's CV is 67% in the Mice ISS skin extract, 46% in the
+# liver, 14% in the NMR_Murilo cells (42% study-wide), part of it the
+# tissue mass every metabolite of a sample shares. The variation across
+# samples is the evidence of identity position cannot fake (one molecule's
+# signals move together); a bench at 12% hides it. Part of every cache key.
+AMOUNT_SD = 0.12
+DILUTION_SD = 0.0
+
 # What detection is handed: the tube as built (None), or aligned first by
 # 'valley' (processing.peak_alignment.valley_segment_align) or 'icoshift'.
 # --align-first; part of the detection cache key.
 ALIGN_FIRST = None
+
+# Settings a variant changed that detection or annotation read
+# (bench_runs --set on one of their modules); part of the cache key, so the
+# variant is annotated under its own settings and not handed the default's.
+PREP_SETTINGS = ''
 
 
 def _spread_signals(sys_, sigma, rng):
@@ -196,8 +212,10 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
     sigma = (float(mb.compound_trace(PPM, lac, 4.0, shift=0.0).max())
              / (mb.NOISE_LACTATE_SNR * snr_gain))
     cols = []
+    dil_rng = np.random.default_rng(seed + 17_000_041)
     for j, info in enumerate(mb.SAMPLES):
         grp = info['label']
+        dil = float(np.exp(dil_rng.normal(0.0, DILUTION_SD))) if DILUTION_SD else 1.0
         shift = (mb.DRIFT_PPM if drift is None else drift) + rng.normal(0.0, 0.0015)
         y = rng.normal(0.0, sigma, PPM.size)
         y += mb._lorentz_area(PPM, mb.STANDARD_PPM + rng.normal(0, 0.0003),
@@ -205,10 +223,10 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
         for sp, si, mid in comps:
             if si is None:
                 sp, si = sp[j]
-            c = truth[mid][grp] * float(np.exp(rng.normal(0.0, 0.12)))
+            c = dil * truth[mid][grp] * float(np.exp(rng.normal(0.0, AMOUNT_SD)))
             y += c * render(PPM, sp + shift, si, lw, field)
         for _name, conc, fsigs in mb.FOREIGN:
-            c = conc * float(np.exp(rng.normal(0.0, 0.12)))
+            c = dil * conc * float(np.exp(rng.normal(0.0, AMOUNT_SD)))
             for p, _mu, nh in fsigs:
                 y += mb._lorentz_area(PPM, p + shift, c * nh * mb.AREA_UNIT, lw)
         cols.append(y)
@@ -273,7 +291,9 @@ def _shift_tag(ref_shift, drift=None) -> str:
     return ((f'_rs{1000 * ref_shift:.0f}' if ref_shift else '')
             + (f'_dr{1000 * drift:.0f}' if drift is not None else '')
             + (f'_ss{1000 * SIGNAL_SHIFT:.0f}' if SIGNAL_SHIFT else '')
-            + (f'_sm{1000 * SAMPLE_SHIFT:.0f}' if SAMPLE_SHIFT else ''))
+            + (f'_sm{1000 * SAMPLE_SHIFT:.0f}' if SAMPLE_SHIFT else '')
+            + (f'_cv{100 * AMOUNT_SD:.0f}' if AMOUNT_SD != 0.12 else '')
+            + (f'_dl{100 * DILUTION_SD:.0f}' if DILUTION_SD else ''))
 
 
 def tube(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
@@ -309,7 +329,8 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
     h = hashlib.sha1(f'{size}|{field}|{seed}|{snr_b0}|{_data_tag()}'
                      f'{_shift_tag(ref_shift, drift)}'
                      f'{"|align=" + ALIGN_FIRST if ALIGN_FIRST else ""}'
-                     f'{"|spin" if _spin_on() else ""}'.encode())
+                     f'{"|spin" if _spin_on() else ""}'
+                     f'{"|set=" + PREP_SETTINGS if PREP_SETTINGS else ""}'.encode())
     d = defaults()
     for k in sorted(d):
         h.update(f'{k}={d[k]!r};'.encode())
@@ -326,8 +347,11 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
         prep = prepare(PPM, X, mb.SAMPLES, db_path=mb.DB_DEFAULT,
                        field_mhz=field, aligned_first=ALIGN_FIRST or False,
                        log=lambda *a: None)
-    with open(path, 'wb') as f:
+    # beside it, then moved: two variants may prepare the same tube at once
+    tmp = f'{path}.{os.getpid()}.tmp'
+    with open(tmp, 'wb') as f:
         pickle.dump(prep, f, protocol=pickle.HIGHEST_PROTOCOL)
+    os.replace(tmp, path)
     return prep, truth
 
 

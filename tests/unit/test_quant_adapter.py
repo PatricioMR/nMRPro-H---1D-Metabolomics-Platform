@@ -68,7 +68,9 @@ class TestCandidates:
                    peak_ppm=1.47, study_linewidth_hz=1.5,
                    pattern_field_mhz=600.0, **kw)
 
-    def test_an_unmarked_complex_multiplet_goes_to_the_remainders(self):
+    def test_an_unmarked_complex_multiplet_goes_to_the_remainders(self, monkeypatch):
+        # the m* rule as it stands when the identity score does not decide
+        monkeypatch.setattr('processing.identity_score.IDENTITY_SCORE_MIN', None)
         pool = []
         out = build_candidates([_met('G', 'Glu', [self._pattern()])], PEAKS,
                                pool=pool)
@@ -220,6 +222,7 @@ class TestComplexMultipletsCompeting:
         assert all(c.evidence['mstar_compete'] for c in out)
 
     def test_one_confirmed_is_not_enough(self, monkeypatch):
+        monkeypatch.setattr('processing.identity_score.IDENTITY_SCORE_MIN', None)
         from processing import quant_engine as qe
         monkeypatch.setattr(qe, 'M_STAR_COMPETE_MIN_GOOD', 2)
         assert build_candidates([self._met(1)], PEAKS, pool=[]) == []

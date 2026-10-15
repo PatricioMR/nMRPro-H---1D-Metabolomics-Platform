@@ -1566,23 +1566,18 @@ def drift_spread(matched_peaks, *, common=None) -> float | None:
     return float(max(abs(v - med) for v in shifts))
 
 
-def study_drift(metabolites) -> float | None:
-    """The study's common drift: how far the compounds every extract holds
-    (``REFERENCE_PANEL``) stand from their listings, when enough of them are
-    confirmed (``reference_drift``); otherwise the signed median shift of the
-    confirmed multiplets -- lines found, coupling measured -- from the
-    database. A multiplet confirmed on its coupling is where it is; a
-    singlet's shift is the thing in question. None without one."""
-    if STUDY_DRIFT_FROM_PANEL:
-        ref = reference_drift(metabolites)
-        if ref is not None:
-            return ref
+def _confirmed_shifts(metabolites, names=None) -> list:
+    """Peak minus listing of every confirmed multiplet -- lines found,
+    coupling measured, accepted Good -- of the metabolites (of ``names``
+    only, when given). A multiplet confirmed on its coupling is where it
+    is; a singlet's shift is the thing in question. Only what the
+    annotation accepted: every database signal within tolerance of a peak
+    is a candidate, and the shifts of all of them fill the tolerance."""
     shifts = []
     for met in metabolites or ():
+        if names is not None and str(met.get('name') or '').strip().lower() not in names:
+            continue
         for mp in met.get('matched_peaks') or ():
-            # only what the annotation accepted: every database signal
-            # within tolerance of a peak is a candidate, and the median
-            # shift of all of them is the tolerance's centre, zero
             if mp.get('peak_rank') is None or mp.get('annotation_quality') != 'good':
                 continue
             if normalize_mult(mp.get('type') or mp.get('multiplicity')) == PATTERN_MULT:
@@ -1595,6 +1590,72 @@ def study_drift(metabolites) -> float | None:
                 shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
             except (KeyError, TypeError, ValueError):
                 continue
+    return shifts
+
+
+# The study's common drift read as the MODE of the confirmed multiplets'
+# shifts rather than their median. The right matches share one drift and
+# stand within a linewidth of each other; the coincidences spread over the
+# whole match tolerance, and the median goes where they go. On a cell extract
+# the median read +2.8 mppm against the panel's +14 (ADR-061); on random tubes
+# of 50 and 75 analytes, where the panel compounds are mostly absent and
+# their multiplets confirmed by coincidence, the panel read -24 to +2 against
+# a true +8, and the mode +7.4 to +8.6. Kernel mode estimate: Parzen E., On
+# estimation of a probability density function and mode, Ann Math Stat
+# 1962;33:1065-1076. The panel's drift stands only where it agrees with the
+# mode (``PANEL_AGREES_PPM``); ADR-085.
+DRIFT_BY_MODE = True
+DRIFT_MODE_BANDWIDTH_PPM = 0.002
+PANEL_AGREES_PPM = 0.006
+# A mode is a drift only where the matches really crowd on it: at least this
+# share of the confirmed multiplets within DRIFT_MODE_WINDOW_PPM of it -- three
+# times what a background spread evenly over the 50 mppm match tolerance
+# leaves there (0.06). Random tubes 0.27-0.35, Liver 0.30, Murilo 0.20; in
+# RawMG v2 re-annotated nothing crowds (0.10, a mode at -18 mppm against a
+# panel of +3) and the drift stays as it was read before the mode.
+DRIFT_MODE_MIN_SHARE = 0.2
+DRIFT_MODE_WINDOW_PPM = 0.003
+
+
+def drift_mode(shifts, bandwidth=DRIFT_MODE_BANDWIDTH_PPM) -> float | None:
+    """Where the shifts are densest: the maximum of their Gaussian kernel
+    density, on a grid a tenth of the bandwidth fine."""
+    v = np.asarray(shifts, dtype=float)
+    v = v[np.isfinite(v)]
+    if v.size == 0:
+        return None
+    g = np.arange(v.min() - bandwidth, v.max() + bandwidth, bandwidth / 10.0)
+    dens = np.exp(-0.5 * ((g[:, None] - v[None, :]) / bandwidth) ** 2).sum(axis=1)
+    return float(g[np.argmax(dens)])
+
+
+def crowded_mode(shifts) -> float | None:
+    """The mode of ``shifts`` when the matches crowd on it
+    (DRIFT_MODE_MIN_SHARE within DRIFT_MODE_WINDOW_PPM), else None."""
+    mode = drift_mode(shifts)
+    if mode is None:
+        return None
+    v = np.asarray(shifts, dtype=float)
+    share = float(np.mean(np.abs(v - mode) <= DRIFT_MODE_WINDOW_PPM))
+    return mode if share >= DRIFT_MODE_MIN_SHARE else None
+
+
+def study_drift(metabolites) -> float | None:
+    """The study's common drift: how far the compounds every extract holds
+    (``REFERENCE_PANEL``) stand from their listings, when enough of them are
+    confirmed (``reference_drift``); otherwise, with ``DRIFT_BY_MODE``, the
+    mode of the confirmed multiplets' shifts where they crowd on it
+    (``crowded_mode``), and their signed median when they do not. None
+    without one."""
+    if STUDY_DRIFT_FROM_PANEL:
+        ref = reference_drift(metabolites)
+        if ref is not None:
+            return ref
+    shifts = _confirmed_shifts(metabolites)
+    if DRIFT_BY_MODE:
+        mode = crowded_mode(shifts)
+        if mode is not None:
+            return mode
     return float(np.median(shifts)) if shifts else None
 
 
@@ -1627,25 +1688,21 @@ def reference_drift(metabolites) -> float | None:
     background of coincidences spread evenly across the match tolerance, and
     the median goes where the background does. Lactate, alanine, valine,
     isoleucine and glucose stood at +12 to +17 (ADR-061).
+
+    With ``DRIFT_BY_MODE`` the panel stands only where it agrees with the
+    mode of every confirmed multiplet, when the matches crowd on that mode:
+    a sample without those compounds confirms their multiplets by
+    coincidence, and the panel is then a background like any other.
     """
-    shifts = []
-    for met in metabolites or ():
-        if str(met.get('name') or '').strip().lower() not in REFERENCE_PANEL:
-            continue
-        for mp in met.get('matched_peaks') or ():
-            if mp.get('peak_rank') is None or mp.get('annotation_quality') != 'good':
-                continue
-            if normalize_mult(mp.get('type') or mp.get('multiplicity')) == PATTERN_MULT:
-                continue
-            n_f, n_e = mp.get('_n_found_lines'), mp.get('_n_exp_lines')
-            if (mp.get('delta_j_hz') is None or n_f is None or n_e is None
-                    or int(n_e) < 2 or int(n_f) < int(n_e)):
-                continue
-            try:
-                shifts.append(float(mp['peak_ppm']) - float(mp['db_ppm']))
-            except (KeyError, TypeError, ValueError):
-                continue
-    return float(np.median(shifts)) if len(shifts) >= REFERENCE_MIN_SIGNALS else None
+    shifts = _confirmed_shifts(metabolites, REFERENCE_PANEL)
+    if len(shifts) < REFERENCE_MIN_SIGNALS:
+        return None
+    ref = float(np.median(shifts))
+    if DRIFT_BY_MODE:
+        mode = crowded_mode(_confirmed_shifts(metabolites))
+        if mode is not None and abs(ref - mode) > PANEL_AGREES_PPM:
+            return None
+    return ref
 
 
 def annotate_drift_spread(metabolites) -> None:

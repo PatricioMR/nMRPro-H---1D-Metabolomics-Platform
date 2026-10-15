@@ -494,12 +494,14 @@ class TestLateCascadeScore:
     reported (ADR-078)."""
 
     def test_a_late_entry_meets_the_late_bar(self, monkeypatch):
+        monkeypatch.setattr('processing.identity_score.IDENTITY_SCORE_MIN', None)
         from processing import quant_cascade as qc, quant_engine as qe
         monkeypatch.setattr(qc, 'CASCADE_LATE_SCORE_MIN', 0.4)
         assert qe._cascade_score_min({'step': qc.CASCADE_FREE_STEPS + 1}) == 0.4
         assert qe._cascade_score_min({'step': qc.CASCADE_FREE_STEPS}) == qc.CASCADE_SCORE_MIN
 
     def test_off_every_entry_meets_the_same_bar(self, monkeypatch):
+        monkeypatch.setattr('processing.identity_score.IDENTITY_SCORE_MIN', None)
         from processing import quant_cascade as qc, quant_engine as qe
         monkeypatch.setattr(qc, 'CASCADE_LATE_SCORE_MIN', None)
         assert qe._cascade_score_min({'step': 999}) == qc.CASCADE_SCORE_MIN

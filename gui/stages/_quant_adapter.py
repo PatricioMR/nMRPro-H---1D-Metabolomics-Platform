@@ -132,7 +132,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
         _eligible = eligible_ids is None or mid in eligible_ids
         _contradicted = bool(met.get('_fingerprint_contradictions'))
         from processing import quant_engine as _qe
-        _mstar_min = _qe.M_STAR_COMPETE_MIN_GOOD
+        _mstar_min = _qe.mstar_compete_min_good()
         _mstar_good = sum(
             1 for _m in met.get('matched_peaks', []) or ()
             if _m.get('peak_rank') is not None
@@ -728,7 +728,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                               quality_marks=quality_marks,
                               eligible_ids=eligible,
                               pool=_pool if resolve_shared else None)
-    return _for_display(_rows_indexed_by_sample(quantify(
+    rows = _for_display(_rows_indexed_by_sample(quantify(
         candidates=_cands,
         residual_pool=_pool,
         peaks_by_rank=peaks_by_rank,
@@ -795,3 +795,10 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         metabolites=metabolites,
         field_mhz=project_field_mhz(metabolites),
     ), n_s), metabolites, peaks_by_rank)
+    # the evidence taken together, when it decides (off by default)
+    from processing import identity_score
+    return identity_score.apply(
+        rows, metabolites, peaks, included,
+        protected=set(manual_good_ids(quality_marks))
+        | {m for m, o in (shared_overrides or {}).items()
+           if (o or {}).get('decision') == 'accept'})
