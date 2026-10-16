@@ -80,6 +80,53 @@ def test_a_rejected_analyte_gives_its_peak_to_the_next():
     assert not rej['S']['_not_quantified'], 'the peak went to the runner-up'
 
 
+def test_accepting_the_runner_up_moves_nothing_else():
+    X = _study([(2.0, 100.0, ((0.0, 1.0),)), (3.0, 100.0, ((0.0, 1.0),))])
+    db = [{'ppm_center': 2.0, 'type': 's', 'protons': 3}]
+
+    def cand(mid, d, score):
+        return Candidate(met_id=mid, peak_rank=1, line_ranks=frozenset({1}),
+                         evidence={'multiplicity': 's', 'ppm_diff': d, 'protons': 3,
+                                   'db_ppm': 2.0, 'study_drift_ppm': 0.0, 'n_found': 1,
+                                   'n_expected': 1, 'peak_ppm': 2.0,
+                                   'predicted_ppms': [2.0], 'score': score},
+                         payload={'met': {'db_peaks': db}, 'name': mid})
+    other = _cand('O', 2, 3.0, [{'ppm_center': 3.0, 'type': 's', 'protons': 3}])
+    cands = [cand('F', 0.0005, 0.9), cand('S', 0.002, 0.5), other]
+    peaks = {1: _peak(1, 2.0), 2: _peak(2, 3.0)}
+    base = _run(cands, peaks, X)
+    assert not base['F']['_not_quantified'] and base['S']['_not_quantified']
+    acc = _run(cands, peaks, X, analyst_accepted=['S'])
+    assert not acc['S']['_not_quantified'] and acc['S']['_analyst_decision'] == 'accepted'
+    for mid in ('F', 'O'):
+        assert acc[mid]['conc_mm'] == base[mid]['conc_mm']
+        assert acc[mid]['_not_quantified'] == base[mid]['_not_quantified']
+        assert acc[mid]['_confidence'] == base[mid]['_confidence']
+
+
+def test_an_accepted_analyte_the_fit_gives_nothing_says_so():
+    from processing.quant_engine import ACCEPTED_NOTHING_MEASURED, _accepted_alone
+    others = [{'hmdb_id': 'A', '_not_quantified': True},
+              {'hmdb_id': 'B', '_not_quantified': False, 'conc_mm': 1.0}]
+    held = [{'hmdb_id': 'A', '_not_quantified': False, '_confidence': 1,
+             'conc_mm': 0.0, '_concs_per_sample': [0.0, 0.0],
+             '_status_reasons': ['Accepted by the analyst ...', 'fitted']},
+            {'hmdb_id': 'B', '_not_quantified': True}]
+    out = {r['hmdb_id']: r for r in _accepted_alone(others, held, {'A'})}
+    assert out['A']['_not_quantified'] and out['A']['_confidence'] == 0
+    assert out['A']['_status_reasons'] == [ACCEPTED_NOTHING_MEASURED, 'fitted']
+    assert out['B'] == others[1], 'the rest is the run without the acceptance'
+
+
+def test_an_accepted_analyte_still_refused_says_it_was_accepted():
+    from processing.quant_engine import ACCEPTED_STILL_REFUSED, _accepted_alone
+    held = [{'hmdb_id': 'A', '_not_quantified': True, '_rejection': 'fit_misplaced',
+             '_status_reasons': ['Not quantified: the joint fit ...']}]
+    out = _accepted_alone([{'hmdb_id': 'A', '_not_quantified': True}], held, {'A'})
+    assert out[0]['_status_reasons'] == [ACCEPTED_STILL_REFUSED,
+                                         'Not quantified: the joint fit ...']
+
+
 def test_a_rejected_analyte_is_taken_out_of_the_cascade_too():
     missed = _met('missed', 'Missed', [_signal(1.0, 's', 3)])
     X = _study([(1.0, 200.0, ((0.0, 1.0),))])

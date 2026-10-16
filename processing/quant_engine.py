@@ -1279,7 +1279,7 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              ppm_band_ppm=None, claim_signals=True,
              max_disagreement=None, raw_intensities=None,
              joint_fit=False, analyst_rejected=(),
-             analyst_accepted=()) -> list[dict]:
+             analyst_accepted=(), _accepted_measured=False) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``analyst_rejected`` and ``analyst_accepted`` are the analyst's decisions
@@ -1291,6 +1291,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     shape, a cascade identification its score leaves without a number), the
     row naming the decision and keeping the engine's own confidence (one
     dot where it refused): the same standing as a Good mark.
+
+    Accepting moves nothing else (``_accepted_alone``): the study is
+    quantified once without the acceptances, which is every other row, and
+    once with them, which is only the accepted analytes' rows. Held as a
+    Good mark inside one run, an accepted analyte takes peaks in the
+    election and changes what the cascade is offered; on the bench (tube of
+    50, 51 candidates accepted one at a time) that lost 59 real analytes
+    and swapped 181 false rows for 321 others.
 
     ``joint_fit`` measures the analytes whose shapes overlap together, with
     a free component at every detected peak no quantified analyte has a
@@ -1346,6 +1354,14 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     the first). Up to AMOUNT_ROUNDS rounds. See ``_quantify_once`` for
     the rest.
     """
+    args = dict(locals())
+    accepted_alone = ({str(m) for m in analyst_accepted or ()}
+                      - {str(m) for m in analyst_rejected or ()})
+    if accepted_alone and not _accepted_measured:
+        others = quantify(**{**args, 'analyst_accepted': ()})
+        held = quantify(**{**args, 'diagnostics': None,
+                           '_accepted_measured': True})
+        return _accepted_alone(others, held, accepted_alone)
     # One baseline under the whole spectrum for the measurements that fit
     # shapes (joint fit, cascade), read where each cluster of signals ends.
     cluster_base = (cluster_baseline(
@@ -1432,6 +1448,39 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
                        if p.get('ppm') is not None],
             standard_ppm=standard_ppm if standard_areas else None)
     return _with_decisions(rows, rejected, accepted, metabolites, names)
+
+
+ACCEPTED_NOTHING_MEASURED = (
+    'Accepted by the analyst in the deconvolution review, but the engine '
+    'measured none of its shape in any sample: the fit gives it zero, so no '
+    'number can be given.')
+ACCEPTED_STILL_REFUSED = (
+    'Accepted by the analyst in the deconvolution review, but the engine '
+    'still could not give it a number, for the reason below.')
+
+
+def _accepted_alone(others, held, accepted) -> list:
+    """``others`` -- the run without the acceptances -- with each accepted
+    analyte's row taken from ``held``, the run that measured it. Nothing
+    but the accepted rows differs from the engine's own run."""
+    def measured(row):
+        reasons = [t for t in row.get('_status_reasons') or ()
+                   if not str(t).startswith('Accepted by the analyst')]
+        if row.get('_not_quantified') and row.get('_rejection'):
+            return {**row, '_status_reasons': [ACCEPTED_STILL_REFUSED] + reasons}
+        concs = row.get('_concs_per_sample') or {}
+        vals = concs.values() if isinstance(concs, dict) else concs
+        if any(v is not None and np.isfinite(v) and v > 0 for v in vals):
+            return row
+        return {**row, '_not_quantified': True, '_confidence': 0,
+                'status': STATUS_NONE, 'conc_mm': float('nan'),
+                '_status_reasons': [ACCEPTED_NOTHING_MEASURED] + reasons}
+
+    mine = {str(r.get('hmdb_id')): measured(r) for r in held
+            if str(r.get('hmdb_id')) in accepted}
+    out = [mine.pop(str(r.get('hmdb_id')), r)
+           if str(r.get('hmdb_id')) in accepted else r for r in others]
+    return out + [mine[m] for m in sorted(mine)]
 
 
 def _with_decisions(rows, rejected, accepted, metabolites, names) -> list:
