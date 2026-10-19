@@ -429,7 +429,7 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
             w.writerows(rows)
 
     names = ev._sample_names()
-    summary = []
+    summary, analytes_all, samples_all = [], [], []
     for n in sizes:
         for s in seeds:
             p = _run_file(label, n, s)
@@ -451,6 +451,8 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
                          ([mid, t['name'], t['A'], t['B']] + [f'{v:.6g}' for v in per.get(mid, [])]
                           for mid, t in truth.items()))
             a_rows, s_rows = ev.run_tables(d['rows'], d['truth'], per, names)
+            analytes_all += [[n, s, *r] for r in a_rows]
+            samples_all += [[n, s, *r] for r in s_rows]
             ev.write_csv(os.path.join(run, 'resultados_por_analito.csv'), ev.A_HEAD[4:], a_rows)
             ev.write_csv(os.path.join(run, 'concentracoes_por_amostra.csv'), ev.S_HEAD[4:], s_rows)
             npk = d.get('n_peaks') or (d.get('coverage') or {}).get('peaks', 0)
@@ -465,7 +467,8 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
     write('curva_picos_parametros.csv', params)
     write('curva_picos_ajuste.csv', curve)
     write('previsao_analitos_por_picos.csv', inv)
-    write('recuperacao_por_concentracao.csv', by_concentration(label, sizes, seeds))
+    conc = by_concentration(label, sizes, seeds)
+    write('recuperacao_por_concentracao.csv', conc)
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo,
                             capture_output=True, text=True).stdout.strip()
@@ -477,7 +480,64 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
                               seeds_cmd=' '.join(map(str, seeds)),
                               old=', '.join(f'{lab} (composições {", ".join(map(str, sd))})'
                                             for lab, sd in old)))
-    print(f'{len(summary)} runs exported to {root}')
+    workbook = os.path.join(dest, f"Composicoes_nMRPro-H_v{APP_VERSION.split(' v')[1].split()[0]}.xlsx")
+    write_workbook(workbook, summary=summary, points=points, params=params, curve=curve,
+                   inv=inv, conc=conc, analytes=analytes_all, samples=samples_all,
+                   about=[('software', APP_VERSION), ('commit', commit),
+                          ('campo', f'{FIELD} MHz'), ('tubos (analitos)', ', '.join(map(str, sizes))),
+                          ('composições (sementes)', ', '.join(map(str, seeds))),
+                          ('corridas', len(summary)),
+                          ('amostras por corrida', '12, dois grupos de 6, variação de 12% entre amostras'),
+                          ('erro', '|medido / verdadeiro − 1|; por analito e grupo: mediana das amostras'),
+                          ('pasta das corridas', 'Composicoes/ (um .nmrproj por corrida)')])
+    print(f'{len(summary)} runs exported to {root}; workbook {workbook}')
+
+
+def _mean_sd(rows, key, k=1.0):
+    v = np.array([float(r[key]) for r in rows
+                  if r.get(key) not in (None, '') and np.isfinite(float(r[key]))])
+    if not v.size:
+        return None, None
+    return round(k * float(v.mean()), 2), (round(k * float(v.std(ddof=1)), 2) if v.size > 1 else None)
+
+
+def write_workbook(path, *, summary, points, params, curve, inv, conc, analytes, samples, about):
+    """Every table of the composition runs in one workbook, numbers as
+    numbers: the per-size means and standard deviations, every run, both
+    curves' data, recovery by concentration, and every analyte and sample
+    of every run."""
+    from validation.export_validation import A_HEAD, S_HEAD, _xlsx
+
+    def sheet(title, rows):
+        head = list(rows[0])
+        return (title, head, [[r.get(h) for h in head] for r in rows])
+    per_size = []
+    for n in sorted({r['analytes_in_tube'] for r in summary}):
+        R = [r for r in summary if r['analytes_in_tube'] == n]
+        row = {'analitos_no_tubo': n, 'composicoes': len(R)}
+        for key, lab, k in (('peaks', 'picos', 1), ('found', 'encontrados', 1),
+                            ('false', 'falsos', 1), ('recall', 'recuperacao_pct', 100),
+                            ('prec2', 'precisao_2_bolinhas_pct', 100),
+                            ('prec3', 'precisao_3_bolinhas_pct', 100),
+                            ('err_median', 'erro_mediano_pct', 100),
+                            ('err_p90', 'erro_p90_pct', 100)):
+            m, sd = _mean_sd(R, key, k)
+            row[f'{lab}_media'] = m
+            row[f'{lab}_dp'] = sd
+        per_size.append(row)
+    run_head = ['analitos_no_tubo', 'composicao']
+    _xlsx(path, [
+        ('Leia-me', ['item', 'valor'], [list(a) for a in about]),
+        sheet('Resumo_por_tamanho', per_size),
+        sheet('Resumo_por_corrida', summary),
+        sheet('Picos_x_analitos', points),
+        sheet('Curva_parametros', params),
+        sheet('Curva_ajuste', curve),
+        sheet('Previsao_analitos', inv),
+        sheet('Recuperacao_concentracao', conc),
+        ('Por_analito', run_head + A_HEAD[4:], analytes),
+        ('Por_amostra', run_head + S_HEAD[4:], samples),
+    ])
 
 
 LEIAME = """# Variação de composição — {version}
