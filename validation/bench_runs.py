@@ -133,7 +133,7 @@ def run(a):
     with ProcessPoolExecutor(max_workers=a.jobs, initializer=_below_normal) as ex:
         futs = [ex.submit(_one, j) for j in jobs]
         for f in as_completed(futs):
-            (_o, _l, t, sh, s, _f, _g, _m, _a, _ms, _st), secs = f.result()
+            (_o, _l, t, sh, s, _f, _g, _m, _a, _ms, _st, _rs), secs = f.result()
             print(f'done tube {t} scatter {sh:g} seed {s} in {secs:.0f} s '
                   f'({time.time() - t0:.0f} s elapsed)', flush=True)
 

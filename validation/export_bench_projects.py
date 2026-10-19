@@ -41,7 +41,6 @@ def build(n, seed=SEED, overrides=None):
     """``(state, truth, sigma, foreign)`` for the ``n``-analyte tube, run
     with the application's current defaults -- everything ``fresh_run``
     does, assembled into the schema ``gui.project_manager`` saves."""
-    d = defaults(overrides)
     pan = panel(mb.DB_DEFAULT, n, seed=seed)
     X, sigma, truth, foreign = mb.build_study(mb.DB_DEFAULT, seed=seed,
                                               panel=pan)
@@ -51,7 +50,14 @@ def build(n, seed=SEED, overrides=None):
                              standard_nh=mb.STANDARD_NH,
                              standard_conc=mb.STANDARD_MM,
                              standard_name='DSS', overrides=overrides)
+    return project_state(prep, rows, mb.PPM, mb.MHZ, overrides), truth, sigma, foreign, pan
 
+
+def project_state(prep, rows, ppm, field_mhz, overrides=None) -> dict:
+    """The schema ``gui.project_manager`` saves, for a bench study already
+    detected, annotated (``prep``, validation.fresh_run.prepare) and
+    quantified (``rows``) with the application's defaults."""
+    d = defaults(overrides)
     samples = []
     for s in mb.SAMPLES:
         i, label = int(s['index']), s['label']
@@ -68,7 +74,7 @@ def build(n, seed=SEED, overrides=None):
 
     state = {
         'version': 6,
-        'ppm': np.asarray(mb.PPM, dtype=float),
+        'ppm': np.asarray(ppm, dtype=float),
         'ppm_calibration': None,
         'all_intensities': prep['raw'],
         'baseline_model': model.to_dict(),
@@ -106,7 +112,7 @@ def build(n, seed=SEED, overrides=None):
             'last_results_args': None,
             'annotations': {},
             'tolerance': d['tolerance_ppm'],
-            'spectrometer_mhz': f'{mb.MHZ:g}',
+            'spectrometer_mhz': f'{field_mhz:g}',
             'align': False,
             'exclude_water': True,
             'water_lo': 4.7,
@@ -161,7 +167,7 @@ def build(n, seed=SEED, overrides=None):
             'last_non_blk': None,
         },
     }
-    return state, truth, sigma, foreign, pan
+    return state
 
 
 def main():

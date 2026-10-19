@@ -70,7 +70,8 @@ def run_sizes(sizes, *, label=LABEL, seeds=SEEDS, jobs=8):
     ns = argparse.Namespace(
         out=OUT_DEFAULT, label=label, tubes=[f'r{n}' for n in sizes],
         shifts=[0.0], seeds=list(seeds), field=FIELD, jobs=jobs, legacy=False,
-        sample_shift=0.0, align_first=None, mstar_min_good=None, set=[])
+        sample_shift=0.0, ref_shift=0.0, align_first=None, mstar_min_good=None,
+        set=[])
     bench_runs.run(ns)
 
 
@@ -297,27 +298,247 @@ def report(sizes, *, label=LABEL, seeds=SEEDS, probe_peaks=(277,)) -> str:
     return text
 
 
+BANDS_MM = ((0.05, 0.1), (0.1, 0.2), (0.2, 0.4), (0.4, 1.0))
+
+
+def _run_file(label, n, seed):
+    return _path(OUT_DEFAULT, label, f'r{n}', 0.0, seed, FIELD)
+
+
+def peak_points(runs) -> list:
+    """``[{analytes, seed, peaks, runs}]`` of every (label, seeds) in ``runs``
+    whose run exists: detection alone sets the count, so runs of engines that
+    differ only after detection share one curve."""
+    out = []
+    for label, seeds, tag in runs:
+        for n in sizes_run(label):
+            for s in seeds:
+                p = _run_file(label, n, s)
+                if not os.path.exists(p):
+                    continue
+                with open(p, 'rb') as f:
+                    d = pickle.load(f)
+                npk = d.get('n_peaks')
+                if npk is None:
+                    npk = (d.get('coverage') or {}).get('peaks', 0)
+                out.append({'analytes': n, 'seed': s, 'peaks': int(npk), 'runs': tag})
+    return out
+
+
+def peak_curves(points, step=2):
+    """``(params, curve)``: the straight line over its linear range and the
+    curve with a ceiling over every point, as rows a chart draws."""
+    x = [p['analytes'] for p in points]
+    y = [p['peaks'] for p in points]
+    top, lin = linear_range(x, y)
+    sat = saturation_fit(x, y)
+    params = [{'model': 'linear', 'range_analytes': f'{min(x)}-{top}', 'a': round(lin['a'], 2),
+               'b': round(lin['b'], 3), 'r2': round(lin['r2'], 4), 'syx': round(lin['syx'], 1),
+               'lack_of_fit_p': round(lin['lof'][1], 3) if lin['lof'] else '',
+               'ymax': '', 'ymax_se': '', 'tau': '', 'tau_se': '', 'aic': ''}]
+    if 'teto' in sat:
+        t = sat['teto']
+        params.append({'model': 'ceiling', 'range_analytes': f'{min(x)}-{max(x)}', 'a': '', 'b': '',
+                       'r2': '', 'syx': round(t['sd'], 1), 'lack_of_fit_p': '',
+                       'ymax': round(t['ymax'], 1), 'ymax_se': round(t['ymax_se'], 1),
+                       'tau': round(t['tau'], 1), 'tau_se': round(t['tau_se'], 1),
+                       'aic': round(t['aic'], 1)})
+    curve = []
+    for v in range(0, max(x) + step, step):
+        row = {'analytes': v, 'linear': round(lin['a'] + lin['b'] * v, 1) if v <= top else ''}
+        if 'teto' in sat:
+            row['ceiling'] = round(sat['teto']['ymax'] * (1 - np.exp(-v / sat['teto']['tau'])), 1)
+        curve.append(row)
+    inv = []
+    for y0 in range(100, int(max(y)) + 25, 25):
+        x0, h = inverse(lin, y0)
+        r = {'peaks': y0, 'analytes_linear': round(x0, 1) if x0 <= top else '',
+             'ci95_linear': round(h, 1) if x0 <= top else ''}
+        if 'teto' in sat and y0 < sat['teto']['ymax']:
+            r['analytes_ceiling'] = round(-sat['teto']['tau'] * np.log(1 - y0 / sat['teto']['ymax']), 1)
+        else:
+            r['analytes_ceiling'] = ''
+        inv.append(r)
+    return params, curve, inv
+
+
+def by_concentration(label, sizes, seeds) -> list:
+    """Per tube size and band of the true amount: analytes in the tubes,
+    found, and the error of the found ones (|measured / true - 1| per group,
+    median over samples)."""
+    out = []
+    for n in sizes:
+        acc = {b: [0, 0, []] for b in BANDS_MM}
+        for s in seeds:
+            p = _run_file(label, n, s)
+            if not os.path.exists(p):
+                continue
+            with open(p, 'rb') as f:
+                d = pickle.load(f)
+            rep = {r['hmdb_id']: r for r in d['rows']
+                   if not r.get('_not_quantified') and not r.get('_is_is')}
+            for mid, t in d['truth'].items():
+                c = float(t.get('A') or 0.0)
+                band = next((b for b in BANDS_MM if b[0] <= c < b[1]
+                             or (b == BANDS_MM[-1] and c == b[1])), None)
+                if band is None:
+                    continue
+                acc[band][0] += 1
+                r = rep.get(mid)
+                if r is None:
+                    continue
+                acc[band][1] += 1
+                for g, vals in (r.get('_concs_by_group') or {}).items():
+                    want = t.get(g)
+                    if want and vals:
+                        acc[band][2].append(abs(float(np.median(vals)) / float(want) - 1.0))
+        for b, (k, f, e) in acc.items():
+            if not k:
+                continue
+            out.append({'analytes_in_tube': n, 'band_mM': f'{b[0]:g}-{b[1]:g}', 'analytes': k,
+                        'found': f, 'recovery_pct': round(100 * f / k, 1),
+                        'error_median_pct': round(100 * float(np.median(e)), 1) if e else '',
+                        'error_p90_pct': round(100 * float(np.percentile(e, 90)), 1) if e else ''})
+    return out
+
+
+def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
+    """``dest``/Composicoes, made anew: every run as a project the
+    application opens (already detected, annotated and quantified), its
+    truth per sample and its tables, the per-run summary, and the two
+    curves' data -- detected peaks against analytes (with the earlier
+    detection runs of ``old``) and recovery and error by true amount."""
+    import csv
+    import shutil
+    import subprocess
+    from app_paths import APP_VERSION
+    from data import project_file
+    from validation import export_validation as ev
+    from validation import gissmo_bench as gb
+    from validation import mixture_bench as mb
+    from validation.export_bench_projects import project_state
+    root = os.path.join(dest, 'Composicoes')
+    if os.path.isdir(root):
+        shutil.rmtree(root)
+    os.makedirs(root)
+
+    def write(name, rows):
+        with open(os.path.join(root, name), 'w', newline='', encoding='utf-8') as f:
+            w = csv.DictWriter(f, fieldnames=list(rows[0]))
+            w.writeheader()
+            w.writerows(rows)
+
+    names = ev._sample_names()
+    summary = []
+    for n in sizes:
+        for s in seeds:
+            p = _run_file(label, n, s)
+            if not os.path.exists(p):
+                continue
+            with open(p, 'rb') as f:
+                d = pickle.load(f)
+            prep, truth = gb.prepared(gb.FIELDS[FIELD], s, f'r{n}')
+            mb.MHZ = gb.FIELDS[FIELD]
+            run = os.path.join(root, f'tubo{n:03d}_composicao{s}')
+            os.makedirs(run)
+            project_file.save(os.path.join(run, f'Composicao_{n}_s{s}.nmrproj'),
+                              project_state(prep, d['rows'], gb.PPM, gb.FIELDS[FIELD]),
+                              keep_backup=False)
+            per = ev.sample_truth(FIELD, s, f'r{n}', 'padrao')
+            ev.write_csv(os.path.join(run, 'verdade_por_amostra.csv'),
+                         ['hmdb_id', 'nome', 'verdade_grupo_A_mM', 'verdade_grupo_B_mM']
+                         + [f'{x}_mM' for x in names],
+                         ([mid, t['name'], t['A'], t['B']] + [f'{v:.6g}' for v in per.get(mid, [])]
+                          for mid, t in truth.items()))
+            a_rows, s_rows = ev.run_tables(d['rows'], d['truth'], per, names)
+            ev.write_csv(os.path.join(run, 'resultados_por_analito.csv'), ev.A_HEAD[4:], a_rows)
+            ev.write_csv(os.path.join(run, 'concentracoes_por_amostra.csv'), ev.S_HEAD[4:], s_rows)
+            npk = d.get('n_peaks') or (d.get('coverage') or {}).get('peaks', 0)
+            m = run_metrics(d['rows'], d['truth'], npk, d.get('coverage'))
+            summary.append({'analytes_in_tube': n, 'composition': s, **{
+                k: (round(v, 4) if isinstance(v, float) else v) for k, v in m.items()}})
+    write('resumo_por_corrida.csv', summary)
+    points = peak_points([(lab, sd, f'{lab} {min(sd)}-{max(sd)}') for lab, sd in old]
+                         + [(label, seeds, f'{label} {min(seeds)}-{max(seeds)}')])
+    write('picos_por_analitos.csv', points)
+    params, curve, inv = peak_curves(points)
+    write('curva_picos_parametros.csv', params)
+    write('curva_picos_ajuste.csv', curve)
+    write('previsao_analitos_por_picos.csv', inv)
+    write('recuperacao_por_concentracao.csv', by_concentration(label, sizes, seeds))
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo,
+                            capture_output=True, text=True).stdout.strip()
+    with open(os.path.join(root, 'versao.txt'), 'w', encoding='utf-8') as f:
+        f.write(f'software: {APP_VERSION}\ncommit: {commit}\ncorridas: {len(summary)}\n')
+    with open(os.path.join(root, 'LEIA-ME.md'), 'w', encoding='utf-8') as f:
+        f.write(LEIAME.format(version=APP_VERSION, field=FIELD, sizes=', '.join(map(str, sizes)),
+                              seeds=', '.join(map(str, seeds)), runs=len(summary),
+                              seeds_cmd=' '.join(map(str, seeds)),
+                              old=', '.join(f'{lab} (composições {", ".join(map(str, sd))})'
+                                            for lab, sd in old)))
+    print(f'{len(summary)} runs exported to {root}')
+
+
+LEIAME = """# Variação de composição — {version}
+
+Tubos simulados com o GISSMO a {field} MHz, de {sizes} analitos, cada um em composições sorteadas de forma independente (sementes {seeds}: compostos ao acaso entre os 234 que o GISSMO simula, 0,05–1 mM log-uniforme, 12 amostras em dois grupos iguais, variação de 12% entre amostras). Cada corrida foi detectada, anotada e quantificada do zero com os padrões do software. Estas composições nunca foram usadas para ajustar o motor. {runs} corridas.
+
+## Abrir no software
+
+Cada pasta `tuboNNN_composicaoS/` tem `Composicao_NNN_sS.nmrproj`: abre já com detecção, anotação e quantificação feitas. `verdade_por_amostra.csv` diz o que está no tubo e em que concentração, amostra a amostra.
+
+## Arquivos
+
+| arquivo | conteúdo |
+|---|---|
+| `tuboNNN_composicaoS/resultados_por_analito.csv` | cada analito presente e cada reportado: verdade, medido, erro, bolinhas, via, SNR, motivo sem número |
+| `tuboNNN_composicaoS/concentracoes_por_amostra.csv` | analitos reportados amostra a amostra: verdade, medido, erro |
+| `resumo_por_corrida.csv` | por corrida: picos detectados, achados, falsos, recuperação, precisão ●●/●●●, erro |
+| `picos_por_analitos.csv` | picos detectados × analitos no tubo, destas corridas e das anteriores de detecção idêntica ({old}) |
+| `curva_picos_parametros.csv` | reta na faixa linear (falta de ajuste) e curva com teto y = ymax(1 − e^(−n/τ)) |
+| `curva_picos_ajuste.csv` | as duas curvas, ponto a ponto |
+| `previsao_analitos_por_picos.csv` | analitos previstos a partir dos picos detectados (reta: IC 95%, Miller & Miller 2010 eq. 5.9; teto: n = −τ ln(1 − picos/ymax)) |
+| `recuperacao_por_concentracao.csv` | por tamanho e faixa de concentração verdadeira: analitos, achados, recuperação, erro mediano e p90 |
+
+## Como reproduzir
+
+```
+python -m validation.composition_bench run --label comp076 --sizes 150 75 18 --seeds {seeds_cmd} --jobs 8
+python -m validation.composition_bench export --label comp076 --sizes 150 75 18 --seeds {seeds_cmd} --dest "<pasta da validação>"
+```
+
+Esta pasta é apagada e refeita a cada exportação.
+"""
+
+
 def main():
     global FIELD
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument('cmd', choices=('overnight', 'run', 'report'))
+    ap.add_argument('cmd', choices=('overnight', 'run', 'report', 'export'))
     ap.add_argument('--label', default=LABEL)
     ap.add_argument('--jobs', type=int, default=8)
     ap.add_argument('--field', type=int, default=FIELD, choices=(500, 600))
     ap.add_argument('--sizes', type=int, nargs='+', default=None,
                     help='tube sizes for run (default: the overnight set)')
+    ap.add_argument('--seeds', type=int, nargs='+', default=list(SEEDS),
+                    help='compositions drawn (random_tube seeds); 100-102 tuned ADR-085')
+    ap.add_argument('--dest', help='export: the validation folder (writes <dest>/Composicoes)')
     ap.add_argument('--deadline', default='06:00',
                     help='the tube of 75 runs only if the others end before this')
     a = ap.parse_args()
     FIELD = a.field
     sizes = list(a.sizes or SIZES)
+    if a.cmd == 'export':
+        export(a.dest, label=a.label, sizes=sizes, seeds=a.seeds)
+        return
     if a.cmd in ('overnight', 'run'):
         with keep_awake():
             t0 = datetime.datetime.now()
-            print(f'{t0:%H:%M} start: tubes {sizes} x seeds {list(SEEDS)}', flush=True)
-            run_sizes(sizes, label=a.label, jobs=a.jobs)
-            print(report(sizes_run(a.label), label=a.label), flush=True)
+            print(f'{t0:%H:%M} start: tubes {sizes} x seeds {a.seeds}', flush=True)
+            run_sizes(sizes, label=a.label, seeds=a.seeds, jobs=a.jobs)
+            print(report(sizes_run(a.label), label=a.label, seeds=a.seeds), flush=True)
             now = datetime.datetime.now()
             hh, mm = (int(v) for v in a.deadline.split(':'))
             deadline = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
@@ -325,11 +546,12 @@ def main():
                 deadline += datetime.timedelta(days=1)
             if a.cmd == 'overnight' and now < deadline:
                 print(f'{now:%H:%M} before {a.deadline}: tube of {LATE_SIZE}', flush=True)
-                run_sizes([LATE_SIZE], label=a.label, jobs=min(a.jobs, len(SEEDS)))
+                run_sizes([LATE_SIZE], label=a.label, seeds=a.seeds,
+                          jobs=min(a.jobs, len(a.seeds)))
             elif a.cmd == 'overnight':
                 print(f'{now:%H:%M} past {a.deadline}: no tube of {LATE_SIZE}', flush=True)
             print(f'{datetime.datetime.now():%H:%M} done', flush=True)
-    print(report(sizes_run(a.label), label=a.label))
+    print(report(sizes_run(a.label), label=a.label, seeds=a.seeds))
 
 
 if __name__ == '__main__':
