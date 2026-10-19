@@ -402,7 +402,15 @@ def by_concentration(label, sizes, seeds) -> list:
     return out
 
 
-def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
+# Earlier compositions of identical detection that join the peak curve, per field.
+OLD_PEAK_RUNS = {600: (('comp', (100, 101, 102)),), 500: (('comp500', (100, 101, 102)),)}
+
+
+def _field_tag() -> str:
+    return '' if FIELD == 600 else f'_{FIELD}MHz'
+
+
+def export(dest, *, label, sizes, seeds, old=None):
     """``dest``/Composicoes, made anew: every run as a project the
     application opens (already detected, annotated and quantified), its
     truth per sample and its tables, the per-run summary, and the two
@@ -417,7 +425,8 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
     from validation import gissmo_bench as gb
     from validation import mixture_bench as mb
     from validation.export_bench_projects import project_state
-    root = os.path.join(dest, 'Composicoes')
+    old = OLD_PEAK_RUNS.get(FIELD, ()) if old is None else old
+    root = os.path.join(dest, f'Composicoes{_field_tag()}')
     if os.path.isdir(root):
         shutil.rmtree(root)
     os.makedirs(root)
@@ -477,10 +486,10 @@ def export(dest, *, label, sizes, seeds, old=(('comp', (100, 101, 102)),)):
     with open(os.path.join(root, 'LEIA-ME.md'), 'w', encoding='utf-8') as f:
         f.write(LEIAME.format(version=APP_VERSION, field=FIELD, sizes=', '.join(map(str, sizes)),
                               seeds=', '.join(map(str, seeds)), runs=len(summary),
-                              seeds_cmd=' '.join(map(str, seeds)),
+                              seeds_cmd=' '.join(map(str, seeds)), sizes_cmd=' '.join(map(str, sizes)),
                               old=', '.join(f'{lab} (composições {", ".join(map(str, sd))})'
                                             for lab, sd in old)))
-    workbook = os.path.join(dest, f"Composicoes_nMRPro-H_v{APP_VERSION.split(' v')[1].split()[0]}.xlsx")
+    workbook = os.path.join(dest, f"Composicoes{_field_tag()}_nMRPro-H_v{APP_VERSION.split(' v')[1].split()[0]}.xlsx")
     write_workbook(workbook, summary=summary, points=points, params=params, curve=curve,
                    inv=inv, conc=conc, analytes=analytes_all, samples=samples_all,
                    about=[('software', APP_VERSION), ('commit', commit),
@@ -564,8 +573,8 @@ Cada pasta `tuboNNN_composicaoS/` tem `Composicao_NNN_sS.nmrproj`: abre já com 
 ## Como reproduzir
 
 ```
-python -m validation.composition_bench run --label comp076 --sizes 150 75 18 --seeds {seeds_cmd} --jobs 8
-python -m validation.composition_bench export --label comp076 --sizes 150 75 18 --seeds {seeds_cmd} --dest "<pasta da validação>"
+python -m validation.composition_bench run --label comp076 --field {field} --sizes {sizes_cmd} --seeds {seeds_cmd} --jobs 8
+python -m validation.composition_bench export --label comp076 --field {field} --sizes {sizes_cmd} --seeds {seeds_cmd} --dest "<pasta da validação>"
 ```
 
 Esta pasta é apagada e refeita a cada exportação.
