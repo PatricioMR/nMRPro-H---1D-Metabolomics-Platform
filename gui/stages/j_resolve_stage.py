@@ -2777,7 +2777,7 @@ class JResolveStage(BaseStage):
             'JG-Deconv applied',
             f'{n} overlapping signal(s) registered here.\n\n'
             'Quantification does not use these fractions. Overlap is '
-            'corrected there by "Split windows two analytes share", which '
+            'corrected there by "Resolve windows by shapes", which '
             'needs nothing from this step.')
 
     def _export(self):

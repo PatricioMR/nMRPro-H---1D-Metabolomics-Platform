@@ -41,6 +41,24 @@ def test_it_starts_on_the_validated_defaults(stage):
     assert stage.proton_corr_var.get() is True
 
 
+def test_group_a_switch_drives_its_three_variables(stage):
+    assert stage.shape_windows_var.get() is True
+    stage.shape_windows_var.set(False)
+    assert not (stage.deconv_var.get() or stage.shape_var.get() or stage.shared_var.get())
+    stage.shape_windows_var.set(True)
+    assert stage.deconv_var.get() and stage.shape_var.get() and stage.shared_var.get()
+
+
+def test_a_variable_set_on_its_own_sets_the_whole_group(stage):
+    # a project saved before the group restores the three one by one
+    stage.shared_var.set(False)
+    assert stage.shape_windows_var.get() is False
+    assert not (stage.deconv_var.get() or stage.shape_var.get())
+    stage.deconv_var.set(True)
+    assert stage.shape_windows_var.get() is True
+    assert stage.shape_var.get() and stage.shared_var.get()
+
+
 def test_the_baseline_list_drives_both_variables_and_back(stage):
     stage.baseline_choice_var.set('Local + model')
     assert stage.local_baseline_var.get() and stage.bl_model_quant_var.get()

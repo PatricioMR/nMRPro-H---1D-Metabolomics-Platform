@@ -155,7 +155,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         is_lipid = self._is_lipidomics_mode()
         targets = [self._integ_rbs.get('Multiplet'),
                    getattr(self, '_proton_corr_cb', None),
-                   getattr(self, '_j_resolve_cb', None)]
+                   getattr(self, '_shape_windows_cb', None)]
         if not getattr(self, '_lipid_tips_attached', False):
             for w in targets:
                 if w is not None:
@@ -341,45 +341,39 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         mf2 = ttk.Frame(s2); mf2.pack(fill=tk.X, pady=1)
         self._ext_is_indices = []
         self.mcr_var = tk.BooleanVar(value=False)   # kept for internal MCR-MCR path
-        # The overlap correction the JG-Deconv checkbox used to promise. The
-        # box is the same question -- should windows two analytes sit in be
-        # split between them -- answered by the engine that now does it, so it
-        # keeps the variable and the saved projects keep working.
+        # Group A -- one window resolved by the shapes of what sits in it:
+        # the balance of a window two winners contest (split_shared,
+        # ADR-010/011), a window holding another accepted analyte's signal
+        # (resolve_shared, ADR-015), and complex multiplets judged by their
+        # shape (quantify_shapes, ADR-013). One question for the analyst, and
+        # one switch: an m* not confirmed line by line is only offered to the
+        # remainders the shared-window split leaves, so m* on with the split
+        # off lost most of them without a word. The three variables stay, as
+        # the engine, the saved projects and the report read them.
         self.deconv_var = tk.BooleanVar(value=QUANTIFICATION['split_shared'])
-        self._j_resolve_cb = ttk.Checkbutton(
-            mf2, text='Split windows two analytes share',
-            variable=self.deconv_var,
+        self.shape_var = tk.BooleanVar(value=QUANTIFICATION['quantify_shapes'])
+        self.shared_var = tk.BooleanVar(value=QUANTIFICATION['resolve_shared'])
+        self.shape_windows_var = tk.BooleanVar(value=self._shape_parts_on())
+        self._syncing_shape_windows = False
+        self._shape_windows_cb = ttk.Checkbutton(
+            mf2, text='Resolve windows by shapes',
+            variable=self.shape_windows_var,
             command=self._on_deconv_change)
         self._j_resolve_status_lbl = ttk.Label(
             mf2, text='(not run yet)', font=('Arial', 7), foreground='gray')
-        self._j_resolve_cb.pack(side=tk.LEFT)
+        self._shape_windows_cb.pack(side=tk.LEFT)
         self._j_resolve_status_lbl.pack(side=tk.LEFT, padx=4)
-
-        # Complex multiplets (m*, ADR-013) are a method still being built.
-        # A shape never competes for a peak. On, with the shape resolution
-        # below, an m* is offered to the spectrum's remainders and
-        # identified only where a free apex, its own amount and its whole
-        # shape agree (ADR-024); off, it is left out and says so.
-        mf3 = ttk.Frame(s2); mf3.pack(fill=tk.X, pady=1)
-        self.shape_var = tk.BooleanVar(value=QUANTIFICATION['quantify_shapes'])
-        _c = ttk.Checkbutton(mf3, text='Complex multiplets (m*)',
-                             variable=self.shape_var)
-        _c.pack(side=tk.LEFT)
-        self._tip(_c, 'On: a complex multiplet is identified on a free apex '
-                      'by its shape, with the shared-window split below; it '
-                      'never competes for a peak.\n'
-                      'Off: complex multiplets are left out and say so.')
-        # A window holding another accepted analyte's signal, resolved by
-        # the two shapes after each was measured on its own (ADR-015).
-        mf4 = ttk.Frame(s2); mf4.pack(fill=tk.X, pady=1)
-        self.shared_var = tk.BooleanVar(value=QUANTIFICATION['resolve_shared'])
-        _c = ttk.Checkbutton(mf4, text='Split shared windows',
-                             variable=self.shared_var)
-        _c.pack(side=tk.LEFT)
-        self._tip(_c, "On: a window that holds another accepted analyte's "
-                      'signal is divided between the two by their shapes, '
-                      'each measured on its own first.\n'
-                      "Off: a window is its owner's whole.")
+        self._tip(self._shape_windows_cb,
+                  'On: a window two analytes sit in is divided between them '
+                  'by their shapes (contested windows and windows holding '
+                  "another analyte's signal), and complex multiplets (m*) "
+                  'are identified and measured by their shape.\n'
+                  "Off: every window is its owner's whole and complex "
+                  'multiplets are left out, saying so.')
+        self.shape_windows_var.trace_add(
+            'write', lambda *_: self._sync_shape_windows(source=self.shape_windows_var))
+        for _v in (self.deconv_var, self.shape_var, self.shared_var):
+            _v.trace_add('write', lambda *_, v=_v: self._sync_shape_windows(source=v))
         # A singlet on its own: position is its whole evidence, and the
         # signal-to-noise it must reach is the study's call (ADR-025): ten
         # suited a synthetic bench, five an organoid study whose real
@@ -1042,6 +1036,29 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
 
     def _on_deconv_change(self, *_):
+        self._refresh_deconv_label()
+
+    def _shape_parts_on(self) -> bool:
+        return bool(self.deconv_var.get() and self.shape_var.get()
+                    and self.shared_var.get())
+
+    def _sync_shape_windows(self, *, source):
+        """Keep group A's switch and its three variables one setting: whichever
+        was set -- the switch, or one variable on its own as a project saved
+        before the group restores them -- the other three take its value. A
+        mix (m* on, the split it depends on off) is not a setting the engine
+        supports."""
+        if self._syncing_shape_windows:
+            return
+        self._syncing_shape_windows = True
+        try:
+            on = bool(source.get())
+            for v in (self.shape_windows_var, self.deconv_var, self.shape_var,
+                      self.shared_var):
+                if bool(v.get()) != on:
+                    v.set(on)
+        finally:
+            self._syncing_shape_windows = False
         self._refresh_deconv_label()
 
     def _refresh_deconv_label(self):
