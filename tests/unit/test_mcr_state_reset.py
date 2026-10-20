@@ -68,7 +68,6 @@ def test_search_clears_before_it_matches():
 
 def test_carried_rows_are_cleared_only_when_mcr_is_off():
     src = inspect.getsource(search_mod)
-    block = src[src.index('_mcr_on = getattr(self'):]
+    block = src[src.index('if not mcr_requested(self):'):]
     block = block[:400]
-    assert 'if not (_mcr_on is not None and _mcr_on.get()):' in block
     assert 'clear_stale_mcr(None, carry_results)' in block

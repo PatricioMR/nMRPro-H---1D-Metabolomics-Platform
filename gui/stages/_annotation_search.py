@@ -68,6 +68,15 @@ MCR_RESULT_KEYS = (
 )
 
 
+def mcr_requested(stage) -> bool:
+    """Whether this annotation run includes the MCR pass: only in a release
+    that ships deconvolution (app_paths.DECONVOLUTION_ENABLED), whatever the
+    checkbox or a saved project says."""
+    from app_paths import DECONVOLUTION_ENABLED
+    var = getattr(stage, 'mcr_run_var', None)
+    return bool(DECONVOLUTION_ENABLED and var is not None and var.get())
+
+
 def clear_stale_mcr(peaks, results=None):
     """Drop MCR state left by a previous search.
 
@@ -1015,8 +1024,7 @@ class _AnnotationSearchMixin:
             carry_results = [r for r in prev_results
                              if (int(r['peak_rank']) if r.get('peak_rank') is not None else -1) in already_good_ranks
                              and r.get('ppm_diff', float('inf')) <= tolerance]
-            _mcr_on = getattr(self, 'mcr_run_var', None)
-            if not (_mcr_on is not None and _mcr_on.get()):
+            if not mcr_requested(self):
                 # Carried rows keep their scores, not a verdict from an MCR pass
                 # that is not part of this run.
                 clear_stale_mcr(None, carry_results)
@@ -1352,8 +1360,7 @@ class _AnnotationSearchMixin:
             pass
         self._measure_results_per_sample(results, _mhz_ps)
 
-        run_mcr = getattr(self, 'mcr_run_var', None)
-        if run_mcr is not None and run_mcr.get():
+        if mcr_requested(self):
             try:
                 mhz = float(self.spectrometer_var.get())
             except Exception:

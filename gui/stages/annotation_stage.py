@@ -170,6 +170,11 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
             mcr_bf, text='🔬 Run MCR Deconvolution',
             variable=self.mcr_run_var)
         self._mcr_run_cb.pack(side=tk.LEFT, padx=2)
+        # Deconvolution is not part of this release (app_paths.
+        # DECONVOLUTION_ENABLED, as the JG-Deconv stage): shown, not offered.
+        from app_paths import DECONVOLUTION_ENABLED
+        if not DECONVOLUTION_ENABLED:
+            self._mcr_run_cb.state(['disabled'])
 
         self.internal_status = ttk.Label(
             s3, text='Internal DB: ready', foreground='gray')

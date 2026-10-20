@@ -1290,7 +1290,9 @@ class AnnotationResultsWindow:
             font=("Arial", 9, "italic"), foreground="gray")
         self._summary_lbl.pack(anchor=tk.W, padx=4, pady=(4, 2))
         ttk.Label(frame_a,
-                  text="Ctrl+1 = Good  ·  Ctrl+2 = Average (→ MCR)  ·  Ctrl+3 = Poor",
+                  text=("Ctrl+1 = Good  ·  Ctrl+2 = Average"
+                        + (" (→ MCR)" if DECONVOLUTION_ENABLED else "")
+                        + "  ·  Ctrl+3 = Poor"),
                   font=("Arial", 7), foreground="#888").pack(
             anchor=tk.W, padx=4, pady=(0, 2))
 
