@@ -14,6 +14,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-installer-brightgreen"></a>
 </p>
 
@@ -24,6 +25,7 @@
   <a href="#validation">Validation</a> ·
   <a href="#installation">Installation</a> ·
   <a href="#roadmap">Roadmap</a> ·
+  <a href="#license">License</a> ·
   <a href="#references">References</a>
 </p>
 
@@ -534,11 +536,43 @@ Planned next, in order:
 
 ---
 
+## License
+
+NMRPro-H is free software, released under the **GNU Affero General Public
+License v3.0** ([`LICENSE`](LICENSE)). You may use, study, modify and
+redistribute it; any distributed or network-served version that includes or
+derives from it must be released under the same licence, with its source code.
+
+**Other licences on request.** The AGPL-3.0 is an OSI-approved open-source
+licence and places no restriction on who uses NMRPro-H or why, commercial use
+included, as long as its terms are met. Using NMRPro-H, or software derived
+from it, **without** those terms — for example inside a closed-source product
+or service — is possible only under a separate written licence from the
+copyright holder, requested in advance.
+
+**Third-party data and tools keep their own terms.** The reference resources
+bundled with or used by NMRPro-H are not covered by the AGPL-3.0, and some of
+them require the provider's prior authorisation for certain uses:
+
+| Resource | Used for | Terms |
+|---|---|---|
+| BioMagResBank (BMRB) | reference spectra behind the BMRB-derived libraries | BMRB terms of use; cite Ulrich 2008 and Hoch 2023 |
+| GISSMO | spin systems used by the simulator and for complex-multiplet shapes | GISSMO/BMRB terms of use; cite Dashti 2017 |
+| HMDB (`hmdb_pathways.db`, HMDB-derived libraries) | pathway membership and optional libraries | free for academic use; **commercial use or redistribution requires the HMDB authors' explicit permission** |
+| Python packages (numpy, scipy, scikit-learn, matplotlib, pandas, networkx, reportlab, pillow, requests) | runtime | their own permissive licences, compatible with the AGPL-3.0 |
+
+Whoever uses NMRPro-H for a purpose these terms restrict must obtain the
+corresponding authorisations from each provider.
+
+---
+
 ## Citation
 
 A manuscript describing NMRPro-H is in preparation. Until it is published,
 please cite the software and the release you used (for example
 *NMRPro-H v0.8 Beta*, tag `v0.8`).
+
+Copyright (C) 2025–2026 the NMRPro-H authors.
 
 ## Acknowledgements
 
