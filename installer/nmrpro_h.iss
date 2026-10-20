@@ -33,6 +33,7 @@ SolidCompression=yes
 WizardStyle=modern
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=..\utils\nmrpro_h.ico
+LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\{#AppExe}
 
 [Languages]
