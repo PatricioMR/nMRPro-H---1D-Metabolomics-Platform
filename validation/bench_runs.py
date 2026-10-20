@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Run the GISSMO bench in parallel and print the tables pooled over seeds.
 
 Every (tube, scatter, seed) is an independent run: the spectrum, detection

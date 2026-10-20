@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """
 Fill ChEBI classification for BMRB metabolites NOT mapped via KEGG, using the
 InChIKey route (ChEBI structures.tsv.gz). Offline. Reuses chebi_classify's obo

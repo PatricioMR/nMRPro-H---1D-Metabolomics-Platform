@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # gui/app.py
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -35,7 +37,7 @@ from gui.stages.cosy_quantification_stage import CosyQuantificationStage
 from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
-from app_paths import APP_VERSION, DECONVOLUTION_ENABLED
+from app_paths import APP_VERSION, DECONVOLUTION_ENABLED, LICENSE_NOTICE
 from gui.utils.quality_palette import (
     SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
 from gui.widgets.annotation_results_window import _TIER_NOTE
@@ -369,6 +371,15 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         view_menu.add_cascade(label="Plot Settings", menu=plot_settings_menu)
 
         _btn('View', view_menu)
+
+        # ── Help ─────────────────────────────────────────────────────────────
+        help_menu = _menu(mb_frame)
+        help_menu.add_command(label='About NMRPro-H…', command=self._show_about)
+        _btn('Help', help_menu)
+
+    def _show_about(self):
+        """The copyright, warranty and licence notice (GNU AGPL-3.0)."""
+        messagebox.showinfo('About NMRPro-H', LICENSE_NOTICE, parent=self.root)
 
 
     # ---------- Stage Toolbar ----------

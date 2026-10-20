@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """An installed application gets the bundled databases it lacks, and keeps
 every database the user already has untouched."""
 import app_paths

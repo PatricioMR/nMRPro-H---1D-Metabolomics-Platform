@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """What a quantified analyte lists inside another winner's window is
 subtracted at the amount it was measured at (ADR-026): the listing places
 it, the analyte's own signal sizes it, and it stays only if it fits."""

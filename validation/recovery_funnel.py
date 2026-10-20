@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Where the true analytes of the random tubes are lost, against what the
 spectrum lets anyone find.
 

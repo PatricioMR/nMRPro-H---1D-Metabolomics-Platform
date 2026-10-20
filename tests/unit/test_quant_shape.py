@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A complex multiplet is quantified from its fitted shape: no peak claimed,
 the copy of the shape that fits under each sample's trace, its area exact."""
 import numpy as np

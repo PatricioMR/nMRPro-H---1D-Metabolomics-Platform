@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_mcr_subpeak_quant.py
 """
 Testes para MCRWindow._build_mcr_subpeak / _sync_peak_list_from_mcr /

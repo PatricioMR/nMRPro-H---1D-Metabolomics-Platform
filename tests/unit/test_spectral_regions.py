@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The suppressed region is not a source of analytes.
 
 On the reference study ATP's H37 triplet — a real database signal at 4.639 ppm,
@@ -136,10 +139,11 @@ def test_the_default_is_defined_in_exactly_one_place():
             continue
         for i, line in enumerate(
                 f.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
-            if re.match(r'\s*(WATER_REGION|DEFAULT_EXCLUDED_REGIONS)\s*=', line):
-                hits.append(f'{f.as_posix()}:{i}')
-    assert hits == ['processing/spectral_regions.py:35',
-                    'processing/spectral_regions.py:37'], hits
+            m = re.match(r'\s*(WATER_REGION|DEFAULT_EXCLUDED_REGIONS)\s*=', line)
+            if m:
+                hits.append(f'{f.as_posix()}:{m.group(1)}')
+    assert sorted(hits) == ['processing/spectral_regions.py:DEFAULT_EXCLUDED_REGIONS',
+                            'processing/spectral_regions.py:WATER_REGION'], hits
 
 
 def test_detection_uses_the_field_and_nothing_else():

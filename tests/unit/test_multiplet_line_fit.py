@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Fitting a multiplet against the apices ONE sample really has.
 
 The defect this replaces: each line was located by its own apex search, so the

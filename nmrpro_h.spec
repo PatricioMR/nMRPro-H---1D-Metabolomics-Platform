@@ -31,6 +31,7 @@ _db_seed = [
 datas = _db_seed + [
     ('data',      'data'),         # lipidomics / internal CSV libraries
     ('utils',     'utils'),        # Logo_NMRPro-H.png, nmrpro_h.ico
+    ('LICENSE',   '.'),            # GNU AGPL-3.0, beside the program
 ]
 binaries = []
 hiddenimports = [

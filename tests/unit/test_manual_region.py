@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The analyst's region: a right-drag on the zoom view says where a signal is,
 and the measurement is redone inside it (processing.annotation_scoring).
 

@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_j_resolve_cascade.py
 """
 Testes para a lógica de cascata de _phase3 em JResolveStage.

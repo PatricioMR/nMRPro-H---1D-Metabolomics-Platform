@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Tests for lines_from_transitions (exact multiplet lines from DB transitions)."""
 import sqlite3
 import numpy as np

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """
 Download the full HMDB metabolite index (one-time) into a local SQLite so the
 mammalian-biofluid flag never needs the API again.

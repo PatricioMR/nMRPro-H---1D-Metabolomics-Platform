@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_cosy_quant.py
 """Testes da quantificação relativa por volume de cross-peaks COSY."""
 import numpy as np

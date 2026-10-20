@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The application's own annotation passes, run over the bench, without a window.
 
 The bench builds its study and annotates it with its own orchestration

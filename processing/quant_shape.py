@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Quantifying a complex multiplet from its fitted shape.
 
 A multiplet judged as a shape (ADR-013) claims no peak: its lines were never

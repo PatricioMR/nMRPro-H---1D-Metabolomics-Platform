@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Line counting and J measurement belong to annotation, not to the view.
 
 Whether a multiplet's expected lines are present in the spectrum is what decides

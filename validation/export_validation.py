@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Export the validation behind the report's quality table, so it can be
 audited outside the code: every spectrum, the truth it was built from, what
 the software reported for it, and the tables.

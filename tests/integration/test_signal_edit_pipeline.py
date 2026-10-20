@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A signal split by hand in the Signal List reaches quantification like a
 detected one: the two lines of a doublet that detection left in one window,
 cut apart, measure the concentrations that were built in."""

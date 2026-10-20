@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Annotate and quantify a saved project the way the application does,
 and, when the study's true concentrations are known, say how it did.
 

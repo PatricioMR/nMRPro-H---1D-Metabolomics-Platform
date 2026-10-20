@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The Signal List's analyte column follows the quantification's result."""
 from gui.stages._signal_labels import NO_LABEL, signal_labels
 

@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # validation/gissmo_extract.py
 """Build ``validation/data/gissmo_spin_systems.json`` from GISSMO XMLs.
 

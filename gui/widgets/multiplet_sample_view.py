@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # gui/widgets/multiplet_sample_view.py
 """
 Per-MULTIPLET across-samples view (MS-DIAL style) for NMR.

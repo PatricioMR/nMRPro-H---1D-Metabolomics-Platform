@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """How far a real study's signals stand from the reference, measured on the
 compounds a tissue extract unmistakably holds -- the regime the bench has to
 reproduce before what improves the bench can improve the study.

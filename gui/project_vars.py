@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Every parameter a stage holds in a tkinter variable, saved and restored.
 
 A project that reopens on other settings than it was saved with gives other

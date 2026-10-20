@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Unit tests for the Box/Violin metabolite selection resolver.
 
 _resolve_box_selection maps user-picked metabolite names to column indices,

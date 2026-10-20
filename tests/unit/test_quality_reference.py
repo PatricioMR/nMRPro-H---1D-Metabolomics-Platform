@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The report quotes what each confidence level was measured to mean, at the
 project's field or the nearest measured one, and says which."""
 import pytest

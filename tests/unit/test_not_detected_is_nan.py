@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A sample the engine found no amount in is NaN wherever the table is read.
 
 A zero is the engine saying it found nothing, and a number written where it

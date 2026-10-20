@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Does the window hold the whole signal, foot to foot?
 
 The study is a sum of known compounds, so the one signal a window was

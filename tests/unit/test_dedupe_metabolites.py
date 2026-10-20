@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The duplicate rule must collapse only what 1H NMR cannot distinguish.
 
 A false positive here silently deletes a real metabolite from a reference

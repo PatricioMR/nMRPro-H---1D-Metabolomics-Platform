@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Probe: identify by fitting every reference template at once.
 
 The engine identifies peak first -- detect, match each peak to candidates,

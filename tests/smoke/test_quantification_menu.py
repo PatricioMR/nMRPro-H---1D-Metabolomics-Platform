@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The Quantification options panel starts on the settings the validation
 was measured with, and its baseline list and cascade controls stay in step
 with the variables the engine and the saved projects read."""

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Probe: a confirmed multiplet fixes the amount; the analyte's other
 signals are looked for at that amount, wherever they stand nearby.
 

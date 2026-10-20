@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A study whose answer is known, built from the reference database's own
 measured shapes, put through the decision chain that runs.
 

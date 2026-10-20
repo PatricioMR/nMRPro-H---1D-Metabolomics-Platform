@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_stocsy.py
 """Unit tests for processing.stocsy — Graph STOCSY and Seed STOCSY."""
 import math

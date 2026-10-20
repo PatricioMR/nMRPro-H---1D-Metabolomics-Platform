@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Foot-to-foot integration, one sample at a time.
 
 One mode, not five. The old engine carried multiplet, area, Lorentz fit, MCR

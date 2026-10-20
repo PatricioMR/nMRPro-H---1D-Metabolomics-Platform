@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # processing/stocsy.py
 """
 Graph STOCSY — pairwise peak correlation matrix from area_per_sample vectors.

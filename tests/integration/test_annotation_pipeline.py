@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/integration/test_annotation_pipeline.py
 """
 End-to-end annotation pipeline test using real CSV + real plasma DB.

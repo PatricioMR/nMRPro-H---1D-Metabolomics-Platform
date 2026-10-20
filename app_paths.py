@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """
 Resource path resolution for NMRPro-H — works both in development and when
 frozen by PyInstaller (one-folder).
@@ -28,6 +31,18 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 __version__   = "0.8"
 RELEASE_STAGE = "Beta"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
+
+# The notice the GNU AGPL asks an interactive program to show (LICENSE,
+# "How to Apply These Terms"); the About box displays it.
+COPYRIGHT  = "Copyright (C) 2025-2026 Miguel Rocha Patricio"
+SOURCE_URL = "https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform"
+LICENSE_NOTICE = (
+    f"{APP_VERSION}" + chr(10) + f"{COPYRIGHT}" + chr(10) + chr(10)
+    + "This program comes with ABSOLUTELY NO WARRANTY. This is free software, "
+    "and you are welcome to redistribute it under the terms of the GNU Affero "
+    "General Public License, version 3 or (at your option) any later version; "
+    "see the LICENSE file distributed with it or <https://www.gnu.org/licenses/>."
+    + chr(10) + chr(10) + f"Source code: {SOURCE_URL}")
 
 # MCR-based deconvolution is a future stage. The JG-Deconv (J-resolved) stage,
 # the Full-Spectrum MCR stage, the MCR pass of the annotation and the

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Mirror the raw 1D 1H spectra of every BMRB entry the reference DB uses.
 
 The reference database was built from the peak lists BMRB publishes, and those

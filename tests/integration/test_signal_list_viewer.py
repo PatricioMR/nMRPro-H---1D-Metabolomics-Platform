@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The Signal List's viewer draws the spectrum the numbers were measured on and
 shades the area that was measured.
 

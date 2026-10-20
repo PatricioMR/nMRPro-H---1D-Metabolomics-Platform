@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Quant Peaks window — multiplet-level selection helpers.
 
 Quantification works per multiplicity: the user selects a whole multiplet

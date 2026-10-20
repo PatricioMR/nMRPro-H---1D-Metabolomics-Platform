@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # data/project_file.py
 """
 The project file (.nmrproj) on disk: how a session state is written and read.

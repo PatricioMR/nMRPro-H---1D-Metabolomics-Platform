@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Deconvolution is a future stage, and one switch says so.
 
 Everything that resolves overlap between analytes stays in the code and

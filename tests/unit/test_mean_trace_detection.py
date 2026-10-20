@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A resonance clear on the mean of the samples and too weak in each of them
 is detected -- where nothing else is; a bump on a big peak's tail is not.
 

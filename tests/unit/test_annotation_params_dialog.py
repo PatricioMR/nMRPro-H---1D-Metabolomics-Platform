@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """One description of the annotation parameters, one dialog.
 
 The menu and the results window each carried their own copy of the parameter

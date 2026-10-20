@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The report's validation page: what the confidence levels were measured to
 mean, at the field the project was acquired at or the nearest one measured.
 

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """PQN divides each sample by how concentrated it is against the median sample,
 so a difference that reaches every metabolite alike is read as dilution and
 taken out. On the validation bench a global x0.6 on one group was estimated at

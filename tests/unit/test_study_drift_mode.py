@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The study's drift read where the confirmed multiplets crowd, not where
 the coincidences spread."""
 import numpy as np

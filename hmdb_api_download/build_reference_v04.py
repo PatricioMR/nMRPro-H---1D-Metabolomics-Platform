@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Build BMRB_Metabolomics_v04: v03 with its measurements checked against
 every BMRB spectrum of the compound.
 

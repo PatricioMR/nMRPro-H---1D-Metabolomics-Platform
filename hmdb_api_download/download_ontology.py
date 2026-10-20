@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """
 Download HMDB ontology for the metabolites in HMDB_Metabolomics_v01.db and
 extract ONLY the origin classification (discard the bulk: disease/location/food

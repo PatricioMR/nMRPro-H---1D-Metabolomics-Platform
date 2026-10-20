@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Each engine mechanism switched off alone, against the whole engine.
 
 The standard GISSMO tubes (600 MHz, 18/50/100 analytes, seeds 0-2), every

@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # processing/cosy_annotation.py
 """
 Anotação de cross-peaks COSY ¹H-¹H por co-ocorrência de shifts (método COLMAR).

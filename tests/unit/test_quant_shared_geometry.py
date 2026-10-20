@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The shared-window fit's geometry: the reference's profile for a letter,
 a refinement of position and width on the mean trace, an intruder placed
 where annotation expects it when detection gave it the owner's line, and

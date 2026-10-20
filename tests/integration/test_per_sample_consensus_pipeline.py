@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """From spectra to the verdict: fit each sample, agree on δ and J, then score.
 
 The four stages that used to be one number off the mean spectrum:

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Tests for the Tk-free math of the per-multiplet across-samples view."""
 
 from gui.widgets.multiplet_sample_view import (

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Lexicographic candidate ranking shared by annotation and quantification.
 
 The cases below are the three contest regimes measured in a real 37-sample

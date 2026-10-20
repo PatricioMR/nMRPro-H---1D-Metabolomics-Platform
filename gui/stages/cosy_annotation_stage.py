@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # gui/stages/cosy_annotation_stage.py
 """
 COSY Annotation Stage — rota alternativa de anotação para espectros 2D COSY.

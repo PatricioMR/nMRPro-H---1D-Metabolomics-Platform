@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A singlet's whole evidence is a position.
 
 There is no J to validate, so the question is not "does it score well" but "is

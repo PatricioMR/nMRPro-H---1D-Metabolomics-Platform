@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The whole of quantification, on a spectrum whose answer is known.
 
 Every change to this pipeline so far was measured by recomputing from a saved

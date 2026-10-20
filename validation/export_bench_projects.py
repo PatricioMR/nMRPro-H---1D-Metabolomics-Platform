@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Write the 18/50/100-analyte crowded studies out as projects the
 application can open, already run: detection, annotation and
 quantification done, with the application's own current defaults

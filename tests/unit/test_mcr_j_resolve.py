@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_mcr_j_resolve.py
 """
 Testes para a infraestrutura MCR-ALS usada pelo J-Resolve.

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Unit tests for the pure annotation scoring core (processing/annotation_scoring.py).
 
 These lock in the behaviour extracted from AnnotationResultsWindow._compute_scores

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Detection's rigid alignment carried to the matrix the later steps read
 (processing.peak_alignment.apply_rigid_shifts)."""
 import numpy as np

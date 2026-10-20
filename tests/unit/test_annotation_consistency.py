@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A metabolite's signals stand in the proportion of their protons; the anchor
 of a signal is the nearest peak among those its proportions allow."""
 import numpy as np

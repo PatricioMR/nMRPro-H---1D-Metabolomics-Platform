@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Write the synthetic study out as a project the application can open.
 
 The bench builds its spectrum in memory and runs the engine on it from a

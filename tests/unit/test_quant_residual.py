@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The remainder as evidence: a winner's window whose accepted shapes leave
 something is offered the signals the election did not accept -- but only
 one with a detected apex of its own that nobody holds, at the amount that

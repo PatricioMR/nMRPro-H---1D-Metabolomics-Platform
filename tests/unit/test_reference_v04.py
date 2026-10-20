@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """v04: a reference value is corrected only where the spectra BMRB deposited
 agree with each other and the one v03 measured on is among them."""
 import json

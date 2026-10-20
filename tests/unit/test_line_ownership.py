@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The same physical lines cannot be quantified twice.
 
 The old allocation blocked a candidate whose ANCHOR peak was already won. A

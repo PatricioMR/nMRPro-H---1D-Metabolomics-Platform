@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """What quantification produces has to be readable by what comes after it.
 
 The engine returns its per-sample values as ``{sample_index: value}`` — a

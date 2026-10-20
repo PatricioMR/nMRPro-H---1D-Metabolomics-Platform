@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A study whose answer is known, put through the pipeline that runs.
 
 Every measurement in this project so far was taken one stage at a time, or by

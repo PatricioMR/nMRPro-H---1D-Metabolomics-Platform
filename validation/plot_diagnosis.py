@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Draw what the software measured against what the study really holds.
 
 Two panels: every measurement on an identity line with the +-10% and +-20%

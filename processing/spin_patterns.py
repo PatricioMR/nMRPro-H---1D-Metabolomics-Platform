@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Complex multiplets judged by their spin system at the study's field.
 
 A complex multiplet (``m*``) is judged by its shape, and the reference

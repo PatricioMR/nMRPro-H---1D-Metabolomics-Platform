@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Regression: _compute_vip_scores must handle per-sample vectors of differing
 lengths (ragged) without the numpy 'inhomogeneous shape' error that previously
 skipped ALL VIP scores."""

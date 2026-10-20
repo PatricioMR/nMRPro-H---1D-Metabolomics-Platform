@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """If it were here, would I see the big one?
 
 Every annotation gate judges a signal on its own. On the reference study eight

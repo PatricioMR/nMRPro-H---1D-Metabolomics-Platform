@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """How much the method's figures move when the analytes in the tube change,
 and how the number of signals grows with the number of analytes.
 

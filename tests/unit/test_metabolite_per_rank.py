@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Unit tests for the canonical per-peak metabolite selector.
 
 Guards the Peak List ↔ Annotation Results agreement on which metabolite

@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # gui/stages/j_resolve_stage.py
 """
 JG-Deconv Stage — J-Guided Overlap Deconvolution (step 4 in the workflow).

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A multiplet's measured shape fitted to the spectrum: the largest copy of
 it that fits under the trace, wherever in the tolerance it fits."""
 import json

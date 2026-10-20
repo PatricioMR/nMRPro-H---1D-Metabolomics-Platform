@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Where analytes with complex multiplets (m*) win or are lost, and what
 tells a real one from a stranger.
 

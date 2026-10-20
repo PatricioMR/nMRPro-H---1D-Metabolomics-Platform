@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """PQN validation (python -m validation.pqn_bench 18 S0,S1,S2 [seeds]). Tube of N analytes, 600 MHz, 3 seeds, 12 samples (6 A, 6 B).
 
 Every analyte and the foreign methanol of each sample is multiplied by that

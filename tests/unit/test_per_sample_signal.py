@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Per-sample view of one annotated signal, and the consensus it adds up to.
 
 Where a signal's lines sit in a sample comes from the multiplet fit, which

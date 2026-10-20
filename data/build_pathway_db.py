@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # data/build_pathway_db.py
 """
 One-time build script: harvests HMDB IDs from all project NMR databases,

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """An analyte is measured on every signal its own amount predicts, not on
 one: a doublet that says ten millimolar says the molecule's singlet must
 say ten millimolar too, whatever its protons."""

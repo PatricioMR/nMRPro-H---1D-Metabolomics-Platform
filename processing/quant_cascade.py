@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The cascade: analytes the election missed, found jointly on what the
 quantified ones leave of the spectrum (ADR-028).
 

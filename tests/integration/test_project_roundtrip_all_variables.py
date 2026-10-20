@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Save is the same as having stopped where the analyst stopped.
 
 The real application is built without a window, every variable of every stage

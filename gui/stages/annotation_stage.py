@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # gui/stages/annotation_stage.py
 """
 Metabolites Annotation Stage — Step 3.

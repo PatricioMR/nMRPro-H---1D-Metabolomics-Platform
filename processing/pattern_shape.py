@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A multiplet's measured shape fitted to the spectrum.
 
 A pattern of fourteen lines -- the ribose protons of NAD between 4.2 and 4.3

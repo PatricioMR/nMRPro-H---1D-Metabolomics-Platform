@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """What a new analysis starts with, before the analyst touches anything.
 
 One place, read by the interface when it builds its controls and by

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Which analyte the Signal List names for each detected signal.
 
 Once quantification has run, the column is its result: a signal is named

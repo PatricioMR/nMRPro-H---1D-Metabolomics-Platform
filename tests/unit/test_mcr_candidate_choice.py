@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """MCR must judge the candidate the ranking elects.
 
 _run_mcr_on_results picks one candidate per peak, runs the Pearson r against it

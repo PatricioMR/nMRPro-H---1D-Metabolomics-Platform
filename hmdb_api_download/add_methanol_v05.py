@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Add methanol to BMRB_Metabolomics v05 (full, Mammalian, General).
 
 Extraction spectra carry methanol as a strong singlet near 3.34 ppm

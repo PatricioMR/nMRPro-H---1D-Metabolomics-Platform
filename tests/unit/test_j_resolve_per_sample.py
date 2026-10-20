@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # tests/unit/test_j_resolve_per_sample.py
 """
 Testes para _compute_per_sample_fractions de JResolveStage.

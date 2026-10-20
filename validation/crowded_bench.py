@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The reference study, filled up: 50 and 100 analytes instead of 18.
 
 A real extract holds a hundred or two hundred metabolites, most of them

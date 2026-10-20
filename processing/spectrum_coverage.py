@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """How much of the spectrum the analysis accounts for.
 
 A table of concentrations says nothing about what it left out. The model

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The spectrometer field reaches the annotation and survives a save.
 
 Every J the annotation predicts is converted from Hz to ppm with this

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """How much of the spectrum the final model explains
 (processing.spectrum_coverage)."""
 import numpy as np

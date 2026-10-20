@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The analysis reads its inputs in one order defined by their content.
 
 The same Mice ISS project, unchanged in content, quantified 37 or 40

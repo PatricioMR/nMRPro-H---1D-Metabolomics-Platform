@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Annotating a study the way the application does, without a window.
 
 The application searches the database (controllers.annotation_controller)

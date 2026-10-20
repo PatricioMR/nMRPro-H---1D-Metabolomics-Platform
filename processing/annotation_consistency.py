@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Which peak within tolerance is a signal's, when the metabolite's other
 signals say how tall it should be.
 

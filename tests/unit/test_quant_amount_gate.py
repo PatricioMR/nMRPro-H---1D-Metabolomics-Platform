@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Two gates on a winner's measured amount (ADR-025).
 
 A winner whose amount its own fingerprint contradicts -- another listed

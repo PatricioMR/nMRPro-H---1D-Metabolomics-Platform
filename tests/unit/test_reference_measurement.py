@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A reference coupling measured from the spectrum, with its uncertainty.
 
 The databases publish peak lists to three decimals -- half a hertz at 500 MHz

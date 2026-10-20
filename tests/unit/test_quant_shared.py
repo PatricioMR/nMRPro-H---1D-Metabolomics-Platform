@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A window two accepted analytes share is resolved by their shapes: each
 gets what its shape accounts for, an intruder no more than its own clean
 signal allows, and what is left is a remainder, not anybody's."""

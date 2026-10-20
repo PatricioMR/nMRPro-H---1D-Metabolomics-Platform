@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """MCR state must not survive a search that did not run MCR.
 
 `mcr_annotation` lives on the detected-peak dicts, which outlive any single

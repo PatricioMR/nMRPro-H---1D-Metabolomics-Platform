@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """What the report draws of a fitted amount is the number's: the shaded area is
 the signal the table's area is read from, the compound's other signals in view
 are only outlined, and a fit standing above the trace it was fitted to says so."""

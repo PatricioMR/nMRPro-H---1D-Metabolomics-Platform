@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The Bruker import puts each spectrum's reference standard at 0 ppm.
 
 TopSpin referenced the Mice ISS spectra (600 MHz) between -0.088 and +0.078

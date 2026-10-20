@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The elected signal on each group's mean: its SNR and its shape agreement,
 and which group the figure and the numbers then share."""
 import numpy as np

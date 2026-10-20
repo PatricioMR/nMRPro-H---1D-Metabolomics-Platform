@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A reference line is expected where its apex would be seen at this study's
 linewidth, not where the line is."""
 import numpy as np

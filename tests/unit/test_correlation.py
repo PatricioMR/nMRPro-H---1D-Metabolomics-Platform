@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Unit tests for processing.correlation (coefficient + OLS confidence band)."""
 import numpy as np
 

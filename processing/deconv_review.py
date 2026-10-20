@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """What the deconvolution review shows, and what the analyst's decisions are.
 
 The quantification resolves overlapping signals in three ways, each of which

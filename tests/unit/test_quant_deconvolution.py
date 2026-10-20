@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A window is not a container for one signal.
 
 A Lorentzian's tails fall away as the square of the distance and never reach

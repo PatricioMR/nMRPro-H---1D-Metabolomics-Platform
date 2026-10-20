@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Elect, integrate, concentrate — end to end, on data small enough to check."""
 import numpy as np
 import pytest

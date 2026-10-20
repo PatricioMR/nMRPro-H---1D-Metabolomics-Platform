@@ -1,3 +1,5 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 # processing/spectral_quality.py
 """
 Spectral quality assessment for 1H NMR metabolomics.

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Evidence a complex multiplet (m*) carries that a stranger's shape does
 not: candidates for judging one, measured against GISSMO tubes.
 

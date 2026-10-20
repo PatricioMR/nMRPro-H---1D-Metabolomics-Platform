@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Two analytes on one peak: what each of them owns of it.
 
 The election gives a contested peak to a single owner, and it is right to —

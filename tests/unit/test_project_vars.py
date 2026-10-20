@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A project saves every variable its stages hold, found by looking at them, and
 says which it could not put back. A parameter nobody listed in the saving code
 used to come back at its default, and the numbers changed with no warning."""

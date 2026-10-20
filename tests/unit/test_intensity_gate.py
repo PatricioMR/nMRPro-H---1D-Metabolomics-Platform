@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Lines all found, but the multiplet accounts for too little of their
 height: a triplet claimed on a singlet of SNR 417 and two lines of noise."""
 import pytest

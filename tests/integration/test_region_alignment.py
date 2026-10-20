@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Aligning a region is an edit of the spectrum, and an edit of the spectrum has
 to be undoable and on the record.
 

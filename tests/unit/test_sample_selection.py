@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Which samples a processing step may read.
 
 The rule lived inside detect_peaks, so detection honoured it and nothing else

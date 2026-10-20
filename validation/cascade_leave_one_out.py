@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Leave-one-out on the bench: how well does the cascade QUANTIFY, apart
 from what it selects (ADR-028)?
 

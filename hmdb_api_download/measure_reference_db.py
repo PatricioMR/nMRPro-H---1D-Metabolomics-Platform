@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Build BMRB_Metabolomics_v02: every signal measured from its own spectrum.
 
 v01 carries what BMRB's curators listed -- ppm to three decimals, J to the

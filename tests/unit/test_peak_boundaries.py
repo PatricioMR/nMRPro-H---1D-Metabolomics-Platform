@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Tests for peak start/end (boundary) determination in separate_overlapping_peaks.
 
 Rule: foot = first valley (signal turns up) OR baseline+3σ; isolated peaks get

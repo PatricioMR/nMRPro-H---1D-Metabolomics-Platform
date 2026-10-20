@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """A window two accepted analytes share, resolved by their shapes.
 
 Integration reads a window as one signal's. Where a second analyte's signal

@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The quantification report draws a shape-quantified analyte as the copy of
 the shape that was integrated, names the method with its reference, and
 lists the references of the methods it used."""

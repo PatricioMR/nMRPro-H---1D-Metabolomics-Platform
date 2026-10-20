@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Every quantification setting the project saves is restored under the
 same key, and to the same variable. A checkbox saved and never restored
 comes back at its default, silently, on every reload."""

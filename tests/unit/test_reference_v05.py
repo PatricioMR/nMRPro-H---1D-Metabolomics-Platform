@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """BMRB v05: the protons of each signal are the molecule's
 (hmdb_api_download/build_reference_v05.py)."""
 import os

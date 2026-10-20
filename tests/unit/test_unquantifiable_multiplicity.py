@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """Broad/exchangeable and generic multiplicities are excluded from annotation."""
 from gui.stages._annotation_search import is_unquantifiable_multiplicity as ex
 

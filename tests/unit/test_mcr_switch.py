@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """MCR in the annotation runs only in a release that ships deconvolution
 (app_paths.DECONVOLUTION_ENABLED), whatever the checkbox or a saved project
 says."""

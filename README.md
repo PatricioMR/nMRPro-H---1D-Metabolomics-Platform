@@ -14,7 +14,7 @@
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue"></a>
   <a href="https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-installer-brightgreen"></a>
 </p>
 
@@ -539,7 +539,10 @@ Planned next, in order:
 ## License
 
 NMRPro-H is free software, released under the **GNU Affero General Public
-License v3.0** ([`LICENSE`](LICENSE)). You may use, study, modify and
+License, version 3 or (at your option) any later version**
+(SPDX `AGPL-3.0-or-later`; full text in [`LICENSE`](LICENSE)). Every source file
+carries the copyright line and points to this licence; the application shows
+the notice under **Help → About NMRPro-H**, without any warranty. You may use, study, modify and
 redistribute it; any distributed or network-served version that includes or
 derives from it must be released under the same licence, with its source code.
 

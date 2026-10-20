@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """When the contested signal cannot tell two analytes apart, ask their partners.
 
 Every criterion above this one judges the contested signal alone. In

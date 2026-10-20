@@ -1,3 +1,6 @@
+# Copyright (C) 2025-2026 Miguel Rocha Patricio
+# SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
+
 """The signal-grade selection must hold on every path into annotation.
 
 Each test here corresponds to a way an excluded signal got annotated anyway.
