@@ -1,7 +1,7 @@
 {
  "500": {
-  "software": "NMRPro-H v0.75 Alpha",
-  "date": "2026-10-15",
+  "software": "NMRPro-H v0.8 Beta",
+  "date": "2026-10-20",
   "database": "BMRB_Metabolomics_Mammalian_v05.db",
   "generator": "gissmo",
   "design": {
@@ -125,8 +125,8 @@
   }
  },
  "600": {
-  "software": "NMRPro-H v0.75 Alpha",
-  "date": "2026-10-15",
+  "software": "NMRPro-H v0.8 Beta",
+  "date": "2026-10-20",
   "database": "BMRB_Metabolomics_Mammalian_v05.db",
   "generator": "gissmo",
   "design": {
