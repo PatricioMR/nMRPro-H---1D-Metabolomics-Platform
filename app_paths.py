@@ -25,17 +25,17 @@ LEGACY_APP_NAMES = ("nMRPipe",)
 
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
-__version__   = "0.76"
-RELEASE_STAGE = "Alpha"
+__version__   = "0.8"
+RELEASE_STAGE = "Beta"
 APP_VERSION   = f"{APP_NAME} v{__version__} {RELEASE_STAGE}"
 
-# Deconvolution is a future stage. Everything that resolves overlap between
-# analytes -- the JG-Deconv stage, the Full-Spectrum MCR stage, the
-# Deconvolution Tool reached from the peak list and the annotation window, and
-# the shared-window split in quantification -- stays in the code, tested, and
-# hidden behind this one switch. Off, the software is the pipeline that has
-# been validated end to end: detect, annotate, elect, integrate, concentrate.
-# Turning it back on is this line; nothing else was removed.
+# MCR-based deconvolution is a future stage. The JG-Deconv (J-resolved) stage,
+# the Full-Spectrum MCR stage, the MCR pass of the annotation and the
+# Deconvolution Tool reached from the peak list and the annotation window stay
+# in the code, tested, and hidden behind this one switch. Overlap in
+# quantification (windows resolved by shapes, joint fit, cascade) is not
+# behind it: those are the quantification stage's own groups, validated and on.
+# Turning the MCR stages back on is this line; nothing else was removed.
 DECONVOLUTION_ENABLED = False   # "NMRPro-H v0.38 Alpha"
 
 

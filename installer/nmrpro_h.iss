@@ -10,7 +10,7 @@
 ; app_paths.__version__ — the single source of truth. Fallback kept so a manual
 ; `iscc installer\nmrpro_h.iss` still compiles; keep it matching app_paths.
 #ifndef AppVersion
-  #define AppVersion "0.76"
+  #define AppVersion "0.8"
 #endif
 #define AppExe     "NMRPro-H.exe"
 
