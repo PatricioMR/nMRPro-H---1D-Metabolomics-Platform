@@ -572,7 +572,7 @@ A manuscript describing NMRPro-H is in preparation. Until it is published,
 please cite the software and the release you used (for example
 *NMRPro-H v0.8 Beta*, tag `v0.8`).
 
-Copyright (C) 2025–2026 the NMRPro-H authors.
+Copyright (C) 2025–2026 Miguel Rocha Patricio.
 
 ## Acknowledgements
 
