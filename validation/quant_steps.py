@@ -213,6 +213,26 @@ def _group_errors(x, t):
             for g, v in (x.get('_concs_by_group') or {}).items() if t.get(g) and v]
 
 
+def level_share_rows(summary):
+    """How the real and the false analytes of each variant spread over the
+    confidence levels: the share of the real ones at each level, the share of
+    the false ones at each level, and the precision of each level. From the
+    summary's means per tube (the same numbers as the steps figure)."""
+    out = []
+    for r in summary:
+        g = lambda k: float(r[k])
+        row = {'topic': r['topic'], 'variant': r['variant'], 'label': r['label'],
+               'real_per_tube': g('found_per_tube'), 'false_per_tube': g('false_per_tube')}
+        for kind, total in (('real', row['real_per_tube']), ('false', row['false_per_tube'])):
+            for lvl in (3, 2, 1):
+                row[f'{kind}_at_{lvl}dots_pct'] = round(100 * g(f'{kind}{lvl}_per_tube') / total, 1) if total else ''
+        for lvl in (3, 2, 1):
+            re_, fa = g(f'real{lvl}_per_tube'), g(f'false{lvl}_per_tube')
+            row[f'precision_{lvl}dots_pct'] = round(100 * re_ / (re_ + fa), 1) if re_ + fa else ''
+        out.append(row)
+    return out
+
+
 def paired_rows():
     """Each step against the one before, on the tube of 100: the real
     analytes both report (their error before and after: the step re-measures
@@ -310,6 +330,7 @@ def export(a):
             'blank_false_per_tube': round(float(np.mean([r['false'] for r in B])), 2) if B else ''})
     bands = [row for v in VARIANTS for row in band_rows(v[0])]
     paired = paired_rows()
+    shares = level_share_rows(summary)
 
     def write(name, rows):
         with open(os.path.join(root, name), 'w', newline='', encoding='utf-8') as f:
@@ -320,6 +341,7 @@ def export(a):
     write('resumo_por_corrida.csv', runs)
     write('recuperacao_por_concentracao.csv', bands)
     write('pareado_entre_etapas.csv', paired)
+    write('percentual_por_nivel.csv', shares)
     sheet = lambda title, rows: (title, list(rows[0]), [list(r.values()) for r in rows])
     version = APP_VERSION.split(' v')[1].split()[0]
     _xlsx(os.path.join(a.dest, f'Etapas_quantificacao_nMRPro-H_v{version}.xlsx'), [
@@ -329,9 +351,11 @@ def export(a):
             ['passos', 'base -> + A (janelas por formas) -> + B (ajuste conjunto) -> + C (cascata)'],
             ['controles', 'ligados nos passos; tópico próprio: cada um desligado no motor completo'],
             ['dose-resposta', 'reta log10(medido) x log10(verdadeiro) por analito e grupo; viés = mediana de medido/verdadeiro - 1'],
-            ['pareado', 'cada etapa contra a anterior: erro dos mesmos analitos antes/depois, os que a etapa retira e os que acrescenta']]),
+            ['pareado', 'cada etapa contra a anterior: erro dos mesmos analitos antes/depois, os que a etapa retira e os que acrescenta'],
+            ['percentual por nível', 'dos verdadeiros (e dos falsos) de cada variante, quantos % em ●●●, ●● e ●; precisão de cada nível = verdadeiros / (verdadeiros + falsos) no nível']]),
         sheet('Resumo_por_variante', summary), sheet('Resumo_por_corrida', runs),
-        sheet('Recuperacao_concentracao', bands), sheet('Pareado_entre_etapas', paired)])
+        sheet('Recuperacao_concentracao', bands), sheet('Pareado_entre_etapas', paired),
+        sheet('Percentual_por_nivel', shares)])
     step_figure(summary, os.path.join(a.dest, f'Etapas_quantificacao_nMRPro-H_v{version}.png'))
     print(f'{len(runs)} runs exported to {root}')
 
