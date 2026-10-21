@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later (see LICENSE)
 
 """Where each bench writes inside the validation folder (the one folder that
-holds every exported run: ``G:/My Drive/Mestrado/NMR/nMRPro-H_Validation``).
+holds every exported run: ``G:/My Drive/Mestrado/BEPE/nMRPro Validation``).
 Every export takes that folder and writes only into its own subfolder, which
 it replaces whole; the workbook, figure, version and LEIA-ME of a bench live
 inside its subfolder."""
