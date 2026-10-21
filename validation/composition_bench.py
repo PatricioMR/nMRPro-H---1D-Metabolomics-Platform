@@ -44,6 +44,7 @@ import numpy as np
 
 from validation.bench_runs import OUT_DEFAULT, _path
 from validation.replicates import mean_sd, reported, summarize
+from validation.validation_folder import subfolder
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'composition')
 FIELD = 600
@@ -424,12 +425,8 @@ def by_concentration(label, sizes, seeds) -> list:
 OLD_PEAK_RUNS = {600: (('comp', (100, 101, 102)),), 500: (('comp500', (100, 101, 102)),)}
 
 
-def _field_tag() -> str:
-    return '' if FIELD == 600 else f'_{FIELD}MHz'
-
-
 def export(dest, *, label, sizes, seeds, old=None):
-    """``dest``/Composicoes, made anew: every run as a project the
+    """``dest``/02_Composicoes_600MHz (03_Composicoes_500MHz at 500), made anew: every run as a project the
     application opens (already detected, annotated and quantified), its
     truth per sample and its tables, the per-run summary, and the two
     curves' data -- detected peaks against analytes (with the earlier
@@ -444,7 +441,7 @@ def export(dest, *, label, sizes, seeds, old=None):
     from validation import mixture_bench as mb
     from validation.export_bench_projects import project_state
     old = OLD_PEAK_RUNS.get(FIELD, ()) if old is None else old
-    root = os.path.join(dest, f'Composicoes{_field_tag()}')
+    root = subfolder(dest, f'composition_{FIELD}')
     if os.path.isdir(root):
         shutil.rmtree(root)
     os.makedirs(root)
@@ -507,7 +504,7 @@ def export(dest, *, label, sizes, seeds, old=None):
                               seeds_cmd=' '.join(map(str, seeds)), sizes_cmd=' '.join(map(str, sizes)),
                               old=', '.join(f'{lab} (composições {", ".join(map(str, sd))})'
                                             for lab, sd in old)))
-    workbook = os.path.join(dest, f"Composicoes{_field_tag()}_nMRPro-H_v{APP_VERSION.split(' v')[1].split()[0]}.xlsx")
+    workbook = os.path.join(root, f"Composicoes_{FIELD}MHz_nMRPro-H_v{APP_VERSION.split(' v')[1].split()[0]}.xlsx")
     write_workbook(workbook, summary=summary, points=points, params=params, curve=curve,
                    inv=inv, conc=conc, analytes=analytes_all, samples=samples_all,
                    about=[('software', APP_VERSION), ('commit', commit),
@@ -516,7 +513,7 @@ def export(dest, *, label, sizes, seeds, old=None):
                           ('corridas', len(summary)),
                           ('amostras por corrida', '12, dois grupos de 6, variação de 12% entre amostras'),
                           ('erro', '|medido / verdadeiro − 1|; por analito e grupo: mediana das amostras'),
-                          ('pasta das corridas', 'Composicoes/ (um .nmrproj por corrida)')])
+                          ('pasta das corridas', 'tuboNNN_composicaoS/ (um .nmrproj por corrida)')])
     print(f'{len(summary)} runs exported to {root}; workbook {workbook}')
 
 
@@ -608,7 +605,7 @@ def main():
                     help='tube sizes for run (default: the overnight set)')
     ap.add_argument('--seeds', type=int, nargs='+', default=list(SEEDS),
                     help='compositions drawn (random_tube seeds); 100-102 tuned ADR-085')
-    ap.add_argument('--dest', help='export: the validation folder (writes <dest>/Composicoes)')
+    ap.add_argument('--dest', help='export: the validation folder (writes <dest>/02_Composicoes_600MHz or 03_Composicoes_500MHz)')
     ap.add_argument('--deadline', default='06:00',
                     help='the tube of 75 runs only if the others end before this')
     a = ap.parse_args()

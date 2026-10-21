@@ -42,6 +42,7 @@ from validation.ablation import _set_defaults
 from validation.bench_runs import OUT_DEFAULT, _apply_sets, _below_normal, _errors
 from validation.composition_bench import band_figures, band_rows as band_summary
 from validation.replicates import mean_sd, reported, run_figures, summarize
+from validation.validation_folder import subfolder
 
 OUT = os.path.join(OUT_DEFAULT, 'quant_steps')
 FIELD = 600
@@ -269,7 +270,7 @@ def paired_rows():
 
 
 def export(a):
-    """``dest``/Etapas_quantificacao, made anew: every run's tables and
+    """``dest``/05_Etapas_quantificacao, made anew: every run's tables and
     project-independent results, the per-run and per-variant summaries
     (mean per tube and SD between tubes), recovery and error by
     concentration, each step paired with the one before, the share of each
@@ -277,7 +278,7 @@ def export(a):
     from app_paths import APP_VERSION
     from validation import export_validation as ev
     from validation.export_validation import _xlsx
-    root = os.path.join(a.dest, 'Etapas_quantificacao')
+    root = subfolder(a.dest, 'steps')
     if os.path.isdir(root):
         shutil.rmtree(root)
     os.makedirs(root)
@@ -314,7 +315,7 @@ def export(a):
     write('percentual_por_nivel.csv', shares)
     sheet = lambda title, rows: (title, list(rows[0]), [list(r.values()) for r in rows])
     version = APP_VERSION.split(' v')[1].split()[0]
-    _xlsx(os.path.join(a.dest, f'Etapas_quantificacao_nMRPro-H_v{version}.xlsx'), [
+    _xlsx(os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.xlsx'), [
         ('Leia-me', ['item', 'valor'], [
             ['software', APP_VERSION], ['campo', f'{FIELD} MHz'],
             ['tubos', '100 analitos (composições 200-204) + branco (DSS, metanol, ruído)'],
@@ -327,7 +328,7 @@ def export(a):
         sheet('Resumo_por_variante', summary), sheet('Resumo_por_corrida', runs),
         sheet('Recuperacao_concentracao', bands), sheet('Pareado_entre_etapas', paired),
         sheet('Percentual_por_nivel', shares)])
-    step_figure(summary, os.path.join(a.dest, f'Etapas_quantificacao_nMRPro-H_v{version}.png'))
+    step_figure(summary, os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.png'))
     print(f'{len(runs)} runs exported to {root}')
 
 
@@ -426,9 +427,10 @@ def figure(a):
     """Redraw the figure from an export's summary table."""
     from app_paths import APP_VERSION
     version = APP_VERSION.split(' v')[1].split()[0]
-    with open(os.path.join(a.dest, 'Etapas_quantificacao', 'resumo_por_variante.csv'), encoding='utf-8') as f:
+    root = subfolder(a.dest, 'steps')
+    with open(os.path.join(root, 'resumo_por_variante.csv'), encoding='utf-8') as f:
         summary = list(csv.DictReader(f))
-    path = os.path.join(a.dest, f'Etapas_quantificacao_nMRPro-H_v{version}.png')
+    path = os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.png')
     step_figure(summary, path)
     print(path)
 

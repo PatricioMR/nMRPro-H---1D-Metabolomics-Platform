@@ -5,7 +5,7 @@
 audited outside the code: every spectrum, the truth it was built from, what
 the software reported for it, and the tables.
 
-    python -m validation.export_validation "G:/My Drive/.../nMRPro-H_Validation"
+    python -m validation.export_validation "G:/My Drive/.../nMRPro-H_Validation"   # writes 01_Tabela_PDF
 
 Reads the GISSMO bench's caches (``validation/out/cache``): the tubes of the
 quality table (500 and 600 MHz, 18/50/100 analytes, seeds 0-2, every compound
@@ -47,6 +47,7 @@ from validation import gissmo_bench as gb
 from validation import mixture_bench as mb
 from validation.quality_reference import _row_error
 from validation.replicates import reported, run_figures, summarize
+from validation.validation_folder import subfolder
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(REPO, 'validation', 'out', 'cache')
@@ -213,13 +214,14 @@ R_NAMES = {'recovery_pct': 'encontrados_%', 'false': 'falsos', 'precision_pct': 
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
-    ap.add_argument('out')
+    ap.add_argument('out', help='the validation folder (writes <out>/01_Tabela_PDF)')
     ap.add_argument('--stress-label', default='atual',
                     help='bench_runs label of the scattered runs (same engine '
                          'and defaults as the quality table)')
     ap.add_argument('--check', action='store_true',
                     help='verify the per-sample truth replay on one tube first')
     a = ap.parse_args()
+    a.out = subfolder(a.out, 'quality')
     if a.check:
         ok = check_replay()
         print('replay of the generator reproduces the cached tube:', ok)
@@ -259,7 +261,7 @@ def main():
                     sample_rows += [[regime, field, n, seed, *r] for r in s_rows]
                     print(f'{regime} {field} MHz tubo {n} semente {seed}', flush=True)
                 if runs:
-                    m = summarize(runs, R_KEYS)
+                    m = summarize(runs, R_KEYS, 2)
                     pooled = [round(100 * sum(r[f'real{l}'] for r in runs)
                                     / max(1, sum(r[f'real{l}'] + r[f'false{l}'] for r in runs)), 1)
                               for l in (3, 2, 1)]

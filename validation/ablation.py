@@ -35,6 +35,7 @@ import numpy as np
 
 from validation.bench_runs import OUT_DEFAULT, _apply_sets, _below_normal, _errors, _prep_sets
 from validation.replicates import paired_change, reported as _reported, run_figures, summarize
+from validation.validation_folder import subfolder
 
 OUT = os.path.join(OUT_DEFAULT, 'ablation')
 TUBES = ('18', '50', '100')
@@ -312,14 +313,14 @@ def _write(path, rows):
 
 
 def export_runs(dest, workbook):
-    """``dest``/Ablacao, made anew: every run's analytes and samples in the
+    """``dest``/04_Ablacao, made anew: every run's analytes and samples in the
     validation export's own tables (export_validation.run_tables), the
     summary, the workbook, the version and a LEIA-ME."""
     import shutil
     import subprocess
     from app_paths import APP_VERSION
     from validation import export_validation as ev
-    root = os.path.join(dest, 'Ablacao')
+    root = subfolder(dest, 'ablation')
     if os.path.isdir(root):
         shutil.rmtree(root)
     names = ev._sample_names()
@@ -352,7 +353,7 @@ def export_runs(dest, workbook):
     with open(os.path.join(root, 'LEIA-ME.md'), 'w', encoding='utf-8') as f:
         f.write(f"""# Ablação do motor do {APP_VERSION}
 
-Cada variante desliga **um** mecanismo do motor e roda de novo os mesmos tubos simulados do regime padrão da validação (GISSMO, {FIELD} MHz, tubos de {', '.join(TUBES)} analitos, sementes {', '.join(map(str, SEEDS))}, 12 amostras em dois grupos, concentração variando 12% entre amostras). A variante `full` é o motor inteiro. Os espectros e a verdade por amostra são os de `../espectros/padrao/{FIELD}MHz` e `../verdade/padrao/{FIELD}MHz`.
+Cada variante desliga **um** mecanismo do motor e roda de novo os mesmos tubos simulados do regime padrão da validação (GISSMO, {FIELD} MHz, tubos de {', '.join(TUBES)} analitos, sementes {', '.join(map(str, SEEDS))}, 12 amostras em dois grupos, concentração variando 12% entre amostras). A variante `full` é o motor inteiro. Os espectros e a verdade por amostra são os de `../01_Tabela_PDF/espectros/padrao/{FIELD}MHz` e `../01_Tabela_PDF/verdade/padrao/{FIELD}MHz`.
 
 | variante | etapa | mecanismo desligado |
 |---|---|---|
