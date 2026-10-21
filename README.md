@@ -312,16 +312,16 @@ file, per-sample truth and per-analyte results.
 Standard tubes in triplicate (seeds 0–2), mean ± SD of the 3 tubes
 ([`data/quality_reference.json`](data/quality_reference.json); per-tube values
 from the validation export). Every count is of analytes except Peaks (peaks
-detected in the spectrum); the confidence levels are means per tube:
+detected in the spectrum):
 
 | Field | Analytes | Peaks | Found | False per tube | Median error | p90 error | ●●● real / false | ●● real / false | ● real / false |
 |---|---|---|---|---|---|---|---|---|---|
-| 600 MHz | 18 | 97 | 94 ± 0% | 6.7 ± 2.1 | 10 ± 1% | 28 ± 4% | 5.7 / 0.0 | 8.3 / 0.0 | 3.0 / 6.7 |
-| 600 MHz | 50 | 199 | 91 ± 6% | 15.7 ± 2.1 | 15 ± 2% | 45 ± 6% | 11.7 / 0.7 | 18.0 / 2.0 | 16.0 / 13.0 |
-| 600 MHz | 100 | 292 | 83 ± 3% | 19.0 ± 3.6 | 19 ± 4% | 66 ± 7% | 13.7 / 0.0 | 49.7 / 6.7 | 19.7 / 12.3 |
-| 500 MHz | 18 | 87 | 94 ± 6% | 7.3 ± 3.2 | 13 ± 5% | 25 ± 8% | 5.7 / 0.0 | 9.7 / 0.3 | 1.7 / 7.0 |
-| 500 MHz | 50 | 182 | 83 ± 6% | 17.3 ± 5.5 | 19 ± 9% | 55 ± 15% | 9.7 / 0.3 | 20.7 / 2.3 | 11.0 / 14.7 |
-| 500 MHz | 100 | 270 | 79 ± 8% | 23.3 ± 5.0 | 23 ± 4% | 86 ± 2% | 12.0 / 0.3 | 45.0 / 5.3 | 21.7 / 17.7 |
+| 600 MHz | 18 | 97 | 94 ± 0% | 6.7 ± 2.1 | 10 ± 1% | 28 ± 4% | 5.7 ± 1.5 / 0.0 ± 0.0 | 8.3 ± 1.2 / 0.0 ± 0.0 | 3.0 ± 1.0 / 6.7 ± 2.1 |
+| 600 MHz | 50 | 199 | 91 ± 6% | 15.7 ± 2.1 | 15 ± 2% | 45 ± 6% | 11.7 ± 1.5 / 0.7 ± 0.6 | 18.0 ± 1.7 / 2.0 ± 2.0 | 16.0 ± 2.6 / 13.0 ± 1.0 |
+| 600 MHz | 100 | 292 | 83 ± 3% | 19.0 ± 3.6 | 19 ± 4% | 66 ± 7% | 13.7 ± 5.9 / 0.0 ± 0.0 | 49.7 ± 4.9 / 6.7 ± 1.5 | 19.7 ± 5.0 / 12.3 ± 3.2 |
+| 500 MHz | 18 | 87 | 94 ± 6% | 7.3 ± 3.2 | 13 ± 5% | 25 ± 8% | 5.7 ± 1.5 / 0.0 ± 0.0 | 9.7 ± 2.1 / 0.3 ± 0.6 | 1.7 ± 0.6 / 7.0 ± 2.6 |
+| 500 MHz | 50 | 182 | 83 ± 6% | 17.3 ± 5.5 | 19 ± 9% | 55 ± 15% | 9.7 ± 2.1 / 0.3 ± 0.6 | 20.7 ± 4.0 / 2.3 ± 3.2 | 11.0 ± 1.0 / 14.7 ± 2.3 |
+| 500 MHz | 100 | 270 | 79 ± 8% | 23.3 ± 5.0 | 23 ± 4% | 86 ± 2% | 12.0 ± 2.6 / 0.3 ± 0.6 | 45.0 ± 6.2 / 5.3 ± 3.1 | 21.7 ± 4.6 / 17.7 ± 3.8 |
 
 Found = analytes in the tube reported with a concentration / analytes in the
 tube. Error = |measured / true − 1| of the found analytes; the median and p90
@@ -329,61 +329,62 @@ are taken per tube, then averaged.
 
 ### Precision across compositions
 
-Random compositions 200–204, mean per tube (± SD of 5 tubes):
+Random compositions 200–204, mean ± SD of the 5 tubes:
 
 | Analytes | 600 MHz recovery | 600 MHz false | 600 MHz median error | 500 MHz recovery | 500 MHz false | 500 MHz median error |
 |---|---|---|---|---|---|---|
-| 18 | 73 ± 28% | 7.4 | 14% | 89 ± 10% | 7.2 | 23% |
-| 50 | 80 ± 4% | 13.4 | 19% | 78 ± 5% | 15.6 | 24% |
-| 75 | 79 ± 6% | 26.2 | 18% | 73 ± 3% | 23.2 | 25% |
-| 100 | 75 ± 4% | 22.4 | 18% | 72 ± 5% | 25.8 | 25% |
-| 150 | 74 ± 5% | 24.2 | 24% | 69 ± 2% | 28.8 | 29% |
-| 200 | 70 ± 3% | 17.8 | 27% | 69 ± 2% | 18.2 | 32% |
+| 18 | 73 ± 28% | 7.4 ± 4.5 | 14 ± 3% | 89 ± 10% | 7.2 ± 2.4 | 23 ± 7% |
+| 50 | 80 ± 4% | 13.4 ± 1.7 | 19 ± 2% | 78 ± 5% | 15.6 ± 4.0 | 24 ± 6% |
+| 75 | 79 ± 6% | 26.2 ± 5.0 | 18 ± 2% | 73 ± 3% | 23.2 ± 4.8 | 25 ± 1% |
+| 100 | 75 ± 4% | 22.4 ± 5.8 | 18 ± 3% | 72 ± 5% | 25.8 ± 4.8 | 25 ± 5% |
+| 150 | 74 ± 5% | 24.2 ± 4.6 | 24 ± 4% | 69 ± 2% | 28.8 ± 3.6 | 29 ± 3% |
+| 200 | 70 ± 3% | 17.8 ± 4.5 | 27 ± 3% | 69 ± 2% | 18.2 ± 2.8 | 32 ± 7% |
 
 ### Confidence levels across compositions
 
-Same tubes; real / false analytes per tube at each level · precision of the
-level (pooled over the 5 tubes):
+Same tubes; real / false analytes per tube at each level (mean ± SD of the 5
+tubes) · precision of the level (pooled over the 5 tubes):
 
 | Field | Analytes | ●●● | ●● | ● |
 |---|---|---|---|---|
-| 600 MHz | 18 | 3.8 / 0.0 · 100% | 4.4 / 1.6 · 73% | 5.0 / 5.8 · 46% |
-| 600 MHz | 50 | 7.4 / 0.2 · 97% | 19.6 / 1.2 · 94% | 13.2 / 12.0 · 52% |
-| 600 MHz | 75 | 10.8 / 0.6 · 95% | 30.6 / 5.6 · 85% | 17.8 / 20.0 · 47% |
-| 600 MHz | 100 | 14.8 / 0.4 · 97% | 43.4 / 6.2 · 88% | 17.0 / 15.8 · 52% |
-| 600 MHz | 150 | 15.8 / 0.6 · 96% | 71.0 / 7.0 · 91% | 23.6 / 16.6 · 59% |
-| 600 MHz | 200 | 17.4 / 0.2 · 99% | 97.0 / 6.6 · 94% | 25.6 / 11.0 · 70% |
-| 500 MHz | 18 | 5.0 / 0.0 · 100% | 4.2 / 0.6 · 88% | 6.8 / 6.6 · 51% |
-| 500 MHz | 50 | 6.4 / 0.0 · 100% | 18.8 / 1.8 · 91% | 13.6 / 13.8 · 50% |
-| 500 MHz | 75 | 8.6 / 0.2 · 98% | 31.6 / 7.4 · 81% | 14.8 / 15.6 · 49% |
-| 500 MHz | 100 | 14.4 / 0.8 · 95% | 39.0 / 7.2 · 84% | 19.0 / 17.8 · 52% |
-| 500 MHz | 150 | 13.6 / 1.6 · 89% | 67.4 / 10.8 · 86% | 21.8 / 16.4 · 57% |
-| 500 MHz | 200 | 15.6 / 0.4 · 98% | 96.2 / 8.0 · 92% | 26.2 / 9.8 · 73% |
+| 600 MHz | 18 | 3.8 ± 1.8 / 0.0 ± 0.0 · 100% | 4.4 ± 2.9 / 1.6 ± 0.9 · 73% | 5.0 ± 2.5 / 5.8 ± 3.8 · 46% |
+| 600 MHz | 50 | 7.4 ± 2.7 / 0.2 ± 0.4 · 97% | 19.6 ± 4.7 / 1.2 ± 1.1 · 94% | 13.2 ± 2.7 / 12.0 ± 2.5 · 52% |
+| 600 MHz | 75 | 10.8 ± 2.8 / 0.6 ± 0.9 · 95% | 30.6 ± 7.6 / 5.6 ± 2.3 · 85% | 17.8 ± 4.6 / 20.0 ± 3.5 · 47% |
+| 600 MHz | 100 | 14.8 ± 2.2 / 0.4 ± 0.9 · 97% | 43.4 ± 7.4 / 6.2 ± 3.3 · 88% | 17.0 ± 2.2 / 15.8 ± 3.7 · 52% |
+| 600 MHz | 150 | 15.8 ± 2.5 / 0.6 ± 0.5 · 96% | 71.0 ± 11.9 / 7.0 ± 1.9 · 91% | 23.6 ± 5.9 / 16.6 ± 4.3 · 59% |
+| 600 MHz | 200 | 17.4 ± 4.8 / 0.2 ± 0.4 · 99% | 97.0 ± 11.3 / 6.6 ± 3.0 · 94% | 25.6 ± 5.3 / 11.0 ± 2.5 · 70% |
+| 500 MHz | 18 | 5.0 ± 1.6 / 0.0 ± 0.0 · 100% | 4.2 ± 1.5 / 0.6 ± 0.5 · 88% | 6.8 ± 1.9 / 6.6 ± 2.6 · 51% |
+| 500 MHz | 50 | 6.4 ± 2.1 / 0.0 ± 0.0 · 100% | 18.8 ± 3.4 / 1.8 ± 1.5 · 91% | 13.6 ± 3.2 / 13.8 ± 3.6 · 50% |
+| 500 MHz | 75 | 8.6 ± 2.1 / 0.2 ± 0.4 · 98% | 31.6 ± 4.1 / 7.4 ± 3.8 · 81% | 14.8 ± 3.5 / 15.6 ± 2.4 · 49% |
+| 500 MHz | 100 | 14.4 ± 3.0 / 0.8 ± 0.8 · 95% | 39.0 ± 4.3 / 7.2 ± 1.8 · 84% | 19.0 ± 2.3 / 17.8 ± 4.4 · 52% |
+| 500 MHz | 150 | 13.6 ± 5.0 / 1.6 ± 0.9 · 89% | 67.4 ± 7.8 / 10.8 ± 5.0 · 86% | 21.8 ± 4.3 / 16.4 ± 4.2 · 57% |
+| 500 MHz | 200 | 15.6 ± 1.5 / 0.4 ± 0.9 · 98% | 96.2 ± 9.1 / 8.0 ± 1.4 · 92% | 26.2 ± 6.8 / 9.8 ± 4.0 · 73% |
 
 Three dots are 89–100% real and two dots 81–94% (73% in the tube of 18 at
 600 MHz); the false analytes concentrate at one dot.
 
 ### Recovery and error by concentration
 
-Recovery / median error of the found analytes, per tube size.
+Recovery / median error of the found analytes, per tube size: mean ± SD of the
+5 tubes. Few analytes fall in a band of one small tube, hence the wide SD at 18.
 
 600 MHz:
 
 | True concentration | 18 | 50 | 75 | 100 | 150 | 200 |
 |---|---|---|---|---|---|---|
-| 0.05–0.1 mM | 52 / 14% | 56 / 23% | 44 / 42% | 46 / 45% | 43 / 90% | 42 / 122% |
-| 0.1–0.2 mM | 79 / 15% | 82 / 19% | 71 / 24% | 70 / 24% | 64 / 34% | 56 / 54% |
-| 0.2–0.4 mM | 89 / 13% | 90 / 17% | 89 / 16% | 87 / 16% | 86 / 24% | 80 / 28% |
-| 0.4–1 mM | 83 / 13% | 99 / 17% | 99 / 13% | 95 / 14% | 93 / 17% | 92 / 16% |
+| 0.05–0.1 mM | 52 ± 42 / 15 ± 3% | 55 ± 18 / 25 ± 9% | 45 ± 12 / 52 ± 19% | 46 ± 13 / 48 ± 12% | 43 ± 8 / 112 ± 108% | 42 ± 4 / 125 ± 42% |
+| 0.1–0.2 mM | 60 ± 55 / 15 ± 2% | 82 ± 14 / 22 ± 10% | 72 ± 12 / 24 ± 6% | 68 ± 9 / 26 ± 9% | 65 ± 13 / 35 ± 4% | 56 ± 10 / 61 ± 22% |
+| 0.2–0.4 mM | 88 ± 16 / 16 ± 11% | 91 ± 9 / 19 ± 5% | 89 ± 11 / 17 ± 4% | 87 ± 5 / 16 ± 4% | 86 ± 1 / 23 ± 4% | 80 ± 5 / 27 ± 4% |
+| 0.4–1 mM | 86 ± 25 / 13 ± 4% | 98 ± 3 / 16 ± 3% | 99 ± 2 / 14 ± 5% | 95 ± 7 / 15 ± 5% | 93 ± 2 / 17 ± 2% | 93 ± 3 / 16 ± 4% |
 
 500 MHz:
 
 | True concentration | 18 | 50 | 75 | 100 | 150 | 200 |
 |---|---|---|---|---|---|---|
-| 0.05–0.1 mM | 72 / 30% | 51 / 26% | 38 / 66% | 42 / 54% | 34 / 93% | 44 / 119% |
-| 0.1–0.2 mM | 100 / 16% | 74 / 32% | 60 / 32% | 64 / 26% | 61 / 40% | 55 / 60% |
-| 0.2–0.4 mM | 89 / 18% | 95 / 25% | 85 / 20% | 90 / 24% | 78 / 30% | 78 / 30% |
-| 0.4–1 mM | 100 / 26% | 99 / 19% | 97 / 23% | 92 / 20% | 91 / 20% | 90 / 17% |
+| 0.05–0.1 mM | 70 ± 30 / 30 ± 12% | 51 ± 5 / 33 ± 22% | 38 ± 12 / 55 ± 23% | 41 ± 7 / 61 ± 25% | 34 ± 4 / 102 ± 57% | 44 ± 8 / 126 ± 70% |
+| 0.1–0.2 mM | 100 ± 0 / 14 ± 4% | 75 ± 11 / 31 ± 6% | 60 ± 2 / 32 ± 9% | 64 ± 10 / 30 ± 11% | 61 ± 4 / 41 ± 10% | 55 ± 8 / 65 ± 18% |
+| 0.2–0.4 mM | 88 ± 16 / 20 ± 11% | 95 ± 6 / 30 ± 13% | 84 ± 10 / 19 ± 7% | 89 ± 4 / 23 ± 5% | 78 ± 7 / 31 ± 7% | 78 ± 7 / 30 ± 13% |
+| 0.4–1 mM | 100 ± 0 / 26 ± 8% | 98 ± 3 / 21 ± 8% | 96 ± 4 / 22 ± 4% | 92 ± 7 / 20 ± 5% | 91 ± 4 / 21 ± 3% | 91 ± 6 / 18 ± 4% |
 
 ### How many analytes a spectrum holds
 
@@ -414,23 +415,23 @@ median error 19 ± 4%):
 
 ### What each quantification group adds
 
-Tube of 100, 600 MHz, compositions 200–204, means per tube. The steps are
+Tube of 100, 600 MHz, compositions 200–204, mean ± SD of the 5 tubes. The steps are
 cumulative: each keeps everything above it (A, windows resolved by shapes;
 B, joint fit of overlapping analytes; C, residual cascade). A blank tube
 (standard, methanol and noise only) gave no false analyte at any step.
 
 | Step | Found | False | Precision | Median error | p90 error | ●●● real / false | ●● real / false | ● real / false |
 |---|---|---|---|---|---|---|---|---|
-| Base: window integration | 40.4 | 10.6 | 79% | 41% | 340% | 23.0 / 2.2 | 11.6 / 4.2 | 5.8 / 4.2 |
-| + A | 42.2 | 16.6 | 72% | 29% | 328% | 3.6 / 0.4 | 26.4 / 4.0 | 12.2 / 12.2 |
-| + B | 28.0 | 4.6 | 86% | 16% | 62% | 14.8 / 0.4 | 6.8 / 0.6 | 6.4 / 3.6 |
-| + C (complete engine) | 75.2 | 22.4 | 77% | 18% | 75% | 14.8 / 0.4 | 43.4 / 6.2 | 17.0 / 15.8 |
+| Base: window integration | 40.4 ± 3.8 | 10.6 ± 9.8 | 81 ± 11% | 41 ± 11% | 340 ± 105% | 23.0 ± 1.7 / 2.2 ± 2.4 | 11.6 ± 4.5 / 4.2 ± 8.3 | 5.8 ± 1.6 / 4.2 ± 1.1 |
+| + A | 42.2 ± 4.5 | 16.6 ± 7.8 | 73 ± 6% | 29 ± 6% | 328 ± 226% | 3.6 ± 2.9 / 0.4 ± 0.9 | 26.4 ± 3.6 / 4.0 ± 5.7 | 12.2 ± 1.3 / 12.2 ± 2.4 |
+| + B | 28.0 ± 4.3 | 4.6 ± 2.1 | 86 ± 4% | 16 ± 5% | 62 ± 25% | 14.8 ± 2.2 / 0.4 ± 0.9 | 6.8 ± 2.3 / 0.6 ± 0.9 | 6.4 ± 2.2 / 3.6 ± 1.5 |
+| + C (complete engine) | 75.2 ± 4.5 | 22.4 ± 5.8 | 77 ± 5% | 18 ± 3% | 75 ± 12% | 14.8 ± 2.2 / 0.4 ± 0.9 | 43.4 ± 7.4 / 6.2 ± 3.3 | 17.0 ± 2.2 / 15.8 ± 3.7 |
 
-The joint fit (B) re-measures the analytes it keeps (on the same analytes,
-median error 23% → 16%, p90 150% → 71%) and refuses those that do not fit the
-spectrum (14 real and 12 false per tube); the cascade (C) leaves those 28
-untouched and adds 47 real analytes (median error 19%) and 18 false ones, most
-at one dot.
+The joint fit (B) re-measures the analytes it keeps (on the same analytes, per
+tube, median error 23 ± 4% → 16 ± 5%) and refuses those that do not fit the
+spectrum (14.4 ± 3.8 real and 12.0 ± 6.2 false per tube); the cascade (C)
+leaves those untouched and adds 47.2 ± 8.5 real analytes (median error
+20 ± 4%) and 17.8 ± 4.2 false ones, most at one dot.
 
 ### Limits of the validation
 
