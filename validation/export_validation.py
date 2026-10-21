@@ -17,7 +17,7 @@ label given by ``--stress-label``, run with the application's defaults). Writes:
     verdade/<regime>/<campo>/tubo<n>_semente<s>.csv     true mM per group and per sample
     resultados_por_analito.csv                          every real analyte and every reported one
     concentracoes_por_amostra.csv                       true vs reported, sample by sample
-    resumo.csv                                          the tables, per regime/field/tube
+    resumo.csv                                          per regime/field/tube: mean per tube, SD over the seeds
     Validacao_nMRPro-H_<versao>.xlsx                    all of the above as sheets
     dados/quality_reference.json, versao.txt
 
@@ -45,7 +45,8 @@ import numpy as np
 from app_paths import APP_VERSION
 from validation import gissmo_bench as gb
 from validation import mixture_bench as mb
-from validation.quality_reference import tube_stats
+from validation.quality_reference import _row_error
+from validation.replicates import reported, run_figures, summarize
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE = os.path.join(REPO, 'validation', 'out', 'cache')
@@ -200,6 +201,15 @@ def write_csv(path, header, rows):
         w.writerows(rows)
 
 
+# per tube, then the mean and the SD over the seeds (validation.replicates)
+R_KEYS = ('recovery_pct', 'false', 'precision_pct', 'error_median_pct', 'error_p90_pct',
+          'real3', 'false3', 'real2', 'false2', 'real1', 'false1')
+R_NAMES = {'recovery_pct': 'encontrados_%', 'false': 'falsos', 'precision_pct': 'precisao_%',
+           'error_median_pct': 'erro_mediano_%', 'error_p90_pct': 'erro_p90_%',
+           'real3': '3_reais', 'false3': '3_falsos', 'real2': '2_reais', 'false2': '2_falsos',
+           'real1': '1_reais', 'false1': '1_falsos'}
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
@@ -227,7 +237,9 @@ def main():
                     if got is None:
                         continue
                     X, truth, rows = got
-                    runs.append((rows, truth, 0))
+                    runs.append(run_figures(rows, truth, [
+                        e for r in reported(rows) if r['hmdb_id'] in truth
+                        for e in [_row_error(r, truth)] if e is not None]))
                     tag = f'{field}MHz'
                     write_csv(os.path.join(a.out, 'espectros', regime, tag,
                                            f'tubo{n:03d}_semente{seed}.csv'),
@@ -247,21 +259,16 @@ def main():
                     sample_rows += [[regime, field, n, seed, *r] for r in s_rows]
                     print(f'{regime} {field} MHz tubo {n} semente {seed}', flush=True)
                 if runs:
-                    st = tube_stats(n, lambda _n, runs=runs: runs)
-                    lv = st['levels']
-                    summary.append([regime, field, n, len(runs),
-                                    round(100 * st['found'], 1),
-                                    *[x for l in ('3', '2', '1') for x in (
-                                        lv[l]['real'], lv[l]['false'],
-                                        round(100 * lv[l]['precision'], 1)
-                                        if lv[l]['precision'] is not None else '')],
-                                    round(st['false_per_run'], 1),
-                                    round(100 * st['error_median'], 1),
-                                    round(100 * st['error_p90'], 1)])
-    R_HEAD = ['regime', 'campo_MHz', 'tubo_analitos', 'sementes', 'encontrados_%',
-              '3_reais', '3_falsos', '3_precisao_%', '2_reais', '2_falsos',
-              '2_precisao_%', '1_reais', '1_falsos', '1_precisao_%',
-              'falsos_por_corrida', 'erro_mediano_%', 'erro_p90_%']
+                    m = summarize(runs, R_KEYS)
+                    pooled = [round(100 * sum(r[f'real{l}'] for r in runs)
+                                    / max(1, sum(r[f'real{l}'] + r[f'false{l}'] for r in runs)), 1)
+                              for l in (3, 2, 1)]
+                    summary.append([regime, field, n, len(runs)]
+                                   + [m[f'{k}_{x}'] for k in R_KEYS for x in ('mean', 'sd')]
+                                   + pooled)
+    R_HEAD = (['regime', 'campo_MHz', 'tubo_analitos', 'sementes']
+              + [f'{R_NAMES[k]}_{x}' for k in R_KEYS for x in ('media', 'dp')]
+              + ['3_precisao_agrupada_%', '2_precisao_agrupada_%', '1_precisao_agrupada_%'])
     write_csv(os.path.join(a.out, 'resultados_por_analito.csv'), A_HEAD, analyte_rows)
     write_csv(os.path.join(a.out, 'concentracoes_por_amostra.csv'), S_HEAD, sample_rows)
     write_csv(os.path.join(a.out, 'resumo.csv'), R_HEAD, summary)

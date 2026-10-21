@@ -40,7 +40,8 @@ import numpy as np
 
 from validation.ablation import _set_defaults
 from validation.bench_runs import OUT_DEFAULT, _apply_sets, _below_normal, _errors
-from validation.composition_bench import BANDS_MM
+from validation.composition_bench import band_figures, band_rows as band_summary
+from validation.replicates import mean_sd, reported, run_figures, summarize
 
 OUT = os.path.join(OUT_DEFAULT, 'quant_steps')
 FIELD = 600
@@ -121,31 +122,20 @@ def run(a):
                   f'({time.time() - t0:.0f} s elapsed)', flush=True)
 
 
-def _reported(rows):
-    return [x for x in rows if not x.get('_not_quantified') and not x.get('_is_is')]
-
-
 def run_row(vid, tube, seed):
-    """One run's figures: analytes found and false, precision, error, the
-    real/false analytes at each confidence level, and the dose-response of
-    the found ones (log10 measured against log10 true, per analyte and
-    group)."""
+    """One run's figures (validation.replicates.run_figures; error per
+    analyte and group) and the dose-response of the found ones (log10
+    measured against log10 true, per analyte and group)."""
     p = _path(vid, tube, seed)
     if not os.path.exists(p):
         return None
     d = pickle.load(open(p, 'rb'))
     truth = d['truth']
-    q = _reported(d['rows'])
-    real = [x for x in q if x['hmdb_id'] in truth]
-    false = [x for x in q if x['hmdb_id'] not in truth]
-    dots = {k: [0, 0] for k in (3, 2, 1)}
-    for x in q:
-        c = int(x.get('_confidence') or 0)
-        if c in dots:
-            dots[c][0 if x['hmdb_id'] in truth else 1] += 1
-    e = np.abs(np.array(_errors(d['rows'], truth) or [np.nan]))
+    f = run_figures(d['rows'], truth, _errors(d['rows'], truth))
     t_, m_ = [], []
-    for x in real:
+    for x in reported(d['rows']):
+        if x['hmdb_id'] not in truth:
+            continue
         for g, vals in (x.get('_concs_by_group') or {}).items():
             want = truth[x['hmdb_id']].get(g)
             med = float(np.median(vals)) if vals else np.nan
@@ -158,50 +148,72 @@ def run_row(vid, tube, seed):
         res = np.array(m_) - (intercept + slope * np.array(t_))
         r2 = 1 - float(res @ res) / float(((np.array(m_) - np.mean(m_)) ** 2).sum())
         bias = float(np.median(10 ** (np.array(m_) - np.array(t_)) - 1))
-    n = len(truth)
-    r1 = lambda v: round(float(v), 4) if np.isfinite(v) else ''
-    return {'variant': vid, 'tube': tube, 'composition': seed, 'analytes_in_tube': n,
-            'found': len(real), 'recovery_pct': round(100 * len(real) / n, 1) if n else '',
-            'false': len(false),
-            'precision_pct': round(100 * len(real) / len(q), 1) if q else '',
-            'error_median_pct': round(100 * float(np.nanmedian(e)), 1) if np.isfinite(e).any() else '',
-            'error_p90_pct': round(100 * float(np.nanpercentile(e, 90)), 1) if np.isfinite(e).any() else '',
-            'real3': dots[3][0], 'false3': dots[3][1], 'real2': dots[2][0], 'false2': dots[2][1],
-            'real1': dots[1][0], 'false1': dots[1][1],
-            'dose_slope': r1(slope), 'dose_intercept': r1(intercept), 'dose_r2': r1(r2),
-            'dose_bias_pct': round(100 * bias, 1) if np.isfinite(bias) else ''}
+    r = lambda v, k=1: round(float(v), k) if np.isfinite(v) else ''
+    return {'variant': vid, 'tube': tube, 'composition': seed, 'analytes_in_tube': f['in_tube'],
+            **{k: (r(v) if isinstance(v, float) else v) for k, v in f.items() if k != 'in_tube'},
+            'dose_slope': r(slope, 4), 'dose_intercept': r(intercept, 4), 'dose_r2': r(r2, 4),
+            'dose_bias_pct': r(100 * bias)}
+
+
+SUM_KEYS = ('found', 'false', 'recovery_pct', 'precision_pct', 'error_median_pct', 'error_p90_pct',
+            'real3', 'false3', 'real2', 'false2', 'real1', 'false1',
+            'dose_slope', 'dose_r2', 'dose_bias_pct')
+
+
+def summary_rows(runs):
+    """Per variant on the tube of 100: the mean per tube and the SD over the
+    compositions (validation.replicates.summarize), each level's precision
+    pooled over the tubes, and the false analytes of the blank tube."""
+    out = []
+    for vid, topic, label, _s, _d in VARIANTS:
+        R = [r for r in runs if r['variant'] == vid and r['tube'] == 'r100']
+        B = [r for r in runs if r['variant'] == vid and r['tube'] == 'r0']
+        if not R:
+            continue
+        row = {'topic': topic, 'variant': vid, 'label': label, **summarize(R, SUM_KEYS, 2)}
+        for lvl in (3, 2, 1):
+            re_, fa = sum(r[f'real{lvl}'] for r in R), sum(r[f'false{lvl}'] for r in R)
+            row[f'precision{lvl}_pooled_pct'] = round(100 * re_ / (re_ + fa), 1) if re_ + fa else ''
+        row['blank_false_mean'], row['blank_false_sd'] = mean_sd([r['false'] for r in B], 2)
+        out.append(row)
+    return out
 
 
 def band_rows(vid):
-    out = []
-    acc = {b: [0, 0, []] for b in BANDS_MM}
+    """Recovery and error by band of the true amount on the tube of 100,
+    tube by tube, as the mean per tube and the SD between tubes."""
+    runs = []
     for s in SEEDS:
         p = _path(vid, 'r100', s)
-        if not os.path.exists(p):
+        if os.path.exists(p):
+            d = pickle.load(open(p, 'rb'))
+            runs.append(band_figures(d['rows'], d['truth']))
+    return [{'variant': vid, **r} for r in band_summary(runs)]
+
+
+def level_share_rows(runs):
+    """How the real and the false analytes of each variant spread over the
+    confidence levels, tube by tube (share of the real ones at each level,
+    share of the false ones), as the mean per tube and the SD between
+    tubes; each level's precision pooled over the tubes."""
+    out = []
+    for vid, topic, label, _s, _d in VARIANTS:
+        R = [r for r in runs if r['variant'] == vid and r['tube'] == 'r100']
+        if not R:
             continue
-        d = pickle.load(open(p, 'rb'))
-        rep = {x['hmdb_id']: x for x in _reported(d['rows'])}
-        for mid, t in d['truth'].items():
-            c = float(t.get('A') or 0.0)
-            band = next((b for b in BANDS_MM if b[0] <= c < b[1]
-                         or (b == BANDS_MM[-1] and c == b[1])), None)
-            if band is None:
-                continue
-            acc[band][0] += 1
-            x = rep.get(mid)
-            if x is None:
-                continue
-            acc[band][1] += 1
-            for g, vals in (x.get('_concs_by_group') or {}).items():
-                want = t.get(g)
-                if want and vals:
-                    acc[band][2].append(abs(float(np.median(vals)) / float(want) - 1.0))
-    for b, (k, f, e) in acc.items():
-        if k:
-            out.append({'variant': vid, 'band_mM': f'{b[0]:g}-{b[1]:g}', 'analytes': k, 'found': f,
-                        'recovery_pct': round(100 * f / k, 1),
-                        'error_median_pct': round(100 * float(np.median(e)), 1) if e else '',
-                        'error_p90_pct': round(100 * float(np.percentile(e, 90)), 1) if e else ''})
+        shares = []
+        for r in R:
+            s = {}
+            for kind, total in (('real', r['found']), ('false', r['false'])):
+                for lvl in (3, 2, 1):
+                    s[f'{kind}_at_{lvl}dots_pct'] = 100 * r[f'{kind}{lvl}'] / total if total else ''
+            shares.append(s)
+        row = {'topic': topic, 'variant': vid, 'label': label,
+               **summarize(shares, list(shares[0]))}
+        for lvl in (3, 2, 1):
+            re_, fa = sum(r[f'real{lvl}'] for r in R), sum(r[f'false{lvl}'] for r in R)
+            row[f'precision_{lvl}dots_pooled_pct'] = round(100 * re_ / (re_ + fa), 1) if re_ + fa else ''
+        out.append(row)
     return out
 
 
@@ -213,46 +225,25 @@ def _group_errors(x, t):
             for g, v in (x.get('_concs_by_group') or {}).items() if t.get(g) and v]
 
 
-def level_share_rows(summary):
-    """How the real and the false analytes of each variant spread over the
-    confidence levels: the share of the real ones at each level, the share of
-    the false ones at each level, and the precision of each level. From the
-    summary's means per tube (the same numbers as the steps figure)."""
-    out = []
-    for r in summary:
-        g = lambda k: float(r[k])
-        row = {'topic': r['topic'], 'variant': r['variant'], 'label': r['label'],
-               'real_per_tube': g('found_per_tube'), 'false_per_tube': g('false_per_tube')}
-        for kind, total in (('real', row['real_per_tube']), ('false', row['false_per_tube'])):
-            for lvl in (3, 2, 1):
-                row[f'{kind}_at_{lvl}dots_pct'] = round(100 * g(f'{kind}{lvl}_per_tube') / total, 1) if total else ''
-        for lvl in (3, 2, 1):
-            re_, fa = g(f'real{lvl}_per_tube'), g(f'false{lvl}_per_tube')
-            row[f'precision_{lvl}dots_pct'] = round(100 * re_ / (re_ + fa), 1) if re_ + fa else ''
-        out.append(row)
-    return out
-
-
 def paired_rows():
-    """Each step against the one before, on the tube of 100: the real
-    analytes both report (their error before and after: the step re-measures
-    them), the ones the step drops (and the error they had before) and the
-    ones it adds; false analytes dropped and added. Counts are means per tube;
-    errors pool every analyte and group of the 5 compositions."""
+    """Each step against the one before on the tube of 100, composition by
+    composition: the real analytes both report (their error before and
+    after: the step re-measures them), the ones the step drops (and the
+    error they had before) and the ones it adds; false analytes dropped and
+    added. Each figure is the mean per tube and the SD between tubes."""
     out = []
     for before, after in STEP_PAIRS:
-        n = {k: 0 for k in ('kept', 'dropped', 'added', 'false_kept', 'false_dropped', 'false_added')}
-        e_b, e_a, e_drop, e_add = [], [], [], []
-        seeds = 0
+        per = []
         for s in SEEDS:
             pb, pa = _path(before, 'r100', s), _path(after, 'r100', s)
             if not (os.path.exists(pb) and os.path.exists(pa)):
                 continue
-            seeds += 1
             db, da = pickle.load(open(pb, 'rb')), pickle.load(open(pa, 'rb'))
             truth = db['truth']
-            rb = {x['hmdb_id']: x for x in _reported(db['rows'])}
-            ra = {x['hmdb_id']: x for x in _reported(da['rows'])}
+            rb = {x['hmdb_id']: x for x in reported(db['rows'])}
+            ra = {x['hmdb_id']: x for x in reported(da['rows'])}
+            n = {k: 0 for k in ('kept', 'dropped', 'added', 'false_kept', 'false_dropped', 'false_added')}
+            e_b, e_a, e_drop, e_add = [], [], [], []
             for mid in rb.keys() | ra.keys():
                 real = mid in truth
                 if mid in rb and mid in ra:
@@ -268,23 +259,21 @@ def paired_rows():
                     n['added' if real else 'false_added'] += 1
                     if real:
                         e_add += _group_errors(ra[mid], truth[mid])
-        if not seeds:
-            continue
-        q = lambda e, p: round(100 * float(np.percentile(e, p)), 1) if e else ''
-        out.append({'step': f'{before} -> {after}', 'compositions': seeds,
-                    **{f'{k}_per_tube': round(v / seeds, 1) for k, v in n.items()},
-                    'kept_error_median_before_pct': q(e_b, 50), 'kept_error_median_after_pct': q(e_a, 50),
-                    'kept_error_p90_before_pct': q(e_b, 90), 'kept_error_p90_after_pct': q(e_a, 90),
-                    'dropped_error_median_before_pct': q(e_drop, 50), 'dropped_error_p90_before_pct': q(e_drop, 90),
-                    'added_error_median_pct': q(e_add, 50)})
+            q = lambda e, p: 100 * float(np.percentile(e, p)) if e else ''
+            per.append({**n, 'kept_error_median_before_pct': q(e_b, 50), 'kept_error_median_after_pct': q(e_a, 50),
+                        'kept_error_p90_before_pct': q(e_b, 90), 'kept_error_p90_after_pct': q(e_a, 90),
+                        'dropped_error_median_before_pct': q(e_drop, 50), 'added_error_median_pct': q(e_add, 50)})
+        if per:
+            out.append({'step': f'{before} -> {after}', **summarize(per, list(per[0]))})
     return out
 
 
 def export(a):
     """``dest``/Etapas_quantificacao, made anew: every run's tables and
-    project-independent results, the per-run and per-variant summaries,
-    recovery and error by concentration, each step paired with the one
-    before, and one workbook."""
+    project-independent results, the per-run and per-variant summaries
+    (mean per tube and SD between tubes), recovery and error by
+    concentration, each step paired with the one before, the share of each
+    confidence level, the figure and one workbook."""
     from app_paths import APP_VERSION
     from validation import export_validation as ev
     from validation.export_validation import _xlsx
@@ -308,29 +297,10 @@ def export(a):
                 folder = os.path.join(root, 'corridas', vid, f'{tube}_composicao{s}')
                 ev.write_csv(os.path.join(folder, 'resultados_por_analito.csv'), ev.A_HEAD[4:], a_rows)
                 ev.write_csv(os.path.join(folder, 'concentracoes_por_amostra.csv'), ev.S_HEAD[4:], s_rows)
-    summary = []
-    for vid, topic, label, _s, _d in VARIANTS:
-        R = [r for r in runs if r['variant'] == vid and r['tube'] == 'r100']
-        B = [r for r in runs if r['variant'] == vid and r['tube'] == 'r0']
-        if not R:
-            continue
-        mean = lambda k: round(float(np.mean([float(r[k]) for r in R if r[k] != ''])), 2)
-        sm = lambda k: sum(int(r[k]) for r in R)
-        prec = lambda re, fa: round(100 * sm(re) / (sm(re) + sm(fa)), 1) if sm(re) + sm(fa) else ''
-        summary.append({
-            'topic': topic, 'variant': vid, 'label': label, 'tubes': len(R),
-            'found_per_tube': mean('found'), 'recovery_pct': mean('recovery_pct'),
-            'false_per_tube': mean('false'),
-            'precision_pct': round(100 * sm('found') / (sm('found') + sm('false')), 1),
-            'error_median_pct': mean('error_median_pct'), 'error_p90_pct': mean('error_p90_pct'),
-            'real3_per_tube': mean('real3'), 'false3_per_tube': mean('false3'), 'precision3_pct': prec('real3', 'false3'),
-            'real2_per_tube': mean('real2'), 'false2_per_tube': mean('false2'), 'precision2_pct': prec('real2', 'false2'),
-            'real1_per_tube': mean('real1'), 'false1_per_tube': mean('false1'), 'precision1_pct': prec('real1', 'false1'),
-            'dose_slope': mean('dose_slope'), 'dose_r2': mean('dose_r2'), 'dose_bias_pct': mean('dose_bias_pct'),
-            'blank_false_per_tube': round(float(np.mean([r['false'] for r in B])), 2) if B else ''})
+    summary = summary_rows(runs)
     bands = [row for v in VARIANTS for row in band_rows(v[0])]
     paired = paired_rows()
-    shares = level_share_rows(summary)
+    shares = level_share_rows(runs)
 
     def write(name, rows):
         with open(os.path.join(root, name), 'w', newline='', encoding='utf-8') as f:
@@ -350,9 +320,10 @@ def export(a):
             ['tubos', '100 analitos (composições 200-204) + branco (DSS, metanol, ruído)'],
             ['passos', 'base -> + A (janelas por formas) -> + B (ajuste conjunto) -> + C (cascata)'],
             ['controles', 'ligados nos passos; tópico próprio: cada um desligado no motor completo'],
+            ['números', 'cada tubo medido sozinho; _mean = média por tubo, _sd = desvio-padrão entre os tubos; nunca somados'],
             ['dose-resposta', 'reta log10(medido) x log10(verdadeiro) por analito e grupo; viés = mediana de medido/verdadeiro - 1'],
-            ['pareado', 'cada etapa contra a anterior: erro dos mesmos analitos antes/depois, os que a etapa retira e os que acrescenta'],
-            ['percentual por nível', 'dos verdadeiros (e dos falsos) de cada variante, quantos % em ●●●, ●● e ●; precisão de cada nível = verdadeiros / (verdadeiros + falsos) no nível']]),
+            ['pareado', 'cada etapa contra a anterior, tubo a tubo: erro dos mesmos analitos antes/depois, os que a etapa retira e os que acrescenta'],
+            ['percentual por nível', 'dos verdadeiros (e dos falsos) de cada tubo, quantos % em ●●●, ●● e ●; precisão de cada nível agrupada nos tubos']]),
         sheet('Resumo_por_variante', summary), sheet('Resumo_por_corrida', runs),
         sheet('Recuperacao_concentracao', bands), sheet('Pareado_entre_etapas', paired),
         sheet('Percentual_por_nivel', shares)])
@@ -380,7 +351,7 @@ def step_figure(summary, path):
     rows = [next(r for r in summary if r['variant'] == v) for v in STEP_TICKS
             if any(r['variant'] == v for r in summary)]
     g = lambda r, k: float(r[k])
-    ink, width, dpi = '#1a1a19', 0.56, 300
+    ink, width, dpi = '#1a1a19', 0.7, 300
     fwd = lambda v: np.sign(v) * np.sqrt(np.abs(v))
     inv = lambda u: np.sign(u) * np.square(u)
     fig, ax = plt.subplots(figsize=(8.5, 9.5), dpi=dpi)
@@ -389,11 +360,12 @@ def step_figure(summary, path):
     x = np.arange(len(rows))
     stacks = {}
     for kind, ramp, sign in (('real', REAL_RAMP, 1), ('false', FALSE_RAMP, -1)):
-        vals = np.array([[g(r, f'{kind}{lvl}_per_tube') for r in rows] for lvl in (3, 2, 1)])
+        vals = np.array([[g(r, f'{kind}{lvl}_mean') for r in rows] for lvl in (3, 2, 1)])
+        sds = [[r[f'{kind}{lvl}_sd'] for r in rows] for lvl in (3, 2, 1)]
         cum = np.vstack([np.zeros(len(rows)), np.cumsum(vals, axis=0)])
         for k in range(3):
             ax.bar(x, sign * vals[k], bottom=sign * cum[k], width=width, color=ramp[k], edgecolor=ink, linewidth=0.8)
-        stacks[kind] = (vals, cum, sign)
+        stacks[kind] = (vals, cum, sign, sds)
     top_r = stacks['real'][1][-1].max() * 1.2
     top_f = stacks['false'][1][-1].max() * 1.35
     ax.set_ylim(-top_f, top_r)
@@ -416,16 +388,16 @@ def step_figure(summary, path):
     px_per_pt = dpi / 72
     to_px = lambda y: ax.transData.transform((0, y))[1]
     beside = {}
-    for kind, (vals, cum, sign) in stacks.items():
+    for kind, (vals, cum, sign, sds) in stacks.items():
         for k, lvl in enumerate((3, 2, 1)):
             for i in range(len(rows)):
                 if vals[k][i] <= 0:
                     continue
                 y0, y1 = sign * cum[k][i], sign * cum[k + 1][i]
                 yc = inv((fwd(y0) + fwd(y1)) / 2)
-                text = f'{"●" * lvl} {vals[k][i]:.1f}'
+                text = f'{"●" * lvl} {vals[k][i]:.1f} ± {float(sds[k][i] or 0):.1f}'
                 if abs(to_px(y1) - to_px(y0)) / px_per_pt >= 12:
-                    ax.text(i, yc, text, ha='center', va='center', fontsize=10, color=ink)
+                    ax.text(i, yc, text, ha='center', va='center', fontsize=9, color=ink)
                 else:
                     beside.setdefault((i, sign), []).append((yc, text))
     # a segment too thin for its label: beside its bar, away from the axis, 9 pt apart
@@ -436,13 +408,14 @@ def step_figure(summary, path):
             last = ypx
             ax.annotate(text, (i + width / 2, y), xytext=(i + width / 2 + 0.06, ax.transData.inverted().transform((0, ypx))[1]),
                         fontsize=9, va='center', arrowprops=dict(arrowstyle='-', color=ink, linewidth=0.6, shrinkA=0, shrinkB=0))
-    for i in range(len(rows)):
-        t = stacks['real'][1][-1][i]
-        ax.annotate(f'{t:.1f}', (i, t), xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=12)
-        t = stacks['false'][1][-1][i]
-        ax.annotate(f'{t:.1f}', (i, -t), xytext=(0, -3), textcoords='offset points', ha='center', va='top', fontsize=12)
     for i, r in enumerate(rows):
-        ax.annotate(f'quant. error\nmedian {g(r, "error_median_pct"):.0f}%\np90 {g(r, "error_p90_pct"):.0f}%',
+        t = stacks['real'][1][-1][i]
+        ax.annotate(f'{t:.1f} ± {g(r, "found_sd"):.1f}', (i, t), xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=12)
+        t = stacks['false'][1][-1][i]
+        ax.annotate(f'{t:.1f} ± {g(r, "false_sd"):.1f}', (i, -t), xytext=(0, -3), textcoords='offset points', ha='center', va='top', fontsize=12)
+    for i, r in enumerate(rows):
+        ax.annotate(f'quant. error\nmedian {g(r, "error_median_pct_mean"):.0f} ± {g(r, "error_median_pct_sd"):.0f}%\n'
+                    f'p90 {g(r, "error_p90_pct_mean"):.0f} ± {g(r, "error_p90_pct_sd"):.0f}%',
                     (i, 0), xycoords=('data', 'axes fraction'), xytext=(0, -48), textcoords='offset points',
                     ha='center', va='top', fontsize=11.5, color='#4a4a47')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')

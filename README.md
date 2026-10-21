@@ -404,14 +404,14 @@ analyte count from its peak count, per field.
 Each mechanism switched off alone on the standard tubes (600 MHz, seeds 0–2).
 On the tube of 100, change per tube against the complete engine (mean ± SD of
 the 3 paired tubes; complete engine: 83.0 ± 3.5 real found, 19.0 ± 3.6 false,
-median error 19 ± 4%):
+median error 19 ± 3%, per analyte and group):
 
 | Switched off | Real found | False | Median error (points) |
 |---|---|---|---|
-| Residual cascade | −55.7 ± 4.2 | −14.7 ± 3.1 | −4.5 ± 5.6 |
-| Joint fit | −15.0 ± 1.0 | +14.3 ± 5.5 | +9.7 ± 3.4 |
-| Spin-system shapes | −2.0 ± 4.4 | +6.3 ± 3.2 | +2.8 ± 6.5 |
-| Multiplet covariation check | −3.0 ± 5.3 | +6.3 ± 1.2 | +0.8 ± 5.3 |
+| Residual cascade | −55.7 ± 4.2 | −14.7 ± 3.1 | −3.7 ± 3.8 |
+| Joint fit | −15.0 ± 1.0 | +14.3 ± 5.5 | +9.1 ± 5.0 |
+| Spin-system shapes | −2.0 ± 4.4 | +6.3 ± 3.2 | +3.2 ± 4.8 |
+| Multiplet covariation check | −3.0 ± 5.3 | +6.3 ± 1.2 | −0.2 ± 2.9 |
 
 ### What each quantification group adds
 

@@ -43,6 +43,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from validation.bench_runs import OUT_DEFAULT, _path
+from validation.replicates import mean_sd, reported, summarize
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'out', 'composition')
 FIELD = 600
@@ -365,43 +366,57 @@ def peak_curves(points, step=2):
     return params, curve, inv
 
 
+def band_figures(rows, truth) -> dict:
+    """One run, per band of the true amount (group A): analytes in the band,
+    recovery, and the median and p90 error of the found ones (|measured /
+    true - 1| per group, median over samples)."""
+    rep = {r['hmdb_id']: r for r in reported(rows)}
+    acc = {b: [0, 0, []] for b in BANDS_MM}
+    for mid, t in truth.items():
+        c = float(t.get('A') or 0.0)
+        band = next((b for b in BANDS_MM if b[0] <= c < b[1]
+                     or (b == BANDS_MM[-1] and c == b[1])), None)
+        if band is None:
+            continue
+        acc[band][0] += 1
+        r = rep.get(mid)
+        if r is None:
+            continue
+        acc[band][1] += 1
+        for g, vals in (r.get('_concs_by_group') or {}).items():
+            want = t.get(g)
+            if want and vals:
+                acc[band][2].append(abs(float(np.median(vals)) / float(want) - 1.0))
+    return {b: {'analytes': k, 'recovery_pct': 100 * f / k,
+                'error_median_pct': 100 * float(np.median(e)) if e else np.nan,
+                'error_p90_pct': 100 * float(np.percentile(e, 90)) if e else np.nan}
+            for b, (k, f, e) in acc.items() if k}
+
+
+def band_rows(runs) -> list:
+    """``runs`` (one ``band_figures`` per tube) as the mean per tube and the
+    SD between tubes, band by band."""
+    out = []
+    for b in BANDS_MM:
+        per = [r[b] for r in runs if b in r]
+        if per:
+            out.append({'band_mM': f'{b[0]:g}-{b[1]:g}',
+                        **summarize(per, ('analytes', 'recovery_pct', 'error_median_pct', 'error_p90_pct'))})
+    return out
+
+
 def by_concentration(label, sizes, seeds) -> list:
-    """Per tube size and band of the true amount: analytes in the tubes,
-    found, and the error of the found ones (|measured / true - 1| per group,
-    median over samples)."""
+    """Per tube size, ``band_rows`` of its tubes."""
     out = []
     for n in sizes:
-        acc = {b: [0, 0, []] for b in BANDS_MM}
+        runs = []
         for s in seeds:
             p = _run_file(label, n, s)
-            if not os.path.exists(p):
-                continue
-            with open(p, 'rb') as f:
-                d = pickle.load(f)
-            rep = {r['hmdb_id']: r for r in d['rows']
-                   if not r.get('_not_quantified') and not r.get('_is_is')}
-            for mid, t in d['truth'].items():
-                c = float(t.get('A') or 0.0)
-                band = next((b for b in BANDS_MM if b[0] <= c < b[1]
-                             or (b == BANDS_MM[-1] and c == b[1])), None)
-                if band is None:
-                    continue
-                acc[band][0] += 1
-                r = rep.get(mid)
-                if r is None:
-                    continue
-                acc[band][1] += 1
-                for g, vals in (r.get('_concs_by_group') or {}).items():
-                    want = t.get(g)
-                    if want and vals:
-                        acc[band][2].append(abs(float(np.median(vals)) / float(want) - 1.0))
-        for b, (k, f, e) in acc.items():
-            if not k:
-                continue
-            out.append({'analytes_in_tube': n, 'band_mM': f'{b[0]:g}-{b[1]:g}', 'analytes': k,
-                        'found': f, 'recovery_pct': round(100 * f / k, 1),
-                        'error_median_pct': round(100 * float(np.median(e)), 1) if e else '',
-                        'error_p90_pct': round(100 * float(np.percentile(e, 90)), 1) if e else ''})
+            if os.path.exists(p):
+                with open(p, 'rb') as f:
+                    d = pickle.load(f)
+                runs.append(band_figures(d['rows'], d['truth']))
+        out += [{'analytes_in_tube': n, **r} for r in band_rows(runs)]
     return out
 
 
@@ -505,14 +520,6 @@ def export(dest, *, label, sizes, seeds, old=None):
     print(f'{len(summary)} runs exported to {root}; workbook {workbook}')
 
 
-def _mean_sd(rows, key, k=1.0):
-    v = np.array([float(r[key]) for r in rows
-                  if r.get(key) not in (None, '') and np.isfinite(float(r[key]))])
-    if not v.size:
-        return None, None
-    return round(k * float(v.mean()), 2), (round(k * float(v.std(ddof=1)), 2) if v.size > 1 else None)
-
-
 def write_workbook(path, *, summary, points, params, curve, inv, conc, analytes, samples, about):
     """Every table of the composition runs in one workbook, numbers as
     numbers: the per-size means and standard deviations, every run, both
@@ -527,15 +534,20 @@ def write_workbook(path, *, summary, points, params, curve, inv, conc, analytes,
     for n in sorted({r['analytes_in_tube'] for r in summary}):
         R = [r for r in summary if r['analytes_in_tube'] == n]
         row = {'analitos_no_tubo': n, 'composicoes': len(R)}
+        levels = [{'reais_3': r['real3'], 'falsos_3': r['false3'],
+                   'reais_2': r['real2'] - r['real3'], 'falsos_2': r['false2'] - r['false3'],
+                   'reais_1': r['found'] - r['real2'], 'falsos_1': r['false'] - r['false2']}
+                  for r in R]
         for key, lab, k in (('peaks', 'picos', 1), ('found', 'encontrados', 1),
                             ('false', 'falsos', 1), ('recall', 'recuperacao_pct', 100),
                             ('prec2', 'precisao_2_bolinhas_pct', 100),
                             ('prec3', 'precisao_3_bolinhas_pct', 100),
                             ('err_median', 'erro_mediano_pct', 100),
                             ('err_p90', 'erro_p90_pct', 100)):
-            m, sd = _mean_sd(R, key, k)
-            row[f'{lab}_media'] = m
-            row[f'{lab}_dp'] = sd
+            row[f'{lab}_media'], row[f'{lab}_dp'] = mean_sd(
+                [k * float(r[key]) for r in R if r.get(key) not in (None, '')], 2)
+        for key in levels[0]:
+            row[f'{key}_media'], row[f'{key}_dp'] = mean_sd([x[key] for x in levels], 2)
         per_size.append(row)
     run_head = ['analitos_no_tubo', 'composicao']
     _xlsx(path, [
@@ -571,7 +583,7 @@ Cada pasta `tuboNNN_composicaoS/` tem `Composicao_NNN_sS.nmrproj`: abre já com 
 | `curva_picos_parametros.csv` | reta na faixa linear (falta de ajuste) e curva com teto y = ymax(1 − e^(−n/τ)) |
 | `curva_picos_ajuste.csv` | as duas curvas, ponto a ponto |
 | `previsao_analitos_por_picos.csv` | analitos previstos a partir dos picos detectados (reta: IC 95%, Miller & Miller 2010 eq. 5.9; teto: n = −τ ln(1 − picos/ymax)) |
-| `recuperacao_por_concentracao.csv` | por tamanho e faixa de concentração verdadeira: analitos, achados, recuperação, erro mediano e p90 |
+| `recuperacao_por_concentracao.csv` | por tamanho e faixa de concentração verdadeira, medido tubo a tubo: analitos na faixa, recuperação, erro mediano e p90, cada um como média por tubo (`_mean`) e desvio-padrão entre os tubos (`_sd`) |
 
 ## Como reproduzir
 

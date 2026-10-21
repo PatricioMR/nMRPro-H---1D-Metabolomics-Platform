@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import numpy as np
 
 from validation.bench_runs import OUT_DEFAULT, _apply_sets, _below_normal, _errors, _prep_sets
+from validation.replicates import paired_change, reported as _reported, run_figures, summarize
 
 OUT = os.path.join(OUT_DEFAULT, 'ablation')
 TUBES = ('18', '50', '100')
@@ -192,41 +193,50 @@ def run(a):
                   f'({time.time() - t0:.0f} s elapsed)', flush=True)
 
 
-def _reported(rows):
-    return [x for x in rows if not x.get('_not_quantified') and not x.get('_is_is')]
+KEYS = ('in_tube', 'found', 'false', 'recovery_pct', 'precision_pct', 'error_median_pct',
+        'error_p90_pct', 'real3', 'false3', 'real2', 'false2', 'real1', 'false1')
+
+
+def runs_of(vid, tube) -> list:
+    """Each seed's figures for ``vid`` on ``tube`` (seed order)."""
+    out = []
+    for s in SEEDS:
+        p = _path(vid, tube, s)
+        if os.path.exists(p):
+            d = pickle.load(open(p, 'rb'))
+            out.append({'seed': s, **run_figures(d['rows'], d['truth'], _errors(d['rows'], d['truth']))})
+    return out
 
 
 def summary(vid, tube):
-    """Found, strangers, real/false per dots and the error over the seeds run."""
-    found = theo = fp = n = 0
-    dots = {3: [0, 0], 2: [0, 0], 1: [0, 0]}
-    errs = []
-    for s in SEEDS:
-        p = _path(vid, tube, s)
-        if not os.path.exists(p):
-            continue
-        n += 1
-        d = pickle.load(open(p, 'rb'))
-        rows, truth = d['rows'], d['truth']
-        q = _reported(rows)
-        found += sum(1 for x in q if x['hmdb_id'] in truth)
-        fp += sum(1 for x in q if x['hmdb_id'] not in truth)
-        theo += len(truth)
-        for x in q:
-            c = int(x.get('_confidence') or 0)
-            if c in dots:
-                dots[c][0 if x['hmdb_id'] in truth else 1] += 1
-        errs += _errors(rows, truth)
-    if not n:
-        return None
-    e = np.abs(np.array(errs)) if errs else np.array([np.nan])
-    return {'seeds': n, 'in_tube': theo, 'found': found, 'strangers': fp,
-            'recovery_pct': round(100 * found / theo, 1),
-            'error_median_pct': round(100 * float(np.nanmedian(e)), 1),
-            'error_p90_pct': round(100 * float(np.nanpercentile(e, 90)), 1),
-            'real_3': dots[3][0], 'false_3': dots[3][1],
-            'real_2': dots[2][0], 'false_2': dots[2][1],
-            'real_1': dots[1][0], 'false_1': dots[1][1]}
+    """Mean and SD per tube over the seeds run: found, false, error and
+    real/false at each confidence level."""
+    runs = runs_of(vid, tube)
+    return summarize(runs, KEYS) if runs else None
+
+
+# Reference only (never a criterion): every compound off its listing by
+# sigma 6 mppm and each signal by sigma 4 mppm, random compositions 103-105.
+EXTRACT = ('o2b', ('r50', 'r75'), (103, 104, 105))
+
+
+def extract_rows():
+    """The shifted-reference (Extract) runs per tube: mean and SD over the
+    compositions."""
+    label, tubes, seeds = EXTRACT
+    out = []
+    for t in tubes:
+        runs = []
+        for s in seeds:
+            p = os.path.join(OUT_DEFAULT, f'{label}_{t}_{FIELD}_4_rs6_{s}.pkl')
+            if os.path.exists(p):
+                d = pickle.load(open(p, 'rb'))
+                runs.append(run_figures(d['rows'], d['truth'], _errors(d['rows'], d['truth'])))
+        if runs:
+            out.append({'tube': t, 'version': 'v0.75-0.8 engine',
+                        **summarize(runs, ('in_tube', 'found', 'false', 'recovery_pct',
+                                           'error_median_pct', 'error_p90_pct'))})
+    return out
 
 
 def measured_rows(vid='full'):
@@ -260,21 +270,29 @@ def _write(path, rows):
         w.writerows(rows)
 
 
-def impact_rows(rows, tube='100'):
-    """Each ablation minus the whole engine on ``tube``."""
-    full = next(r for r in rows if r['variant'] == 'full' and r['tube'] == tube)
-    return [{'variant': r['variant'], 'stage': r['stage'], 'mechanism': r['mechanism'],
-             'found_change': r['found'] - full['found'],
-             'false_change': r['strangers'] - full['strangers'],
-             'error_median_change_pts': round(r['error_median_pct'] - full['error_median_pct'], 1)}
-            for r in rows if r['variant'] != 'full' and r['tube'] == tube]
+def impact_rows(tube='100'):
+    """Each ablation against the whole engine on ``tube``, paired seed by
+    seed: the mean change per tube and its SD."""
+    full = runs_of('full', tube)
+    out = []
+    for vid, stage, what, _s, _d in VARIANTS:
+        if vid == 'full':
+            continue
+        runs = runs_of(vid, tube)
+        seeds = {r['seed'] for r in runs} & {r['seed'] for r in full}
+        if not seeds:
+            continue
+        pick = lambda rs: [r for r in rs if r['seed'] in seeds]
+        out.append({'variant': vid, 'stage': stage, 'mechanism': what, 'seeds': len(seeds),
+                    **paired_change(pick(runs), pick(full), ('found', 'false', 'error_median_pct'))})
+    return out
 
 
 def method_rows():
     return [
         ('Simulator', 'GISSMO spin systems (data/gissmo_spin_systems.json), rendered at 600 MHz'),
         ('Tubes', ', '.join(TUBES) + ' analytes drawn from the reference database'),
-        ('Seeds', ', '.join(str(s) for s in SEEDS) + ' (summed)'),
+        ('Seeds', ', '.join(str(s) for s in SEEDS) + ': figures per tube, mean and SD over the seeds; changes paired seed by seed'),
         ('Samples', '12, two groups of 6; concentration varies 12% between samples'),
         ('Engine', 'validation.fresh_run: the defaults a new user runs, internal standard DSS'),
         ('Found', 'reported analytes that are in the tube'),
@@ -346,7 +364,7 @@ Cada variante desliga **um** mecanismo do motor e roda de novo os mesmos tubos s
 |---|---|
 | `corridas/<variante>/tuboNNN_sementeS/resultados_por_analito.csv` | cada analito presente e cada reportado: verdade A/B, medido (mediana do grupo), erro, bolinhas, via (eleição ou cascata), SNR e o motivo quando não recebeu número |
 | `corridas/<variante>/tuboNNN_sementeS/concentracoes_por_amostra.csv` | cada analito reportado, amostra a amostra: verdade, medido e erro (medido/verdade − 1; vazio quando o analito não está no tubo) |
-| `resumo_ablacao.csv` | achados, falsos, erro e reais/falsos por bolinha, por variante e tubo (3 sementes somadas) |
+| `resumo_ablacao.csv` | achados, falsos, erro e reais/falsos por bolinha, por variante e tubo: média por tubo e desvio-padrão entre as sementes (`_mean`, `_sd`) |
 | `{os.path.basename(workbook)}` | as mesmas tabelas em abas, com a lista dos processos do motor |
 | `versao.txt` | versão, commit e número de corridas |
 
@@ -377,17 +395,12 @@ def write_csv(a):
     procs = [{'step': i, 'stage': p[0], 'process': p[1], 'what_it_does': p[2],
               'reference': p[3], 'ablation': p[4]} for i, p in enumerate(PROCESSES, 1)]
     mv = measured_rows()
-    tables = {'processes': procs, 'ablation': rows, 'impact_tube100': impact_rows(rows),
-              'measured_vs_true_standard': mv}
+    tables = {'processes': procs, 'ablation': rows, 'impact_tube100': impact_rows(),
+              'measured_vs_true_standard': mv, 'extract_reference': extract_rows()}
     for name, t in tables.items():
         _write(os.path.join(a.out, f'{name}.csv'), t)
     sheets = [('Method', ['item', 'value'], method_rows())]
     sheets += [(name[:31], list(t[0]), [list(r.values()) for r in t]) for name, t in tables.items()]
-    ref = os.path.join(a.out, 'extract_reference.csv')
-    if os.path.exists(ref):
-        with open(ref, encoding='utf-8') as f:
-            ex = list(csv.reader(f))
-        sheets.append(('extract_reference', ex[0], ex[1:]))
     workbook = os.path.join(a.out, 'Ablation_NMRPro-H.xlsx')
     _xlsx(workbook, sheets)
     if a.export_dir:
