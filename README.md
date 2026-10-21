@@ -309,16 +309,23 @@ file, per-sample truth and per-analyte results.
 
 ### Quality table printed in the PDF
 
-Standard tubes, 3 seeds summed ([`data/quality_reference.json`](data/quality_reference.json)):
+Standard tubes in triplicate (seeds 0–2), mean ± SD of the 3 tubes
+([`data/quality_reference.json`](data/quality_reference.json); per-tube values
+from the validation export). Every count is of analytes except Peaks (peaks
+detected in the spectrum); the confidence levels are means per tube:
 
-| Field | Analytes | Peaks | Found | ●●● real / false | ●● real / false | ● real / false | False per run | Median error | p90 error |
+| Field | Analytes | Peaks | Found | False per tube | Median error | p90 error | ●●● real / false | ●● real / false | ● real / false |
 |---|---|---|---|---|---|---|---|---|---|
-| 600 MHz | 18 | 97 | 94% | 17 / 0 | 25 / 0 | 9 / 20 | 6.7 | 10% | 28% |
-| 600 MHz | 50 | 199 | 91% | 35 / 2 | 54 / 6 | 48 / 39 | 15.7 | 15% | 44% |
-| 600 MHz | 100 | 292 | 83% | 41 / 0 | 149 / 20 | 59 / 37 | 19.0 | 20% | 67% |
-| 500 MHz | 18 | 87 | 94% | 17 / 0 | 29 / 1 | 5 / 21 | 7.3 | 11% | 29% |
-| 500 MHz | 50 | 182 | 83% | 29 / 1 | 62 / 7 | 33 / 44 | 17.3 | 20% | 56% |
-| 500 MHz | 100 | 270 | 79% | 36 / 1 | 135 / 16 | 65 / 53 | 23.3 | 24% | 87% |
+| 600 MHz | 18 | 97 | 94 ± 0% | 6.7 ± 2.1 | 10 ± 1% | 28 ± 4% | 5.7 / 0.0 | 8.3 / 0.0 | 3.0 / 6.7 |
+| 600 MHz | 50 | 199 | 91 ± 6% | 15.7 ± 2.1 | 15 ± 2% | 45 ± 6% | 11.7 / 0.7 | 18.0 / 2.0 | 16.0 / 13.0 |
+| 600 MHz | 100 | 292 | 83 ± 3% | 19.0 ± 3.6 | 19 ± 4% | 66 ± 7% | 13.7 / 0.0 | 49.7 / 6.7 | 19.7 / 12.3 |
+| 500 MHz | 18 | 87 | 94 ± 6% | 7.3 ± 3.2 | 13 ± 5% | 25 ± 8% | 5.7 / 0.0 | 9.7 / 0.3 | 1.7 / 7.0 |
+| 500 MHz | 50 | 182 | 83 ± 6% | 17.3 ± 5.5 | 19 ± 9% | 55 ± 15% | 9.7 / 0.3 | 20.7 / 2.3 | 11.0 / 14.7 |
+| 500 MHz | 100 | 270 | 79 ± 8% | 23.3 ± 5.0 | 23 ± 4% | 86 ± 2% | 12.0 / 0.3 | 45.0 / 5.3 | 21.7 / 17.7 |
+
+Found = analytes in the tube reported with a concentration / analytes in the
+tube. Error = |measured / true − 1| of the found analytes; the median and p90
+are taken per tube, then averaged.
 
 ### Precision across compositions
 
@@ -393,12 +400,17 @@ analyte count from its peak count, per field.
 
 ### What each mechanism is worth
 
-Each mechanism switched off alone on the standard tubes (600 MHz, 126 runs). On
-the tube of 100: without the residual cascade the engine finds 167 fewer real
-analytes (and reports 44 fewer false ones); without the joint fit it finds 45
-fewer, reports 43 more false ones and the median error rises 7.5 points;
-spin-system shapes and the multiplet covariation check each prevent about 19
-false rows.
+Each mechanism switched off alone on the standard tubes (600 MHz, seeds 0–2).
+On the tube of 100, change per tube against the complete engine (mean ± SD of
+the 3 paired tubes; complete engine: 83.0 ± 3.5 real found, 19.0 ± 3.6 false,
+median error 19 ± 4%):
+
+| Switched off | Real found | False | Median error (points) |
+|---|---|---|---|
+| Residual cascade | −55.7 ± 4.2 | −14.7 ± 3.1 | −4.5 ± 5.6 |
+| Joint fit | −15.0 ± 1.0 | +14.3 ± 5.5 | +9.7 ± 3.4 |
+| Spin-system shapes | −2.0 ± 4.4 | +6.3 ± 3.2 | +2.8 ± 6.5 |
+| Multiplet covariation check | −3.0 ± 5.3 | +6.3 ± 1.2 | +0.8 ± 5.3 |
 
 ### What each quantification group adds
 
