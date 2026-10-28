@@ -328,7 +328,7 @@ def export(a):
         sheet('Resumo_por_variante', summary), sheet('Resumo_por_corrida', runs),
         sheet('Recuperacao_concentracao', bands), sheet('Pareado_entre_etapas', paired),
         sheet('Percentual_por_nivel', shares)])
-    step_figure(summary, os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.png'))
+    step_figure(summary, step_errors(), os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.png'))
     print(f'{len(runs)} runs exported to {root}')
 
 
@@ -338,25 +338,45 @@ FALSE_RAMP = ('#b5461a', '#eb6834', '#f4a885')
 STEP_TICKS = {'base': 'Base\nwindows', 'plus_a': '+ A\nshapes', 'plus_b': '+ B\njoint fit', 'full': '+ C\ncascade'}
 
 
-def step_figure(summary, path):
-    """The steps as one figure: real analytes per tube rise from the axis and
-    false ones hang below it, each bar split by confidence level with the dots
-    and count written in the segment, and the median and p90 quantification
-    error under each step. The y axis is a signed square root, for reading:
+STEP_COL = ('#86b6ef', '#5598e7', '#2a78d6', '#184f95')   # one blue ramp, steps 250-600: later step, darker
+
+
+def step_errors() -> dict:
+    """Per step (tube of 100), per composition: the signed relative error,
+    measured / true - 1, of every true analyte found, one value per analyte and
+    sample group (the median of the group's samples against the group's true
+    amount)."""
+    out = {}
+    for vid in STEP_TICKS:
+        per = []
+        for s in SEEDS:
+            p = _path(vid, 'r100', s)
+            if not os.path.exists(p):
+                continue
+            d = pickle.load(open(p, 'rb'))
+            truth, e = d['truth'], []
+            for x in reported(d['rows']):
+                if x['hmdb_id'] not in truth:
+                    continue
+                for g, vals in (x.get('_concs_by_group') or {}).items():
+                    want = truth[x['hmdb_id']].get(g)
+                    if want and vals:
+                        e.append(float(np.median(vals)) / float(want) - 1.0)
+            per.append(np.array(e))
+        out[vid] = per
+    return out
+
+
+def _counts_panel(fig, ax, rows, dpi):
+    """Panel A: real analytes per tube rise from the axis and false ones hang
+    below it, each bar split by confidence level with the dots and count
+    written in the segment. The y axis is a signed square root, for reading:
     it opens the first units, where the thin segments are, without cutting the
-    axis (labels carry the numbers). Same numbers as the summary table (means
-    per tube)."""
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
-    rows = [next(r for r in summary if r['variant'] == v) for v in STEP_TICKS
-            if any(r['variant'] == v for r in summary)]
+    axis (the labels carry the numbers)."""
     g = lambda r, k: float(r[k])
-    ink, width, dpi = '#1a1a19', 0.7, 300
+    ink, width = '#1a1a19', 0.7
     fwd = lambda v: np.sign(v) * np.sqrt(np.abs(v))
     inv = lambda u: np.sign(u) * np.square(u)
-    fig, ax = plt.subplots(figsize=(8.5, 9.5), dpi=dpi)
-    fig.subplots_adjust(left=0.13, right=0.96, top=0.98, bottom=0.2)
     ax.set_yscale('function', functions=(fwd, inv))
     x = np.arange(len(rows))
     stacks = {}
@@ -380,7 +400,7 @@ def step_figure(summary, path):
     ax.tick_params(axis='x', length=0, pad=6)
     ax.tick_params(labelsize=13)
     ax.set_xticks(x, [STEP_TICKS[r['variant']] for r in rows])
-    side_label = lambda text, lo, hi: ax.annotate(text, (-0.1, inv((fwd(lo) + fwd(hi)) / 2)), xycoords=('axes fraction', 'data'),
+    side_label = lambda text, lo, hi: ax.annotate(text, (-0.115, inv((fwd(lo) + fwd(hi)) / 2)), xycoords=('axes fraction', 'data'),
                                                   rotation=90, ha='center', va='center', fontsize=13)
     side_label('Real analytes per tube', 0, top_r)
     side_label('False analytes per tube', -top_f, 0)
@@ -401,7 +421,7 @@ def step_figure(summary, path):
                     ax.text(i, yc, text, ha='center', va='center', fontsize=9, color=ink)
                 else:
                     beside.setdefault((i, sign), []).append((yc, text))
-    # a segment too thin for its label: beside its bar, away from the axis, 9 pt apart
+    # a segment too thin for its label: beside its bar, away from the axis, 12 pt apart
     for (i, sign), labels in beside.items():
         last = to_px(0) - sign * 3 * px_per_pt
         for y, text in sorted(labels, key=lambda t: to_px(t[0]), reverse=sign < 0):
@@ -414,11 +434,87 @@ def step_figure(summary, path):
         ax.annotate(f'{t:.1f} ± {g(r, "found_sd"):.1f}', (i, t), xytext=(0, 3), textcoords='offset points', ha='center', va='bottom', fontsize=12)
         t = stacks['false'][1][-1][i]
         ax.annotate(f'{t:.1f} ± {g(r, "false_sd"):.1f}', (i, -t), xytext=(0, -3), textcoords='offset points', ha='center', va='top', fontsize=12)
-    for i, r in enumerate(rows):
-        ax.annotate(f'quant. error\nmedian {g(r, "error_median_pct_mean"):.0f} ± {g(r, "error_median_pct_sd"):.0f}%\n'
-                    f'p90 {g(r, "error_p90_pct_mean"):.0f} ± {g(r, "error_p90_pct_sd"):.0f}%',
-                    (i, 0), xycoords=('data', 'axes fraction'), xytext=(0, -48), textcoords='offset points',
-                    ha='center', va='top', fontsize=11.5, color='#4a4a47')
+
+
+def _error_panel(ax, errors, steps):
+    """Panel B: a raincloud (Allen et al., Wellcome Open Res 2019;
+    doi:10.12688/wellcomeopenres.15191.1) of measured / true for every true
+    analyte found, one row per step, the first step at the bottom and the last on top. Each mountain is a
+    kernel density on one grid and one straight baseline; its rain, one point
+    per analyte and group at its own x, falls on it from just above; inside it,
+    on the baseline, the quartile box of all analytes and the median of each
+    composition (diamonds). Every point is on the axis."""
+    from matplotlib.patches import Rectangle
+    from scipy.stats import gaussian_kde
+    ink = '#1a1a19'
+    ratio = lambda e: np.log2(np.clip(1.0 + np.asarray(e, float), 1e-3, None))
+    pooled = {v: ratio(np.concatenate(errors[v])) for v in steps}
+    every = np.concatenate(list(pooled.values()))
+    lo = min(np.log2(0.025), float(every.min()) - 0.1)
+    hi = max(np.log2(100.0), float(every.max()) + 0.1)
+    height, gap = 0.8, 1.38
+    rng = np.random.default_rng(7)
+    grid = np.linspace(lo, hi, 900)
+    ax.axvspan(np.log2(0.8), np.log2(1.2), color='#e9f1fc', zorder=0)
+    ax.axvline(0, color=ink, linewidth=0.9, zorder=1)
+    ticks_y, names = [], []
+    for i, (vid, color) in enumerate(zip(steps, STEP_COL)):
+        base = i * gap
+        r = pooled[vid]
+        dens = gaussian_kde(r)(grid)
+        ax.fill_between(grid, base, base + height * dens / dens.max(), color=color, alpha=0.6, edgecolor=ink,
+                        linewidth=0.9, zorder=2)
+        ax.plot([lo, hi], [base, base], color=ink, linewidth=0.7, zorder=3)
+        ax.scatter(r, base + height + 0.07 + rng.uniform(0, 0.30, r.size), s=5, color=color, edgecolor='none',
+                   alpha=0.8, zorder=4)
+        q1, q2, q3 = np.percentile(r, [25, 50, 75])
+        ax.add_patch(Rectangle((q1, base + 0.03), q3 - q1, 0.07, facecolor='white', edgecolor=ink, linewidth=0.8, zorder=5))
+        ax.plot([q2, q2], [base + 0.03, base + 0.10], color=ink, linewidth=1.5, zorder=6)
+        meds = np.array([np.median(ratio(e)) for e in errors[vid]])
+        ax.scatter(meds, np.full(meds.size, base + 0.065), s=20, marker='D', color='white', edgecolor=ink,
+                   linewidths=0.8, zorder=7)
+        bias = np.array([np.median(e) for e in errors[vid]]) * 100
+        ax.text(hi - 0.1, base + 0.04, f'bias {bias.mean():+.0f} ± {bias.std(ddof=1):.0f}%', ha='right', va='bottom',
+                fontsize=11.5, color=ink, zorder=8)
+        ticks_y.append(base + 0.3)
+        names.append(STEP_TICKS[vid])
+    ticks = [0.05, 0.25, 1, 4, 20, 100]
+    ax.set_xticks(np.log2(ticks), [f'{t:g}×' for t in ticks])
+    ax.set_xticks(np.log2([0.1, 0.5, 2, 10, 50]), minor=True)
+    ax.tick_params(axis='x', which='minor', length=3)
+    ax.tick_params(axis='x', labelsize=13)
+    ax.set_xlim(lo - 0.1, hi + 0.1)
+    ax.set_ylim(-0.1, (len(steps) - 1) * gap + height + 0.45)
+    ax.set_yticks(ticks_y, [''] * len(names))
+    for y, name in zip(ticks_y, names):                    # step names, left-aligned in one column
+        ax.text(-0.2, y, name, transform=ax.get_yaxis_transform(), ha='left', va='center', fontsize=13)
+    ax.set_xlabel('Measured / true concentration (log scale)', fontsize=13)
+    for side in ('top', 'right'):
+        ax.spines[side].set_visible(False)
+    ax.tick_params(axis='y', length=0)
+    ax.grid(color='#e4e3dd', linewidth=0.6)
+    ax.set_axisbelow(True)
+
+
+def step_figure(summary, errors, path):
+    """The steps as one figure, two panels. A: the analytes each step
+    reports (real above the axis, false below, split by confidence level;
+    mean ± SD per tube). B: how well the found analytes are measured
+    (``_error_panel``: measured / true of every one, mean ± SD of the
+    compositions in the bias). Both are the tube of 100 at 600 MHz."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+    rows = [next(r for r in summary if r['variant'] == v) for v in STEP_TICKS
+            if any(r['variant'] == v for r in summary)]
+    steps = [r['variant'] for r in rows]
+    dpi = 300
+    fig, (ax_a, ax_b) = plt.subplots(1, 2, figsize=(17.0, 9.0), dpi=dpi, gridspec_kw={'width_ratios': [1, 1.1]})
+    fig.subplots_adjust(left=0.075, right=0.985, top=0.94, bottom=0.12, wspace=0.28)
+    _counts_panel(fig, ax_a, rows, dpi)
+    _error_panel(ax_b, errors, steps)
+    for ax, x in ((ax_a, -0.2), (ax_b, -0.2)):
+        ax.text(x, 1.04, 'AB'[ax is ax_b], transform=ax.transAxes, fontsize=26, fontweight='bold', va='bottom')
     fig.savefig(path, dpi=dpi, bbox_inches='tight')
     plt.close(fig)
 
@@ -431,7 +527,7 @@ def figure(a):
     with open(os.path.join(root, 'resumo_por_variante.csv'), encoding='utf-8') as f:
         summary = list(csv.DictReader(f))
     path = os.path.join(root, f'Etapas_quantificacao_nMRPro-H_v{version}.png')
-    step_figure(summary, path)
+    step_figure(summary, step_errors(), path)
     print(path)
 
 
