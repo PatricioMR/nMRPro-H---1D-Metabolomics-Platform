@@ -18,6 +18,8 @@ SUBFOLDERS = {
     'steps': '05_Etapas_quantificacao',    # validation.quant_steps export
     'external': '06_Comparacao_externa',   # comparisons with other software (by hand)
     'documents': '07_Documentos',          # methods and manuscript material (by hand)
+    'figures': '08_Figuras',               # validation.composition_figure (both fields)
+    'real': '09_Amostras_reais',           # validation.real_samples (old projects re-analysed)
     'archive': '99_Arquivo',               # earlier versions' exports
 }
 

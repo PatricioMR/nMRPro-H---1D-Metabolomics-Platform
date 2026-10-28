@@ -182,12 +182,16 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
 
 def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
                       standard_conc, standard_name='IS', overrides=None,
-                      diagnostics=None):
+                      diagnostics=None, external_is_samples=None,
+                      group_dilution=None):
     """The quantification step alone, on what ``prepare`` detected and
     annotated. Only the quantification's own settings are read from
     ``overrides``: changing how an amount is measured does not change what
     was detected or annotated, so a test of the one need not redo the
-    other."""
+    other. ``external_is_samples`` (the indices of the samples that hold the
+    standard when it was measured apart from the study's samples) and
+    ``group_dilution`` go to ``quantify_project`` as they do from the
+    interface."""
     d = defaults(overrides)
     ppm, raw, corr = prep['ppm'], prep['raw'], prep['corr']
     peaks, mets, params = prep['peaks'], prep['mets'], prep['params']
@@ -214,7 +218,8 @@ def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,
             cascade=d['cascade'],
             max_disagreement=d['max_disagreement_pct'] / 100.0,
             raw_intensities=raw, joint_fit=d['joint_fit'],
-            diagnostics=diagnostics)
+            diagnostics=diagnostics, external_is_samples=external_is_samples,
+            group_dilution=group_dilution)
     return rows
 
 
