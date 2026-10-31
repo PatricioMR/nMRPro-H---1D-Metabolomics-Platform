@@ -118,9 +118,10 @@ class TestCrowding:
     def test_the_report_says_which_mixture_and_why(self):
         from gui.widgets.pdf_validation import crowding_note, precision_footnote
         n = crowding_note(self.ENTRY, 294)
-        assert '294 detected peaks' in n and 'mixture of 100' in n
+        assert 'median of 294 peaks' in n and 'mixture of 100' in n
+        assert 'per sample, not in the list merged' in n
         assert 'more crowded' in crowding_note(self.ENTRY, 450)
-        f = precision_footnote(500, self.ENTRY, '100', False, 294)
-        assert '100 compounds' in f and '294 peaks' in f
+        f = precision_footnote(500, self.ENTRY, '100', False, 293.5)
+        assert '100 compounds' in f and '294 peaks per sample' in f
         assert 'may be lower' in precision_footnote(500, self.ENTRY, '100',
                                                     True, 450)

@@ -1115,13 +1115,47 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
 
 # ── Ponto de entrada ──────────────────────────────────────────────────────────
 def project_peak_count(quant_stage, app):
-    """How many peaks detection found in this project, or None: what the
-    report matches the validation mixtures against."""
-    for holder in (getattr(quant_stage, 'peak_stage', None), app):
-        peaks = getattr(holder, 'peaks', None)
-        if peaks:
-            return len(peaks)
-    return None
+    """The median number of peaks a sample of this project shows on its own,
+    or None: what the report matches the validation mixtures against.
+
+    Not the length of the merged peak list. A line that moves between
+    samples is kept there once per position, which in real extracts made
+    the list 1.1-1.7 times longer than any sample and picked a mixture far
+    more crowded than the project (processing.peak_count, ADR-089). None
+    sends the report to the most crowded mixture and says the count is
+    unknown, rather than quoting the merged list as if it were the count."""
+    stage = getattr(quant_stage, 'peak_stage', None)
+    ppm = getattr(app, 'ppm', None)
+    if stage is None or ppm is None or not getattr(stage, 'peaks', None):
+        return None
+    try:
+        data = app.corrected_intensities()
+    except Exception:
+        data = None
+    if data is None:
+        data = getattr(app, 'all_intensities', None)
+    if data is None:
+        return None
+    # the regions detection applied, else the field a loaded project's
+    # detection was given (as _quant_computation reads them)
+    from processing.peak_count import per_sample_peak_count
+    from processing.spectral_regions import parse_regions
+    excluded = getattr(stage, '_excluded_regions', None)
+    if excluded is None:
+        try:
+            excluded = parse_regions(stage.excluded_regions_var.get())
+        except (ValueError, AttributeError):
+            excluded = []
+    try:
+        settings = {'min_snr': float(stage.min_snr_var.get()),
+                    'min_distance': float(stage.min_width_var.get()),
+                    'detect_shoulders': bool(stage.detect_shoulders_var.get()),
+                    'shoulder_curvature_k': float(stage.shoulder_k_var.get())}
+    except Exception:   # a Tk variable left blank or not a number
+        return None
+    return per_sample_peak_count(ppm, data, excluded_regions=excluded,
+                                 samples_info=getattr(app, 'samples_info', None),
+                                 **settings)
 
 
 def generate_pdf(output_path: str, quant_stage, app,

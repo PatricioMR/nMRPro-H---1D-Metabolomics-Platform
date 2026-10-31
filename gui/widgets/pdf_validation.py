@@ -103,8 +103,8 @@ def precision_footnote(field, entry, tube, beyond, n_peaks) -> str:
     if n_peaks is None or peaks is None:
         return (base + ', the most crowded measured: the number of compounds '
                 'in this sample is not known; see Validation.')
-    base += (f' ({peaks:.0f} peaks detected), the one as crowded as this '
-             f'project ({n_peaks} peaks)')
+    base += (f' ({peaks:.0f} peaks per sample), the one as crowded as this '
+             f'project ({n_peaks:.0f} peaks per sample)')
     if beyond:
         base += (': this project is more crowded than any mixture measured, '
                  'and its precision may be lower')
@@ -126,9 +126,12 @@ def crowding_note(entry, n_peaks) -> str:
                 f'crowded its spectrum is, is. This report quotes the '
                 f'mixture of {tube} compounds, the most crowded measured.')
     s = (f'The number of compounds in a real sample is not known; how crowded '
-         f'its spectrum is, is: this project has {n_peaks} detected peaks '
-         f'(the mixtures: {counts}). The dots in this report quote the '
-         f'mixture of {tube} compounds, the one as crowded as this project.')
+         f'its spectrum is, is: a sample of this project shows a median of '
+         f'{n_peaks:.0f} peaks on its own (the mixtures: {counts}). The dots '
+         f'in this report quote the mixture of {tube} compounds, the one as '
+         f'crowded as this project. Peaks are counted per sample, not in the '
+         f'list merged over samples, where a line that moves between samples '
+         f'is kept more than once.')
     if beyond:
         s += (' This project is more crowded than any mixture measured: its '
               'identity precision can only be lower than quoted.')
@@ -138,8 +141,9 @@ def crowding_note(entry, n_peaks) -> str:
 def validation_section(project_mhz, styles, avail_w, doc=None,
                        n_peaks=None) -> list:
     """Flowables for the validation page; ``[]`` when nothing is measured.
-    ``n_peaks`` is the project's detected peak count, which picks the
-    mixture the report quotes (``crowding_note``)."""
+    ``n_peaks`` is the median number of peaks a sample of the project shows
+    on its own (``pdf_report.project_peak_count``), which picks the mixture
+    the report quotes (``crowding_note``)."""
     measured, entry, exact = for_field(project_mhz, doc)
     if entry is None:
         return []
@@ -183,7 +187,7 @@ def validation_section(project_mhz, styles, avail_w, doc=None,
     out.append(_table(rows, [w0] + [rest] * len(tubes)))
     out.append(Spacer(1, 0.25 * cm))
 
-    rows = [['Mixture', 'Peaks\ndetected', 'Compounds\nfound',
+    rows = [['Mixture', 'Peaks per\nsample', 'Compounds\nfound',
              'Found at\n●● or more', 'Precision at\n●● or more',
              'False rows\nper analysis', 'Amount error,\nall found']]
     for k, t in tubes:

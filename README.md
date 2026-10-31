@@ -66,7 +66,7 @@ the result.
 - **The validation is built in**: simulated spectra of known composition,
   exported run by run so every figure can be audited (see [Validation](#validation)).
 
-> **Status: Beta (v0.8).** The pipeline below is the one validated end to end.
+> **Status: Beta (v0.81).** The pipeline below is the one validated end to end.
 > MCR-based deconvolution stages are kept in the code, tested, and switched off
 > (`DECONVOLUTION_ENABLED` in [`app_paths.py`](app_paths.py)) until they have
 > their own validation.
@@ -311,17 +311,18 @@ file, per-sample truth and per-analyte results.
 
 Standard tubes in triplicate (seeds 0–2), mean ± SD of the 3 tubes
 ([`data/quality_reference.json`](data/quality_reference.json); per-tube values
-from the validation export). Every count is of analytes except Peaks (peaks
-detected in the spectrum):
+from the validation export). Every count is of analytes except Peaks (median
+number of peaks a sample shows on its own, the unit the report matches a
+project in; see `processing/peak_count.py`):
 
 | Field | Analytes | Peaks | Found | False per tube | Median error | p90 error | ●●● real / false | ●● real / false | ● real / false |
 |---|---|---|---|---|---|---|---|---|---|
-| 600 MHz | 18 | 97 | 94 ± 0% | 6.7 ± 2.1 | 10 ± 1% | 28 ± 4% | 5.7 ± 1.5 / 0.0 ± 0.0 | 8.3 ± 1.2 / 0.0 ± 0.0 | 3.0 ± 1.0 / 6.7 ± 2.1 |
-| 600 MHz | 50 | 199 | 91 ± 6% | 15.7 ± 2.1 | 15 ± 2% | 45 ± 6% | 11.7 ± 1.5 / 0.7 ± 0.6 | 18.0 ± 1.7 / 2.0 ± 2.0 | 16.0 ± 2.6 / 13.0 ± 1.0 |
-| 600 MHz | 100 | 292 | 83 ± 3% | 19.0 ± 3.6 | 19 ± 4% | 66 ± 8% | 13.7 ± 5.9 / 0.0 ± 0.0 | 49.7 ± 4.9 / 6.7 ± 1.5 | 19.7 ± 5.0 / 12.3 ± 3.2 |
+| 600 MHz | 18 | 92 | 94 ± 0% | 6.7 ± 2.1 | 10 ± 1% | 28 ± 4% | 5.7 ± 1.5 / 0.0 ± 0.0 | 8.3 ± 1.2 / 0.0 ± 0.0 | 3.0 ± 1.0 / 6.7 ± 2.1 |
+| 600 MHz | 50 | 196 | 91 ± 6% | 15.7 ± 2.1 | 15 ± 2% | 45 ± 6% | 11.7 ± 1.5 / 0.7 ± 0.6 | 18.0 ± 1.7 / 2.0 ± 2.0 | 16.0 ± 2.6 / 13.0 ± 1.0 |
+| 600 MHz | 100 | 290 | 83 ± 3% | 19.0 ± 3.6 | 19 ± 4% | 66 ± 8% | 13.7 ± 5.9 / 0.0 ± 0.0 | 49.7 ± 4.9 / 6.7 ± 1.5 | 19.7 ± 5.0 / 12.3 ± 3.2 |
 | 500 MHz | 18 | 87 | 94 ± 6% | 7.3 ± 3.2 | 13 ± 5% | 25 ± 8% | 5.7 ± 1.5 / 0.0 ± 0.0 | 9.7 ± 2.1 / 0.3 ± 0.6 | 1.7 ± 0.6 / 7.0 ± 2.6 |
-| 500 MHz | 50 | 182 | 83 ± 6% | 17.3 ± 5.5 | 19 ± 9% | 55 ± 15% | 9.7 ± 2.1 / 0.3 ± 0.6 | 20.7 ± 4.0 / 2.3 ± 3.2 | 11.0 ± 1.0 / 14.7 ± 2.3 |
-| 500 MHz | 100 | 270 | 79 ± 8% | 23.3 ± 5.0 | 23 ± 4% | 86 ± 2% | 12.0 ± 2.6 / 0.3 ± 0.6 | 45.0 ± 6.2 / 5.3 ± 3.1 | 21.7 ± 4.6 / 17.7 ± 3.8 |
+| 500 MHz | 50 | 187 | 83 ± 6% | 17.3 ± 5.5 | 19 ± 9% | 55 ± 15% | 9.7 ± 2.1 / 0.3 ± 0.6 | 20.7 ± 4.0 / 2.3 ± 3.2 | 11.0 ± 1.0 / 14.7 ± 2.3 |
+| 500 MHz | 100 | 272 | 79 ± 8% | 23.3 ± 5.0 | 23 ± 4% | 86 ± 2% | 12.0 ± 2.6 / 0.3 ± 0.6 | 45.0 ± 6.2 / 5.3 ± 3.1 | 21.7 ± 4.6 / 17.7 ± 3.8 |
 
 Found = analytes in the tube reported with a concentration / analytes in the
 tube. Error = |measured / true − 1| of the found analytes; the median and p90
@@ -397,7 +398,10 @@ Detected peaks grow linearly with the analytes up to 75 and then saturate:
 
 The inverse (line with its 95% interval, Miller & Miller 2010; ceiling curve
 beyond, Burnham & Anderson 2002 for the model choice) estimates a study's
-analyte count from its peak count, per field.
+analyte count from its peak count, per field. In a real study the count is the
+median over samples of the peaks each sample shows alone: the merged peak list
+keeps a line that moves between samples once per position (1.1–1.7× longer in
+the four real matrices, ADR-089).
 
 ### What each mechanism is worth
 

@@ -40,6 +40,9 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(REPO, 'data', 'quality_reference.json')
 TUBES = (18, 50, 100)
 SEEDS = (0, 1, 2)
+# what a tube's 'peaks' counts, recorded in the file so an entry written
+# before ADR-089 (the merged list) is not read as this
+PEAKS_UNIT = 'median per sample (processing.peak_count)'
 
 
 def _row_error(r, truth) -> float | None:
@@ -54,8 +57,24 @@ def _row_error(r, truth) -> float | None:
     return float(np.median(e)) if e else None
 
 
+def sample_peaks(prep) -> float:
+    """How crowded a tube is, in the unit the report measures a project in
+    (``pdf_report.project_peak_count``): the median number of peaks a
+    sample shows on its own, with the application's detection settings."""
+    from processing.peak_count import per_sample_peak_count
+    from validation.fresh_run import defaults
+    d = defaults(None)
+    return per_sample_peak_count(
+        prep['ppm'], prep['corr'], min_snr=d['min_snr'],
+        min_distance=d['min_distance_ppm'],
+        excluded_regions=prep.get('excluded'), samples_info=mb.SAMPLES,
+        detect_shoulders=d['detect_shoulders'],
+        shoulder_curvature_k=d['shoulder_k'])
+
+
 def _bench_runs(n):
-    """``[(rows, truth)]`` of the reference bench's tube of ``n``."""
+    """``[(rows, truth, peaks per sample)]`` of the reference bench's tube
+    of ``n``."""
     out = []
     for seed in SEEDS:
         prep, truth = prepared(n, seed)
@@ -64,7 +83,7 @@ def _bench_runs(n):
                                  standard_nh=mb.STANDARD_NH,
                                  standard_conc=mb.STANDARD_MM,
                                  standard_name='DSS')
-        out.append((rows, truth, len(prep['peaks'])))
+        out.append((rows, truth, sample_peaks(prep)))
     return out
 
 
@@ -93,9 +112,22 @@ def warm_gissmo(fields, jobs):
 
 def _gissmo_runs(field):
     def runs(n):
-        from validation.gissmo_bench import run
-        return [run(field, seed, str(n))[1:4] for seed in SEEDS]
+        from validation.gissmo_bench import prepared as gissmo_prepared, run
+        out = []
+        for seed in SEEDS:
+            _s, rows, truth, _merged = run(field, seed, str(n))
+            prep, _t = gissmo_prepared(field, seed, str(n))
+            out.append((rows, truth, sample_peaks(prep)))
+        return out
     return runs
+
+
+def gissmo_tube_peaks(field, n) -> float:
+    """``tube_stats``'s 'peaks' for a GISSMO tube from its detection alone,
+    without quantifying it again."""
+    from validation.gissmo_bench import prepared as gissmo_prepared
+    return float(np.mean([sample_peaks(gissmo_prepared(field, s, str(n))[0])
+                          for s in SEEDS]))
 
 
 def tube_stats(n, runs=_bench_runs) -> dict:
@@ -163,11 +195,29 @@ def main():
     ap.add_argument('--fields', type=int, nargs='+', default=[500, 600])
     ap.add_argument('--jobs', type=int, default=8,
                     help='GISSMO runs computed in parallel before the tables')
+    ap.add_argument('--peaks-only', action='store_true',
+                    help="rewrite only each GISSMO tube's 'peaks' (median per "
+                         'sample) from its detection, keeping every measured '
+                         'precision and error in the file')
     a = ap.parse_args()
     doc = {}
     if os.path.exists(OUT):
         with open(OUT, encoding='utf-8') as f:
             doc = json.load(f)
+    if a.peaks_only:
+        from validation.gissmo_bench import FIELDS
+        for fk in a.fields:
+            entry = doc.get(str(fk))
+            if not entry or entry.get('generator') != 'gissmo':
+                raise SystemExit(f'{fk} MHz: no GISSMO entry to update in {OUT}')
+            for n in TUBES:
+                entry['tubes'][str(n)]['peaks'] = gissmo_tube_peaks(FIELDS[fk], n)
+            entry['peaks'] = PEAKS_UNIT
+            print(f'{fk} MHz peaks per sample:',
+                  {k: round(t['peaks'], 1) for k, t in entry['tubes'].items()})
+        with open(OUT, 'w', encoding='utf-8') as f:
+            json.dump(doc, f, indent=1)
+        return
     if a.generator == 'profiles':
         plan = [(int(mb.MHZ), mb.MHZ, _bench_runs)]
     else:
@@ -192,6 +242,7 @@ def main():
                             'et al., Anal Chem 2017)' if a.generator == 'gissmo'
                             else "the reference database's own profiles"),
             },
+            'peaks': PEAKS_UNIT,
             'tubes': {str(n): tube_stats(n, runs) for n in TUBES},
         }
         print(f'{key} MHz ({a.generator}) ->', OUT, flush=True)
