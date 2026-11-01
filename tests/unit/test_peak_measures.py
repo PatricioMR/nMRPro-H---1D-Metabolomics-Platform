@@ -7,7 +7,8 @@ moves a boundary all go through ``foot_line_area`` / ``peak_measures``."""
 import numpy as np
 import pytest
 
-from processing.peak_detection import detect_peaks, foot_line_area, peak_measures
+from processing.peak_detection import (
+    detect_peaks, foot_line_area, peak_measures, window_apex)
 
 
 def _lorentz(ppm, c, h, w=0.002):
@@ -69,6 +70,19 @@ def test_a_moved_boundary_changes_the_measures():
     narrow = peak_measures(ppm, X, i - 40, i + 40, 1.0, index=i)
     assert narrow['area'] < wide['area']
     assert narrow['height'] == pytest.approx(wide['height'], rel=0.05)
+
+
+def test_the_window_apex_is_the_most_prominent_interior_maximum():
+    y = np.array([9.0, 7.0, 5.0, 5.5, 4.0, 3.0, 3.2, 3.1, 1.0])
+    # 5.5 stands 0.5 over its valley; 3.2, the other maximum, only 0.2
+    assert window_apex(y) == (3, pytest.approx(0.5))
+
+
+def test_a_window_without_an_interior_maximum_falls_back_to_the_chord():
+    y = np.array([0.0, 3.0, 4.0, 4.5, 4.8, 5.0])     # a bare shoulder
+    i, prom = window_apex(y)
+    assert 0 < i < y.size - 1 and prom == 0.0
+    assert window_apex(np.array([5.0, 4.0, 3.0]))[0] == 0   # nothing above it
 
 
 def test_the_apex_follows_when_the_old_one_leaves_the_window():

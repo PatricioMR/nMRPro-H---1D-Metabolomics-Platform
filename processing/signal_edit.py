@@ -28,9 +28,9 @@ import copy
 
 import numpy as np
 
-from processing.peak_alignment import _refine_one_center
+from processing.peak_alignment import parabolic_apex
 from processing.peak_detection import (
-    as_app_peak, broad_removed_fractions, peak_measures)
+    as_app_peak, broad_removed_fractions, peak_measures, window_apex)
 from processing.signal_quality import GATE_MIN_SNR
 
 ORIGIN_SPLIT = 'split'
@@ -85,9 +85,10 @@ def valley_near(mean, idx, lo, hi, radius=VALLEY_SNAP_POINTS):
 def measure_window(ppm, raw_2d, corrected_2d, start_idx, end_idx, noise_std,
                    index=None):
     """Everything the Signal List and quantification read about one window:
-    ``peak_measures``, the bounds, the per-sample apex (searched inside the
-    window only, so it cannot land on the neighbour the window was cut from)
-    and the share of the raw area the baseline model removed."""
+    ``peak_measures``, the bounds, the per-sample apex (``window_apex`` inside
+    the window only, so it can land neither on the neighbour the window was
+    cut from nor on the edge that neighbour's tail lifts) and the share of the
+    raw area the baseline model removed."""
     ppm = np.asarray(ppm, dtype=float)
     Y = np.asarray(corrected_2d, dtype=float)
     if Y.ndim == 1:
@@ -102,9 +103,13 @@ def measure_window(ppm, raw_2d, corrected_2d, start_idx, end_idx, noise_std,
     floor = GATE_MIN_SNR * float(noise_std) if noise_std else 0.0
     centers, ok = [], []
     for s in range(Y.shape[1]):
-        c, a = _refine_one_center(x, Y[lo:hi + 1, s], m['ppm'], span, floor)
-        centers.append(c)
-        ok.append(a)
+        y = Y[lo:hi + 1, s]
+        i, prom = window_apex(y)
+        # no line above the noise in this sample: keep the window's apex
+        # rather than chase noise to a position nobody measured
+        found = prom > 0 and prom >= floor
+        centers.append(parabolic_apex(x, y, i) if found else m['ppm'])
+        ok.append(found)
     fracs = broad_removed_fractions(x, (R - Y)[lo:hi + 1],
                                     m['area_per_sample'])
     m.update(

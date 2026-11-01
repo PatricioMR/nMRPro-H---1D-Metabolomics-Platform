@@ -153,6 +153,30 @@ def test_an_added_signal_is_removed_and_a_detected_one_is_not(merged):
         remove_added_signal(peaks, big)
 
 
+@pytest.mark.parametrize('lo_ppm, hi_ppm', [(1.995, 1.975), (1.992, 1.980),
+                                            (1.990, 1.970)])
+def test_a_new_signal_on_a_tall_neighbours_tail_finds_its_own_apex(lo_ppm,
+                                                                   hi_ppm):
+    """The window's highest point is the edge the neighbour's tail lifts; the
+    small line sits below the chord of that convex tail. Neither is its apex."""
+    rng = np.random.default_rng(1)
+    corr = np.column_stack([_lorentz(2.000, 100.0 * k) + _lorentz(1.985, 3.0 * k)
+                            + rng.normal(0, NOISE / 5, PPM.size)
+                            for k in (1, 2, 3)])
+    p = add_signal([], _idx(lo_ppm), _idx(hi_ppm), PPM, corr, corr, NOISE)
+    assert p['ppm'] == pytest.approx(1.985, abs=0.0005)
+    assert p['start_idx'] < p['index'] < p['end_idx']
+    assert all(c == pytest.approx(1.985, abs=0.0005) for c in p['ppm_per_sample'])
+    assert all(p['aligned_per_sample'])
+
+
+def test_a_sample_without_the_line_keeps_the_windows_apex():
+    corr = np.column_stack([_lorentz(1.5, 5.0), np.zeros(PPM.size)])
+    p = add_signal([], _idx(1.51), _idx(1.49), PPM, corr, corr, NOISE)
+    assert p['aligned_per_sample'] == [True, False]
+    assert p['ppm_per_sample'][1] == p['ppm']
+
+
 def test_next_rank_never_reuses_one():
     assert next_rank([{'rank': 4}, {'rank': 9}, {'rank': '_sub_1'}]) == 10
     assert next_rank([]) == 1

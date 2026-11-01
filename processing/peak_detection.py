@@ -69,6 +69,30 @@ def foot_line_area(x, y):
     return abs(float(np.trapezoid(above, x))), line
 
 
+def window_apex(y):
+    """``(i, prominence)`` of the apex of a trace that only holds one window.
+
+    A window the analyst drew has no detected apex, and its highest point is
+    often not one: drawn beside a tall line it sits on that line's tail, whose
+    highest point is the window's edge. Nor does the line between the ends
+    help, since a Lorentzian tail is convex and a small line on it stays below
+    that chord. So the apex is the interior local maximum with the largest
+    prominence, as detection's ``find_peaks`` ranks them; only a window with no
+    interior maximum (a bare shoulder) falls back to the point highest above
+    the chord, then to the highest point, with prominence 0.
+    """
+    y = np.asarray(y, dtype=float)
+    idx, props = find_peaks(y, prominence=0.0)
+    if idx.size:
+        k = int(np.argmax(props['prominences']))
+        return int(idx[k]), float(props['prominences'][k])
+    if y.size < 2:
+        return 0, 0.0
+    above = y - np.linspace(y[0], y[-1], y.size)
+    i = int(np.argmax(above))
+    return (i if above[i] > 0 else int(np.argmax(y))), 0.0
+
+
 def peak_measures(ppm, corrected_2d, start_idx, end_idx, noise_std, index=None):
     """What the Signal List reports about a signal on the window
     ``[start_idx, end_idx]`` of the baseline-corrected matrix (points x
@@ -77,7 +101,7 @@ def peak_measures(ppm, corrected_2d, start_idx, end_idx, noise_std, index=None):
     the apex and its SNR. The same arithmetic as detection's last step, so a
     signal whose boundaries the analyst moved can be re-measured without
     running detection again. ``index`` is kept when inside the window, else
-    the apex of the mean spectrum.
+    the ``window_apex`` of the mean spectrum.
     """
     ppm = np.asarray(ppm, dtype=float)
     Y = np.asarray(corrected_2d, dtype=float)
@@ -89,7 +113,7 @@ def peak_measures(ppm, corrected_2d, start_idx, end_idx, noise_std, index=None):
                       for s in range(Y.shape[1])])
     mean = Y.mean(axis=1)
     apex = (int(index) if index is not None and lo <= int(index) <= hi
-            else lo + int(np.argmax(mean[lo:hi + 1])))
+            else lo + window_apex(mean[lo:hi + 1])[0])
     height = float(max(np.max(mean[lo:hi + 1]) - 0.5 * (mean[lo] + mean[hi]), 0.0))
     mean_int = float(np.mean(Y[apex, :]))
     return {'area_per_sample': areas, 'area': float(np.mean(areas)),
