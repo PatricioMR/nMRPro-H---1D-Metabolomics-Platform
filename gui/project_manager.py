@@ -30,7 +30,7 @@ from tkinter import filedialog, messagebox
 from processing.spectral_regions import (
     format_regions, parse_regions)
 
-from app_paths import APP_VERSION, user_data_dir
+from app_paths import APP_VERSION, resolve_database, user_data_dir
 from data import project_file
 from gui.project_vars import (
     apply_vars, collect_vars, diff_vars, engine_fingerprint)
@@ -46,6 +46,16 @@ def _safe_var(obj, attr):
         return getattr(obj, attr).get()
     except Exception:
         return None
+
+
+def _resolved_db(path):
+    """A saved database path as it stands now (``app_paths.resolve_database``),
+    said aloud when the project's own file is gone and another replaces it."""
+    new = resolve_database(path)
+    if path and new != path:
+        print(f'  reference database {os.path.basename(path)} not found; '
+              f'using {os.path.basename(new)}')
+    return new
 
 
 def _set_var(obj, attr, value):
@@ -509,10 +519,13 @@ class ProjectManager:
         ann       = app.stages.get('annotation')
         if ann_state and ann:
             try:
-                ann._db_path = ann_state.get('db_path') or getattr(ann, '_db_path', None)
+                ann._db_path = _resolved_db(ann_state.get('db_path'))                     or getattr(ann, '_db_path', None)
 
                 # Replaced even when empty, like the quantification results.
                 ann._last_results_args = ann_state.get('last_results_args')
+                if ann._last_results_args and ann._last_results_args.get('db_path'):
+                    ann._last_results_args['db_path'] = _resolved_db(
+                        ann._last_results_args['db_path'])
                 if ann._last_results_args:
                     try: app.btn_annot_shortcut.config(state='normal')
                     except Exception: pass
@@ -739,7 +752,7 @@ class ProjectManager:
         if fs_state and fs:
             try:
                 fs._mcr_regions  = fs_state.get('mcr_regions', [])
-                fs._db_path      = fs_state.get('db_path')
+                fs._db_path      = _resolved_db(fs_state.get('db_path'))
                 fs._norm_factors = fs_state.get('norm_factors')
                 _set_var(fs, '_blank_enabled', fs_state.get('blank_enabled'))
                 _set_var(fs, '_norm_enabled',  fs_state.get('norm_enabled'))

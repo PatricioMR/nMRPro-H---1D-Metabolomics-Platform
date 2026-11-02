@@ -1,0 +1,1402 @@
+what,name,hmdb_id,detail
+promoted,D-Mannose,HMDB0000169,?
+promoted,Shikimic acid,HMDB0003070,0
+promoted,Trans-cinnamic acid,HMDB0000930,0
+promoted,4-Hydroxyphenethyl alcohol,HMDB0004284,0
+promoted,L-Arabinose,HMDB0000646,?
+promoted,Quinic acid,HMDB0003072,0
+promoted,3-hydroxybenzoic acid,HMDB0002466,0
+promoted,Vanillin,HMDB0012308,0
+promoted,L-Norleucine,HMDB0001645,?
+promoted,Trimethylamine N-oxide,HMDB0000925,?
+promoted,Glutaconic acid,HMDB0000620,?
+promoted,Ferulic acid,HMDB0000954,0
+promoted,4-Aminophenol,HMDB0001169,?
+promoted,Vanillic acid,HMDB0000484,0
+promoted,2-hydroxyhexanoic-acid,HMDB0001624,?
+promoted,3-methylglutaric-acid,HMDB0000752,?
+promoted,Gly-pro,HMDB0000721,?
+promoted,3-hydroxy-4-methoxycinnamic acid,HMDB0000955,?
+promoted,O-phospho-DL-threonine,HMDB0011185,?
+promoted,N-acetyl-histidine,HMDB0032055,?
+promoted,DL-3-Aminoisobutyric acid,HMDB0003911,?
+not in D2O: Methanol-d4,(+)-abscisic_acid,,bmse001238
+no verified spectrum,(+)-epicatechin,HMDB0037954,
+no verified spectrum,(+)-limonene,HMDB0003375,
+no verified spectrum,(+-)-2-heptanol,HMDB0033908,
+no verified spectrum,(+-)-2-hydroxy-2-phenylacetonitrile,HMDB0034666,
+no verified spectrum,(+-)-2-methylbutanal,HMDB0031526,
+no verified spectrum,(+-)-2-octanol,HMDB0034261,
+no verified spectrum,(+-)-3-methyl-1-pentanol,HMDB0033676,
+no verified spectrum,(+-)-citronellyl_acetate,HMDB0034160,
+no verified spectrum,(+-)-metalaxyl,HMDB0031802,
+no verified spectrum,(+-)-naled,HMDB0031806,
+not in D2O: Chloroform-d,(-)-alpha-santonin,,bmse001233
+not in D2O: Chloroform-d,(-)-ambroxide,,bmse001221
+not in D2O: Chloroform-d,(-)-dehydrocostuslactone,,bmse001319
+not in D2O: DMSO,(-)-epicatechin,,bmse001255
+no verified spectrum,(-)-isoproterenol_hydrochloride,,
+no verified spectrum,(-)-limonene,HMDB0004321,
+no verified spectrum,(-)-menthone,HMDB0035162,
+not in D2O: DMSO,"(1e,6e)-1,7-bis(4-hydroxy-3-methoxyphenyl)hepta-1,6-diene-3,5-dione",,bmse001156
+no verified spectrum,"(1s,2s,5r)-(+)-neomenthol",,
+no verified spectrum,(2-hydroxy-3-tetradecanoyloxypropyl)_2-trimethylazaniumylethyl_phosphate,,
+no verified spectrum,(2e)-2-heptenal,HMDB0033827,
+no verified spectrum,"(4e,15z)-bilirubin",HMDB0000488,
+no verified spectrum,"(5z,8z,11z,14z)-icosa-5,8,11,14-tetraenoic_acid",,
+no verified spectrum,"(5z,8z,11z,14z,17z)-icosa-5,8,11,14,17-pentaenoic_acid",,
+no verified spectrum,"(6z,9z,12z)-octadeca-6,9,12-trienoic_acid",,
+no verified spectrum,(chloromethyl)oxirane,HMDB0034232,
+no verified spectrum,(dimethoxymethyl)benzene,HMDB0041326,
+not in D2O: Chloroform-d,(e)-6-(4-hydroxy-6-methoxy-7-methyl-3-oxo-1h-2-benzofuran-5-yl)-4-methylhex-4-enoic_acid,,bmse001197
+no verified spectrum,(e)-monocrotophos,HMDB0031805,
+no verified spectrum,(r)-1-octen-3-ol,HMDB0031299,
+not in D2O: ethanol,(r)-2-benzylsuccinate,HMDB0012127,bmse000695
+no verified spectrum,(r)-3-hydroxyisobutyric_acid,HMDB0000336,
+not in D2O: CDCl3,(r)-carvone,HMDB0035089,bmse000500
+no verified spectrum,(r)-lipoic_acid,HMDB0001451,
+no verified spectrum,(s)-2-methyl-1-butanol,HMDB0031527,
+no verified spectrum,(s)-3-hydroxyisobutyric_acid,HMDB0000023,
+no verified spectrum,(s)-carvone,HMDB0004487,
+no verified spectrum,(s)-lipoic_acid,HMDB0014312,
+no verified spectrum,(z)-cinnamaldehyde,HMDB0032072,
+no verified spectrum,(z)-octadec-11-enoic_acid,,
+no verified spectrum,(~)-eburnamonine,,
+no verified spectrum,"1,1,1-trichloroethane",HMDB0041791,
+added,"1,1-Dimethylbiguanide",HMDB0001921,HMDB
+no verified spectrum,"1,11-undecanedicarboxylic_acid",HMDB0002327,
+no verified spectrum,"1,2,3-propanetricarboxylic_acid",HMDB0031193,
+no verified spectrum,"1,2,4-trimethylbenzene",HMDB0013733,
+no verified spectrum,"1,2-benzisothiazol-3(2h)-one",HMDB0034413,
+not in D2O: CDCl3,"1,2-dichloroethane",HMDB0029571,bmse000568
+no verified spectrum,"1,2-dimethoxybenzene",HMDB0032139,
+no verified spectrum,"1,3,3-trimethyl-2-[3,7,12,16-tetramethyl-18-(2,6,6-trimethyl-1-cyclohexenyl)octadeca-1,3,5,7,9,11,13,15,17-nonaenyl]cyclohexene",,
+no verified spectrum,"1,3,5-trichloro-2-methoxybenzene",HMDB0029643,
+no verified spectrum,"1,3,7-trimethyluric_acid",HMDB0002123,
+no verified spectrum,"1,3-butadiene",HMDB0041792,
+no verified spectrum,"1,3-butanediol",HMDB0031320,
+no verified spectrum,"1,3-dichloropropene",HMDB0013592,
+no verified spectrum,"1,3-dimethyluracil",HMDB0002144,
+no verified spectrum,"1,3-dimethyluric_acid",HMDB0001857,
+not in D2O: CDCl3,"1,4-cyclohexanedione",,bmse000513
+no verified spectrum,"1,4-dithiane",HMDB0031474,
+no verified spectrum,"1,5-anhydrosorbitol",HMDB0002712,
+no verified spectrum,"1,9-dimethyluric_acid",HMDB0002026,
+no verified spectrum,1-(2-furanyl)-2-propanone,HMDB0032917,
+no verified spectrum,"1-(3,17-dihydroxy-10,13-dimethyl-1,2,3,4,5,6,7,8,9,11,12,14,15,16-tetradecahydrocyclopenta[a]phenanthren-17-yl)ethanone",,
+no verified spectrum,1-butanethiol,HMDB0031322,
+no verified spectrum,1-butylamine,HMDB0031321,
+no verified spectrum,1-heptanol,HMDB0031479,
+no verified spectrum,1-hexadecanol,HMDB0003424,
+no verified spectrum,1-hexanol,HMDB0012971,
+no verified spectrum,1-hexen-3-ol,HMDB0031503,
+not in D2O: Chloroform-d,"1-hydroxyanthracene-9,10-dione",,bmse001201
+no verified spectrum,1-isothiocyanato-2-phenylethane,HMDB0038445,
+no signal,1-kestose,HMDB0011729,BMRB
+not in D2O: Chloroform-d,1-methoxy-4-(2-propenyl)benzene,HMDB0034121,bmse001262
+no verified spectrum,1-methoxy-4-methylbenzene,HMDB0032076,
+no verified spectrum,1-methyladenine,HMDB0011599,
+no verified spectrum,1-methyladenosine,HMDB0003331,
+no verified spectrum,1-methylguanine,HMDB0003282,
+no verified spectrum,1-methylguanosine,HMDB0001563,
+no verified spectrum,1-methylhistamine,HMDB0000898,
+no verified spectrum,1-methylinosine,HMDB0002721,
+not in D2O: CDCl3,1-methylnaphthalene,HMDB0032860,bmse000531
+not in D2O: DMSO,1-methylnicotinamide,HMDB0000699,bmse000639
+no verified spectrum,1-methyluric_acid,HMDB0003099,
+no verified spectrum,1-naphthol,HMDB0012138,
+no verified spectrum,1-nonanol,HMDB0031265,
+no verified spectrum,1-octacosanol,HMDB0034380,
+no verified spectrum,1-pentadecene,HMDB0031082,
+no verified spectrum,1-pentanol,HMDB0013036,
+no verified spectrum,1-penten-3-ol,HMDB0031605,
+no verified spectrum,1-penten-3-one,HMDB0031607,
+no verified spectrum,1-propanethiol,HMDB0034238,
+no verified spectrum,1-propylamine,HMDB0034006,
+no verified spectrum,1-undecanol,HMDB0013113,
+no verified spectrum,"10,13-dimethyl-17-(6-methylheptan-2-yl)-2,3,4,5,6,7,8,9,11,12,14,15,16,17-tetradecahydro-1h-cyclopenta[a]phenanthren-3-ol",,
+no verified spectrum,11-cis-retinaldehyde,HMDB0002152,
+no verified spectrum,11_alpha_hydroxyprogesterone,,
+no verified spectrum,11_ketoetiocholanolone,,
+no verified spectrum,11a-hydroxyprogesterone,HMDB0000920,
+no verified spectrum,12-hydroxydodecanoic_acid,HMDB0002059,
+no verified spectrum,13-cis-retinal,HMDB0006220,
+no verified spectrum,13-cis-retinoic_acid,HMDB0006219,
+no verified spectrum,"13-methyl-7,8,9,11,12,14,15,16-octahydro-6h-cyclopenta[a]phenanthren-17-one",,
+no verified spectrum,16-a-hydroxypregnenolone,HMDB0000315,
+not in D2O: Chloroform-d,16-dehydroprogesterone,HMDB0000995,bmse001135
+no verified spectrum,16_hydroxyhexadecanoic_acid,,
+no verified spectrum,16a-hydroxyestrone,HMDB0000335,
+no verified spectrum,16b-hydroxyestradiol,HMDB0000347,
+no verified spectrum,"17-acetyl-3,17-dihydroxy-10,13-dimethyl-2,3,4,5,6,7,8,9,12,14,15,16-dodecahydro-1h-cyclopenta[a]phenanthren-11-one",,
+no verified spectrum,17-epiestriol,HMDB0000356,
+no verified spectrum,17-hydroxyprogesterone,HMDB0000374,
+no verified spectrum,17a-ethynylestradiol,HMDB0001926,
+no verified spectrum,17a-hydroxypregnenolone,HMDB0000363,
+no verified spectrum,"17alpha,20alpha-dihydroxypregn-4-en-3-one",HMDB0011653,
+no verified spectrum,17alpha-estradiol,HMDB0000429,
+no verified spectrum,1_2_3_4_tetrahydronaphthalene,,
+not in D2O: CDCl3,1_2_4_trichlorobenzene,,bmse000841
+not in D2O: ethanol,1_4_dihydroxy_2_naphthoic_acid,,bmse000688
+no verified spectrum,1_hydroxy_2_naphthoic_acid,,
+no verified spectrum,1_naphthaldehyde,,
+no verified spectrum,1_naphthalenemethanol,,
+no verified spectrum,1r_2r_4r_dihydrocarveol,,
+no verified spectrum,"2,3-butanediol",HMDB0003156,
+no verified spectrum,"2,3-diaminopropionic_acid",HMDB0002006,
+no verified spectrum,"2,3-diethyl-5-methylpyrazine",HMDB0041345,
+no verified spectrum,"2,3-dihydroxyvaleric_acid",HMDB0000421,
+no verified spectrum,"2,3-dimethylpyrazine",HMDB0032971,
+no verified spectrum,"2,3-heptanedione",HMDB0031476,
+no verified spectrum,"2,3-pentanedione",HMDB0031598,
+no verified spectrum,"2,4,5-trimethoxybenzaldehyde",HMDB0029648,
+no verified spectrum,"2,4,6-tribromophenol",HMDB0029642,
+no verified spectrum,"2,4-diamino-6-hydroxypyrimidine",HMDB0002128,
+no verified spectrum,"2,4-diaminobutyric_acid",HMDB0002362,
+not in D2O: benzene,"2,4-dichlorophenol",HMDB0004811,bmse000691
+no verified spectrum,"2,4-dichlorophenoxyacetic_acid",HMDB0041797,
+no verified spectrum,"2,4-toluenediamine",HMDB0041799,
+not in D2O: benzene,"2,5-dichlorophenol",HMDB0041800,bmse000673
+no verified spectrum,"2,5-dimethylfuran",HMDB0033182,
+no verified spectrum,"2,5-dimethylpyrazine",HMDB0035289,
+no verified spectrum,"2,5-furandicarboxylic_acid",HMDB0004812,
+no verified spectrum,"2,6-di-tert-butyl-4-ethylphenol",HMDB0040179,
+no verified spectrum,"2,6-di-tert-butyl-4-methylphenol",HMDB0033826,
+no verified spectrum,"2,6-diethylaniline",HMDB0032782,
+no verified spectrum,"2,6-dimethoxyphenol",HMDB0034158,
+no verified spectrum,"2,6-dimethyl-1,4-benzenediol",HMDB0032137,
+no verified spectrum,"2,6-dimethyl-4-heptanone",HMDB0031417,
+no verified spectrum,"2,6-dimethylphenol",HMDB0032150,
+no verified spectrum,"2,6-dimethylpyrazine",HMDB0035248,
+not in D2O: DMSO,2-(2-hydroxy-5-prop-2-enylphenyl)-4-prop-2-enylphenol,,bmse001189
+not in D2O: DMSO,2-(4-hydroxy-3-prop-2-enylphenyl)-4-prop-2-enylphenol,,bmse001188
+not in D2O: DMSO,2-(hydroxymethyl)anthraquinone,,bmse001260
+no verified spectrum,2-(methylthio)ethanol,HMDB0032425,
+no verified spectrum,2-(methylthiomethyl)furan,HMDB0032916,
+no verified spectrum,"2-[2,3-di(hexanoyloxy)propoxy-hydroxyphosphoryl]oxyethyl-trimethylazanium",,
+no signal,2-[2-[2-[2-(bis(carboxymethyl)amino)ethoxy]ethoxy]ethyl-(carboxymethyl)amino]acetic_acid,HMDB0251718,BMRB
+no verified spectrum,2-[hydroxy-[2-hydroxy-3-[(z)-octadec-9-enoyl]oxypropoxy]phosphoryl]oxyethyl-trimethylazanium,,
+no verified spectrum,2-acetylfuran,HMDB0033127,
+no verified spectrum,2-acetylpyrrole,HMDB0035882,
+no verified spectrum,2-acetylthiophene,HMDB0033133,
+added,2-amino-4-ethylsulfanylbutanoic acid,,GISSMO
+not in D2O: DMSO,2-amino-6-chloropurine,,bmse000984
+no verified spectrum,2-aminoisobutyric_acid,HMDB0001906,
+no verified spectrum,2-aminonaphthalene,HMDB0041802,
+no verified spectrum,2-biphenylol,HMDB0032582,
+no verified spectrum,2-butanol,HMDB0011469,
+no verified spectrum,2-decanone,HMDB0031409,
+no verified spectrum,2-dodecanone,HMDB0031019,
+no verified spectrum,2-ethoxyethanol,HMDB0031213,
+no verified spectrum,2-ethyl-2-hydroxybutyric_acid,HMDB0001975,
+no verified spectrum,2-ethylacrylic_acid,HMDB0001862,
+no verified spectrum,2-ethylbutanal,HMDB0031220,
+no verified spectrum,2-ethylfuran,HMDB0040587,
+no verified spectrum,2-ethylhexanoic_acid,HMDB0031230,
+no verified spectrum,2-ethylpyrazine,HMDB0031849,
+no verified spectrum,2-fucosyllactose,,
+no verified spectrum,2-furancarboxaldehyde,HMDB0032914,
+no verified spectrum,2-furanmethanethiol,HMDB0032915,
+no verified spectrum,2-furanmethanol,HMDB0013742,
+no verified spectrum,2-heptanone,HMDB0003671,
+no verified spectrum,2-hexen-1-ol,HMDB0030952,
+no verified spectrum,2-hydroxy-2-methylbutyric_acid,HMDB0001987,
+no verified spectrum,2-hydroxyacetophenone,HMDB0032568,
+no verified spectrum,2-hydroxyadipic_acid,HMDB0000321,
+no verified spectrum,2-hydroxybenzaldehyde,HMDB0034170,
+no verified spectrum,2-hydroxydecanedioic_acid,HMDB0000424,
+no verified spectrum,2-hydroxyestradiol,HMDB0000338,
+no verified spectrum,2-hydroxyestrone,HMDB0000343,
+not in D2O: CDCl3,2-indanone,,bmse000514
+added,2-Isopropylmalic acid,HMDB0000402,GISSMO
+no verified spectrum,2-isopropylphenol,HMDB0032029,
+no verified spectrum,2-isopropylphenyl_methylcarbamate,HMDB0031797,
+no verified spectrum,2-ketohexanoic_acid,HMDB0001864,
+no verified spectrum,2-methoxy-4-methylphenol,HMDB0032136,
+no verified spectrum,2-methoxyestradiol,HMDB0000405,
+no verified spectrum,2-methoxyestrone,HMDB0000010,
+no verified spectrum,"2-methyl-1,3-dithiolane",HMDB0036179,
+no verified spectrum,2-methyl-2-butanol,HMDB0033772,
+no signal,"2-methyl-3,4,5,6-tetrahydropyrimidine-4-carboxylic_acid",HMDB0240650,BMRB
+no verified spectrum,2-methyl-3-(2-methylpropyl)pyrazine,HMDB0036174,
+no verified spectrum,2-methyl-3-(methyldithio)furan,HMDB0040199,
+no verified spectrum,2-methyl-3-ketovaleric_acid,HMDB0000408,
+no verified spectrum,2-methyl-4-heptanone,HMDB0013821,
+not in D2O: Chloroform-d,"2-methyl-5-propan-2-ylcyclohexa-1,3-diene",,bmse001186
+not in D2O: Chloroform-d,2-methyl-bicyclo(2.2.1)hept-5-ene-2-carboxylic_acid,,bmse001204
+no verified spectrum,2-methylbenzyl,,
+no verified spectrum,2-methylbutyl_acetate,HMDB0034166,
+no verified spectrum,2-methylbutyroylcarnitine,HMDB0000378,
+no verified spectrum,2-methylbutyrylglycine,HMDB0000339,
+no verified spectrum,2-methylhippuric_acid,HMDB0011723,
+no verified spectrum,2-methylpropanal,HMDB0031243,
+no verified spectrum,2-methylpropyl_acetate,HMDB0031246,
+no verified spectrum,2-methylthiophene,HMDB0033118,
+no verified spectrum,2-naphthol,HMDB0012322,
+not in D2O: Methanol-d4,2-nitrophenyl_2-acetamido-2-deoxy-alpha-d-glucopyranoside,,bmse001212
+no verified spectrum,2-nonanol,HMDB0033916,
+no verified spectrum,2-nonanone,HMDB0031266,
+no verified spectrum,2-octanone,HMDB0031294,
+no verified spectrum,2-octenedioic_acid,HMDB0000341,
+no verified spectrum,2-oxohexane,HMDB0005842,
+no verified spectrum,2-pentanol,HMDB0031599,
+no verified spectrum,2-pentanone,HMDB0034235,
+no verified spectrum,2-pentyl-3-phenyl-2-propenal,HMDB0031313,
+no verified spectrum,2-pentylfuran,HMDB0013824,
+no verified spectrum,2-pentylpyridine,HMDB0034893,
+no verified spectrum,2-pentylthiophene,HMDB0040240,
+no verified spectrum,2-phenoxyethanol,HMDB0041607,
+no verified spectrum,2-phenylaminoadenosine,HMDB0001069,
+no verified spectrum,2-phenylethyl_acetate,HMDB0033945,
+no verified spectrum,2-phenylglycine,HMDB0002210,
+no verified spectrum,2-piperidinone,HMDB0011749,
+not in D2O: Chloroform-d,2-prop-2-enylphenol,,bmse001195
+no verified spectrum,2-propanethiol,HMDB0031634,
+no verified spectrum,2-propenyl_3-methylbutanoate,HMDB0038036,
+no verified spectrum,2-propenyl_hexanoate,HMDB0040210,
+no verified spectrum,2-pyrrolidinone,HMDB0002039,
+no verified spectrum,2-thiophenemethanol,HMDB0032993,
+no verified spectrum,2-undecanol,HMDB0030942,
+no verified spectrum,21_hydroxypregnenolone,,
+no verified spectrum,2_2_bis_4_chlorophenyl_ethanol,,
+no verified spectrum,2_3_difluorobenzyl_alcohol,,
+no verified spectrum,2_3_dihydro_2_oxofuran_5_acetate,,
+no verified spectrum,2_4_5_trichlorophenoxyacetic_acid,,
+not in D2O: ethanol,2_4_6_trichlorophenol,,bmse000678
+not in D2O: benzene,2_4_dichlorobenzoic_acid,,bmse000672
+not in D2O: acetone,2_5_dichlorohydroquinone,,bmse000661
+not in D2O: benzene,2_6_dichlorophenol,,bmse000674
+not in D2O: ethanol,2_amino_3_methoxybenzoic_acid,,bmse000692
+not in D2O: CDCl3,2_hexenal,,bmse000536
+not in D2O: CDCl3,2_hydroxyethyl_salicylate,,bmse000750
+no verified spectrum,2_methylnaphthalene,,
+no verified spectrum,2_naphthaldehyde,,
+no verified spectrum,2_naphthalenemethanol,,
+not in D2O: ethanol,2_naphthoic_acid,,bmse000693
+not in D2O: CDCl3,2_thiophenecarboxylic_acid,,bmse000848
+not in D2O: DMSO,"3,16,17-trihydroxy-13-methyl-8,9,11,12,14,15,16,17-octahydro-7h-cyclopenta[a]phenanthren-6-one",,bmse001164
+no verified spectrum,"3,3-dimethylhexane",HMDB0031418,
+no verified spectrum,"3,3-dithiobis[2-methylfuran]",HMDB0040201,
+no verified spectrum,"3,4,5-trimethoxycinnamic_acid",HMDB0002511,
+not in D2O: ethanol,"3,4-dihydroxyhydrocinnamic_acid",HMDB0000423,bmse000680
+no signal,"3,4-dihydroxymandelic_acid",HMDB0001866,HMDB
+no verified spectrum,"3,4-dihydroxyphenylglycol",HMDB0000318,
+no verified spectrum,"3,4-dimethylphenol",HMDB0032151,
+no verified spectrum,"3,5-diiodothyronine",HMDB0000582,
+no verified spectrum,"3,5-dimethylphenyl_methylcarbamate",HMDB0031811,
+no verified spectrum,"3,7-dimethyl-1,6-octadien-3-ol",HMDB0036100,
+no verified spectrum,"3,7-dimethyl-3-octanol",HMDB0035246,
+no verified spectrum,"3,7-dimethylocta-1,6-dien-3-ol",,
+no verified spectrum,"3,7-dimethyluric_acid",HMDB0001982,
+no verified spectrum,3-(3-hydroxyphenyl)-3-hydroxypropanoic_acid,HMDB0002643,
+not in D2O: Chloroform-d,3-(dimethylaminomethyl)indole,HMDB0035762,bmse001182
+no verified spectrum,3-(methylthio)-1-propanol,HMDB0031716,
+no verified spectrum,3-(methylthio)propanal,HMDB0031857,
+no verified spectrum,"3-acetamido-5-(acetyl-methylamino)-2,4,6-triiodo-n-[2,4,5-trihydroxy-6-(hydroxymethyl)oxan-3-yl]benzamide",,
+no verified spectrum,3-aminosalicylic_acid,HMDB0001972,
+not in D2O: Chloroform-d,3-carene,,bmse001268
+no verified spectrum,3-chlorotyrosine,HMDB0001885,
+no verified spectrum,3-deoxyarabinohexonic_acid,HMDB0000346,
+no verified spectrum,3-ethyl-2-methoxypyrazine,HMDB0040054,
+no verified spectrum,3-fucosyllactose,,
+not in D2O: CDCl3,3-furoic_acid,HMDB0000444,bmse000842
+no verified spectrum,3-hexanol,HMDB0031493,
+no signal,3-hexanone,HMDB0000753,HMDB
+no verified spectrum,3-hydroxydodecanedioic_acid,HMDB0000413,
+no verified spectrum,3-hydroxydodecanoic_acid,HMDB0000387,
+no verified spectrum,3-hydroxyglutaric_acid,HMDB0000428,
+no verified spectrum,3-hydroxyisovaleric_acid,HMDB0000754,
+added,3-hydroxymandelic-acid,,GISSMO
+no verified spectrum,3-hydroxysebacic_acid,HMDB0000350,
+no verified spectrum,3-hydroxysuberic_acid,HMDB0000325,
+no verified spectrum,3-hydroxytetradecanedioic_acid,HMDB0000394,
+no verified spectrum,3-indoleacetonitrile,HMDB0006524,
+no verified spectrum,3-indolebutyric_acid,HMDB0002096,
+no verified spectrum,3-mercaptopyruvic_acid,HMDB0001368,
+no verified spectrum,3-methoxy-4-hydroxyphenylglycol_sulfate,HMDB0003332,
+no verified spectrum,3-methoxybenzenepropanoic_acid,HMDB0011751,
+no verified spectrum,3-methoxytyrosine,HMDB0001434,
+no verified spectrum,3-methyl-1-butylamine,HMDB0031659,
+no verified spectrum,3-methyl-2-butanol,HMDB0033777,
+no verified spectrum,3-methyladenine,HMDB0011600,
+not in D2O: CDCl3,3-methylbenzaldehyde,HMDB0029637,bmse000552
+no verified spectrum,3-methylbutyl_hexanoate,HMDB0033618,
+no verified spectrum,3-methylcrotonylglycine,HMDB0000459,
+no verified spectrum,3-methylheptane,HMDB0031583,
+no verified spectrum,3-methylhistamine,HMDB0001861,
+no verified spectrum,3-methylhistidine,HMDB0000479,
+not in D2O: CDCl3,3-methylindole,HMDB0000466,bmse000516
+added,3-methylphenylacetate,,GISSMO
+no verified spectrum,3-methylphenylacetic_acid,HMDB0002222,
+no verified spectrum,3-methylxanthine,HMDB0001886,
+no verified spectrum,3-nitrotyrosine,HMDB0001904,
+no verified spectrum,"3-octadecoxypropane-1,2-diol",,
+no verified spectrum,3-octen-2-one,HMDB0033547,
+no verified spectrum,3-oxo-n-(2-oxooxolan-3-yl)dodecanamide,,
+no verified spectrum,3-oxoadipic_acid,HMDB0000398,
+no verified spectrum,3-phenoxypropionic_acid,HMDB0002229,
+no verified spectrum,3-phenylbutyric_acid,HMDB0001955,
+no verified spectrum,3-phenylpropanal,HMDB0033716,
+no verified spectrum,3-pyridylacetic_acid,HMDB0001538,
+no signal,3-sialyllactose_sodium_salt,,BMRB
+no verified spectrum,3_acetylphenylboronic_acid,,
+no verified spectrum,3_deazauridine_2,,
+not in D2O: CDCl3,3_isochromanone,,bmse000539
+not in D2O: methanol,3_methoxybenzamide,,bmse000775
+no verified spectrum,3_methylbenzyl_alcohol,,
+not in D2O: CDCl3,3_methylsalicylaldehyde,,bmse000843
+not in D2O: CDCl3,3_morpholinopropylamine,,bmse000981
+no verified spectrum,3_nitrofluoranthene,,
+no verified spectrum,"3a,6a,7b-trihydroxy-5b-cholanoic_acid",HMDB0000364,
+no verified spectrum,"3a,6b,7b-trihydroxy-5b-cholanoic_acid",HMDB0000415,
+no verified spectrum,3b-hydroxy-5-cholenoic_acid,HMDB0000308,
+no verified spectrum,"4,4,10,13,14-pentamethyl-17-(6-methylhept-5-en-2-yl)-2,3,5,6,7,11,12,15,16,17-decahydro-1h-cyclopenta[a]phenanthren-3-ol",,
+not in D2O: CDCl3,"4,4-dichlorobenzophenone",,bmse000517
+no verified spectrum,"4,4-methylenedianiline",HMDB0041808,
+no verified spectrum,"4-(1,1,3,3-tetramethylbutyl)-phenol",HMDB0013825,
+no verified spectrum,4-(methylnitrosamino)-1-(3-pyridyl)-1-butanone,HMDB0011603,
+not in D2O: CDCl3,4-4-ddd,,bmse000845
+no signal,"4-amino-1,2-oxazolidin-3-one",HMDB0014405,GISSMO
+added,4-Aminohippuric acid,HMDB0001867,HMDB
+not in D2O: CDCl3,4-chloroacetophenone,,bmse000518
+no verified spectrum,4-chlorobenzaldehyde,,
+added,4-Chlorophenoxyacetic acid,HMDB0246399,GISSMO
+no verified spectrum,4-ethylbenzoic_acid,HMDB0002097,
+no verified spectrum,4-ethylphenol,HMDB0029306,
+no verified spectrum,4-heptanone,HMDB0004814,
+not in D2O: Chloroform-d,"4-hydroxy-2,5-dimethylfuran-3-one",,bmse001203
+added,4-Hydroxy-3-methoxybenzenemethanol,HMDB0032012,GISSMO
+no verified spectrum,4-hydroxy-3-methylbenzoic_acid,HMDB0004815,
+not in D2O: DMSO,4-hydroxybenzoic_acid,HMDB0000500,bmse000583
+no verified spectrum,4-hydroxyphenylpyruvic_acid,HMDB0000707,
+not in D2O: Methanol-d4,4-hydroxytamoxifen,,bmse001236
+not in D2O: Chloroform-d,4-ipomeanol,,bmse001338
+no verified spectrum,4-methoxyacetophenone,HMDB0032570,
+no verified spectrum,4-methoxybenzaldehyde,HMDB0029686,
+no verified spectrum,4-methoxycinnamic_acid,HMDB0002040,
+no verified spectrum,4-methoxyphenylacetic_acid,HMDB0002072,
+not in D2O: Chloroform-d,4-methyl-1-propan-2-ylbicyclo[3.1.0]hexan-4-ol_hydrate,,bmse001180
+no verified spectrum,4-methyl-2-(1-methylethyl)thiazole,HMDB0037156,
+no verified spectrum,"4-methyl-3-penten-2-one,_9ci",HMDB0031563,
+no verified spectrum,4-methylacetophenone,HMDB0032608,
+not in D2O: CDCl3,4-methylbenzaldehyde,HMDB0029638,bmse000527
+no verified spectrum,4-methylbenzyl,,
+no verified spectrum,4-methylthiazole,HMDB0033116,
+no verified spectrum,4-tert-butylphenol,HMDB0032063,
+no verified spectrum,4-tert-butylphenyl_salicylate,HMDB0041314,
+not in D2O: CDCl3,4_4_ddd,,bmse000845
+no verified spectrum,4_4_ddt,,
+no verified spectrum,4_isopropylbenzoic_acid,,
+no verified spectrum,"4a,5-dimethyl-3-prop-1-en-2-yl-2,3,4,5,6,7-hexahydro-1h-naphthalene",,
+not in D2O: Chloroform-d,"5,10,15,20-tetraphenyl-21h,23h-porphine_zinc",,bmse001106
+not in D2O: DMSO,"5,7-dihydroxy-2-(4-hydroxyphenyl)chromen-4-one",,bmse001124
+not in D2O: DMSO,"5,7-dihydroxy-2-phenylchromen-4-one",,bmse001103
+not in D2O: Acetone-d6,"5,7-dihydroxy-3-(4-methoxyphenyl)chromen-4-one",,bmse001173
+not in D2O: DMSO,"5-[(e)-2-(4-hydroxyphenyl)ethenyl]benzene-1,3-diol",,bmse001136
+no verified spectrum,"5-alpha-pregnane-3,20-dione(allo)",,
+no signal,5-aminolevulinic_acid,HMDB0001149,HMDB
+added,5-Aminopentanoic acid,HMDB0003355,GISSMO
+not in D2O: Chloroform-d,"5-chloro-2-(2,4-dichlorophenoxy)phenol",,bmse001192
+not in D2O: DMSO,5-hydroxy-2-(hydroxymethyl)pyran-4-one,,bmse001196
+not in D2O: Chloroform-d,"5-hydroxy-2-methylnaphthalene-1,4-dione",,bmse001187
+no verified spectrum,5-hydroxylysine,HMDB0000450,
+no verified spectrum,5-hydroxymethyl-2-furancarboxaldehyde,HMDB0034355,
+no verified spectrum,5-hydroxymethyl-4-methyluracil,HMDB0000544,
+no verified spectrum,5-hydroxytryptophol,HMDB0001855,
+no verified spectrum,5-isopropyl-2-methylphenol,HMDB0035770,
+no verified spectrum,5-methoxydimethyltryptamine,HMDB0002004,
+no verified spectrum,5-methoxysalicylic_acid,HMDB0001868,
+no verified spectrum,5-methoxytryptamine,HMDB0004095,
+no verified spectrum,5-methoxytryptophol,HMDB0001896,
+not in D2O: Acetone-d6,5-methyl-2-furancarboxaldehyde,HMDB0033002,bmse001191
+no verified spectrum,5-methyl-2-hexanone,HMDB0031549,
+no verified spectrum,5-methyl-2-thiophenecarboxaldehyde,HMDB0032431,
+no verified spectrum,5-methylcytidine,HMDB0000982,
+no verified spectrum,5-methylthioadenosine,HMDB0001173,
+no signal,5-phenylvaleric_acid,HMDB0002043,BMRB
+no verified spectrum,5-thymidylic_acid,HMDB0001227,
+not in D2O: CD3OD,5_6_dimethylbenzimidazole,,bmse000881
+no verified spectrum,5_methoxy_3_indoleacetic_acid,,
+no verified spectrum,"5alpha-androstane-3beta,17beta-diol",HMDB0000493,
+no verified spectrum,5alpha-cholestanol,HMDB0000908,
+no verified spectrum,5alpha-cholestanone,HMDB0000871,
+no verified spectrum,5beta-coprostanol,HMDB0000577,
+no verified spectrum,5z-dodecenoic_acid,HMDB0000529,
+no verified spectrum,6-dimethylaminopurine,HMDB0000473,
+no verified spectrum,"6-hydroxy-1,4a-dimethyl-2,3,4,9,10,10a-hexahydrophenanthrene-1-carboxylic_acid",,
+no verified spectrum,6-hydroxydopamine,HMDB0001537,
+no verified spectrum,6-hydroxyflavanone,,
+no verified spectrum,6-methyladenine,HMDB0002099,
+no verified spectrum,6-phosphogluconic_acid,HMDB0001316,
+no signal,6-sialyllactose_sodium_salt,,BMRB
+not in D2O: DMSO,6_chloropurine_riboside,,bmse000907
+not in D2O: methanol,6_ethylmercaptopurine,,bmse000732
+no verified spectrum,7-dehydrocholesterol,HMDB0000032,
+not in D2O: DMSO,7-hydroxyflavone,,bmse001159
+no verified spectrum,7-ketocholesterol,HMDB0000501,
+no verified spectrum,7-methyladenine,HMDB0011614,
+no verified spectrum,7-methylguanosine,HMDB0001107,
+no verified spectrum,7-methylxanthine,HMDB0001991,
+no verified spectrum,9-cis-retinal,HMDB0006218,
+no verified spectrum,9-methyluric_acid,HMDB0001973,
+not in D2O: CDCl3,9_fluorenone,,bmse000521
+not in D2O: CDCl3,9_hydroxyfluorene,,bmse000564
+no verified spectrum,[(2r)-3-hexadecanoyloxy-2-[(z)-octadec-9-enoyl]oxypropyl]_2-trimethylazaniumylethyl_phosphate,,
+no verified spectrum,a-ketoglutaric_acid_oxime,HMDB0002467,
+not in D2O: Chloroform-d,acenaphthene,,bmse001198
+not in D2O: CDCl3,acetaldehyde,HMDB0000990,bmse000647
+no verified spectrum,acetaminophen,HMDB0001859,
+no verified spectrum,acetoacetic_acid,HMDB0000060,
+no verified spectrum,acetoin,HMDB0003243,
+added,Acetone,HMDB0001659,HMDB
+not in D2O: DMSO,acetosyringone,,bmse000576
+not in D2O: DMSO,acetovanillone,,bmse000584
+no verified spectrum,acetyl_tributyl_citrate,HMDB0034159,
+no verified spectrum,acetylcysteine,HMDB0001890,
+no verified spectrum,acetylglycine,HMDB0000532,
+no verified spectrum,acrolein,HMDB0041822,
+no verified spectrum,"adenosine_3,5-diphosphate",HMDB0000061,
+no verified spectrum,adenosine_phosphosulfate,HMDB0001003,
+no verified spectrum,adenylsuccinic_acid,HMDB0000536,
+no verified spectrum,adrenosterone,,
+not in D2O: DMSO,aesculetin,HMDB0030819,bmse000986
+no verified spectrum,alachlor,HMDB0031766,
+no verified spectrum,albendazole,HMDB0014659,
+no verified spectrum,aldosterone,HMDB0000037,
+no verified spectrum,aleuritic_acid,,
+no verified spectrum,all-trans-retinoic_acid,HMDB0001852,
+no verified spectrum,allantoic_acid,HMDB0001209,
+no verified spectrum,allyl_isothiocyanate,HMDB0005843,
+no verified spectrum,aloin,,
+no verified spectrum,alpha-hydroxyhippuric_acid,HMDB0002404,
+no verified spectrum,alpha-hydroxyisobutyric_acid,HMDB0000729,
+no verified spectrum,alpha-linolenic_acid,HMDB0001388,
+no verified spectrum,alpha-naphthoic-acid,,
+no verified spectrum,alpha-pinene-oxide,,
+no verified spectrum,alpha-terpinene,HMDB0036995,
+no verified spectrum,alpha-terpineol,HMDB0004043,
+no verified spectrum,alpha-terpineol_acetate,HMDB0032051,
+no verified spectrum,alpha-tocopherol,HMDB0001893,
+no verified spectrum,alpha_lipoamide,,
+no verified spectrum,alpha_terpineol,,
+no verified spectrum,amantadine,HMDB0015051,
+no signal,aminopterin,HMDB0001833,HMDB
+no verified spectrum,amlodipine,HMDB0005018,
+no verified spectrum,amobarbital,HMDB0015440,
+no verified spectrum,amylose,HMDB0003403,
+no verified spectrum,anabasine,HMDB0004350,
+no verified spectrum,anatabine,HMDB0004476,
+no verified spectrum,androstanedione,HMDB0000899,
+no verified spectrum,androstenedione,HMDB0000053,
+no verified spectrum,androsterone,,
+no verified spectrum,aniline,HMDB0003012,
+no verified spectrum,anisole,HMDB0033895,
+no verified spectrum,arachidic_acid,HMDB0002212,
+no verified spectrum,arachidyl_alcohol,HMDB0011619,
+no signal,arecoline_hydrobromide,HMDB0030353,BMRB
+no verified spectrum,argininosuccinic_acid,HMDB0000052,
+no verified spectrum,artemisinin,,
+no verified spectrum,ascochitine,,
+no verified spectrum,aspartame,HMDB0001894,
+no verified spectrum,aspartyllysine,HMDB0004987,
+no verified spectrum,aspartylphenylalanine,HMDB0000706,
+no verified spectrum,aspergillic_acid,,
+no verified spectrum,aspirin,HMDB0001879,
+no verified spectrum,atenolol,HMDB0001924,
+no verified spectrum,atorvastatin,,
+no verified spectrum,atrazine,HMDB0041830,
+no verified spectrum,azacitidine,HMDB0015063,
+no verified spectrum,azelaic_acid,HMDB0000784,
+no verified spectrum,azithromycin,HMDB0014352,
+not in D2O: Chloroform-d,azulene,,bmse001162
+no signal,bactobolin,,BMRB
+not in D2O: DMSO,bakuchiol,,bmse001315
+no verified spectrum,behenic_acid,HMDB0000944,
+no verified spectrum,benzaldehyde,HMDB0006115,
+not in D2O: ethanol,benzamide,,bmse000668
+no verified spectrum,benzene,HMDB0001505,
+no verified spectrum,benzenebutanoic_acid,HMDB0000543,
+no verified spectrum,benzocaine,HMDB0004992,
+no verified spectrum,benzofuran,HMDB0032929,
+no verified spectrum,benzophenone,HMDB0032049,
+no verified spectrum,benzothiazole,HMDB0032930,
+no verified spectrum,benzyl-dimethyl-tetradecylazanium_chloride,,
+no verified spectrum,benzyl_acetate,HMDB0031310,
+no verified spectrum,benzylamine,HMDB0033871,
+no verified spectrum,berberine,HMDB0003409,
+not in D2O: Methanol-d4,berberine_chloride,,bmse001193
+not in D2O: CDCl3,bergapten,HMDB0030637,bmse000758
+no verified spectrum,beta-aminopropionitrile,HMDB0004101,
+not in D2O: Methanol-d4,beta-caryophyllene,,bmse001252
+no verified spectrum,beta-d-galactopyranosyl-(1->4)-beta-d-galactopyranosyl-(1->4)-d-galactose,HMDB0038852,
+no verified spectrum,beta-geraniol,HMDB0035155,
+not in D2O: Chloroform-d,beta-ionone,HMDB0036565,bmse001269
+not in D2O: Chloroform-d,beta-lapachone,,bmse001304
+no verified spectrum,beta-myrcene,HMDB0038169,
+no verified spectrum,beta-sitosterol,HMDB0000852,
+no verified spectrum,beta-yohimbine,,
+no verified spectrum,beta_carotene,,
+no verified spectrum,betulin,,
+not in D2O: Chloroform-d,bicuculline,,bmse001278
+no verified spectrum,bilirubin,HMDB0000054,
+no verified spectrum,biocytin,HMDB0003134,
+no verified spectrum,biopterin,HMDB0000468,
+no verified spectrum,biotin,HMDB0000030,
+not in D2O: CDCl3,biphenyl,HMDB0034437,bmse000506
+no verified spectrum,bis(methylthio)methane,HMDB0031317,
+no verified spectrum,bis_2_butoxyethyl_phthalate,,
+no verified spectrum,bisphenol_a,HMDB0032133,
+no verified spectrum,boldine,,
+no verified spectrum,bromomethane,HMDB0031524,
+no verified spectrum,brompheniramine,HMDB0001941,
+no verified spectrum,busulfan,HMDB0015143,
+no verified spectrum,but-2-enoic_acid,HMDB0010720,
+not in D2O: CDCl3,butanal,HMDB0003543,bmse000972
+no verified spectrum,butanone,HMDB0000474,
+no verified spectrum,butyl_butyrate,HMDB0039620,
+no verified spectrum,butyl_formate,HMDB0040575,
+no verified spectrum,butyl_isobutyrate,HMDB0040251,
+no verified spectrum,butyl_lactate,HMDB0040254,
+no verified spectrum,butylparaben,HMDB0032575,
+no verified spectrum,caffeic_acid,HMDB0001964,
+not in D2O: Chloroform-d,camphor,,bmse001230
+not in D2O: DMSO,camptothecin,,bmse001324
+not in D2O: DMSO,canadine,,bmse001234
+no verified spectrum,canrenone,HMDB0003033,
+no verified spectrum,canthaxanthin,HMDB0003154,
+no verified spectrum,capric_acid,HMDB0000511,
+no verified spectrum,caprylic_acid,HMDB0000482,
+no verified spectrum,capryloylglycine,HMDB0000832,
+not in D2O: Chloroform-d,capsaicin,,bmse001241
+no verified spectrum,captafol,HMDB0031669,
+no verified spectrum,carbamazepine,HMDB0014704,
+no verified spectrum,carbazole,,
+no verified spectrum,carbon_disulfide,HMDB0036574,
+no verified spectrum,carbon_tetrachloride,HMDB0031330,
+not in D2O: DMSO,cardamonin,,bmse001316
+not in D2O: Methanol-d4,catechin,HMDB0002780,bmse001147
+no verified spectrum,chalcone,HMDB0003066,
+no verified spectrum,chartreusin_from_streptomyces_chartreusis,,
+not in D2O: DMSO,chelidonic_acid,,bmse001245
+not in D2O: acetone,chenodeoxycholic_acid,HMDB0000518,bmse000908
+not in D2O: Methanol-d4,chicoric_acid,,bmse001261
+no verified spectrum,chlormezanone,HMDB0015309,
+no verified spectrum,chloroacetaldehyde,HMDB0013860,
+no verified spectrum,chlorobenzene,HMDB0041855,
+no verified spectrum,chloroform,HMDB0029596,
+added,chlorohydroquinone,,GISSMO
+no verified spectrum,chloromethyl_methyl_ether,HMDB0031332,
+no verified spectrum,chlorpheniramine,HMDB0001944,
+no verified spectrum,chlorpyrifos,HMDB0041856,
+no verified spectrum,cholestenone,HMDB0000921,
+no verified spectrum,cholesterol,HMDB0000067,
+no verified spectrum,cholesterol_sulfate,HMDB0000653,
+no verified spectrum,cholesteryl_stearate,,
+no verified spectrum,chrysophanol,,
+no verified spectrum,cimetidine,HMDB0014644,
+no verified spectrum,cinnamaldehyde,HMDB0003441,
+no verified spectrum,cis-3-hexenyl_acetate,HMDB0040215,
+no verified spectrum,cis-4-octenedioic_acid,HMDB0004982,
+no verified spectrum,cis-caffeic_acid,HMDB0003501,
+no verified spectrum,cis-citral,HMDB0035092,
+not in D2O: Chloroform-d,cis-jasmone,,bmse001246
+not in D2O: CDCl3,cis_1_3_dichloropropene,,bmse000718
+no verified spectrum,cis_fenpropimorph,,
+no verified spectrum,citalopram,HMDB0005038,
+no verified spectrum,citicoline,HMDB0001413,
+no verified spectrum,clofenotane,HMDB0032127,
+no verified spectrum,clotrimazole,HMDB0001922,
+no verified spectrum,coenzyme_a,HMDB0001423,
+no verified spectrum,colchicine,,
+not in D2O: Chloroform-d,confertifoline,,bmse001292
+no verified spectrum,coniferin,,
+not in D2O: DMSO,coniferyl_alcohol,,bmse000602
+not in D2O: DMSO,cordycepin,,bmse001307
+no verified spectrum,cortexolone,HMDB0000015,
+no verified spectrum,cortexolone_2,,
+no verified spectrum,corticosterone,HMDB0001547,
+no verified spectrum,cortisone,HMDB0002802,
+no verified spectrum,coumarin,HMDB0001218,
+"not in D2O: Chloroform-d, Methanol-d4",coumestrol,,bmse001216
+no verified spectrum,cuminaldehyde,HMDB0002214,
+no verified spectrum,cuminyl_alcohol,HMDB0031817,
+no verified spectrum,cyclohexane,HMDB0029597,
+no verified spectrum,cyclohexanecarboxylic_acid,,
+no verified spectrum,cyclohexyl_acetate,HMDB0031352,
+no verified spectrum,cyclopentanone,HMDB0031407,
+no verified spectrum,cyclophosphamide,HMDB0014672,
+no verified spectrum,cyprodinil,HMDB0034853,
+no verified spectrum,cyromazine,HMDB0029862,
+no verified spectrum,cysteine-s-sulfate,HMDB0000731,
+no verified spectrum,cysteineglutathione_disulfide,HMDB0000656,
+added,Cytosine,HMDB0000630,GISSMO
+no verified spectrum,d-biopterin,HMDB0000633,
+no verified spectrum,d-citronellol,HMDB0035093,
+no signal,"d-glucurono-6,3-lactone",HMDB0006355,BMRB
+no verified spectrum,d-pantethine,HMDB0003828,
+no verified spectrum,d-ribose,HMDB0000283,
+no verified spectrum,d-ribose_5-phosphate,HMDB0001548,
+no verified spectrum,daidzein,HMDB0003312,
+not in D2O: DMSO,daidzein_2,,bmse001298
+no verified spectrum,danazol,HMDB0002835,
+not in D2O: DMSO,daphnetin_diacetate,,bmse001282
+no verified spectrum,dapsone,HMDB0014395,
+no verified spectrum,daunorubicin,,
+no verified spectrum,dcmp,HMDB0001202,
+no signal,deacetyldiltiazem,HMDB0002873,HMDB
+no verified spectrum,decanal,HMDB0011623,
+no verified spectrum,decanoylcarnitine,HMDB0000651,
+no verified spectrum,decyl_alcohol,HMDB0011624,
+no verified spectrum,dehydroabietic_acid,,
+no verified spectrum,dehydroascorbic_acid,HMDB0001264,
+no verified spectrum,dehydroepiandrosterone,HMDB0000077,
+no verified spectrum,delta-decalactone,HMDB0037116,
+no verified spectrum,delta-hexanolactone,HMDB0000453,
+no verified spectrum,delta_tocopherol,,
+no verified spectrum,deltamethrin,HMDB0041866,
+no verified spectrum,deoxyadenosine,HMDB0000101,
+no verified spectrum,deoxyadenosine_monophosphate,HMDB0000905,
+no verified spectrum,deoxyadenosine_triphosphate,HMDB0001532,
+no verified spectrum,deoxycholic_acid,HMDB0000626,
+no verified spectrum,deoxycholic_acid_glycine_conjugate,HMDB0000631,
+no verified spectrum,deoxycorticosterone,HMDB0000016,
+no verified spectrum,deoxyguanosine,HMDB0000085,
+not in D2O: DMSO,desaminotyrosine,HMDB0002199,bmse001295
+no verified spectrum,dextromethorphan,HMDB0001920,
+no verified spectrum,"di-2-propenyl_disulfide,_9ci",HMDB0033966,
+no verified spectrum,di-2-propenyl_sulfide,HMDB0036491,
+no verified spectrum,diacetyl,HMDB0003407,
+no verified spectrum,diaminopimelic_acid,HMDB0001370,
+no verified spectrum,diazinon,HMDB0032943,
+not in D2O: CDCl3,dibenzofuran,,bmse000548
+no verified spectrum,dibenzyl_ether,HMDB0032078,
+no verified spectrum,dibutyl_decanedioate,HMDB0041220,
+no verified spectrum,dibutyl_phthalate,HMDB0033244,
+no verified spectrum,dichloroisoproterenol_hydrochloride,,
+no verified spectrum,dichloromethane,HMDB0031548,
+no verified spectrum,dichlorvos,HMDB0033956,
+no verified spectrum,diethyl_disulfide,HMDB0029572,
+no verified spectrum,diethyl_malonate,HMDB0029573,
+no verified spectrum,diethyl_succinate,HMDB0033838,
+no verified spectrum,diethyl_sulfide,HMDB0031666,
+no verified spectrum,diethyl_tartrate,HMDB0033584,
+no verified spectrum,diethylamine,HMDB0041878,
+no verified spectrum,diethylenetriamine,HMDB0031413,
+no verified spectrum,diethylthiophosphate,HMDB0001460,
+no verified spectrum,diflubenzuron,HMDB0031778,
+no verified spectrum,digitoxin,HMDB0015468,
+no verified spectrum,digoxigenin,,
+no verified spectrum,dihomo-gamma-linolenic_acid,HMDB0002925,
+no verified spectrum,dihydro-5-methyl-2(3h)-furanone,HMDB0033840,
+no verified spectrum,dihydro_sinapyl_alcohol,,
+no verified spectrum,dihydroandrosterone,HMDB0000554,
+no verified spectrum,dihydrobiopterin,HMDB0000038,
+no verified spectrum,dihydrobrassicasterol,HMDB0034224,
+no verified spectrum,dihydrocarvone,HMDB0036079,
+no verified spectrum,dihydroconiferyl_alcohol,,
+no verified spectrum,dihydroisorescinnamine,,
+no verified spectrum,dihydrotestosterone,HMDB0002961,
+no signal,dihydrothymine,HMDB0000079,HMDB
+no verified spectrum,diisobutyl_phthalate,HMDB0013835,
+no verified spectrum,diisopropyl_sulfide,HMDB0029579,
+no verified spectrum,dimethicone,HMDB0033532,
+no verified spectrum,dimethyl_adipate,HMDB0041606,
+no verified spectrum,dimethyl_succinate,HMDB0033837,
+added,Dimethyl sulfone,HMDB0004983,HMDB
+no verified spectrum,dimethyl_sulfoxide,HMDB0002151,
+no verified spectrum,dimethylallylpyrophosphate,HMDB0001120,
+added,Dimethylamine,HMDB0000087,HMDB
+no verified spectrum,dimethylethanolamine,HMDB0032231,
+no verified spectrum,dimethylmalonic_acid,HMDB0002001,
+no verified spectrum,dimethylsulfide,HMDB0002303,
+no verified spectrum,dioctyl_sulfosuccinate,,
+no verified spectrum,diosgenin,,
+not in D2O: DMSO,diosmetin,,bmse001257
+no verified spectrum,diphenhydramine,HMDB0001927,
+no verified spectrum,diphenylacetic_acid,,
+no verified spectrum,diphenylamine,HMDB0032562,
+no verified spectrum,dipropyl_disulfide,HMDB0031472,
+no verified spectrum,disulfiram,HMDB0014960,
+not in D2O: CDCl3,"dl-3,4-dihydroxymandelic_acid",,bmse000684
+no verified spectrum,dl-dopa,HMDB0000609,
+no verified spectrum,dl-homocystine,HMDB0000575,
+not in D2O: Chloroform-d,dl-kavain,,bmse001227
+no verified spectrum,dl_3_4_dihydroxymandelic_acid,,
+no verified spectrum,docosanol,HMDB0014770,
+no verified spectrum,dodecanedioic_acid,HMDB0000623,
+no verified spectrum,dodecanoic_acid,HMDB0000638,
+no verified spectrum,dodecanol,HMDB0011626,
+no verified spectrum,doxylamine,HMDB0001936,
+no verified spectrum,dump,HMDB0001409,
+no verified spectrum,elaidic_acid,HMDB0000573,
+not in D2O: DMSO,ellagic_acid,HMDB0002899,bmse001190
+not in D2O: DMSO,ellipticine,,bmse001340
+not in D2O: DMSO,emodin,,bmse001297
+no verified spectrum,enilconazole,HMDB0031794,
+no verified spectrum,epi-coprostanol,HMDB0001569,
+no verified spectrum,epiandrosterone,HMDB0000365,
+no verified spectrum,epicatechin,HMDB0001871,
+not in D2O: benzene,epichlorohydrin,,bmse000722
+no verified spectrum,epietiocholanolone,HMDB0000546,
+no verified spectrum,epitestosterone,HMDB0000628,
+no verified spectrum,epsilon-caprolactone,,
+no verified spectrum,ergocalciferol,HMDB0000900,
+no verified spectrum,ergosterol,,
+no verified spectrum,erucic_acid,HMDB0002068,
+no verified spectrum,erythromycin,,
+no verified spectrum,erythrose,HMDB0002649,
+no verified spectrum,estradiene_dione-3-keta,,
+no verified spectrum,estradiol,HMDB0000151,
+no verified spectrum,estriol,HMDB0000153,
+no verified spectrum,estrone,HMDB0000145,
+no verified spectrum,ethenodeoxyadenosine,HMDB0001786,
+no verified spectrum,ethenyl_acetate,HMDB0031209,
+no verified spectrum,ethiofencarb,HMDB0031782,
+no verified spectrum,ethoxyquin,HMDB0039531,
+no verified spectrum,ethyl_3-phenylpropanoate,HMDB0040411,
+not in D2O: CDCl3,ethyl_4_aminobutyrate,,bmse000973
+no verified spectrum,ethyl_acetate,HMDB0031217,
+not in D2O: CDCl3,ethyl_acetoacetate,,bmse000944
+no verified spectrum,ethyl_acrylate,HMDB0033978,
+no verified spectrum,ethyl_benzoate,HMDB0033967,
+no verified spectrum,ethyl_butyrate,HMDB0033889,
+no verified spectrum,ethyl_carbamate,HMDB0031219,
+no verified spectrum,ethyl_decanoate,HMDB0030998,
+no verified spectrum,ethyl_dodecanoate,HMDB0033788,
+no verified spectrum,ethyl_formate,HMDB0031229,
+no verified spectrum,ethyl_hexadecanoate,HMDB0029811,
+no verified spectrum,ethyl_hexanoate,HMDB0040209,
+no verified spectrum,ethyl_isopropyl_ketone,HMDB0005846,
+no verified spectrum,ethyl_isovalerate,HMDB0030028,
+no verified spectrum,ethyl_lactate,HMDB0040735,
+no verified spectrum,ethyl_nonanoate,HMDB0040193,
+no verified spectrum,ethyl_octanoate,HMDB0040195,
+no verified spectrum,ethyl_pentanoate,HMDB0040297,
+no verified spectrum,ethyl_pentyl_ketone,HMDB0031295,
+no verified spectrum,ethyl_phenylacetate,HMDB0032618,
+no verified spectrum,ethyl_propionate,HMDB0030058,
+no verified spectrum,ethyl_salicylate,HMDB0029817,
+no verified spectrum,ethyl_stearate,HMDB0034156,
+no verified spectrum,ethyl_tetradecanoate,HMDB0034153,
+no verified spectrum,ethyl_tiglate,HMDB0038962,
+no verified spectrum,ethyl_vanillin,HMDB0029665,
+no verified spectrum,ethylamine,HMDB0013231,
+no verified spectrum,ethylmethylacetic_acid,HMDB0002176,
+no verified spectrum,ethylparaben,HMDB0032573,
+no verified spectrum,etiocholanolone,HMDB0000490,
+no verified spectrum,etoposide,HMDB0014911,
+not in D2O: Chloroform-d,eucalyptol,HMDB0004472,bmse001185
+no verified spectrum,eugenol,HMDB0005809,
+no verified spectrum,fad,HMDB0001248,
+no verified spectrum,fadh,HMDB0001197,
+no verified spectrum,famotidine,HMDB0001919,
+no verified spectrum,fapy-adenine,HMDB0004816,
+not in D2O: Chloroform-d,fastigillin_b,,bmse001291
+no verified spectrum,fenchol,,
+no verified spectrum,fenthion,HMDB0033209,
+no verified spectrum,fenvalerate,HMDB0031791,
+no verified spectrum,flavin_mononucleotide,HMDB0001520,
+not in D2O: CDCl3,flavone,HMDB0003075,bmse000945
+no verified spectrum,fludrocortisone,,
+no verified spectrum,fluorene,,
+no verified spectrum,fluorescein,HMDB0014831,
+no verified spectrum,fluorouracil,HMDB0014684,
+no verified spectrum,flurbiprofen,HMDB0014850,
+no verified spectrum,flusilazole,HMDB0039815,
+no verified spectrum,folate,,
+no verified spectrum,folic_acid,HMDB0000121,
+no verified spectrum,folpet,HMDB0031792,
+no verified spectrum,formiminoglycine,,
+not in D2O: DMSO,formononetin,,bmse001231
+no verified spectrum,furan,HMDB0013785,
+no verified spectrum,furosemide,HMDB0001933,
+no verified spectrum,gabapentin,HMDB0005015,
+no verified spectrum,galacturonic_acid,HMDB0002545,
+not in D2O: DMSO,galangin,,bmse001320
+no verified spectrum,gamma-butyrolactone,HMDB0000549,
+no verified spectrum,gamma-caprolactone,HMDB0003843,
+no verified spectrum,gamma-cyclodextrin,HMDB0029927,
+no verified spectrum,gamma-glutamylcysteine,HMDB0001049,
+no verified spectrum,gamma-terpinene,HMDB0005806,
+not in D2O: Chloroform-d,gelcohol,,bmse001289
+no verified spectrum,gemfibrozil,HMDB0015371,
+no verified spectrum,genipin,,
+not in D2O: DMSO,genistein,HMDB0003217,bmse001174
+not in D2O: CD3OD,gentisaldehyde,,bmse000962
+no verified spectrum,geranial,HMDB0035078,
+no verified spectrum,geraniol,HMDB0005812,
+not in D2O: Methanol-d4,ginkgotoxin,,bmse001224
+no verified spectrum,glucosamine_6-sulfate,HMDB0000592,
+no verified spectrum,glutaral,HMDB0029599,
+no verified spectrum,glutarylglycine,HMDB0000590,
+no verified spectrum,glyceric_acid,HMDB0000139,
+no verified spectrum,glycerophosphocholine,HMDB0000086,
+no verified spectrum,glycodesoxycholic_acid,,
+no verified spectrum,glycogen,HMDB0000757,
+no verified spectrum,glycyl-glycine,HMDB0011733,
+no verified spectrum,glycylglycylglycine,HMDB0029419,
+no verified spectrum,glycylleucine,HMDB0000759,
+no verified spectrum,glycyrrhetinic_acid,HMDB0011628,
+not in D2O: Methanol-d4,guaiacol_glyceryl_ether_carbamate,,bmse001223
+not in D2O: Chloroform-d,guaiazulene,,bmse001253
+no verified spectrum,guaifenesin,HMDB0004998,
+no verified spectrum,guanidinosuccinic_acid,HMDB0003157,
+no signal,guanosine_monophosphate,HMDB0001397,HMDB
+no verified spectrum,guanosine_triphosphate,HMDB0001273,
+no verified spectrum,haloperidol,HMDB0014645,
+not in D2O: DMSO,haloperidol_2,,bmse001206
+no verified spectrum,halosulfuron-methyl,HMDB0034859,
+no verified spectrum,halothane,HMDB0015290,
+not in D2O: DMSO,harmalol,,bmse001010
+no verified spectrum,heneicosanoic_acid,HMDB0002345,
+no verified spectrum,heparan_sulfate,HMDB0000693,
+no verified spectrum,heparin,HMDB0001394,
+no verified spectrum,heptadecanoic_acid,HMDB0002259,
+no verified spectrum,heptanal,HMDB0031475,
+no verified spectrum,heptanoic_acid,HMDB0000666,
+no verified spectrum,heptyl_4-hydroxybenzoate,HMDB0034462,
+no verified spectrum,heptyl_acetate,HMDB0031480,
+no verified spectrum,herniarin,HMDB0029758,
+not in D2O: DMSO,hesperetin,HMDB0005782,bmse001127
+no verified spectrum,hesperidin,HMDB0003265,
+no verified spectrum,hexachlorobenzene,HMDB0032566,
+no verified spectrum,hexacosanoic_acid,HMDB0002356,
+no verified spectrum,hexadecane,HMDB0033792,
+no verified spectrum,hexadecanedioic_acid,HMDB0000672,
+no verified spectrum,hexanal,HMDB0005994,
+no verified spectrum,hexane,HMDB0029600,
+no verified spectrum,hexanoylcarnitine,HMDB0000756,
+no verified spectrum,hexanoylglycine,HMDB0000701,
+no verified spectrum,hexobarbital,HMDB0015444,
+no verified spectrum,hexyl_3-methylbutanoate,HMDB0032044,
+no verified spectrum,hexyl_acetate,HMDB0029980,
+no verified spectrum,hexyl_hexanoate,HMDB0033619,
+no verified spectrum,hexylresorcinol,HMDB0032567,
+no verified spectrum,himbacine,,
+not in D2O: Chloroform-d,hispanolone,,bmse001286
+no verified spectrum,homocarnosine,HMDB0000745,
+no verified spectrum,homoveratric_acid,HMDB0000434,
+no verified spectrum,hordenine,,
+no verified spectrum,hydrochlorothiazide,HMDB0001928,
+not in D2O: benzene,hydrocinnamic_acid,HMDB0000764,bmse000675
+no verified spectrum,hydrogen_sulfide,HMDB0003276,
+no verified spectrum,hydroxocobalamin,HMDB0002308,
+no verified spectrum,hydroxyacetone,HMDB0006961,
+no verified spectrum,hydroxykynurenine,HMDB0000732,
+no verified spectrum,hydroxyphenylacetylglycine,HMDB0000735,
+no verified spectrum,hydroxyphenyllactic_acid,HMDB0000755,
+no verified spectrum,hydroxypropionic_acid,HMDB0000700,
+no verified spectrum,hyodeoxycholic_acid,HMDB0000733,
+no verified spectrum,hyodeoxycholic_acid_2,,
+no verified spectrum,ibuprofen,HMDB0001925,
+no verified spectrum,ifosfamide,HMDB0015312,
+no verified spectrum,imidacloprid,HMDB0040292,
+no verified spectrum,imidazoleacetic_acid,HMDB0002024,
+no verified spectrum,imipramine,HMDB0001848,
+not in D2O: CDCl3,indanone,,bmse000496
+no verified spectrum,indole-3-acetamide,HMDB0029739,
+no verified spectrum,indole-3-carbinol,HMDB0005785,
+not in D2O: DMSO,indole-3-carboxaldehyde,HMDB0029737,bmse000645
+no verified spectrum,indole-3-carboxylic_acid,HMDB0003320,
+no verified spectrum,indole-3-propionic_acid,HMDB0002302,
+no verified spectrum,indole,HMDB0000738,
+not in D2O: methanol,indole_3_pyruvic_acid,,bmse000646
+added,Indoleacrylic acid,HMDB0000734,GISSMO
+no verified spectrum,indomethacin,HMDB0014473,
+no verified spectrum,indoxyl,HMDB0004094,
+no verified spectrum,indoxyl_sulfate,HMDB0000682,
+not in D2O: CDCl3,iodoquinol,,bmse000836
+no verified spectrum,iprodione,HMDB0031795,
+no verified spectrum,isoamyl_butyrate,HMDB0040221,
+not in D2O: Chloroform-d,isoborneol,,bmse001226
+no verified spectrum,isobutanol,HMDB0006006,
+no verified spectrum,isobutyryl-l-carnitine,HMDB0000736,
+no verified spectrum,isobutyrylglycine,HMDB0000730,
+no verified spectrum,isocaproic_acid,HMDB0000689,
+not in D2O: Chloroform-d,isocorydine,,bmse001250
+no verified spectrum,isoeugenol,HMDB0005802,
+no verified spectrum,isoniazid,HMDB0015086,
+not in D2O: DMSO,isonicotinamide,,bmse001207
+no verified spectrum,isopentanol,HMDB0006007,
+no verified spectrum,isopentyl_acetate,HMDB0031528,
+no verified spectrum,isopentyl_isopentanoate,HMDB0030029,
+not in D2O: Chloroform-d,isophorone,,bmse001274
+not in D2O: methanol,isoprene,,bmse000844
+no verified spectrum,isoprenyl_alcohol,HMDB0033854,
+added,Isopropyl alcohol,HMDB0000863,HMDB
+no verified spectrum,isopropyl_hexadecanoate,HMDB0035474,
+no verified spectrum,isopropylbenzene,HMDB0034029,
+not in D2O: Chloroform-d,isovaleraldehyde,HMDB0006478,bmse001181
+no verified spectrum,isovalerylalanine,HMDB0000747,
+no verified spectrum,isovalerylcarnitine,HMDB0000688,
+no verified spectrum,isovalerylglutamic_acid,HMDB0000726,
+no signal,isovalerylglycine,HMDB0000678,HMDB
+no verified spectrum,isovelleral,,
+no verified spectrum,isoxanthopterin,HMDB0000704,
+no verified spectrum,jasmonic,,
+not in D2O: DMSO,kaempferol,HMDB0005801,bmse001167
+no verified spectrum,khellin,,
+no verified spectrum,l-2-hydroxyglutaric_acid,HMDB0000694,
+no verified spectrum,l-3-phenyllactic_acid,HMDB0000748,
+no verified spectrum,l-alpha-phosphatidylinositol,,
+not in D2O: Chloroform-d,l-citronellol,HMDB0035094,bmse001155
+no verified spectrum,l-homocysteic_acid,HMDB0002205,
+no verified spectrum,l-homocystine,HMDB0000676,
+no verified spectrum,l-thyronine,HMDB0000667,
+no verified spectrum,l_alpha_phosphatidyl_dl_glycerol,,
+no verified spectrum,lactitol,HMDB0040937,
+no verified spectrum,lacto-n-fucopentaitoli,,
+no verified spectrum,lacto-n-tetraose,,
+no verified spectrum,lansoprazole,HMDB0005008,
+no verified spectrum,lapachol,,
+no verified spectrum,lathosterol,HMDB0001170,
+no verified spectrum,ldcast,,
+no verified spectrum,levetiracetam,HMDB0015333,
+no verified spectrum,levofloxacin,HMDB0001929,
+no verified spectrum,levonorgestrel,HMDB0014511,
+no signal,levulinic_acid,HMDB0000720,HMDB
+no verified spectrum,lidocaine,HMDB0014426,
+no verified spectrum,lignocerane,HMDB0034282,
+not in D2O: CDCl3,limonene_oxide,,bmse000963
+no verified spectrum,linalyl_acetate,HMDB0039522,
+no verified spectrum,linoleic_acid,HMDB0000673,
+no verified spectrum,liothyronine,HMDB0000265,
+no verified spectrum,lipoamide,HMDB0000962,
+no verified spectrum,lisinopril,HMDB0001938,
+no verified spectrum,lithocholic_acid,HMDB0000761,
+no verified spectrum,lnnt,,
+not in D2O: Chloroform-d,lonchocarpic_acid,,bmse001218
+no verified spectrum,loperamide,HMDB0004999,
+no verified spectrum,loperamide_hydrochloride,,
+no verified spectrum,loratadine,HMDB0005000,
+no verified spectrum,lovastatin,,
+no verified spectrum,luteolin,HMDB0005800,
+not in D2O: DMSO,luteolin_2,,bmse001276
+no verified spectrum,m-aminobenzoic_acid,HMDB0001891,
+no verified spectrum,m-chlorobenzoic_acid,HMDB0001544,
+not in D2O: CDCl3,m_toluic_acid,,bmse000553
+no verified spectrum,m_xylene,,
+no verified spectrum,madecassic_acid,,
+not in D2O: DMSO,magnolin,,bmse001313
+no verified spectrum,malathion,HMDB0014910,
+no verified spectrum,malonic_acid,HMDB0000691,
+no signal,maltitol,HMDB0002928,HMDB
+not in D2O: CDCl3,maltol,HMDB0030776,bmse000538
+no verified spectrum,maltotetraose,HMDB0001296,
+no verified spectrum,maltotriose,HMDB0001262,
+no verified spectrum,mandelic_acid,HMDB0000703,
+no verified spectrum,maslinic_acid,,
+not in D2O: Acetone-d6,masoprocol,HMDB0014325,bmse001157
+not in D2O: Chloroform-d,medicarpin,,bmse001290
+no verified spectrum,medroxyprogesterone,HMDB0001939,
+no verified spectrum,melamine,HMDB0041922,
+no verified spectrum,melatonin,HMDB0001389,
+no verified spectrum,menadione,HMDB0001892,
+no verified spectrum,menthol,HMDB0003352,
+not in D2O: Chloroform-d,mestranol,HMDB0015446,bmse001149
+no verified spectrum,metenamine,HMDB0029598,
+no verified spectrum,methane,HMDB0002714,
+no verified spectrum,methanethiol,HMDB0003227,
+no verified spectrum,methomyl,HMDB0031804,
+no verified spectrum,methotrexate,HMDB0014703,
+not in D2O: Chloroform-d,methoxsalen,HMDB0014693,bmse001232
+no verified spectrum,methoxyeugenol,HMDB0041194,
+no verified spectrum,"methyl_(10e,12z)-octadeca-10,12-dienoate",,
+no verified spectrum,methyl_(s)-2-methylbutanoate,HMDB0029762,
+no verified spectrum,methyl_2-furoate,HMDB0029750,
+no verified spectrum,methyl_2-hydroxybenzoate,HMDB0034172,
+no verified spectrum,methyl_3-(methylthio)propanoate,HMDB0034377,
+not in D2O: DMSO,methyl_4_coumarate,,bmse000605
+no verified spectrum,methyl_acetate,HMDB0031523,
+no verified spectrum,methyl_benzoate,HMDB0033968,
+no verified spectrum,methyl_beta-naphthyl_ketone,HMDB0032412,
+no verified spectrum,methyl_butyrate,HMDB0033890,
+no verified spectrum,methyl_decanoate,HMDB0033848,
+not in D2O: DMSO,methyl_ferulate,,bmse000609
+no verified spectrum,methyl_hexanoate,HMDB0035238,
+no verified spectrum,methyl_hippurate,HMDB0000859,
+no verified spectrum,methyl_isobutyl_ketone,HMDB0002939,
+no verified spectrum,methyl_isobutyrate,HMDB0031249,
+no verified spectrum,methyl_isothiocyanate,HMDB0034106,
+no verified spectrum,methyl_jasmonate,,
+no verified spectrum,methyl_linoleate,HMDB0034381,
+no verified spectrum,methyl_nonanoate,HMDB0031264,
+no verified spectrum,methyl_pentanoate,HMDB0031207,
+no verified spectrum,methyl_phenylacetate,HMDB0032617,
+no verified spectrum,methyl_propenyl_ketone,HMDB0001184,
+not in D2O: DMSO,methyl_sinapate,,bmse000589
+no verified spectrum,methylacetoacetic_acid,HMDB0000310,
+no verified spectrum,methylamine,HMDB0000164,
+no verified spectrum,methylcyclopentane,HMDB0031542,
+no verified spectrum,methylcysteine,HMDB0002108,
+not in D2O: Chloroform-d,methyldisulfanylmethane,,bmse001151
+not in D2O: Chloroform-d,methyleugenol,HMDB0031864,bmse001263
+no signal,methylguanidine,HMDB0001522,HMDB
+no verified spectrum,methylimidazoleacetic_acid,HMDB0002820,
+no verified spectrum,methyloxirane,HMDB0031558,
+not in D2O: Methanol-d4,methylparaben,HMDB0032572,bmse001194
+no verified spectrum,methylsuccinic_acid,HMDB0001844,
+not in D2O: Chloroform-d,methylsulfanyldisulfanylmethane,,bmse001152
+no verified spectrum,methyltestosterone,HMDB0015655,
+no verified spectrum,metoclopramide,,
+no verified spectrum,metoprolol,HMDB0001932,
+no verified spectrum,metronidazole,HMDB0015052,
+no verified spectrum,mevalonic_acid,HMDB0000227,
+no verified spectrum,mevalonolactone,HMDB0006024,
+not in D2O: DMSO,miconazole,,bmse000924
+no verified spectrum,mifepristone,HMDB0014972,
+no verified spectrum,mitotane,HMDB0014786,
+no verified spectrum,monoethyl_phthalate,HMDB0002120,
+no verified spectrum,monomethyl_glutaric_acid,HMDB0000858,
+no verified spectrum,muramic_acid,HMDB0003254,
+no verified spectrum,myricetin,HMDB0002755,
+not in D2O: Methanol-d4,myricetin_2,,bmse001272
+no verified spectrum,myristic_acid,HMDB0000806,
+not in D2O: Chloroform-d,myristicin,,bmse001264
+no verified spectrum,myrtenol,,
+no verified spectrum,"n,n-dimethylaniline",HMDB0001020,
+not in D2O: benzene,"n,n-dimethylformamide",HMDB0001888,bmse000709
+no verified spectrum,n-acetyl-l-methionine,HMDB0011745,
+no verified spectrum,n-acetyl-l-tyrosine,HMDB0000866,
+no verified spectrum,n-acetylaspartylglutamic_acid,HMDB0001067,
+no verified spectrum,n-acetylgalactosamine_4-sulphate,HMDB0000781,
+no verified spectrum,n-acetyllactosamine,HMDB0001542,
+no verified spectrum,n-acetylputrescine,HMDB0002064,
+no verified spectrum,n-acetylserine,HMDB0002931,
+no verified spectrum,n-acetylserotonin,HMDB0001238,
+no verified spectrum,n-acetylvaline,HMDB0011757,
+no verified spectrum,n-acryloylglycine,HMDB0001843,
+no verified spectrum,n-butyl_acetate,HMDB0031325,
+no verified spectrum,n-butyrylglycine,HMDB0000808,
+no verified spectrum,n-decane,HMDB0031450,
+no verified spectrum,n-formyl-l-methionine,HMDB0001015,
+no verified spectrum,n-heptane,HMDB0031447,
+no verified spectrum,n-methyl-a-aminoisobutyric_acid,HMDB0002141,
+no verified spectrum,n-methylhydantoin,HMDB0003646,
+no verified spectrum,n-methylnicotinamide,HMDB0003152,
+no verified spectrum,n-nitroso-pyrrolidine,HMDB0031642,
+no verified spectrum,n-nitrosodimethylamine,HMDB0031419,
+no verified spectrum,n1-acetylspermine,HMDB0001186,
+no verified spectrum,n_3_indolylacety_dl_aspartic_acid,,
+no verified spectrum,n_3_indolylacetyl_l_alanine,,
+no verified spectrum,nalidixic_acid_sodium_salt,,
+no verified spectrum,naphthalene,HMDB0029751,
+no verified spectrum,naproxen,HMDB0001923,
+not in D2O: Methanol-d4,naringenin,HMDB0002670,bmse001121
+no verified spectrum,naringin,HMDB0002927,
+no verified spectrum,neohesperidin,,
+no verified spectrum,neopterin,HMDB0000845,
+no verified spectrum,nervonic_acid,HMDB0002368,
+no verified spectrum,nicotinamide_ribotide,HMDB0000229,
+no verified spectrum,nitrazepam,HMDB0015534,
+no verified spectrum,nitrobenzene,HMDB0041950,
+no verified spectrum,nitrofen,HMDB0041951,
+not in D2O: CDCl3,nitrosobenzene,,bmse000925
+no verified spectrum,nonacosane,HMDB0034288,
+no verified spectrum,nonactin,,
+no verified spectrum,nonadecane,HMDB0034289,
+no verified spectrum,nonadecanoic_acid,HMDB0000772,
+no verified spectrum,nonanal,,
+no verified spectrum,nonivamide,HMDB0029846,
+no verified spectrum,norethindrone,HMDB0014855,
+not in D2O: Methanol-d4,"norlobaric_acid,_decarboxy-",,bmse001301
+no verified spectrum,normetanephrine,HMDB0000819,
+no verified spectrum,norspermidine,HMDB0011634,
+no signal,norvaline,HMDB0013716,BMRB
+not in D2O: DMSO,noscapine_hydrochloride,,bmse001281
+no verified spectrum,noscapine_hydrochloride_hydrate,,
+no verified spectrum,nutriacholic_acid,HMDB0000467,
+no verified spectrum,o-acetylserine,HMDB0003011,
+no verified spectrum,o-toluidine,HMDB0041965,
+no verified spectrum,o-tyrosine,HMDB0006050,
+not in D2O: CDCl3,o-xylene,,bmse000526
+not in D2O: CDCl3,o_tolualdehyde,,bmse000556
+no verified spectrum,o_toluic_acid,,
+no verified spectrum,octacosanoic_acid,HMDB0002348,
+no verified spectrum,octadecane,HMDB0033721,
+no verified spectrum,octadecanedioic_acid,HMDB0000782,
+no verified spectrum,octadecanol,HMDB0002350,
+no verified spectrum,octamethylcyclotetrasiloxane,,
+no verified spectrum,octanal,HMDB0001140,
+no verified spectrum,octane,HMDB0001485,
+no verified spectrum,octanol,HMDB0001183,
+no verified spectrum,octanoylcarnitine,HMDB0000791,
+no verified spectrum,octyl_butanoate,HMDB0034136,
+no verified spectrum,octyl_gallate,HMDB0033375,
+no verified spectrum,oenanthic_ether,HMDB0000798,
+no verified spectrum,oleanolic_acid,HMDB0002364,
+no verified spectrum,oleic_acid,HMDB0000207,
+no verified spectrum,omeprazole,HMDB0001913,
+no verified spectrum,ondansetron,HMDB0005035,
+added,Orotic acid,HMDB0000226,GISSMO
+no verified spectrum,orotidine,HMDB0000788,
+added,Oxalacetic acid,HMDB0000223,HMDB
+no verified spectrum,oxoadipic_acid,HMDB0000225,
+no verified spectrum,oxybenzone,HMDB0015497,
+no verified spectrum,oxypurinol,HMDB0000786,
+no verified spectrum,p-cresol_sulfate,HMDB0011635,
+no verified spectrum,p-cymene,HMDB0005805,
+no verified spectrum,p-dichlorobenzene,HMDB0041971,
+no verified spectrum,p-menth-1-en-4-ol,HMDB0035833,
+not in D2O: DMSO,p_coumaraldehyde,,bmse000611
+not in D2O: DMSO,p_coumaryl_alcohol,,bmse000592
+not in D2O: ethanol,p_hydroxyacetophenone,,bmse000670
+not in D2O: CDCl3,p_xylene,,bmse000834
+not in D2O: DMSO,paeonol,,bmse001323
+no verified spectrum,palmitic_acid,HMDB0000220,
+no verified spectrum,palmitoleic_acid,HMDB0003229,
+no verified spectrum,palmitoylcarnitine,HMDB0000222,
+no verified spectrum,panaxatriol,,
+not in D2O: DMSO,papaverine_hydrochloride,,bmse001240
+no verified spectrum,parathion,HMDB0001355,
+no verified spectrum,paraxanthine,HMDB0001860,
+not in D2O: Chloroform-d,parthenin,,bmse001299
+not in D2O: DMSO,parthenolide,,bmse001294
+no verified spectrum,patchouli_alcohol,,
+no verified spectrum,pelargonic_acid,HMDB0000847,
+no verified spectrum,pentacosanoic_acid,HMDB0002361,
+no verified spectrum,pentadecanoic_acid,HMDB0000826,
+no verified spectrum,pentanal,HMDB0031206,
+no verified spectrum,pentane,HMDB0029603,
+not in D2O: Chloroform-d,pentoxifylline,,bmse001293
+not in D2O: Methanol-d4,pentyl_benzoate,,bmse001104
+no verified spectrum,pentyl_formate,HMDB0040327,
+no verified spectrum,perchloroethylene,HMDB0041980,
+no verified spectrum,perillic_acid,HMDB0004586,
+no verified spectrum,perillyl_alcohol,HMDB0003634,
+no verified spectrum,perillyl_alcohol_2,,
+no verified spectrum,petroselinic_acid,HMDB0002080,
+no verified spectrum,petroselinic_acid_2,,
+no verified spectrum,phenacemide,HMDB0015253,
+no verified spectrum,phenanthrene,,
+no verified spectrum,phenindione,HMDB0014641,
+no verified spectrum,phenobarbital,HMDB0015305,
+no verified spectrum,phentermine,HMDB0014337,
+no verified spectrum,phenyl_acetate,HMDB0040733,
+no verified spectrum,phenyl_beta_d_glucoside,,
+no verified spectrum,phenyl_salicylate,HMDB0032018,
+no verified spectrum,phenylephrine,HMDB0002182,
+no verified spectrum,phenyllactic_acid,HMDB0000779,
+no verified spectrum,phenylmethanesulfonyl_fluoride,,
+no verified spectrum,phenylpropanolamine,HMDB0001942,
+no verified spectrum,phenylpropiolic_acid,HMDB0002359,
+no verified spectrum,phenylpropionylglycine,HMDB0000860,
+no verified spectrum,phenylpyruvic_acid,HMDB0000205,
+no verified spectrum,phenytoin,HMDB0014397,
+not in D2O: Methanol-d4,phloretin,HMDB0003306,bmse001122
+no verified spectrum,phlorizin,HMDB0036634,
+no verified spectrum,phosalone,HMDB0041985,
+no verified spectrum,phosphorylcholine,HMDB0001565,
+not in D2O: CDCl3,phthalic_acid_diethyl_ester,,bmse000846
+no verified spectrum,picolinic_acid,HMDB0002243,
+not in D2O: DMSO,picrotin,,bmse001283
+no verified spectrum,pinocarveol,,
+no verified spectrum,piperidine,HMDB0034301,
+no verified spectrum,piperine,HMDB0029377,
+not in D2O: Chloroform-d,pleurotine,,bmse001213
+no verified spectrum,polyethylene_glycol,HMDB0037790,
+no verified spectrum,polyoxyethylene_23_lauryl_ether,,
+"not in D2O: Chloroform-d, Methanol-d4",pomiferin,,bmse001284
+not in D2O: CDCl3,precocene_1,,bmse000754
+no verified spectrum,pregnenolone,HMDB0000253,
+no verified spectrum,pregnenolone_sulfate,HMDB0000774,
+no verified spectrum,prephenate,HMDB0012283,
+not in D2O: DMSO,probucol,,bmse001242
+no verified spectrum,procaine,HMDB0014859,
+no verified spectrum,procyclidine,,
+no verified spectrum,progesterone,HMDB0001830,
+no signal,proglumide_sodium_salt,,BMRB
+no verified spectrum,propanal,HMDB0003366,
+no verified spectrum,propane,HMDB0031630,
+added,Propynoic acid,HMDB0006804,GISSMO
+no verified spectrum,propionylglycine,HMDB0000783,
+no verified spectrum,propofol,HMDB0014956,
+no verified spectrum,propranolol,HMDB0001849,
+no verified spectrum,propyl_acetate,HMDB0034237,
+no verified spectrum,propyl_butyrate,HMDB0039618,
+no verified spectrum,propyl_gallate,HMDB0033835,
+no verified spectrum,propylparaben,HMDB0032574,
+no verified spectrum,propylthiouracil,HMDB0014690,
+no verified spectrum,prostaglandin_d2,HMDB0001403,
+no verified spectrum,prostaglandin_e2,HMDB0001220,
+no verified spectrum,protoporphyrin_ix,,
+no verified spectrum,protoveratrine,,
+no verified spectrum,pseudoephedrine,HMDB0001943,
+no verified spectrum,pseudouridine,HMDB0000767,
+no verified spectrum,pseudoyohimbine,,
+no verified spectrum,psoralen,HMDB0034272,
+no verified spectrum,pterin,HMDB0000802,
+not in D2O: DMSO,pterostilbene,,bmse001321
+no verified spectrum,pteroyltriglutamic_acid,HMDB0001902,
+no verified spectrum,pubescine,,
+no verified spectrum,pulegone,HMDB0035604,
+no verified spectrum,puromycin_dihydrochloride_from_streptomyces_alboniger,,
+no verified spectrum,purpurin,,
+no verified spectrum,pyrazinamide,HMDB0014483,
+no verified spectrum,pyrene,HMDB0042002,
+no verified spectrum,pyrethrosin,,
+no verified spectrum,pyrimidine,HMDB0003361,
+not in D2O: methanol,pyromellitic_acid,,bmse000771
+no verified spectrum,pyrrole-2-carboxylic_acid,HMDB0004230,
+no verified spectrum,pyrrole,HMDB0035924,
+no verified spectrum,pyruvatoxime,HMDB0002455,
+not in D2O: DMSO,quadrone,,bmse001288
+not in D2O: DMSO,quercetin,HMDB0005794,bmse001176
+no verified spectrum,quercitrin,HMDB0033751,
+no verified spectrum,quinidine,,
+no verified spectrum,quinoline,HMDB0033731,
+no verified spectrum,radicinin,,
+no verified spectrum,ranitidine,HMDB0001930,
+no verified spectrum,retinal,HMDB0001358,
+no verified spectrum,retinyl,,
+not in D2O: methanol,rhodanine,,bmse000840
+no verified spectrum,riboflavin,HMDB0000244,
+no verified spectrum,ribonolactone,HMDB0001900,
+not in D2O: DMSO,riluzole,,bmse001244
+not in D2O: methanol,rosmarinic_acid,,bmse000648
+no verified spectrum,rotenone,HMDB0034436,
+not in D2O: Chloroform-d,rotenone_2,,bmse001243
+no verified spectrum,rottlerin,,
+no verified spectrum,roxarsone,HMDB0033205,
+no verified spectrum,rutin,HMDB0003249,
+no verified spectrum,rutin_trihydrate,,
+no verified spectrum,s_perillaldehyde,,
+no verified spectrum,s_perillic_acid,,
+no verified spectrum,saccharopine,HMDB0000279,
+not in D2O: Chloroform-d,safrole,HMDB0033591,bmse001265
+no verified spectrum,salbutamol,HMDB0001937,
+not in D2O: methanol,salicylhydroxamic_acid,,bmse000772
+no verified spectrum,salicyluric_acid,HMDB0000840,
+not in D2O: DMSO,schisandrin,,bmse001334
+no verified spectrum,scopolamine,HMDB0003573,
+not in D2O: DMSO,scopoletin,,bmse001129
+no verified spectrum,sebacic_acid,HMDB0000792,
+no verified spectrum,sec_butylbenzene,,
+no verified spectrum,secobarbital,HMDB0014562,
+no verified spectrum,sedoheptulose,HMDB0003219,
+no verified spectrum,selenocystine,HMDB0004122,
+no verified spectrum,sepiapterin,HMDB0000238,
+"not in D2O: Chloroform-d, Methanol-d4",sequiterpene_lactone_326,,bmse001215
+not in D2O: Chloroform-d,sesamol,,bmse001267
+not in D2O: DMSO,silibinin,,bmse001318
+no verified spectrum,simvastatin,,
+not in D2O: DMSO,sinapaldehyde,,bmse000606
+not in D2O: DMSO,sinapyl_alcohol,,bmse000612
+no verified spectrum,"sodium_(10,13-dimethyl-17-oxo-1,2,3,4,5,6,7,8,9,11,12,14,15,16-tetradecahydrocyclopenta[a]phenanthren-3-yl)_sulfate",,
+no verified spectrum,sodium_glycochenodeoxycholate,,
+no verified spectrum,sodium_tetradecyl_sulfate,HMDB0014607,
+not in D2O: DMSO,sparstolonin_b,,bmse001277
+no verified spectrum,spectinomycin_hydrochloride,,
+no verified spectrum,sphinganine,HMDB0000269,
+no verified spectrum,sphingomyelin,,
+no verified spectrum,sphingosine,HMDB0000252,
+no verified spectrum,squalene,HMDB0000256,
+no verified spectrum,stearic_acid,HMDB0000827,
+no verified spectrum,stearoylcarnitine,HMDB0000848,
+no verified spectrum,stictic_acid,,
+no verified spectrum,stigmasterol,HMDB0000937,
+no verified spectrum,stigmasterol_2,,
+not in D2O: DMSO,streptonigrin,,bmse001339
+no verified spectrum,styrene,HMDB0034240,
+no verified spectrum,suberylglycine,HMDB0000953,
+no verified spectrum,succinic_acid_semialdehyde,HMDB0001259,
+no verified spectrum,succinylacetone,HMDB0000635,
+no verified spectrum,sulcatone,HMDB0035915,
+no verified spectrum,sulfolithocholic_acid,HMDB0000907,
+no verified spectrum,sulforaphane,HMDB0005792,
+no verified spectrum,sumikis_acid,HMDB0002432,
+no verified spectrum,symmetric_dimethylarginine,HMDB0003334,
+not in D2O: DMSO,syringaldehyde,,bmse000595
+not in D2O: DMSO,syringic_acid,HMDB0002085,bmse000607
+not in D2O: DMSO,syringin,,bmse000613
+not in D2O: DMSO,tangeretin,,bmse001336
+no verified spectrum,tanshinone_iia,,
+no verified spectrum,taurocholic_acid,HMDB0000036,
+no verified spectrum,taurodeoxycholic_acid,HMDB0000896,
+not in D2O: Methanol-d4,taxifolin,,bmse001302
+no verified spectrum,terephthalic_acid,HMDB0002428,
+no verified spectrum,terpinolene,HMDB0036994,
+no verified spectrum,testosterone,HMDB0000234,
+no verified spectrum,testosterone_propionate,HMDB0015489,
+not in D2O: CDCl3,tetrabromobisphenol_a,,bmse000567
+no verified spectrum,tetracosanoic_acid,HMDB0002003,
+no verified spectrum,tetradecanedioic_acid,HMDB0000872,
+not in D2O: DMSO,tetrahydrobiopterin,,bmse000911
+no verified spectrum,tetrahydrocortisone,HMDB0000903,
+no verified spectrum,tetrahydrofolic_acid,HMDB0001846,
+no verified spectrum,tetrahydrofuran,HMDB0000246,
+no verified spectrum,tetramethylpyrazine,HMDB0036584,
+no verified spectrum,tetraoleoylcardiolipin,,
+no verified spectrum,theobromine,HMDB0002825,
+no signal,theophylline,HMDB0001889,HMDB
+no verified spectrum,thiabendazole,HMDB0014868,
+no verified spectrum,thiamine_pyrophosphate,HMDB0001372,
+no verified spectrum,thiophene,HMDB0029718,
+no verified spectrum,thiram,,
+no verified spectrum,threonic_acid,HMDB0000943,
+no verified spectrum,"thymidine_3,5-cyclic_monophosphate",HMDB0001570,
+no signal,thymidine_5-triphosphate,HMDB0001342,HMDB
+no verified spectrum,thymine,HMDB0000262,
+no verified spectrum,thymol,HMDB0001878,
+not in D2O: DMSO,thyroxine,HMDB0000248,bmse000923
+no verified spectrum,tiglylglycine,HMDB0000959,
+no verified spectrum,tolnaftate,HMDB0005005,
+no verified spectrum,toluene,HMDB0034168,
+no verified spectrum,trans-dec-2-enoic_acid,HMDB0010726,
+not in D2O: Chloroform-d,trans-nerolidol,,bmse001254
+no verified spectrum,trans-ocimene,HMDB0030089,
+no verified spectrum,traumatic_acid,HMDB0000933,
+no verified spectrum,triamcinolone,HMDB0014758,
+no verified spectrum,triamterene,HMDB0001940,
+no verified spectrum,tributyl_phosphate,,
+no verified spectrum,trichloroethylene,HMDB0029593,
+no verified spectrum,tricosanoic_acid,HMDB0001160,
+no verified spectrum,tridecane,HMDB0034284,
+no verified spectrum,tridecanoic_acid,HMDB0000910,
+no verified spectrum,triethyl_citrate,HMDB0034263,
+no verified spectrum,trimethyl_phosphonoacetate,,
+no verified spectrum,trimethyloxazole,HMDB0040148,
+no verified spectrum,trimethylpyrazine,HMDB0031844,
+no verified spectrum,trimethylthiazole,HMDB0033155,
+no verified spectrum,tropine,,
+not in D2O: CDCl3,tryptophol,HMDB0003447,bmse000473
+no verified spectrum,tuftsin_acetate_salt_hydrate,,
+no signal,udp_galactose,,BMRB
+no verified spectrum,undecanal,HMDB0030941,
+no verified spectrum,undecane,HMDB0031445,
+no verified spectrum,undecanedioic_acid,HMDB0000888,
+no verified spectrum,undecanoic_acid,HMDB0000947,
+no verified spectrum,undecylenic_acid,HMDB0033724,
+no verified spectrum,urea,HMDB0000294,
+no verified spectrum,uric_acid,HMDB0000289,
+no verified spectrum,uridine_diphosphate-n-acetylglucosamine,HMDB0000290,
+no verified spectrum,uridine_diphosphate_glucose,HMDB0000286,
+no verified spectrum,uridine_diphosphategalactose,HMDB0000302,
+no verified spectrum,ursodeoxycholic_acid,HMDB0000946,
+no verified spectrum,uvaol,HMDB0002391,
+no verified spectrum,vaccenic_acid,HMDB0003231,
+no verified spectrum,valerylglycine,HMDB0000927,
+no verified spectrum,valproic_acid,HMDB0001877,
+no verified spectrum,vanillactic_acid,HMDB0000913,
+no verified spectrum,vanylglycol,HMDB0001490,
+no verified spectrum,venlafaxine,HMDB0005016,
+no verified spectrum,verapamil,HMDB0001850,
+not in D2O: Chloroform-d,vinpocetine,,bmse001270
+no verified spectrum,vinylacetylglycine,HMDB0000894,
+no verified spectrum,vitamin_d3,HMDB0000876,
+no verified spectrum,vitamin_k1,HMDB0003555,
+not in D2O: Chloroform-d,vitamin_k1_2,,bmse001275
+no verified spectrum,voglibose,,
+no verified spectrum,warfarin,HMDB0001935,
+no verified spectrum,water,HMDB0002111,
+pH 10.5,xanthosine,HMDB0000299,GISSMO
+no verified spectrum,xanthurenic_acid,HMDB0000881,
+no verified spectrum,"xi-2,3-dimethylhexane",HMDB0037617,
+no verified spectrum,xi-2-ethyl-1-hexanol,HMDB0031231,
+no verified spectrum,xi-5-hexyldihydro-2(3h)-furanone,HMDB0037217,
+no verified spectrum,xi-dihydro-2-methyl-3(2h)-thiophenone,HMDB0038556,
+no verified spectrum,xi-tetrahydro-6-propyl-2h-pyran-2-one,HMDB0038310,
+no verified spectrum,zeatin,HMDB0012204,
+no verified spectrum,zeatin_2,,
+no verified spectrum,zidovudine,HMDB0014638,
+no verified spectrum,zopiclone,HMDB0015329,

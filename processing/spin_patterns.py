@@ -72,8 +72,20 @@ def signal_pattern(name, ppm_listed, field_mhz, reach_ppm=None):
     st = _sticks(name, float(field_mhz))
     if st is None:
         return None
-    spins, sp, si = st
-    mine = np.abs(spins - float(ppm_listed)) <= (reach_ppm or SPIN_REACH_PPM)
+    lines = signal_lines(*st, ppm_listed, field_mhz,
+                         reach_ppm or SPIN_REACH_PPM)
+    if lines is None:
+        return None
+    return json.dumps(lines), profile_of(lines), PROFILE_FWHM_HZ
+
+
+def signal_lines(spins, sp, si, ppm_listed, field_mhz, reach_ppm):
+    """``[(offset Hz, rel)]`` of the stick lines ``(sp, si)`` that belong to
+    the spins within ``reach_ppm`` of ``ppm_listed`` -- each line goes to its
+    nearest spin -- about their intensity-weighted centre; None under two
+    lines."""
+    spins, sp, si = (np.asarray(a, dtype=float) for a in (spins, sp, si))
+    mine = np.abs(spins - float(ppm_listed)) <= reach_ppm
     if not mine.any():
         return None
     nearest = np.argmin(np.abs(sp[:, None] - spins[None, :]), axis=1)
@@ -81,28 +93,46 @@ def signal_pattern(name, ppm_listed, field_mhz, reach_ppm=None):
     if keep.sum() < 2:
         return None
     lp, li = sp[keep], si[keep]
-    f = float(field_mhz)
     centre = float(np.sum(lp * li) / np.sum(li))
-    hz = (lp - centre) * f
+    return merge_lines((lp - centre) * float(field_mhz), li)
+
+
+def merge_close(hz, rel):
+    """``[(hz, intensity)]`` in ascending hz with lines closer than
+    ``MERGE_HZ`` summed into one at their intensity-weighted position.
+    A spin system lists every transition: the isopropyl of
+    2-isopropylmalic acid solves to 296 sticks for its two methyl doublets,
+    some 0.03 Hz apart, which a spectrum shows as four lines."""
+    hz, rel = np.asarray(hz, dtype=float), np.asarray(rel, dtype=float)
     order = np.argsort(hz)
-    hz, li = hz[order], li[order]
     merged = []
-    for h, i in zip(hz, li):
+    for h, i in zip(hz[order], rel[order]):
         if merged and h - merged[-1][0] <= MERGE_HZ:
             w = merged[-1][1] + i
             merged[-1] = ((merged[-1][0] * merged[-1][1] + h * i) / w, w)
         else:
             merged.append((float(h), float(i)))
+    return merged
+
+
+def merge_lines(hz, rel):
+    """Lines closer than ``MERGE_HZ`` as one, normalised to the tallest,
+    those under ``MIN_REL`` dropped; None under two lines."""
+    merged = merge_close(hz, rel)
     top = max(i for _h, i in merged)
     lines = [(round(h, 3), round(i / top, 4)) for h, i in merged if i / top >= MIN_REL]
-    if len(lines) < 2:
-        return None
+    return lines if len(lines) >= 2 else None
+
+
+def profile_of(lines) -> str:
+    """The encoded profile of ``[(offset Hz, rel)]`` drawn at
+    ``PROFILE_FWHM_HZ``."""
     from processing.pattern_shape import encode_profile
     lo, hi = lines[0][0] - 10.0, lines[-1][0] + 10.0
     grid = np.arange(lo, hi + 1e-9, 0.1)
     w = PROFILE_FWHM_HZ / 2.0
     prof = sum(r * (w / np.pi) / ((grid - h) ** 2 + w ** 2) for h, r in lines)
-    return json.dumps(lines), encode_profile(grid, prof), PROFILE_FWHM_HZ
+    return encode_profile(grid, prof)
 
 
 def apply(rows, field_mhz, *, name=None) -> int:

@@ -55,16 +55,34 @@ DECONVOLUTION_ENABLED = False   # "NMRPro-H v0.38 Alpha"
 
 
 # The reference databases the application offers for annotation, in the order
-# it lists them. Both are split from BMRB_Metabolomics_v05
-# (hmdb_api_download/split_dbs.py) and carry every correction of v04 and v05
-# (ADR-049, ADR-060): Mammalian holds the compounds ChEBI places in mammals,
-# General adds those of unknown origin. Older versions stay in git history;
-# an installation that still holds them in its user folder no longer lists
-# them. Any other file is reachable through "Browse".
+# it lists them, all in D2O and split from BMRB_Metabolomics_v06
+# (hmdb_api_download/build_reference_v06.py, ADR-091): v05's signals
+# unchanged, HMDB identifiers, CASMDB compounds verified against their
+# spectra. Mammalian holds the compounds found in mammals, General adds those
+# of unknown origin, and each matrix is the Mammalian compounds HMDB
+# quantifies in that biospecimen. Names carry no version: the build records it
+# (``build_info``). Older files stay in git history; an installation that
+# still holds them no longer lists them. Any other file is reachable through
+# "Browse".
 REFERENCE_DATABASES = (
-    ("BMRB Mammalian v05", "BMRB_Metabolomics_Mammalian_v05.db"),
-    ("BMRB General v05", "BMRB_Metabolomics_General_v05.db"),
+    ("BMRB Mammalian", "BMRB_Mammalian_nMRPro-H.db"),
+    ("BMRB General", "BMRB_General_nMRPro-H.db"),
+    ("BMRB Blood", "BMRB_Blood_nMRPro-H.db"),
+    ("BMRB Urine", "BMRB_Urine_nMRPro-H.db"),
+    ("BMRB Feces", "BMRB_Feces_nMRPro-H.db"),
+    ("BMRB Saliva", "BMRB_Saliva_nMRPro-H.db"),
+    ("BMRB CSF", "BMRB_CSF_nMRPro-H.db"),
+    ("BMRB Milk", "BMRB_Milk_nMRPro-H.db"),
+    ("BMRB Sweat", "BMRB_Sweat_nMRPro-H.db"),
 )
+# A project saved against a database file that is no longer there reopens
+# against the one that replaced it.
+LEGACY_DATABASES = {
+    "BMRB_Metabolomics_Mammalian_v05.db": "BMRB_Mammalian_nMRPro-H.db",
+    "BMRB_Metabolomics_General_v05.db": "BMRB_General_nMRPro-H.db",
+    "BMRB_Metabolomics_Mammalian_v06.db": "BMRB_Mammalian_nMRPro-H.db",
+    "BMRB_Metabolomics_General_v06.db": "BMRB_General_nMRPro-H.db",
+}
 # Shipped beside them, not offered for annotation: pathway membership for
 # the statistics stage.
 SUPPORT_DATABASES = ("hmdb_pathways.db",)
@@ -157,3 +175,18 @@ def reference_databases():
     return [(label, os.path.join(folder, fname))
             for label, fname in REFERENCE_DATABASES
             if os.path.isfile(os.path.join(folder, fname))]
+
+
+def resolve_database(path):
+    """The database a saved project names: the file itself when it is there,
+    else the file of that name in ``databases_dir()``, else the one that
+    replaced it (``LEGACY_DATABASES``); ``path`` unchanged when none is
+    found, so the caller still reports what was asked for."""
+    if not path or os.path.isfile(path):
+        return path
+    name = os.path.basename(str(path))
+    folder = databases_dir()
+    for cand in (name, LEGACY_DATABASES.get(name)):
+        if cand and os.path.isfile(os.path.join(folder, cand)):
+            return os.path.join(folder, cand)
+    return path

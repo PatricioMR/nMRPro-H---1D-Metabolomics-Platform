@@ -46,3 +46,10 @@ def test_off_nothing_changes(monkeypatch):
              'pattern_lines': '[[-24.0, 0.05], [24.0, 0.05]]'}]
     assert sp.apply(rows, 600.71) == 0
     assert 'pattern_source' not in rows[0]
+
+
+def test_degenerate_transitions_are_one_line_at_their_weighted_position():
+    # three sticks 0.03 Hz apart are one line; one 7 Hz away stays apart
+    lines = sp.merge_close([10.03, 10.0, 10.06, 17.0], [1.0, 2.0, 1.0, 4.0])
+    assert [round(h, 6) for h, _i in lines] == [10.0225, 17.0]
+    assert [i for _h, i in lines] == [4.0, 4.0]
