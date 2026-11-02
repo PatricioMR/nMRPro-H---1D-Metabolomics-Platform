@@ -154,6 +154,48 @@ ALIGN_FIRST = None
 # variant is annotated under its own settings and not handed the default's.
 PREP_SETTINGS = ''
 
+# The database the tube is annotated with (--annotate-db); None is the one
+# it is built from (mixture_bench.DB_DEFAULT). The tube itself never changes
+# with it: a larger reference only adds candidates. Part of the cache keys.
+ANNOTATE_DB = None
+
+
+def _annotate_db() -> str:
+    return ANNOTATE_DB or mb.DB_DEFAULT
+
+
+def _ids_back(rows):
+    """Rows annotated with ``ANNOTATE_DB`` under the keys the tube's truth
+    uses: a database that remapped a compound's key (v06 gives a bmse
+    compound its HMDB id) records the key it had in ``v06_evidence``."""
+    if not ANNOTATE_DB:
+        return rows
+    import json
+    con = sqlite3.connect(ANNOTATE_DB)
+    try:
+        cols = {r[1] for r in con.execute('pragma table_info(metabolites)')}
+        if 'v06_evidence' not in cols:
+            return rows
+        back = {}
+        for bid, ev in con.execute("select bmrb_id, v06_evidence from metabolites "
+                                   "where v06_status = 'id_filled'"):
+            was = json.loads(ev).get('bmrb_id_was')
+            if was and was != bid:
+                back[bid] = was
+    finally:
+        con.close()
+    for r in rows:
+        if r.get('hmdb_id') in back:
+            r['hmdb_id'] = back[r['hmdb_id']]
+    return rows
+
+
+def _db_tag() -> str:
+    if not ANNOTATE_DB:
+        return ''
+    st = os.stat(ANNOTATE_DB)
+    return f'_db{hashlib.sha1(f"{os.path.basename(ANNOTATE_DB)}|{st.st_size}|{st.st_mtime_ns}".encode()).hexdigest()[:8]}'
+
 
 def _spread_signals(sys_, sigma, rng):
     """A copy of a GISSMO system whose distinct shifts each moved by a normal
@@ -332,7 +374,8 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
                      f'{_shift_tag(ref_shift, drift)}'
                      f'{"|align=" + ALIGN_FIRST if ALIGN_FIRST else ""}'
                      f'{"|spin" if _spin_on() else ""}'
-                     f'{"|set=" + PREP_SETTINGS if PREP_SETTINGS else ""}'.encode())
+                     f'{"|set=" + PREP_SETTINGS if PREP_SETTINGS else ""}'
+                     f'{_db_tag()}'.encode())
     d = defaults()
     for k in sorted(d):
         h.update(f'{k}={d[k]!r};'.encode())
@@ -346,7 +389,7 @@ def prepared(field, seed, size='c600', *, snr_b0=False, ref_shift=0.0,
             return pickle.load(f), truth
     mb.MHZ = field
     with contextlib.redirect_stdout(io.StringIO()):
-        prep = prepare(PPM, X, mb.SAMPLES, db_path=mb.DB_DEFAULT,
+        prep = prepare(PPM, X, mb.SAMPLES, db_path=_annotate_db(),
                        field_mhz=field, aligned_first=ALIGN_FIRST or False,
                        log=lambda *a: None)
     # beside it, then moved: two variants may prepare the same tube at once
@@ -385,7 +428,7 @@ def run(field, seed, size='c600', *, snr_b0=False, overrides=None,
         path = os.path.join(CACHE_DIR, f'gissmo_rows_{size}_{field:.0f}'
                                        f'{"snr" if snr_b0 else ""}'
                                        f'{_shift_tag(ref_shift, drift)}_s{seed}_'
-                                       f'{_data_tag()}_{_quant_hash()}.pkl')
+                                       f'{_data_tag()}_{_quant_hash()}{_db_tag()}.pkl')
     if path and os.path.exists(path):
         with open(path, 'rb') as f:
             rows = pickle.load(f)
@@ -400,6 +443,7 @@ def run(field, seed, size='c600', *, snr_b0=False, overrides=None,
         if path:
             with open(path, 'wb') as f:
                 pickle.dump(rows, f, protocol=pickle.HIGHEST_PROTOCOL)
+    rows = _ids_back(rows)
     s = score(rows, truth)
     core = {m: t for m, t in truth.items()
             if t['name'] in {n for n, _c, _f in mb.PANEL}}
@@ -425,10 +469,14 @@ def main():
     ap.add_argument('--sample-shift-mppm', type=float, default=0.0,
                     help='each environment moved per sample by its own sensitivity')
     ap.add_argument('--align-first', choices=('valley', 'icoshift'), default=None)
+    ap.add_argument('--annotate-db', default=None,
+                    help='annotate with this database (path); the tube stays '
+                         'built from the default one')
     ap.add_argument('--drift-mppm', type=float, default=None,
                     help='the study-wide shift every compound shares (default 8)')
     a = ap.parse_args()
-    global SIGNAL_SHIFT, SAMPLE_SHIFT, ALIGN_FIRST
+    global SIGNAL_SHIFT, SAMPLE_SHIFT, ALIGN_FIRST, ANNOTATE_DB
+    ANNOTATE_DB = a.annotate_db
     SIGNAL_SHIFT = a.signal_shift_mppm / 1000.0
     SAMPLE_SHIFT = a.sample_shift_mppm / 1000.0
     ALIGN_FIRST = a.align_first

@@ -43,6 +43,7 @@ from processing.peak_alignment import apply_rigid_shifts
 from processing.peak_detection import as_app_peak, detect_peaks
 from processing.stocsy import compute_peak_correlation_matrix
 from validation.app_annotation import annotate as app_annotate
+from validation.app_annotation import annotate_per_sample
 
 
 # The Align dialog's own starting values (visualization_stage).
@@ -78,9 +79,14 @@ def region_noise(ppm, raw, region):
 
 def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
             aligned_first=False, keep_detection_alignment=True,
-            overrides=None, log=print):
+            overrides=None, annotation='mean', log=print):
     """Detection and annotation, as the interface runs them: everything
     before an amount is measured.
+
+    ``annotation='per_sample'`` annotates every sample on its own trace and
+    keeps a signal where enough samples of one group agree
+    (``app_annotation.annotate_per_sample``); the interface annotates on the
+    study's mean trace (``'mean'``).
 
     ``aligned_first`` presses the Align button before detecting, with the
     dialog's own settings (icoshift, 50 segments, 0.030 ppm): it replaces
@@ -167,17 +173,22 @@ def prepare(ppm, raw, samples_info, *, db_path, field_mhz,
         f'({"region" if noise else "estimated"}), baseline model '
         f'{"on" if d["baseline_model"] else "off"}')
 
+    ann = dict(db_path=db_path, field_mhz=float(field_mhz),
+               tolerance_ppm=d['tolerance_ppm'], noise_std=noise_std,
+               min_snr=d['min_snr'], min_distance_ppm=d['min_distance_ppm'],
+               excluded_regions=excluded, peak_correlation=peak_corr,
+               n_samples_correlated=raw.shape[1] if raw.ndim == 2 else 1)
+    votes = None
     with contextlib.redirect_stdout(io.StringIO()):
-        mets, params = app_annotate(
-            peaks, ppm, raw, samples_info, db_path=db_path,
-            field_mhz=float(field_mhz), tolerance_ppm=d['tolerance_ppm'],
-            noise_std=noise_std, min_snr=d['min_snr'],
-            min_distance_ppm=d['min_distance_ppm'],
-            excluded_regions=excluded, peak_correlation=peak_corr,
-            n_samples_correlated=raw.shape[1] if raw.ndim == 2 else 1)
+        if annotation == 'per_sample':
+            mets, params, votes = annotate_per_sample(
+                peaks, ppm, raw, samples_info,
+                min_group_presence=d['min_group_presence'], **ann)
+        else:
+            mets, params = app_annotate(peaks, ppm, raw, samples_info, **ann)
     return {'ppm': ppm, 'raw': raw, 'corr': corr, 'peaks': peaks,
             'mets': mets, 'params': params, 'noise_std': noise_std,
-            'excluded': excluded, 'settings': d}
+            'excluded': excluded, 'settings': d, 'votes': votes}
 
 
 def quantify_prepared(prep, samples_info, *, standard_ppm, standard_nh,

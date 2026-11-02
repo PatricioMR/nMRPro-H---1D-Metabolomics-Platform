@@ -20,6 +20,7 @@ SUBFOLDERS = {
     'documents': '07_Documentos',          # methods and manuscript material (by hand)
     'figures': '08_Figuras',               # validation.composition_figure (both fields)
     'real': '09_Amostras_reais',           # validation.real_samples (old projects re-analysed)
+    'artifacts': '10_Artefatos',           # validation.artifact_bench (spoiled samples)
     'archive': '99_Arquivo',               # earlier versions' exports
 }
 
