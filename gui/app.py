@@ -1672,52 +1672,27 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 return
             pk_stage = self.stages.get('peak_detection')
 
-            # Progress dialog while AnnotationResultsWindow initialises
-            import tkinter.ttk as _ttk
-            _pdlg = tk.Toplevel(self.root)
-            _pdlg.title('Building Results…')
-            _pdlg.resizable(False, False)
-            _pdlg.grab_set()
-            self.root.update_idletasks()
-            _px = self.root.winfo_rootx() + self.root.winfo_width()  // 2 - 175
-            _py = self.root.winfo_rooty() + self.root.winfo_height() // 2 - 60
-            _pdlg.geometry(f'350x120+{_px}+{_py}')
-            _ttk.Label(_pdlg, text='Processing annotation results…',
-                       font=('Arial', 9, 'bold')).pack(pady=(12, 4))
-            _pb = _ttk.Progressbar(_pdlg, orient='horizontal', length=310,
-                                    mode='determinate', maximum=100)
-            _pb.pack(padx=20)
-            _msg_var = tk.StringVar(value='Initialising…')
-            _ttk.Label(_pdlg, textvariable=_msg_var,
-                       font=('Arial', 8), foreground='gray').pack(pady=(4, 8))
-            _pdlg.update()
-
-            def _progress_cb(step, total, msg):
-                try:
-                    _pb['value'] = int(step / max(total, 1) * 100)
-                    _msg_var.set(msg)
-                    _pdlg.update_idletasks()
-                except Exception:
-                    pass
-
+            from gui.widgets.annotation_progress import AnnotationProgress
             from gui.widgets.annotation_results_window import AnnotationResultsWindow
+            _prog = AnnotationProgress(
+                self.root, ('scoring', 'interface'),
+                title='NMRPro-H — Opening Annotation Results')
             _saved_mets = getattr(stage, '_metabolites', None)
-            self._annot_win = AnnotationResultsWindow(
-                self.root,
-                args['results'],
-                pk_stage.peaks if pk_stage else [],
-                self.ppm,
-                self.all_intensities,
-                db_path=args.get('db_path'),
-                elapsed=args.get('elapsed', 0),
-                app=self,
-                saved_quality=dict(getattr(stage, '_quality_marks', {})),
-                progress_cb=_progress_cb,
-                saved_metabolites=_saved_mets)
             try:
-                _pdlg.destroy()
-            except Exception:
-                pass
+                self._annot_win = AnnotationResultsWindow(
+                    self.root,
+                    args['results'],
+                    pk_stage.peaks if pk_stage else [],
+                    self.ppm,
+                    self.all_intensities,
+                    db_path=args.get('db_path'),
+                    elapsed=args.get('elapsed', 0),
+                    app=self,
+                    saved_quality=dict(getattr(stage, '_quality_marks', {})),
+                    progress_cb=_prog.step_callback('scoring', then='interface'),
+                    saved_metabolites=_saved_mets)
+            finally:
+                _prog.close()
 
             # Keep the live reference updated so Resolving Method sees
             # the same metabolite dicts that the user is annotating.

@@ -240,3 +240,107 @@ class TestAcrossSamples:
                                   field_mhz=MHZ, dj_bad_hz=BAD,
                                   dj_gold_hz=GOLD, max_drift_ppm=0.05)
         assert sorted(fits) == [0, 2]
+
+
+def _exhaustive(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
+                dj_gold_hz, max_drift_ppm=None):
+    """The assignment as first written: every order-preserving chain within
+    dj_bad_hz, of every length, then the hierarchical choice. Exponential on
+    dense patterns, kept here only as the reference the pruned search must
+    reproduce exactly."""
+    from processing.multiplet_line_fit import _cap
+    exp = sorted(float(p) for p in expected_ppms)
+    cands = _cap([(float(p), float(h)) for p, h in candidates])
+    cp = [p for p, _ in cands]
+    scored = []
+
+    def _ext(ranks, picks, res):
+        for r in range(ranks[-1] + 1, len(exp)):
+            for c in range(picks[-1] + 1, len(cp)):
+                pr = abs((cp[c] - cp[picks[-1]]) - (exp[r] - exp[ranks[-1]])) \
+                    * field_mhz
+                if pr > dj_bad_hz:
+                    continue
+                w = max(pr, res)
+                ch = [cp[i] for i in picks + [c]]
+                rk = ranks + [r]
+                drift = abs(sum(ch) / len(ch) - sum(exp[i] for i in rk) / len(rk))
+                if max_drift_ppm is None or drift <= max_drift_ppm:
+                    scored.append((len(rk), w, drift, rk, ch))
+                _ext(rk, picks + [c], w)
+
+    for r in range(len(exp)):
+        for c in range(len(cp)):
+            _ext([r], [c], 0.0)
+    if not scored:
+        return None
+    best = min(scored, key=lambda s: (-s[0], s[1], s[2]))
+    alts = sum(1 for s in scored if s[0] == best[0] and s[4] != best[4]
+               and abs(s[1] - best[1]) <= dj_gold_hz)
+    return best[3], best[4], best[1], best[2], alts
+
+
+def test_the_pruned_search_chooses_exactly_what_the_exhaustive_one_did():
+    rng = np.random.default_rng(7)
+    for _ in range(400):
+        ne, nc = int(rng.integers(2, 9)), int(rng.integers(2, 10))
+        j = rng.uniform(1.0, 10.0) / MHZ
+        exp = list(1.5 + (np.arange(ne) * j if rng.random() < 0.5
+                          else np.sort(rng.uniform(0, ne * j, ne))))
+        cands = [(float(p), 1.0) for p in
+                 (1.5 + np.arange(nc) * rng.uniform(1, 8) / MHZ
+                  if rng.random() < 0.3
+                  else rng.uniform(1.49, 1.5 + ne * j + 0.01, nc))]
+        kw = dict(field_mhz=MHZ, dj_bad_hz=float(rng.choice([0.5, 1.0, 2.0])),
+                  dj_gold_hz=GOLD,
+                  max_drift_ppm=float(rng.choice([0.005, 0.02])))
+        ref = _exhaustive(exp, cands, **kw)
+        f = fit_lines(exp, cands, **kw)
+        if ref is None:
+            assert not f['fitted']
+            continue
+        assert (f['ranks'], f['ppms'], f['residual_hz'], f['drift_ppm'],
+                f['n_alternatives']) == ref
+
+
+def test_a_dense_pattern_with_evenly_spaced_apices_does_not_stall():
+    """58 lines 0.2-1 Hz apart (a BMRB pattern like L-citrulline) match
+    almost any spacing to 0.5 Hz; twelve apices 2.5 Hz apart in it took the
+    exhaustive search 9 s for one sample, and the reading of a real study
+    stalled on such signals."""
+    import time
+    rng = np.random.default_rng(3)
+    exp = list(3.70 + np.cumsum(rng.uniform(0.2, 1.0, 58)) / MHZ)
+    mid = (exp[0] + exp[-1]) / 2
+    cands = [(mid + (i - 5.5) * 2.5 / MHZ, 1.0) for i in range(12)]
+    t0 = time.perf_counter()
+    f = fit_lines(exp, cands, field_mhz=MHZ, dj_bad_hz=BAD, dj_gold_hz=GOLD,
+                  max_drift_ppm=0.02)
+    assert time.perf_counter() - t0 < 0.5
+    assert f['fitted'] and len(f['ranks']) >= 2
+
+
+def test_a_list_far_denser_than_the_apices_is_reported_not_read():
+    """The doublet of 2-isopropylmalic acid arrived with 223 lines, some
+    0.03 Hz apart, against 12 apices 3-7 Hz apart; searching one sample to
+    the end took 110 s. Past the budget the sample is not read -- no
+    assignment is picked from an unfinished search."""
+    import time
+    rng = np.random.default_rng(5)
+    exp = list(0.80 + np.cumsum(rng.uniform(0.02, 0.7, 223)) / MHZ)
+    gaps = [0, 3.65, 2.84, 4.12, 4.31, 6.27, 6.16, 5.3, 3.73, 6.98, 3.26, 7.16]
+    c0 = (exp[0] + exp[-1]) / 2
+    cands = [(c0 + (x - 27.0) / MHZ, 1.0) for x in np.cumsum(gaps)]
+    t0 = time.perf_counter()
+    f = fit_lines(exp, cands, field_mhz=MHZ, dj_bad_hz=BAD, dj_gold_hz=GOLD,
+                  max_drift_ppm=0.05)
+    assert time.perf_counter() - t0 < 10
+    assert f['too_ambiguous'] is True
+    assert f['fitted'] is False and f['ppms'] == [] and f['ranks'] == []
+
+
+def test_an_ordinary_fit_is_not_flagged():
+    exp = [1.5 - D, 1.5, 1.5 + D]
+    f = fit_lines(exp, [(p, 1.0) for p in exp], field_mhz=MHZ, dj_bad_hz=BAD,
+                  dj_gold_hz=GOLD, max_drift_ppm=0.02)
+    assert f['fitted'] and f['too_ambiguous'] is False

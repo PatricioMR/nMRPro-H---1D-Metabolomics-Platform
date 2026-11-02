@@ -8,13 +8,14 @@ Extracted from annotation_stage.py to isolate:
   • _rescue_unassigned_with_mcr — rescue pass with relaxed DB search + MCR
   • search_internal_db          — main DB fingerprint search (threaded)
   • _rerun_mcr_for_peak         — re-run MCR on a single peak
-  • _update_progress / _handle_search_error / _open_results_window — helpers
+  • _post_search_passes / _finish_in_background — per-sample reading and
+    MCR on the worker thread, then _open_results_window on the Tk thread
   • search_builtin_library      — built-in CSV library search
   • search_hmdb_online          — placeholder for online search
   • _export                     — CSV export of results
 """
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from tkinter import messagebox, filedialog
 import numpy as np
 import json
 import os
@@ -39,6 +40,7 @@ from ._annotation_helpers import (
     _stocsy_coherence,
     _stocsy_partner_count,
 )
+from gui.widgets.annotation_progress import AnnotationProgress, run_phases
 from processing.spectral_regions import measure_linewidth_ppm
 from processing.annotation_consistency import (
     consistent_peaks, reference_per_proton)
@@ -388,7 +390,12 @@ class _AnnotationSearchMixin:
             combined.sort(key=lambda r: r.get('composite_score', 0), reverse=True)
             elapsed = time.monotonic() - t0
             self._status_ok(f'Rescue completed: +{len(rescued)} candidate match(es) in {elapsed:.2f}s.')
-            self._open_results_window(combined, None, len(good_peaks), db_path, elapsed)
+            settings = self._run_settings(mhz, tolerance)
+            prog = AnnotationProgress(
+                self.app.root, run_phases(search=False, mcr=settings['run_mcr']),
+                subtitle=f'Rescue · {os.path.basename(db_path)}')
+            self._finish_in_background(combined, settings, prog,
+                                       len(good_peaks), db_path, elapsed)
         except Exception as e:
             self._status_err(f'Rescue failed: {e}')
             messagebox.showerror('Rescue Error', str(e))
@@ -439,7 +446,8 @@ class _AnnotationSearchMixin:
                 return [float(l['ppm']) for l in syn], True
         return (pred or ([centre] if centre else [])), False
 
-    def _measure_results_per_sample(self, results, mhz):
+    def _measure_results_per_sample(self, results, mhz, *, tolerance_ppm,
+                                    min_snr, progress=None):
         """Write each result's per-sample reading onto the result row.
 
         Annotation decides on the mean spectrum, which cannot say in how many
@@ -455,6 +463,11 @@ class _AnnotationSearchMixin:
 
         Blanks and excluded samples are left out, the same selection detection
         used. Returns how many results were measured.
+
+        Runs on the worker thread (16 s for 12 samples on the bench study,
+        linear in the samples), so the panel values come in as arguments,
+        read on the Tk thread; ``progress(done, total, name)`` follows the
+        rows, naming the one being read.
         """
         peaks = getattr(self.peak_stage, 'peaks', None) or []
         _ppm_axis = getattr(self.app, 'ppm', None)
@@ -471,23 +484,19 @@ class _AnnotationSearchMixin:
         # unacceptable exactly when the score would, and the drift it allows is
         # the analyst's own Tolerance (ppm).
         _params = dict(SCORING_DEFAULTS)
-        try:
-            _params['dppm_gold'] = float(self.tolerance_var.get())
-        except Exception:
-            pass
+        if tolerance_ppm is not None:
+            _params['dppm_gold'] = float(tolerance_ppm)
         _params.update(getattr(self, '_annotation_params', None) or {})
 
         # A sample without this analyte must yield no apices, not noise ones —
         # the same bar detection used when it decided a peak was real there.
         _noise = float(getattr(self.peak_stage, 'noise_std', 0.0) or 0.0)
-        try:
-            _min_snr = float(self.peak_stage.min_snr_var.get())
-        except Exception:
-            _min_snr = 3.0
-        _floor = _noise * _min_snr
+        _floor = _noise * (3.0 if min_snr is None else float(min_snr))
 
         n = 0
-        for r in results:
+        for i_r, r in enumerate(results):
+            if progress is not None:
+                progress(i_r, len(results), r.get('name') or '')
             line_pks = multiplet_line_peaks(r, pk_by_rank)
             if not line_pks:
                 continue
@@ -524,6 +533,8 @@ class _AnnotationSearchMixin:
             for _row in out['per_sample']:
                 _row['align_shift_ppm'] = _shifts.get(_row['sample_idx'])
             r['per_sample']    = out['per_sample']
+            r['per_sample_too_ambiguous'] = sum(
+                1 for _f in _fits.values() if _f.get('too_ambiguous'))
             r['n_present']     = out['n_present']
             r['n_included']    = out['n_included']
             r['ppm_spread']    = out['ppm_spread']
@@ -565,9 +576,11 @@ class _AnnotationSearchMixin:
                 k: out[k] for k in ('ppm_centre', 'ppm_diff', 'ppm_n', 'ppm_sd',
                                     'observed_j_hz', 'delta_j_hz', 'j_n', 'j_sd')}
             n += 1
+        if progress is not None:
+            progress(len(results), len(results), '')
         return n
 
-    def _run_mcr_on_results(self, results, mhz):
+    def _run_mcr_on_results(self, results, mhz, progress=None):
         """Run MCR deconvolution on all annotated peaks and enrich results in place.
 
         Runs for every peak_rank (not just overlapping ones). MCR extracts the
@@ -576,7 +589,8 @@ class _AnnotationSearchMixin:
         Pearson r flags a likely false positive regardless of ppm proximity.
         shift_tol_ppm=0.05 (30 Hz at 600 MHz) absorbs pH/temperature variation
         without risking alignment to neighboring peaks.
-        Returns number of regions processed.
+        Returns number of regions processed; ``progress(done, total)``
+        follows the regions (worker thread).
         """
         _ppm_full = getattr(self.app, 'ppm', None)
         _all_int  = getattr(self.app, 'all_intensities', None)
@@ -602,7 +616,9 @@ class _AnnotationSearchMixin:
                 'dj_gold_hz', SCORING_DEFAULTS['dj_gold_hz']))
 
         n_validated = 0
-        for rk, cands in all_ranks.items():
+        for i_rk, (rk, cands) in enumerate(all_ranks.items()):
+            if progress is not None:
+                progress(i_rk, len(all_ranks))
             orig_peak = next(
                 (p for p in self.peak_stage.peaks if int(p.get('rank', -1)) == rk), None)
             if orig_peak is None:
@@ -802,6 +818,8 @@ class _AnnotationSearchMixin:
                 if peer_corrs:
                     c['mcr_cross_corr'] = float(np.mean(peer_corrs))
 
+        if progress is not None:
+            progress(len(all_ranks), len(all_ranks))
         return n_validated
 
     # ── Search ────────────────────────────────────────────────────────────────
@@ -1113,93 +1131,60 @@ class _AnnotationSearchMixin:
                     _sp['_obs_j_hz'] = _obs_j
                     _sp['_obs_mult'] = _obs_m
 
-        # Unified progress window — covers all phases (search + build)
-        pw = tk.Toplevel(self.app.root)
-        pw.title('NMRPro-H — Annotating…')
-        pw.resizable(False, False)
-        pw.transient(self.app.root)
-        pw.grab_set()
-        self.app.root.update_idletasks()
-        _px = (self.app.root.winfo_rootx()
-               + self.app.root.winfo_width() // 2 - 230)
-        _py = (self.app.root.winfo_rooty()
-               + self.app.root.winfo_height() // 2 - 65)
-        pw.geometry(f'460x130+{_px}+{_py}')
-
-        ttk.Label(pw, text=f'Database: {os.path.basename(db_path)}',
-                  font=('Arial', 9)).pack(pady=(10, 2))
-        self.progress_bar = ttk.Progressbar(
-            pw, length=420, mode='determinate', maximum=100)
-        self.progress_bar.pack(pady=(4, 2), padx=20)
-        self.progress_op_label = ttk.Label(
-            pw, text='Initialising…', font=('Arial', 8), foreground='gray')
-        self.progress_op_label.pack()
-        self.progress_time_label = ttk.Label(
-            pw, text='', font=('Arial', 8), foreground='gray')
-        self.progress_time_label.pack(pady=(2, 8))
-        pw.update()
+        # Everything the worker needs from the panels, read here: a Tk
+        # variable read from another thread can block on the main loop.
+        settings = self._run_settings(mhz, tolerance)
+        prog = AnnotationProgress(
+            self.app.root, run_phases(search=True, mcr=settings['run_mcr']),
+            subtitle=f'Database: {os.path.basename(db_path)}')
+        prog.report('search', note='Opening the database…')
 
         def search_task():
             with profiled('annotation_search'):
                 _search_task_body()
 
         def _search_task_body():
-            """Run the search and hand its answer to the window.
+            """Run the search, then the per-sample readings, and hand the
+            answer to the window.
 
             The search itself is controllers.annotation_controller: the
-            stage owns the dialogs, this progress window and the thread,
-            and nothing else. What it says on the way arrives through the
-            two callbacks, which put it back on the interface's thread.
+            stage owns the dialogs, the progress window and the thread,
+            and nothing else. Nothing here touches a widget; what it says
+            on the way goes through ``prog.post`` and ``root.after``.
             """
             def _progress(done, total, matches, peaks_matched, elapsed):
-                self.app.root.after(
-                    0,
-                    lambda _i=done, _t=total, _m=matches,
-                           _pm=peaks_matched, _e=elapsed:
-                    self._update_progress(_i, _t, _m, _pm, _e))
+                prog.post('search', done, total, unit='database entries',
+                          note=f'{matches} matches on {peaks_matched} signals')
 
             def _status(text):
                 self.app.root.after(0, lambda t=text: self._status(t))
 
-            _pk_stage = getattr(self, 'peak_stage', None)
-            try:
-                _min_dist = float(getattr(_pk_stage, 'min_width_var').get())
-            except Exception:
-                _min_dist = 0.0
-            try:
-                _min_snr = float(getattr(_pk_stage, 'min_snr_var').get())
-            except Exception:
-                _min_snr = 0.0
-            _raw_int = getattr(self.app, 'all_intensities', None)
             try:
                 found = search_database(
                     db_path=db_path, db_type=db_type,
                     peaks_to_search=peaks_to_search,
                     annotatable_peaks=_annotatable, tiers=_tiers,
                     ppm=getattr(self.app, 'ppm', None),
-                    intensities=_raw_int,
+                    intensities=getattr(self.app, 'all_intensities', None),
                     samples_info=getattr(self.app, 'samples_info', None),
                     field_mhz=mhz, tolerance_ppm=tolerance,
                     params=getattr(self, '_annotation_params', None),
                     ppm_calibration=getattr(self.app, '_ppm_calibration', None),
                     peak_correlation=getattr(_pk_stage, '_peak_corr', {}),
                     n_samples_correlated=getattr(_pk_stage, '_n_samples_pk', 0),
-                    min_distance_ppm=_min_dist,
+                    min_distance_ppm=settings['min_distance'],
                     noise_std=getattr(_pk_stage, 'noise_std', 0.0) or 0.0,
-                    min_snr=_min_snr,
+                    min_snr=settings['min_snr'] or 0.0,
                     carry_results=carry_results,
                     progress=_progress, status=_status)
             except IncompatibleDatabase as e:
-                self.app.root.after(0, lambda m=str(e): messagebox.showerror(
-                    'Incompatible DB', m))
-                self.app.root.after(0, pw.destroy)
+                self.app.root.after(0, lambda m=str(e): (
+                    prog.close(), messagebox.showerror('Incompatible DB', m)))
                 return
             except Exception as e:
-                self.app.root.after(
-                    0, lambda: self._status_err(f'Search failed: {e}'))
-                self.app.root.after(
-                    0, lambda: self._handle_search_error(pw, e))
                 import traceback; traceback.print_exc()
+                self.app.root.after(
+                    0, lambda e=e: self._run_failed(prog, 'Search failed', e))
                 return
 
             # Report the Poor signals left out so the denominator is never
@@ -1215,8 +1200,8 @@ class _AnnotationSearchMixin:
                     f'Search complete — {_nm} matches '
                     f'for {_np}/{_tp} {_tier_txt} peaks  '
                     f'({_el:.2f}s){_skip_txt}'))
-            self.app.root.after(0, lambda: self._open_results_window(
-                found.results, pw, _tp, db_path, _el))
+            self._finish_in_background(found.results, settings, prog, _tp,
+                                       db_path, _el)
 
         threading.Thread(target=search_task, daemon=True).start()
 
@@ -1277,41 +1262,88 @@ class _AnnotationSearchMixin:
         except Exception as e:
             print(f'_rerun_mcr_for_peak error: {e}')
 
-    # ── Progress update ───────────────────────────────────────────────────────
+    # ── After the search ──────────────────────────────────────────────────────
 
-    def _update_progress(self, processed, total, matches, peaks_matched, elapsed):
-        try:
-            # Phase 1 occupies 0→55% of the unified bar
-            self.progress_bar['value'] = int(processed / max(total, 1) * 55)
-            self.progress_op_label.config(
-                text=f'Searching — {processed}/{total} entries  ·  {matches} match(es)')
-            self.progress_time_label.config(text=f'{elapsed:.1f} s')
-        except Exception:
-            pass
+    def _run_settings(self, mhz, tolerance):
+        """The panel values a run reads, taken on the Tk thread before the
+        worker starts: reading a Tk variable from another thread can block
+        on, or fail without, the main loop."""
+        pk = getattr(self, 'peak_stage', None)
 
-    def _handle_search_error(self, pw, error):
-        try:
-            pw.destroy()
-        except Exception:
-            pass
-        messagebox.showerror('Search Error', str(error))
+        def _num(attr, default):
+            try:
+                return float(getattr(pk, attr).get())
+            except Exception:
+                return default
+        return {'mhz': float(mhz), 'tolerance': float(tolerance),
+                'min_snr': _num('min_snr_var', None),
+                'min_distance': _num('min_width_var', 0.0),
+                'run_mcr': mcr_requested(self)}
+
+    def _post_search_passes(self, results, settings, prog):
+        """The readings the results window needs and the search does not
+        make: every sample on its own, then MCR when the run asked for it.
+        Neither touches the interface and both are long (16 s and 48 s on
+        the 12-sample bench study), so they run on the worker thread --
+        on the Tk thread they left the program not responding."""
+        mhz = settings['mhz']
+        self._measure_results_per_sample(
+            results, mhz, tolerance_ppm=settings['tolerance'],
+            min_snr=settings['min_snr'],
+            progress=lambda d, t, name: prog.post('per_sample', d, t,
+                                                  unit='signals', note=name))
+        _amb = [r.get('name') for r in results
+                if r.get('per_sample_too_ambiguous')]
+        if _amb:
+            _msg = (f'{len(_amb)} signal(s) not read in some samples: too many '
+                    f'ways to assign their lines ({", ".join(sorted(set(_amb))[:3])}'
+                    f'{"…" if len(set(_amb)) > 3 else ""})')
+            print(f'[annotation] {_msg}')
+            self.app.root.after(0, lambda m=_msg: self._status(m, 'darkorange'))
+        if settings['run_mcr']:
+            n = self._run_mcr_on_results(
+                results, mhz,
+                progress=lambda d, t: prog.post('mcr', d, t, unit='regions'))
+            prog.post('mcr', 1, 1, note=f'{n} region(s) deconvolved')
+
+    def _finish_in_background(self, results, settings, prog, total_peaks,
+                              db_path, elapsed, then=None):
+        """Run ``_post_search_passes`` off the Tk thread, then open the
+        results window on it (and call ``then`` once it is open)."""
+        def _work():
+            try:
+                if results:
+                    self._post_search_passes(results, settings, prog)
+            except Exception as e:
+                import traceback; traceback.print_exc()
+                self.app.root.after(0, lambda e=e: self._run_failed(
+                    prog, 'Reading the samples failed', e))
+                return
+            self.app.root.after(0, lambda: self._open_results_window(
+                results, prog, total_peaks, db_path, elapsed, then))
+        threading.Thread(target=_work, daemon=True).start()
+
+    def _run_failed(self, prog, what, error):
+        prog.close()
+        self._status_err(f'{what}: {error}')
+        messagebox.showerror('Annotation', f'{what}:\n{error}')
 
     # ── Open results window ───────────────────────────────────────────────────
 
-    def _open_results_window(self, results, pw, total_peaks, db_path, elapsed):
-        # The results window is built on the Tk thread and the app does not
-        # answer while it is; when it takes long, this is where to look.
+    def _open_results_window(self, results, prog, total_peaks, db_path,
+                             elapsed, then=None):
+        # The interface itself is built on the Tk thread; when opening takes
+        # long, this is where to look.
         with profiled('results_window'):
-            self._build_results_window(results, pw, total_peaks, db_path,
+            self._build_results_window(results, prog, total_peaks, db_path,
                                        elapsed)
+        if then is not None and getattr(self.app, '_annot_win', None):
+            then()
 
-    def _build_results_window(self, results, pw, total_peaks, db_path,
+    def _build_results_window(self, results, prog, total_peaks, db_path,
                               elapsed):
         if not results:
-            try:
-                pw.destroy()
-            except Exception:
-                pass
+            prog.close()
             messagebox.showinfo('No Results',
                 'No matches found.\n'
                 'Try increasing the tolerance or checking the DB file.')
@@ -1339,81 +1371,24 @@ class _AnnotationSearchMixin:
                 pass
             self.app._annot_win = None
 
-        # ── Phase 2: reuse pw for build progress (55→100%) ───────────────────
-        _build_start = 55
-        try:
-            pw.title('NMRPro-H — Building Results…')
-            self.progress_bar['value'] = _build_start
-            self.progress_op_label.config(text='Preparing results…')
-            self.progress_time_label.config(text='')
-            pw.update_idletasks()
-        except Exception:
-            pass
-
-        try:
-            _mhz_ps = float(self.spectrometer_var.get())
-        except Exception:
-            _mhz_ps = 600.0
-        try:
-            self.progress_op_label.config(text='Reading each sample…')
-            self.progress_bar['value'] = 56
-            pw.update_idletasks()
-        except Exception:
-            pass
-        self._measure_results_per_sample(results, _mhz_ps)
-
-        if mcr_requested(self):
-            try:
-                mhz = float(self.spectrometer_var.get())
-            except Exception:
-                mhz = 600.0
-            try:
-                self.progress_op_label.config(text='Running MCR deconvolution…')
-                self.progress_bar['value'] = 57
-                pw.update_idletasks()
-            except Exception:
-                pass
-            n_mcr = self._run_mcr_on_results(results, mhz)
-            _build_start = 62
-            try:
-                self.progress_bar['value'] = _build_start
-                self.progress_op_label.config(
-                    text=f'MCR: {n_mcr} region(s) — building results…')
-                pw.update_idletasks()
-            except Exception:
-                pass
-
-        # progress_cb: steps 1-11 map from _build_start→95%; UI build → 100%
-        def _progress_cb(step, total, msg):
-            try:
-                pct = _build_start + int(step / max(total, 1) * (95 - _build_start))
-                self.progress_bar['value'] = pct
-                self.progress_op_label.config(text=msg)
-                pw.update_idletasks()
-            except Exception:
-                pass
-
         from gui.widgets.annotation_results_window import AnnotationResultsWindow
-        _win = AnnotationResultsWindow(
-            self.app.root,
-            results,
-            self.peak_stage.peaks,
-            getattr(self.app, 'ppm', None),
-            getattr(self.app, 'all_intensities', None),
-            db_path=db_path,
-            app=self.app,
-            saved_quality=dict(self._quality_marks),
-            progress_cb=_progress_cb)
-
         try:
-            self.progress_bar['value'] = 100
-            pw.update_idletasks()
-        except Exception:
-            pass
-        try:
-            pw.destroy()
-        except Exception:
-            pass
+            _win = AnnotationResultsWindow(
+                self.app.root,
+                results,
+                self.peak_stage.peaks,
+                getattr(self.app, 'ppm', None),
+                getattr(self.app, 'all_intensities', None),
+                db_path=db_path,
+                elapsed=elapsed,
+                app=self.app,
+                saved_quality=dict(self._quality_marks),
+                progress_cb=prog.step_callback('scoring', then='interface'))
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            self._run_failed(prog, 'Scoring the candidates failed', e)
+            return
+        prog.close()
 
         self.app._annot_win = _win
         # Hide (withdraw) on close — keeps computed state so re-open is instant.
@@ -1474,15 +1449,15 @@ class _AnnotationSearchMixin:
         self.hmdb_status.config(text='Internal DB: searching…', foreground='blue')
         self.app.root.update()
 
-        pw = tk.Toplevel(self.app.root)
-        pw.title(prog_title)
-        pw.geometry('420x120')
-        pw.transient(self.app.root)
-        pw.grab_set()
-        ttk.Label(pw, text=prog_text,
-                  font=('Arial', 10)).pack(pady=10)
-        pb = ttk.Progressbar(pw, length=360, mode='indeterminate')
-        pb.pack(pady=10); pb.start(); pw.update()
+        try:
+            mhz = float(self.spectrometer_var.get())
+        except (ValueError, tk.TclError):
+            mhz = 600.0
+        settings = self._run_settings(mhz, tolerance)
+        prog = AnnotationProgress(
+            self.app.root, run_phases(search=True, mcr=settings['run_mcr']),
+            title=f'NMRPro-H — {prog_title}', subtitle=lib_label)
+        prog.report('search', note=prog_text)
 
         def _search():
             try:
@@ -1566,18 +1541,20 @@ class _AnnotationSearchMixin:
                         self.hmdb_status.config(
                             text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} signals)',
                             foreground='green')
-                    self._open_results_window(all_results, pw, len(good_peaks), None, elapsed)
+
+                def _tag_library():
                     if self._last_results_args is not None:
                         self._last_results_args['internal_library_mode'] = mode
                         self._last_results_args['lipid_solvent'] = solvent
 
                 self.app.root.after(0, _show)
+                self._finish_in_background(all_results, settings, prog,
+                                           len(good_peaks), None, elapsed,
+                                           then=_tag_library)
             except Exception as exc:
-                self.app.root.after(0, pw.destroy)
-                self.app.root.after(
-                    0, lambda: messagebox.showerror('Error',
-                        f'Library search failed:\n{exc}'))
                 import traceback; traceback.print_exc()
+                self.app.root.after(0, lambda exc=exc: self._run_failed(
+                    prog, 'Library search failed', exc))
 
         threading.Thread(target=_search, daemon=True).start()
 

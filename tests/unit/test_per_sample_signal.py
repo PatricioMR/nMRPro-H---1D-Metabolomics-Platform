@@ -63,6 +63,16 @@ class TestPresence:
         r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
         assert r['n_found'] == 0 and r['j_obs_hz'] is None
 
+    def test_a_sample_too_ambiguous_to_search_says_so(self):
+        """Not read is not absent: the row carries why there is no reading."""
+        f = dict(ppms=[], ranks=[], residual_hz=None, drift_ppm=None,
+                 n_alternatives=0, fitted=False, n_candidates=12,
+                 too_ambiguous=True)
+        r = signal_in_sample(_doublet(), 0, fit=f, field_mhz=MHZ)
+        assert r['too_ambiguous'] is True and r['n_found'] == 0
+        assert signal_in_sample(_doublet(), 0, fit=_fit([1.47], [0]),
+                                field_mhz=MHZ)['too_ambiguous'] is False
+
     def test_area_does_not_depend_on_the_fit(self):
         """Integration runs over the master peak bounds; no apex enters it."""
         r = signal_in_sample(_doublet(), 0, field_mhz=MHZ)

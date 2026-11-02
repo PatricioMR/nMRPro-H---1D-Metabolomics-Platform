@@ -95,6 +95,8 @@ def signal_in_sample(line_peaks, sample_idx, *, fit=None, db_ppm=None,
         n_lines=n_exp,
         n_found=n_found,
         partial=bool(n_found) and n_found < n_exp,
+        # not read: the assignment was too ambiguous to search
+        too_ambiguous=bool(fit.get('too_ambiguous')),
         n_alternatives=int(fit.get('n_alternatives') or 0),
         residual_hz=fit.get('residual_hz') if fitted else None,
     )

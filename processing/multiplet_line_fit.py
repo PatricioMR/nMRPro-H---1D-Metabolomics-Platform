@@ -40,6 +40,15 @@ from processing.peak_alignment import parabolic_apex
 # cost seconds. 12 leaves every DB multiplicity (at most 8 lines) room to pick.
 MAX_CANDIDATES = 12
 
+# Steps the assignment search may take for one sample. Real readings take a
+# handful -- 3 to 6 at the median, at most 145 on the bench study and 26 103
+# on a real one (Mice, 37 samples, 38 575 fits, 2026-11-01). A line list far
+# denser than the apices can still need more than any budget: the doublet of
+# 2-isopropylmalic acid arrived with 223 lines and one sample took 110 s to
+# search to the end. Past this the sample is reported as not read,
+# ``too_ambiguous``, after about 2 s, rather than holding the reading up.
+MAX_ASSIGNMENT_STEPS = 50000
+
 # An apex under this fraction of the tallest in reach is not the singlet
 # being read; the same ratio the annotation's consistency and contradiction
 # rules use.
@@ -82,6 +91,34 @@ def _cap(cands):
     return sorted(kept, key=lambda t: t[0])
 
 
+class _TooAmbiguous(Exception):
+    """The assignment search ran past MAX_ASSIGNMENT_STEPS."""
+
+
+def _longest_chains(exp, cand_ppms, field_mhz, bad_hz):
+    """``longest[r, c]``: the most lines an assignment starting with line
+    ``r`` on apex ``c`` can cover, drift not considered -- an upper bound the
+    search prunes with. A pair may follow another when both come later in
+    order and the spacing sits within ``bad_hz`` of the expected one, by the
+    search's own arithmetic in the same order, so the bound and the search
+    cannot disagree on a pair. Built one line at a time: holding every pair
+    of pairs at once took 57 MB for a list of 223 lines.
+    """
+    e = np.asarray(exp, dtype=float)
+    p = np.asarray(cand_ppms, dtype=float)
+    n_e, n_c = e.size, p.size
+    d_c = p[None, :] - p[:, None]                   # [c0, c] = p[c] - p[c0]
+    after = np.arange(n_c)[:, None] < np.arange(n_c)[None, :]
+    longest = np.ones((n_e, n_c), dtype=int)
+    for r0 in range(n_e - 2, -1, -1):
+        d_exp = e[r0 + 1:] - e[r0]                  # [r] = exp[r] - exp[r0]
+        pr = np.abs(d_c[:, None, :] - d_exp[None, :, None]) * field_mhz
+        ok = (pr <= bad_hz) & after[:, None, :]     # [c0, r, c]
+        reach = np.where(ok, longest[None, r0 + 1:, :], 0)
+        longest[r0] = 1 + reach.reshape(n_c, -1).max(axis=1)
+    return longest
+
+
 def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
               dj_gold_hz, max_drift_ppm=None):
     """Assign this multiplet's lines to the apices one sample actually has.
@@ -104,13 +141,15 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     ``n_alternatives`` and ``fitted``. When nothing fits within ``dj_bad_hz``
     the result is empty with ``fitted=False`` and the candidate count, so the
     caller can say the window held no such pattern instead of showing a
-    forced reading.
+    forced reading. ``too_ambiguous`` is True, and the result as empty, when
+    the assignments were too many to search (MAX_ASSIGNMENT_STEPS): not
+    read, rather than a reading picked from an unfinished search.
     """
     exp = sorted(float(p) for p in (expected_ppms or ()))
     cands = _cap([(float(p), float(h)) for p, h in (candidates or ())])
     blank = dict(ppms=[], ranks=[], heights=[], residual_hz=None,
                  drift_ppm=None, n_alternatives=0, fitted=False,
-                 n_candidates=len(cands))
+                 n_candidates=len(cands), too_ambiguous=False)
     if not exp or not cands or field_mhz <= 0:
         return blank
 
@@ -134,7 +173,8 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
         return dict(ppms=[within[0][1]], ranks=[0],
                     heights=[_h.get(within[0][1], 0.0)], residual_hz=None,
                     drift_ppm=float(within[0][0]), fitted=True,
-                    n_alternatives=len(within) - 1, n_candidates=len(cands))
+                    n_alternatives=len(within) - 1, n_candidates=len(cands),
+                    too_ambiguous=False)
 
     if len(cands) < 2:
         return blank
@@ -149,7 +189,26 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
     # this did, and judging afterwards, cost fifty million spacing checks
     # over one study -- sixteen minutes with the window frozen -- to find
     # the handful that fit.
+    longest = _longest_chains(exp, cand_ppms, field_mhz, bad)
+    # The winner covers the most lines and only rivals of that length count
+    # as alternatives, so only assignments of the longest length that passes
+    # the drift bar matter. Growing every shorter one as well is what froze
+    # the per-sample reading on real samples: a BMRB pattern of 58 lines
+    # 0.78 Hz apart (L-citrulline) matches almost any spacing to 0.5 Hz, and
+    # 12 evenly spaced apices in it took 3-5 s per sample, with millions of
+    # short assignments kept in memory. A branch that cannot reach the
+    # target length any more is cut; the assignments that remain are the
+    # same, found in the same order, so the choice below is unchanged.
     scored = []
+    target = [0]
+    steps = [0]
+    # The winner has the smallest residual and a rival counts only within
+    # dj_gold_hz of it; a residual only grows as a chain does. So once an
+    # assignment is recorded, a branch already worse than its residual plus
+    # dj_gold_hz can be neither -- cut, with a margin that keeps rounding at
+    # the boundary from ever cutting a rival.
+    beaten = [float('inf')]
+    gold_cut = float(dj_gold_hz) + 1e-9
 
     def _record(ranks, picks, res):
         chosen = [cand_ppms[i] for i in picks]
@@ -158,22 +217,40 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
         if max_drift_ppm is not None and drift > float(max_drift_ppm):
             return
         scored.append((len(ranks), res, drift, list(ranks), chosen))
+        beaten[0] = min(beaten[0], res + gold_cut)
 
     def _extend(ranks, picks, res):
+        steps[0] += 1
+        if steps[0] > MAX_ASSIGNMENT_STEPS:
+            raise _TooAmbiguous
         r0, c0 = ranks[-1], picks[-1]
+        need = target[0] - len(ranks)
         for r in range(r0 + 1, n_e):
             d_exp = exp[r] - exp[r0]
             for c in range(c0 + 1, n_c):
+                if longest[r, c] < need:
+                    continue
                 pr = abs((cand_ppms[c] - cand_ppms[c0]) - d_exp) * field_mhz
                 if pr > bad:
                     continue
                 worst = pr if pr > res else res
-                _record(ranks + [r], picks + [c], worst)
-                _extend(ranks + [r], picks + [c], worst)
+                if worst > beaten[0]:
+                    continue
+                if need == 1:
+                    _record(ranks + [r], picks + [c], worst)
+                else:
+                    _extend(ranks + [r], picks + [c], worst)
 
-    for r in range(n_e):
-        for c in range(n_c):
-            _extend([r], [c], 0.0)
+    try:
+        for target[0] in range(int(longest.max()), 1, -1):
+            for r in range(n_e):
+                for c in range(n_c):
+                    if longest[r, c] >= target[0]:
+                        _extend([r], [c], 0.0)
+            if scored:
+                break
+    except _TooAmbiguous:
+        return dict(blank, too_ambiguous=True)
     if not scored:
         return blank
 
@@ -195,7 +272,7 @@ def fit_lines(expected_ppms, candidates, *, field_mhz, dj_bad_hz,
                 heights=[float(_h.get(p, 0.0)) for p in best[4]],
                 residual_hz=float(res_b), drift_ppm=float(best[2]),
                 n_alternatives=int(alts), fitted=True,
-                n_candidates=len(cands))
+                n_candidates=len(cands), too_ambiguous=False)
 
 
 def observed_j_hz(ranks, ppms, field_mhz):

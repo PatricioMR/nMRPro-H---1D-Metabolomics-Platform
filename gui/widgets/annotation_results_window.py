@@ -512,7 +512,7 @@ class AnnotationResultsWindow:
             except Exception:
                 pass
 
-        _TOTAL_STEPS = 11   # pure-data steps below
+        _TOTAL_STEPS = 12   # pure-data steps below
 
         def _step(n, msg):
             """Post a progress update to the main thread from any thread."""
@@ -537,7 +537,7 @@ class AnnotationResultsWindow:
 
         def _data_phase():
             try:
-                _step(1, 'Expanding peaks…')
+                _step(0, 'Listing the detected signals')
                 # Every detected peak stays a snap target: line counting and
                 # ΔJ measure the spectrum, they do not annotate it. Removing a
                 # Poor line here would pair its partner with an unrelated
@@ -547,12 +547,13 @@ class AnnotationResultsWindow:
                 self.peaks = self._expand_peaks_with_subpeaks(
                     canonical_peak_order(peaks))
 
-                _step(2, 'Grouping metabolites…')
+                _step(1, f'Grouping {len(results)} matches by metabolite')
                 _using_saved = self._saved_metabolites is not None
                 if _using_saved:
                     self.metabolites = self._saved_metabolites
                 else:
                     self.metabolites = self._group_by_metabolite(results)
+                _n_met = len(self.metabolites)
 
                 # Skip DB fingerprint fetch when using saved metabolites that
                 # already have db_peaks — db_peaks, sticks, cosine, and rri
@@ -563,46 +564,48 @@ class AnnotationResultsWindow:
                     and all(met.get('db_peaks') for met in self.metabolites)
                 )
                 if _has_saved_fingerprints:
-                    _step(3, f'Using saved fingerprints ({len(self.metabolites)} metabolites)…')
+                    _step(2, f'Using the saved fingerprints of {_n_met} metabolites')
                 else:
-                    _step(3, f'Fetching DB fingerprints ({len(self.metabolites)} metabolites)…')
+                    _step(2, f'Reading the database fingerprints of {_n_met} metabolites')
                     self._fetch_fingerprints(db_path)
 
-                _step(4, 'Computing detectability…')
+                _step(3, 'Expected size of every signal (detectability)')
                 self._compute_detectability()
 
                 if not _using_saved:
-                    _step(5, 'Restoring saved quality marks…')
+                    _step(4, 'Restoring your quality marks')
                     if saved_quality:
                         self._apply_saved_quality(saved_quality)
 
-                _step(6, 'Computing peak overlap…')
+                _step(5, 'Finding signals claimed by more than one candidate')
                 self._compute_overlap()
 
-                _step(7, 'Building candidate assignments…')
+                _step(6, 'Listing the candidates of each signal')
                 self._build_child_candidates()
 
                 if not _using_saved:
-                    _step(8, 'Enriching ΔJ from spectrum…')
-
-                    _step(9, 'Computing scores…')
+                    _step(7, 'Scoring each signal: Δppm, multiplicity, ΔJ, shape')
                     self._compute_scores()
                     self._enrich_scores()
+
+                    _step(8, 'Applying the acceptance rules')
                     self._auto_mark_good()
                     self._promote_singlets()
+
+                    _step(9, 'Checking that the large signals of each '
+                             'metabolite are present')
                     self._apply_fingerprint_gate()
                     self._nnls_spectral_validation()
                 else:
-                    _step(8, 'Restoring saved state…')
                     # Metabolites already have all quality marks embedded — do NOT
                     # re-run auto-marking or NNLS validation, which would alter
                     # auto-assigned marks and produce a different state than saved.
-                    _step(9, '')
+                    _step(9, 'Restoring the saved verdicts')
 
-                _step(10, 'Building peak assignments…')
+                _step(10, 'Assigning each signal to one metabolite')
                 self._build_peak_assignments()
 
-                _step(11, 'Calibrating PPM axis…')
+                _step(11, 'Calibrating the ppm axis on the anchors')
                 self._calibrate_ppm_from_anchors()
 
             except Exception as _exc:
@@ -635,7 +638,8 @@ class AnnotationResultsWindow:
         # ── Phase 2: UI construction (must be on main thread) ─────────────────
         if progress_cb is not None:
             try:
-                progress_cb(_TOTAL_STEPS, _TOTAL_STEPS, 'Building interface…')
+                progress_cb(_TOTAL_STEPS, _TOTAL_STEPS,
+                            f'{len(self.metabolites)} metabolites')
                 if _root:
                     _root.update_idletasks()
             except Exception:
