@@ -634,8 +634,10 @@ def _is_apex(r, i, half) -> bool:
 
 def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
             min_snr=CASCADE_MIN_SNR, max_steps=CASCADE_MAX_STEPS,
-            cap_ratio=None) -> CascadeResult:
-    """Forward selection over ``cols`` on one trace (see the module)."""
+            cap_ratio=None, progress=None) -> CascadeResult:
+    """Forward selection over ``cols`` on one trace (see the module).
+    ``progress(done, total, unit, note)`` is told each step, and may raise
+    to stop the run."""
     if cap_ratio is None:
         cap_ratio = CAP_RATIO
     ppm = np.asarray(ppm, dtype=float)
@@ -674,6 +676,8 @@ def cascade(cols, ppm, trace, *, sigma, linewidth_ppm, weight=None,
     out = CascadeResult()
     active = out.active
     for step in range(max_steps):
+        if progress is not None:
+            progress(step, max_steps, 'steps', 'taking in what is left')
         best = None
         taken = {e.col.mid for e in active}
         for col in cols:
@@ -1006,7 +1010,8 @@ def others_removed(Y, ppm, sel, found, cols, mid):
 def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
                    noise_sigma, linewidth_ppm, drift_ppm, field_mhz,
                    excluded_regions=(), min_snr=CASCADE_MIN_SNR,
-                   diagnostics=None, residual_out=None) -> dict:
+                   diagnostics=None, residual_out=None,
+                   progress=None) -> dict:
     """What the cascade adds to a quantified study.
 
     ``fixed_per_proton`` is ``{mid: {sample: area per proton}}`` for every
@@ -1046,7 +1051,7 @@ def cascade_missed(metabolites, ppm, intensities, included, *, fixed_per_proton,
     trace = Y[:, incl].mean(axis=1)
     res = cascade(free, ppm, trace, sigma=float(noise_sigma),
                   linewidth_ppm=float(linewidth_ppm), weight=weight,
-                  min_snr=min_snr)
+                  min_snr=min_snr, progress=progress)
     # Measured on the spectrum as it is, beside the quantified analytes
     # that reach into these regions -- not on what the subtraction left.
     taken = {e.col.mid for e in res.active}

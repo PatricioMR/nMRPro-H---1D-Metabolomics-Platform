@@ -101,6 +101,34 @@ def reselect_singlets(metabolites, peaks_by_rank):
     return out if changed else metabolites
 
 
+def pattern_evidence(mp) -> dict:
+    """What measuring an annotated signal needs of it (quant_engine.
+    measure_signal): its protons, its lines' weights, where its lines are.
+    The election's candidates and the analyst's choice of a signal read the
+    same three."""
+    return {
+        # Divided by the listed protons, the stoichiometry -- not by those
+        # measured under the profile on the reference spectrum, which carry
+        # its artefacts (see quant_cascade.signal_protons).
+        'protons': mp.get('protons'),
+        # A measured pattern's relative line heights, for the capture
+        # correction; a first-order multiplet carries none and the engine
+        # falls back to the binomial pattern.
+        'line_weights': ([float(l.get('rel_intensity') or 1.0)
+                          for l in (mp.get('predicted_lines') or ())]
+                         if (mp.get('type') or mp.get('multiplicity'))
+                         == 'm*' else None),
+        # Where the database says the lines are. Only read when detection
+        # found none of them, to bound what could have been there -- never
+        # to place a peak.
+        'predicted_ppms': [l.get('ppm') for l
+                           in (mp.get('predicted_lines') or ())
+                           if l.get('ppm') is not None]
+                          or ([mp.get('ppm')]
+                              if mp.get('ppm') is not None else []),
+    }
+
+
 def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                      eligible_ids=None, pool=None):
     """One Candidate per annotated signal that is not marked Bad.
@@ -236,26 +264,7 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
                     'mstar_compete': _mstar,
                     'score': mp.get('composite_score',
                                     mp.get('multiplet_score', 0.0)),
-                    # Divided by the listed protons, the stoichiometry --
-                    # not by those measured under the profile on the
-                    # reference spectrum, which carry its artefacts (see
-                    # quant_cascade.signal_protons).
-                    'protons': mp.get('protons'),
-                    # A measured pattern's relative line heights, for the
-                    # capture correction; a first-order multiplet carries none
-                    # and the engine falls back to the binomial pattern.
-                    'line_weights': ([float(l.get('rel_intensity') or 1.0)
-                                      for l in (mp.get('predicted_lines') or ())]
-                                     if (mp.get('type') or mp.get('multiplicity'))
-                                     == 'm*' else None),
-                    # Where the database says the lines are. Only read when
-                    # detection found none of them, to bound what could have
-                    # been there — never to place a peak.
-                    'predicted_ppms': [l.get('ppm') for l
-                                       in (mp.get('predicted_lines') or ())
-                                       if l.get('ppm') is not None]
-                                      or ([mp.get('ppm')]
-                                          if mp.get('ppm') is not None else []),
+                    **pattern_evidence(mp),
                     'shape_fit': _shape,
                     # The shape the reference measured for this signal,
                     # letter or singlet, for a shared window's fit
@@ -655,7 +664,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                      shared_overrides=None, diagnostics=None,
                      singlet_min_snr=None, cascade=False, ppm_band_ppm=None,
                      claim_signals=True, max_disagreement=None,
-                     raw_intensities=None, joint_fit=False):
+                     raw_intensities=None, joint_fit=False, progress=None):
     """Quantify one project and return the rows the results window reads.
 
     ``intensities`` must be the project's corrected matrix — what
@@ -672,7 +681,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
 
     ``cascade`` adds, after the election, the analytes the cascade finds on
     what the quantified ones leave (quant_engine.quantify).
+
+    ``progress`` is the engine's (quant_engine.quantify), told 'prepare'
+    first.
     """
+    if progress is not None:
+        progress('prepare')
     peaks_by_rank = {p.get('rank'): p for p in (peaks or ())
                      if p.get('rank') is not None}
     # A copy of its own: the steps below write their working values onto
@@ -796,4 +810,5 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         joint_fit=joint_fit,
         metabolites=metabolites,
         field_mhz=project_field_mhz(metabolites),
+        progress=progress,
     ), n_s), metabolites, peaks_by_rank)

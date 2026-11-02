@@ -19,8 +19,10 @@ and the exports — display and analysis over results that already exist.
 import tkinter as tk
 from tkinter import filedialog, messagebox
 import numpy as np
+import copy
 import csv
 import os
+import threading
 
 from ._quant_adapter import (
     blank_indices, dilution_and_correction, identity_columns as _identity_columns,
@@ -350,7 +352,16 @@ class _QuantCompMixin:
 
     # ── Core quantification ───────────────────────────────────────────────────
 
-    def _run(self):
+    def _say(self, kind, title, text):
+        """A message box from the run, on the Tk thread: the run is a worker
+        thread, and Tk called from one can hang the window."""
+        show = getattr(messagebox, kind)
+        if threading.current_thread() is threading.main_thread():
+            show(title, text)
+        else:
+            self.app.root.after(0, lambda: show(title, text))
+
+    def _run(self, progress=None):
         """Quantify the project: elect, integrate, concentrate, then display.
 
         Everything scientific happens in ``processing``. What is left here is
@@ -359,23 +370,22 @@ class _QuantCompMixin:
         live in this method decided the same question in four places that
         disagreed with each other, and no defect it carried was visible from
         any single one of them.
+
+        ``progress`` is the engine's (quant_engine.quantify): it may raise to
+        stop the run, and then the previous results stay as they were.
         """
-        self._quant_results = []
-        self._all_peak_quant = {}
         # NOT reset: user multiplet choices from the Quant Peaks window must
         # survive a re-quantification. They are cleared when annotation re-runs.
         if not hasattr(self, '_quant_peak_overrides'):
             self._quant_peak_overrides = {}
         if not hasattr(self, '_deconv_overrides'):
             self._deconv_overrides = {}
-        self._peak_competitor_count = {}
-        self._pqn_factor = 1.0
 
         ann = self.annotation_stage
         metabolites = list(getattr(ann, '_metabolites', []) or [])
         if not metabolites:
-            messagebox.showinfo(
-                'Info',
+            self._say(
+                'showinfo', 'Info',
                 'No annotation results found.\n\n'
                 'Run the Annotation stage first.')
             return
@@ -393,7 +403,7 @@ class _QuantCompMixin:
                 print(f'[Quant] baseline model unavailable, integrating the '
                       f'data: {_bl_exc}')
         if ppm_arr is None or all_int is None or np.asarray(all_int).ndim < 2:
-            messagebox.showinfo('Info', 'No spectral data loaded.')
+            self._say('showinfo', 'Info', 'No spectral data loaded.')
             return
         all_int = np.asarray(all_int, dtype=float)
         n_s = all_int.shape[1]
@@ -413,7 +423,8 @@ class _QuantCompMixin:
         align = bool(getattr(self, 'icoshift_var', None)
                      and self.icoshift_var.get())
         if align:
-            self._status('Pre-align: per-signal window alignment active', 'blue')
+            self.app.root.after(0, lambda: self._status(
+                'Pre-align: per-signal window alignment active', 'blue'))
 
         if self.ext_is_var.get() and self._ext_is_indices:
             if not getattr(self, '_ext_is_confirmed', False):
@@ -494,7 +505,6 @@ class _QuantCompMixin:
         _excluded_used = (f'{format_regions(_excl)} ({_excl_src})' if _excl
                           else 'none')
 
-        self._prog_apply(20, 'Electing signals…')
         _diag: dict = {}
         # The overlap correction is the analyst's choice, and off it must
         # leave every number exactly where the engine put it before the
@@ -559,9 +569,13 @@ class _QuantCompMixin:
             # the study before the project's baseline model, so every
             # window can say what the model took out of it
             raw_intensities=getattr(self.app, 'all_intensities', None),
+            progress=progress,
         )
+        if progress is not None:
+            progress('results')        # the last point a Cancel still stops
 
-        self._prog_apply(70, 'Building results…')
+        self._all_peak_quant = {}
+        self._pqn_factor = 1.0
         self._quant_results = rows
         # Every option this run was made with, kept with its results.
         self._last_run_settings = collect_vars(self)
@@ -574,7 +588,7 @@ class _QuantCompMixin:
             _div = pqn_group_divergence_of_rows(
                 rows, sample_groups(si, n_s))
             if _div and _div['diverges']:
-                messagebox.showwarning('PQN', pqn_group_note(_div))
+                self._say('showwarning', 'PQN', pqn_group_note(_div))
         # What the manual region editor needs to recompute one row the same
         # way the run computed all of them.
         self._last_norm_mode = norm_mode
@@ -598,10 +612,18 @@ class _QuantCompMixin:
                                  if np.isfinite(r['conc_mm']) else -1),
                   reverse=True)
         self._sync_all_peak_quant()
+        _refused_choices = self._reapply_signal_choices()
+        if _refused_choices:
+            self._say(
+                'showwarning', 'Signals chosen by hand',
+                f'{len(_refused_choices)} analyte(s) could not be quantified '
+                f'again on the signal chosen for them; they keep the '
+                f"engine's number:" + chr(10)
+                + chr(10).join(f'  {n}: {w}' for n, w in _refused_choices[:12]))
         _refused = self._reapply_manual_regions()
         if _refused:
-            messagebox.showwarning(
-                'Manual regions',
+            self._say(
+                'showwarning', 'Manual regions',
                 f'{len(_refused)} sample window(s) set by hand could not be '
                 f'applied to this run (the number now comes from a fit):\n'
                 + '\n'.join(f'  signal #{k}, sample {i}' for k, i, _w in _refused[:12]))
@@ -618,7 +640,7 @@ class _QuantCompMixin:
 
         def _finish_ui():
             self.app.refresh_deconv_button()
-            self._prog_apply(93, 'Computing VIP scores…')
+            self._prog_report('results', 'VIP scores')
             try:
                 self._compute_vip_scores()
             except Exception as _vip_err:
@@ -626,7 +648,6 @@ class _QuantCompMixin:
                 for _r in self._quant_results:
                     _r.setdefault('vip_score', float('nan'))
 
-            self._prog_apply(99, 'Done.')
             # Counted once, for both places that report it. Two labels reading
             # the same list two different ways is how one of them kept saying
             # 100 after the other was taught to say 65.
@@ -947,6 +968,148 @@ class _QuantCompMixin:
                     pk, int(s_i), adj.get('start_ppm'), adj.get('end_ppm'))
                 if why:
                     refused.append((pk.get('rank'), int(s_i), why))
+        return refused
+
+    # ── The analyst's choice of signal for one analyte ───────────────────────
+
+    def _run_option(self, name):
+        """An option as the last run had it (a reopened project keeps it),
+        else as the panel reads now."""
+        saved = (getattr(self, '_last_run_settings', None) or {}).get(name)
+        if saved is not None:
+            return bool(saved)
+        var = getattr(self, name, None)
+        return bool(var.get()) if var is not None else False
+
+    def quantify_with_signal(self, row, choice):
+        """Quantify ``row``'s analyte on the signal the analyst chose, the
+        rest of the table untouched. ``choice`` is ``{'line_ranks': [...],
+        'protons', 'predicted_ppms', 'line_weights', 'label'}``; it is kept
+        (``_quant_peak_overrides``) and applied again after every run.
+        Returns None when done, or why it could not be."""
+        from processing.quant_engine import STATUS_WEAK
+        from processing.quant_single import (
+            quantify_chosen_signal, run_conversion)
+        from processing.quant_snr import representative_snr
+        from processing.spectral_regions import measure_linewidth_ppm
+        peaks = list(getattr(self.peak_stage, 'peaks', None) or [])
+        by_rank = {p.get('rank'): p for p in peaks if p.get('rank') is not None}
+        lines = [by_rank[r] for r in choice.get('line_ranks') or ()
+                 if r in by_rank]
+        mat = (self.app.corrected_intensities()
+               if self._run_option('bl_model_quant_var')
+               else self.app.all_intensities)
+        if mat is None or self.app.ppm is None:
+            return 'No spectral data loaded.'
+        arr = np.asarray(mat, dtype=float)
+        ppm = np.asarray(self.app.ppm, dtype=float)
+        n_s = arr.shape[1]
+        si = self.app.samples_info or []
+        try:
+            res = quantify_chosen_signal(
+                lines, {'protons': choice.get('protons'),
+                        'predicted_ppms': choice.get('predicted_ppms'),
+                        'line_weights': choice.get('line_weights')},
+                ppm=ppm, intensities=arr,
+                included=included_sample_indices(si, n_s),
+                local_baseline=self._run_option('local_baseline_var'),
+                align=self._run_option('icoshift_var'),
+                blank_indices=(blank_indices(si, n_s)
+                               if self._run_option('blk_sub_var') else None),
+                linewidth_ppm=measure_linewidth_ppm(ppm, arr, peaks) or 0.008,
+                other_peaks=peaks,
+                noise_sigma=getattr(self.peak_stage, 'noise_std', None),
+                conversion=run_conversion(self._quant_results, n_s),
+                pqn_factors=row.get('_pqn_factors'))
+        except ValueError as e:
+            return str(e)
+        info = res['info']
+        if '_engine_row' not in row:
+            # what the engine had: the choice is undone by putting it back
+            row['_engine_row'] = copy.deepcopy(
+                {k: v for k, v in row.items() if k != '_engine_row'})
+        for k in ('_joint_fit', '_fit_curve', '_by_cascade', '_deconv',
+                  '_shape_fit', '_used_j_resolve', '_fit_refused',
+                  '_rejection', '_upper_bound_mm', '_ceiling_per_sample',
+                  '_manual_regions', '_engine_concs_per_sample',
+                  '_engine_areas_per_sample', '_shared_with'):
+            row.pop(k, None)
+        lo, hi = info['window']
+        nan = float('nan')
+        label = choice.get('label')
+        row.update({
+            'ppm': float((lo + hi) / 2.0),
+            'n_peaks': len(lines),
+            '_peak_rank': choice['line_ranks'][0],
+            '_display_peak_rank': choice['line_ranks'][0],
+            '_multiplet_window': [float(lo), float(hi)],
+            '_integ_segments': [[float(a), float(b)]
+                                for a, b in info.get('segments') or ()],
+            '_integ_mode': 'Multiplet',
+            '_line_ppms': list(info['lines']),
+            '_missing_lines': list(info['missing_lines']),
+            '_pattern_share': info['pattern_share'],
+            '_nh': float(info['nh']),
+            '_baseline_anchors': ([float(v) for v in info['baseline_anchors']]
+                                  if info.get('baseline_anchors') else None),
+            '_areas_per_sample': [float(res['areas'].get(s, nan))
+                                  for s in range(n_s)],
+            '_concs_per_sample': [float(res['concs'].get(s, nan))
+                                  for s in range(n_s)],
+            '_snr_per_sample': dict(info['snr']),
+            'snr': representative_snr(info['snr']),
+            '_not_quantified': False,
+            '_confidence': 1,
+            'status': STATUS_WEAK,
+            '_analyst_signal': label,
+            '_status_reasons': [
+                f"Quantified on the signal the analyst chose ({label}): its "
+                f"window integrated as the run integrates every signal, with "
+                f"the run's normalisation; no other analyte was re-measured. "
+                f"One dot: the choice stands behind it."],
+        })
+        mid = str(row.get('hmdb_id'))
+        if getattr(self, '_quant_peak_overrides', None) is None:
+            self._quant_peak_overrides = {}
+        self._quant_peak_overrides[mid] = dict(choice)
+        self._refresh_row_statistics(row)
+        pm = getattr(self.app, '_project_mgr', None)
+        if pm is not None:
+            try:
+                pm.mark_dirty()
+            except Exception:
+                pass
+        return None
+
+    def undo_signal_choice(self, row):
+        """The engine's own number for ``row`` back, and the choice forgotten."""
+        (getattr(self, '_quant_peak_overrides', None) or {}).pop(
+            str(row.get('hmdb_id')), None)
+        engine = row.pop('_engine_row', None)
+        if engine is None:
+            return
+        row.clear()
+        row.update(engine)
+        if self._right_widget:
+            self._refresh_tree_row(row)
+
+    def _reapply_signal_choices(self):
+        """A run measures every analyte the engine's way; the signals the
+        analyst chose are applied on top of it, so they survive a re-run.
+        Returns ``[(name, why)]`` for those that could not be."""
+        refused = []
+        for mid, choice in list((getattr(self, '_quant_peak_overrides', None)
+                                 or {}).items()):
+            if not isinstance(choice, dict):
+                continue            # an anchor rank from before: never used
+            row = next((r for r in self._quant_results
+                        if str(r.get('hmdb_id')) == str(mid)), None)
+            if row is None:
+                refused.append((mid, 'not in this run'))
+                continue
+            why = self.quantify_with_signal(row, choice)
+            if why:
+                refused.append((row.get('metabolite', mid), why))
         return refused
 
     # ── Tree row refresh ─────────────────────────────────────────────────────

@@ -255,3 +255,56 @@ def test_the_reference_groups_are_replicates_and_the_rest_together():
     assert [0, 1] in got and [3, 4] in got
     assert [2, 5, 6] in got, 'a lone sample and the ungrouped share one'
     assert _reference_groups({'a': [0]}, [0, 1]) == [[0, 1]]
+
+
+def test_no_analyte_buys_a_tall_peak_with_lines_that_stand_on_nothing(monkeypatch):
+    """The Mice ISS skin extract: the water's foot outside the excluded band
+    went to compounds with one line there, drawn thousands of noises tall
+    over their other lines' empty trace, and that overshoot zeroed the
+    analytes really under those lines. Capped by its empty line at 3.600,
+    B cannot take the broad peak, and A keeps its amount."""
+    a = _met('A', [(3.900, 's', 3, None)])
+    b = _met('B', [(2.700, 's', 1, None), (3.600, 's', 1, None),
+                   (3.900, 's', 1, None)])
+    cols = _cols(a, b)
+    g = 3 * LW / 2
+    water = 2e5 * (g / np.pi) / ((PPM - 2.700) ** 2 + g * g)
+    y = _trace(cols, {'A': 100.0, 'B': 0.0}) + water
+    X = np.column_stack([y + np.random.default_rng(s).normal(0, 2.0, PPM.size)
+                         for s in range(3)])
+    got = {}
+    for flag in (False, True):
+        monkeypatch.setattr(jf, 'AMPLITUDE_CAP', flag)
+        out = joint_measure(_cols(a, b), [], PPM, X, range(3), sigma=2.0,
+                            linewidth_ppm=LW)
+        got[flag] = {m: np.median(list(out[m]['amplitudes'].values()))
+                     for m in ('A', 'B')}
+    assert got[False]['A'] == 0.0, 'the zero this guards'
+    assert got[True]['A'] == pytest.approx(100.0, rel=0.10)
+    assert got[True]['B'] < 0.01 * got[False]['B']
+
+
+def test_the_fit_says_how_far_it_is_and_stops_when_told():
+    """A fit of minutes on a real study: the window shows each analyte
+    placed and each sample fitted, and Cancel raises out of the fit."""
+    a = _met('A', [(3.250, 's', 9, None), (3.900, 's', 2, None)])
+    b = _met('B', [(3.253, 's', 2, None), (3.410, 's', 2, None)])
+    X = np.column_stack([_trace(_cols(a, b), {'A': 1000.0, 'B': 3000.0},
+                                noise=5.0, seed=s) for s in range(4)])
+    seen = []
+    joint_measure(_cols(a, b), [], PPM, X, range(4), sigma=5.0,
+                  linewidth_ppm=LW,
+                  progress=lambda d, t, u='', n='': seen.append((u, d, t)))
+    assert ('analytes', 0, 2 * jf.PART_SHIFT_PASSES) in seen
+    assert [x for x in seen if x[0] == 'samples'] == [
+        ('samples', s, 4) for s in range(4)]
+
+    class Stop(Exception):
+        pass
+
+    def stop(d, t, u='', n=''):
+        if u == 'samples':
+            raise Stop
+    with pytest.raises(Stop):
+        joint_measure(_cols(a, b), [], PPM, X, range(4), sigma=5.0,
+                      linewidth_ppm=LW, progress=stop)

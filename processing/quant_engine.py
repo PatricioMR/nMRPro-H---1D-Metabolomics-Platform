@@ -1031,6 +1031,81 @@ def _signal_windows(candidates, peaks_by_rank, ppm, intensities, *,
     return windows, by_key, reasons, counts
 
 
+def measure_signal(lines, evidence, *, ppm, intensities, included,
+                   local_baseline, align, blank_indices, linewidth_ppm,
+                   other_peaks, noise_sigma):
+    """One signal's area per sample, integrated on its own lines.
+
+    ``lines`` are the detected peaks of the signal, ``evidence`` what the
+    annotation says of it (protons, predicted line positions and weights).
+    Returns ``(info, None)`` with the areas corrected for what the window
+    left outside, or ``(None, 'unmeasurable')`` when no window could be
+    built, or ``((found, expected, share, missing), 'partial')`` when the
+    lines hold too little of the pattern to scale it. The election measures
+    every winner with it, and the analyst's choice of a signal for one
+    analyte is measured the same way.
+    """
+    out = integrate_signal(lines, ppm, intensities, included=included,
+                           local_baseline=local_baseline, align=align,
+                           blank_indices=blank_indices,
+                           linewidth_ppm=linewidth_ppm,
+                           other_peaks=other_peaks)
+    if not out or not out['areas']:
+        return None, 'unmeasurable'
+    nh = signal_nh(evidence.get('protons'))
+    lo, hi = out['window']
+    # What the window left outside. A Lorentzian's tails never end, and how
+    # much a window holds depends on its width in half-widths and on how
+    # many lines share it -- so two signals integrated foot to foot lose
+    # different fractions, and the ratio between them carries the
+    # difference. On a study whose answer was known every analyte came back
+    # about 7% high against a standard whose own window held 94% of its
+    # line while a doublet's held 83%.
+    _lw = evidence.get('line_weights')
+    # The whole pattern, not only the lines detection placed: a triplet
+    # with one line found is a third of a pattern, and integrating that
+    # line as if it were the signal, then dividing by the triplet's
+    # protons, reports half of what is there. The missing lines stand
+    # where the annotation predicted them, and the fraction the window
+    # holds is computed over all of them -- so the area comes back as
+    # the multiplet's. Below MIN_TRUSTED_CAPTURE of the pattern the
+    # scale is not believed (one line of a triplet: x2 on a line that
+    # may be somebody else's) and the analyte is not quantified.
+    _ppms, _weights, _found_mask, _share = pattern_lines(
+        evidence.get('predicted_ppms') or (),
+        [float(p.get('ppm', 0.0)) for p in lines],
+        weights=(list(_lw) if _lw else None))
+    _missing = [p for p, m in zip(_ppms, _found_mask) if not m]
+    if _share < MIN_TRUSTED_CAPTURE:
+        return (len(lines), len(_ppms), _share, _missing), 'partial'
+    # A window built from the lines and the neighbours is known: the
+    # correction is arithmetic on it. Only a window from detection's
+    # feet alone is refused when it holds too little.
+    captured = lorentzian_captured_fraction(
+        _ppms, _weights, lo, hi, linewidth_ppm / 2.0,
+        min_trusted=(0.0 if out.get('geometry') == 'lines'
+                     else MIN_TRUSTED_CAPTURE),
+        segments=out.get('segments'),
+        anchors=out.get('baseline_anchors'))
+    if captured:
+        out['areas'] = {s_i: a / captured
+                        for s_i, a in out['areas'].items()}
+    snr, interference = _window_snr(
+        ppm, intensities, lo, hi, included=included,
+        noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
+    med_area = (float(np.median(list(out['areas'].values())))
+                if out['areas'] else float('nan'))
+    return {'nh': nh, 'snr': snr,
+            'interference': interference,
+            'captured': captured,
+            'lines': [float(p.get('ppm', 0.0)) for p in lines],
+            'pattern_lines': list(_ppms),
+            'missing_lines': _missing,
+            'pattern_share': _share,
+            'weights': _weights,
+            'area_median': med_area, **out}, None
+
+
 def _window_snr(ppm, intensities, lo, hi, *, included, noise_sigma,
                 linewidth_ppm):
     """The SNR and the interference of one window.
@@ -1281,7 +1356,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
              ppm_band_ppm=None, claim_signals=True,
              max_disagreement=None, raw_intensities=None,
              joint_fit=False, analyst_rejected=(),
-             analyst_accepted=(), _accepted_measured=False) -> list[dict]:
+             analyst_accepted=(), _accepted_measured=False,
+             progress=None) -> list[dict]:
     """Quantify a study and return one row per metabolite.
 
     ``analyst_rejected`` and ``analyst_accepted`` are the analyst's decisions
@@ -1355,6 +1431,11 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     amount it implies (an analyte listed with one signal is asked only
     the first). Up to AMOUNT_ROUNDS rounds. See ``_quantify_once`` for
     the rest.
+
+    ``progress(phase, done=0, total=0, unit='', note='')`` is told which
+    phase the run is in ('windows', 'shapes', 'joint', 'recheck',
+    'cascade', 'accepted') and how far; it may raise to stop the run, and
+    nothing the run has computed is kept.
     """
     args = dict(locals())
     accepted_alone = ({str(m) for m in analyst_accepted or ()}
@@ -1362,7 +1443,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     if accepted_alone and not _accepted_measured:
         others = quantify(**{**args, 'analyst_accepted': ()})
         held = quantify(**{**args, 'diagnostics': None,
-                           '_accepted_measured': True})
+                           '_accepted_measured': True,
+                           'progress': _under(progress, 'accepted')})
         return _accepted_alone(others, held, accepted_alone)
     # One baseline under the whole spectrum for the measurements that fit
     # shapes (joint fit, cascade), read where each cluster of signals ends.
@@ -1409,8 +1491,12 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     withdrawn: dict = {}
     rows: list = []
     for _round in range(AMOUNT_ROUNDS):
-        rows, bad = _quantify_once(candidates=cands, withdrawn=withdrawn,
-                                   retry=_round < AMOUNT_ROUNDS - 1, **kw)
+        rows, bad = _quantify_once(
+            candidates=cands, withdrawn=withdrawn,
+            retry=_round < AMOUNT_ROUNDS - 1, **kw,
+            progress=progress if not _round else _under(
+                progress, 'recheck', f'round {_round + 1}, without '
+                f'{len(withdrawn)} the fingerprint contradicts'))
         if not bad:
             break
         withdrawn.update(bad)
@@ -1422,6 +1508,8 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     if diag is not None:
         diag['amount_withdrawn'] = {m: r for m, (r, _d) in withdrawn.items()}
     if cascade and metabolites:
+        if progress is not None:
+            progress('cascade')
         # The cascade probes the spectrum with an analyte's whole listing,
         # so it never asks whether that listing belongs to this study at
         # all. One whose every matched signal landed further from the
@@ -1448,8 +1536,33 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
             accepted=accepted,
             peak_ppms=[p.get('ppm') for p in (peaks_by_rank or {}).values()
                        if p.get('ppm') is not None],
-            standard_ppm=standard_ppm if standard_areas else None)
+            standard_ppm=standard_ppm if standard_areas else None,
+            progress=_within(progress, 'cascade'))
     return _with_decisions(rows, rejected, accepted, metabolites, names)
+
+
+def _under(progress, phase, note=''):
+    """``progress`` with every report of a repeated sub-run filed under
+    ``phase``, the sub-run's own step named in the note."""
+    if progress is None:
+        return None
+    labels = {'windows': 'windows', 'shapes': 'shared windows (A)',
+              'joint': 'joint fit (B)', 'cascade': 'cascade (C)'}
+
+    def rep(key, done=0, total=0, unit='', note_=''):
+        progress(phase, done, total, unit,
+                 ' · '.join(x for x in (note, labels.get(key, key), note_)
+                            if x))
+    return rep
+
+
+def _within(progress, phase):
+    """``progress`` as the ``(done, total, unit, note)`` callback of one
+    phase's loop."""
+    if progress is None:
+        return None
+    return lambda done, total, unit='', note='': progress(
+        phase, done, total, unit, note)
 
 
 ACCEPTED_NOTHING_MEASURED = (
@@ -1520,7 +1633,7 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
                   correction, proton_correction, max_disagreement=None,
                   diagnostics=None, local_baseline=False,
                   cluster_base=None, accepted=(), peak_ppms=(),
-                  standard_ppm=None) -> list:
+                  standard_ppm=None, progress=None) -> list:
     """The rows the cascade adds to a quantified study, in place of the
     rejected rows of the analytes it takes in.
 
@@ -1566,7 +1679,7 @@ def _cascade_rows(rows, metabolites, *, ppm, intensities, included, groups,
         noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
         drift_ppm=drift_ppm, field_mhz=field_mhz,
         excluded_regions=excluded_regions, diagnostics=diagnostics,
-        residual_out=_resid)
+        residual_out=_resid, progress=progress)
     if diagnostics is not None and _resid.get('model') is not None:
         _p = np.asarray(ppm, dtype=float)
         diagnostics['coverage'] = coverage(
@@ -1829,7 +1942,7 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                    residual_pool=None, withdrawn=None, singlet_min_snr=None,
                    ppm_band_ppm=None, claim_signals=True,
                    raw_intensities=None, joint_fit=False, field_mhz=None,
-                   retry=False, cluster_base=None):
+                   retry=False, cluster_base=None, progress=None):
     """One election and measurement. Returns ``(rows, withdrawn)``: the
     rows, and the winners whose measured amount the fingerprint
     contradicts (``{met_id: (reason, detail)}``) -- empty when the table
@@ -1918,6 +2031,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         for c in _complex:
             if c.met_id not in _with_peaks:
                 shapes_off[c.met_id] = SHAPE_UNIDENTIFIED
+    if progress is not None:
+        progress('windows')
     election = elect(candidates, dj_gold_hz=dj_gold_hz,
                      ambiguous_ranks=ambiguous_ranks,
                      band_ppm=ppm_band_ppm)
@@ -1953,68 +2068,21 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                  if r in peaks_by_rank]
         if not lines and cand.peak_rank in peaks_by_rank:
             lines = [peaks_by_rank[cand.peak_rank]]
-        out = integrate_signal(lines, ppm, intensities, included=included,
-                               local_baseline=local_baseline, align=align,
-                               blank_indices=blank_indices,
-                               linewidth_ppm=linewidth_ppm,
-                               other_peaks=list(peaks_by_rank.values()))
-        if not out or not out['areas']:
+        info, why = measure_signal(
+            lines, cand.evidence or {}, ppm=ppm, intensities=intensities,
+            included=included, local_baseline=local_baseline, align=align,
+            blank_indices=blank_indices, linewidth_ppm=linewidth_ppm,
+            other_peaks=list(peaks_by_rank.values()),
+            noise_sigma=noise_sigma)
+        if why == 'unmeasurable':
             unmeasurable.append(mid)
             continue
-        nh = signal_nh((cand.evidence or {}).get('protons'))
-        lo, hi = out['window']
-        # What the window left outside. A Lorentzian's tails never end, and how
-        # much a window holds depends on its width in half-widths and on how
-        # many lines share it -- so two signals integrated foot to foot lose
-        # different fractions, and the ratio between them carries the
-        # difference. On a study whose answer was known every analyte came back
-        # about 7% high against a standard whose own window held 94% of its
-        # line while a doublet's held 83%.
-        _lw = (cand.evidence or {}).get('line_weights')
-        # The whole pattern, not only the lines detection placed: a triplet
-        # with one line found is a third of a pattern, and integrating that
-        # line as if it were the signal, then dividing by the triplet's
-        # protons, reports half of what is there. The missing lines stand
-        # where the annotation predicted them, and the fraction the window
-        # holds is computed over all of them -- so the area comes back as
-        # the multiplet's. Below MIN_TRUSTED_CAPTURE of the pattern the
-        # scale is not believed (one line of a triplet: x2 on a line that
-        # may be somebody else's) and the analyte is not quantified.
-        _ppms, _weights, _found_mask, _share = pattern_lines(
-            (cand.evidence or {}).get('predicted_ppms') or (),
-            [float(p.get('ppm', 0.0)) for p in lines],
-            weights=(list(_lw) if _lw else None))
-        _missing = [p for p, m in zip(_ppms, _found_mask) if not m]
-        if _share < MIN_TRUSTED_CAPTURE:
-            partial[mid] = (len(lines), len(_ppms), _share, _missing)
+        if why == 'partial':
+            partial[mid] = info
             continue
-        # A window built from the lines and the neighbours is known: the
-        # correction is arithmetic on it. Only a window from detection's
-        # feet alone is refused when it holds too little.
-        captured = lorentzian_captured_fraction(
-            _ppms, _weights, lo, hi, linewidth_ppm / 2.0,
-            min_trusted=(0.0 if out.get('geometry') == 'lines'
-                         else MIN_TRUSTED_CAPTURE),
-            segments=out.get('segments'),
-            anchors=out.get('baseline_anchors'))
-        if captured:
-            out['areas'] = {s_i: a / captured
-                            for s_i, a in out['areas'].items()}
-        snr, interference = _window_snr(
-            ppm, intensities, lo, hi, included=included,
-            noise_sigma=noise_sigma, linewidth_ppm=linewidth_ppm)
-        med_area = (float(np.median(list(out['areas'].values())))
-                    if out['areas'] else float('nan'))
-        measured[mid] = {'signal': cand, 'nh': nh, 'snr': snr,
-                         'interference': interference,
-                         'captured': captured,
-                         'lines': [float(p.get('ppm', 0.0)) for p in lines],
-                         'pattern_lines': list(_ppms),
-                         'missing_lines': _missing,
-                         'pattern_share': _share,
-                         'weights': _weights,
-                         'area_median': med_area, **out}
-        per_proton_areas[mid] = {s: a / nh for s, a in out['areas'].items()}
+        measured[mid] = {'signal': cand, **info}
+        per_proton_areas[mid] = {s: a / info['nh']
+                                 for s, a in info['areas'].items()}
 
     # ── The signal on each group's mean ─────────────────────────────────
     # The figure the report draws is one group's mean, and the SNR and the
@@ -2171,6 +2239,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     # but one is measured elsewhere, subtracting what those must be
     # contributing leaves the rest, and the rest is arithmetic on measured
     # quantities rather than an estimate.
+    if progress is not None:
+        progress('shapes')
     if deconvolve:
         shared, shared_reasons = _resolve_shared(
             candidates, peaks_by_rank, ppm, intensities, included=included,
@@ -2446,7 +2516,8 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
                 _jcols, list((peaks_by_rank or {}).values()), ppm, _arr_all,
                 _cols, sigma=noise_sigma, linewidth_ppm=linewidth_ppm,
                 weight=exclusion_weight(ppm, excluded_regions),
-                baseline=cluster_base, groups=groups)
+                baseline=cluster_base, groups=groups,
+                progress=_within(progress, 'joint'))
             _jcol_of = {c.mid: c for c in _jcols}
             for mid, r in _jf.items():
                 if mid not in measured:
@@ -2886,7 +2957,9 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
                           (info.get('group_evidence') or {}).items()},
         '_cosine_by_group': {g: e['cosine'] for g, e in
                              (info.get('group_evidence') or {}).items()},
-        'status': dots,
+        # no concentration, no dots: the level is the identification's, and
+        # shown on a row without a number it read as a result
+        'status': dots if good else STATUS_NONE,
         'vip_score': float('nan'),
         '_confidence': level,
         '_integ_mode': 'Shape' if info.get('shape') else 'Multiplet',
@@ -3252,6 +3325,15 @@ def _joint_fit_reason(info) -> list:
     jf = info.get('joint_fit')
     if not jf:
         return []
+    if not any(v > 0 for v in (jf.get('fitted') or {}).values()):
+        # Kept, not replaced by the integral: on the GISSMO tube of 18
+        # (600 MHz, seed 0) 16 of the 17 analytes the fit left at zero were
+        # not in the tube, one at SNR 638 -- the elected peak was another
+        # analyte's. Quantifying them from the window added 6 false rows.
+        return [f"Not quantified: the joint fit with "
+                f"{max(len(jf.get('group') or ()) - 1, 0)} overlapping "
+                f"analyte(s) gave it zero in every sample -- the shapes "
+                f"around it explain its region."]
     others = max(len(jf.get('group') or ()) - 1, 0)
     free = int(jf.get('free') or 0)
     res = jf.get('residual')

@@ -554,64 +554,29 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
 
     # ── Progress dialog ───────────────────────────────────────────────────────
 
-    def _build_progress_dialog(self):
-        _root = self.app.root
-        win = tk.Toplevel(_root)
-        win.title('Quantification')
-        win.resizable(False, False)
-        win.protocol('WM_DELETE_WINDOW', lambda: None)
-        win.transient(_root)
+    def _open_progress(self, progress):
+        """The run's window; closing it or Cancel stops the run."""
+        from gui.widgets.run_progress import RunProgress
+        from ._quant_progress import PHASES
+        n = len(getattr(self.annotation_stage, '_metabolites', None) or ())
+        self._prog_win = RunProgress(
+            self.app.root, progress.phases, PHASES,
+            'NMRPro-H — Quantifying',
+            subtitle=f'{n} annotated analytes' if n else '',
+            on_cancel=progress.cancel)
+        progress.window = self._prog_win
 
-        tk.Label(win, text='Running quantification…',
-                 font=('Arial', 10, 'bold')).pack(pady=(18, 4), padx=28)
-
-        self._prog_step_var = tk.StringVar(value='Initializing…')
-        tk.Label(win, textvariable=self._prog_step_var,
-                 font=('Arial', 9), foreground='#555555').pack(padx=28)
-
-        self._prog_var = tk.DoubleVar(value=0.0)
-        ttk.Progressbar(win, variable=self._prog_var, maximum=100.0,
-                        length=340, mode='determinate').pack(
-            pady=(10, 4), padx=28)
-
-        self._prog_pct_var = tk.StringVar(value='0%')
-        tk.Label(win, textvariable=self._prog_pct_var,
-                 font=('Arial', 8), foreground='#888888').pack(pady=(0, 18))
-
-        win.update_idletasks()
-        pw = win.winfo_reqwidth()
-        ph = win.winfo_reqheight()
-        rx = _root.winfo_rootx() + (_root.winfo_width()  - pw) // 2
-        ry = _root.winfo_rooty() + (_root.winfo_height() - ph) // 2
-        win.geometry(f'+{max(rx, 0)}+{max(ry, 0)}')
-
-        win.update()
-        win.grab_set()
-        win.lift()
-
-        self._prog_win = win
-
-    def _prog_update(self, pct, step=''):
-        """Thread-safe: schedule on main thread via app.root.after(0, ...)."""
-        self.app.root.after(0, lambda p=float(pct), s=str(step): self._prog_apply(p, s))
-
-    def _prog_apply(self, pct, step):
-        try:
-            self._prog_var.set(pct)
-            self._prog_pct_var.set(f'{int(pct)}%')
-            if step:
-                self._prog_step_var.set(step)
-        except Exception:
-            pass
+    def _prog_report(self, phase, note=''):
+        """The window at ``phase``, from the Tk thread."""
+        win = getattr(self, '_prog_win', None)
+        if win is not None and phase in win.phases:
+            win.report(phase, note=note)
 
     def _close_progress_dialog(self):
-        try:
-            if getattr(self, '_prog_win', None):
-                self._prog_win.grab_release()
-                self._prog_win.destroy()
-                self._prog_win = None
-        except Exception:
-            pass
+        win = getattr(self, '_prog_win', None)
+        self._prog_win = None
+        if win is not None:
+            win.close()
 
     def _restore_canvas(self):
         if self._right_widget:
@@ -834,6 +799,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
             if r.get('_not_quantified'):
                 conf_tag = 'nq'
                 conc_s = 'n.q.'
+                stat = 'n.q.'
             else:
                 conf_tag = f'conf{_conf}'
             peak_rank = r.get('_peak', {})
@@ -907,14 +873,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         finally:
             menu.grab_release()
 
-    def _safe_run(self, on_done=None):
+    def _safe_run(self, on_done=None, on_cancel=None):
         """Run quantification in a worker thread.
 
         on_done : optional callable invoked on the main thread after the run
                   finishes (used by the Quant Peaks window to refresh itself
                   after a multiplet override re-quantifies all analytes).
+        on_cancel : invoked on the main thread when the analyst stops the
+                  run, so a caller that changed a decision before it can put
+                  the decision back -- the table still holds the old numbers.
         """
         import threading
+        from ._quant_progress import EngineProgress, RunCancelled, run_phases
         # askyesno must run on main thread — it needs a user answer before
         # the computation thread starts.
         if self.ext_is_var.get() and self._ext_is_indices:
@@ -925,36 +895,82 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                     'for both the External IS samples and the analytical samples.\n\n'
                     'Proceed with quantification?'):
                 return
+        if not getattr(self.annotation_stage, '_metabolites', None):
+            messagebox.showinfo(
+                'Info', 'No annotation results found.\n\n'
+                        'Run the Annotation stage first.')
+            return
+        # a run of minutes on a project the analyst cannot save meanwhile:
+        # what they had before it starts is on disk
+        _pm = getattr(self.app, '_project_mgr', None)
+        if _pm is not None:
+            _pm.autosave_before_run()
         self._ext_is_confirmed = True
         self.btn_run.config(state='disabled')
         self.run_status.config(text='Running…', foreground='blue')
         self._show_placeholder()
-        self._build_progress_dialog()
+        def _var(name):
+            v = getattr(self, name, None)
+            return bool(v.get()) if v is not None else False
+        progress = EngineProgress(run_phases(
+            joint=_var('joint_fit_var'), cascade=_var('cascade_var'),
+            accepted=any((o or {}).get('decision') == 'accept'
+                         for o in (getattr(self, '_deconv_overrides', None)
+                                   or {}).values())))
+        self._open_progress(progress)
+
+        state = {'outcome': 'done', 'error': None}
+        finished = threading.Event()
 
         def _worker():
+            # nothing here calls Tk: the main thread polls for the end
             try:
-                self._run()
+                self._run(progress=progress)
+            except RunCancelled:
+                state['outcome'] = 'cancelled'
             except Exception as _run_exc:
+                state['outcome'], state['error'] = 'failed', _run_exc
                 import traceback
                 traceback.print_exc()
-                self.app.root.after(0, lambda e=_run_exc: messagebox.showerror(
+            finally:
+                finished.set()
+
+        def _poll():
+            if not finished.is_set():
+                self.app.root.after(100, _poll)
+                return
+            self._ext_is_confirmed = False
+            outcome = state['outcome']
+            self._close_progress_dialog()
+            self.btn_run.config(state='normal')
+            if outcome != 'done':
+                self._after_stop(outcome)
+            if state['error'] is not None:
+                e = state['error']
+                messagebox.showerror(
                     'Quantification Error',
                     f'Unexpected error:\n{type(e).__name__}: {e}\n\n'
-                    f'Check quant_debug.log for details.'))
-            finally:
-                self._ext_is_confirmed = False
-                def _cleanup():
-                    self._close_progress_dialog()
-                    self.btn_run.config(state='normal')
-                    if on_done is not None:
-                        try:
-                            on_done()
-                        except Exception:
-                            import traceback
-                            traceback.print_exc()
-                self.app.root.after(0, _cleanup)
+                    f'Check quant_debug.log for details.')
+            _cb = on_cancel if outcome == 'cancelled' else on_done
+            if _cb is not None:
+                try:
+                    _cb()
+                except Exception:
+                    import traceback
+                    traceback.print_exc()
 
         threading.Thread(target=_worker, daemon=True).start()
+        self.app.root.after(100, _poll)
+
+    def _after_stop(self, outcome):
+        """The table as it was before the run that was stopped or failed."""
+        what = 'Cancelled' if outcome == 'cancelled' else 'Failed'
+        self.run_status.config(
+            text=f'{what} — previous results kept'
+            if self._quant_results else what,
+            foreground='orange' if outcome == 'cancelled' else 'red')
+        if self._quant_results:
+            self._populate_tree()
 
     def _open_quant_peaks_window(self, result):
         """Open or reuse the Quant Peaks window for an analyte."""

@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 from plotting.fit_curve import draw_fit_curve
 from processing.quant_integration import baseline_and_signal, baseline_under
 
+from ._quant_reasons import short_reasons
 from ._quant_helpers import (
     _fit_lorentz_mean, _fit_lorentz_mean_with_bl, _fit_lorentz_sample,
     _lorentz_amplitude, _lorentz_shape,
@@ -82,8 +83,10 @@ class _QuantVisMixin:
             r = next((x for x in self._quant_results
                       if x.get('hmdb_id', x.get('metabolite')) == iid), None)
             if r:
-                reasons = r.get('_status_reasons', [])
-                text = '\n'.join(f'• {s}' for s in reasons) if reasons else '—'
+                lines = short_reasons(
+                    r.get('_status_reasons'),
+                    not_quantified=bool(r.get('_not_quantified')))
+                text = '\n'.join(f'• {s}' for s in lines) if lines else '—'
                 self._show_tooltip(event, text)
                 self._tooltip_iid = iid
                 return

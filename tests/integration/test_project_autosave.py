@@ -225,3 +225,102 @@ def test_a_project_in_the_old_format_opens_and_saving_converts_it(real_app, pm, 
     np.testing.assert_array_equal(
         project_file.read(path)['all_intensities'],
         project_file.stored_spectrum(state['all_intensities']))
+
+
+def _until(app, cond, secs=10.0):
+    import time
+    end = time.monotonic() + secs
+    while not cond() and time.monotonic() < end:
+        app.root.update()
+        time.sleep(0.01)
+    assert cond(), 'timed out'
+
+
+def test_a_quantification_run_autosaves_first_and_cancel_keeps_the_table(
+        real_app, pm, monkeypatch):
+    """A run of minutes: what the analyst had is on disk before it starts,
+    and stopping it leaves the table and the run button as they were."""
+    q = _quant(real_app)
+    calls = []
+    monkeypatch.setattr(pm, 'autosave_before_run', lambda: calls.append('saved'))
+
+    def run(progress=None):
+        calls.append('run')
+        progress('windows')
+        progress.cancel()                      # the Cancel button
+        progress('shapes')
+        calls.append('not reached')
+    monkeypatch.setattr(q, '_run', run)
+    monkeypatch.setattr(q, '_populate_tree', lambda: calls.append('table'))
+    monkeypatch.setattr(real_app.stages['annotation'], '_metabolites',
+                        [{'id': 'm'}], raising=False)
+    monkeypatch.setattr(q.ext_is_var, 'get', lambda: False)
+    before = [{'metabolite': 'x', 'conc_mm': 2.0}]
+    q._quant_results = before
+    cancelled = []
+    q._safe_run(on_done=lambda: calls.append('done'),
+                on_cancel=lambda: cancelled.append(True))
+    _until(real_app, lambda: bool(cancelled))
+    assert calls == ['saved', 'run', 'table']
+    assert q._quant_results is before
+    assert q.run_status.cget('text').startswith('Cancelled')
+    assert str(q.btn_run.cget('state')) == 'normal'
+    assert getattr(q, '_prog_win', None) is None
+    q._quant_results = []
+
+
+def test_an_annotation_run_autosaves_first(real_app, pm, monkeypatch):
+    from gui.widgets.annotation_progress import run_phases
+    calls = []
+    monkeypatch.setattr(pm, 'autosave_before_run', lambda: calls.append('saved'))
+    prog = real_app.stages['annotation']._run_progress(run_phases())
+    prog.close()
+    assert calls == ['saved']
+
+
+def test_a_signal_chosen_for_one_analyte_moves_only_it_and_is_saved(
+        real_app, pm, tmp_path, monkeypatch):
+    """Quant Signals -> Quantify: the analyte is measured on the doublet the
+    analyst chose with the run's conversion, its neighbour's row is left
+    exactly as it was, the choice is in the saved project, and the engine's
+    choice puts the row back."""
+    g = 0.002
+    real_app.ppm = ppm = np.linspace(4.0, 1.0, 12001)
+
+    def line(c, area):
+        return area * (g / np.pi) / ((ppm - c) ** 2 + g * g)
+    spec = line(3.000, 50.0) + line(3.012, 50.0) + line(2.000, 30.0)
+    real_app.all_intensities = np.column_stack([spec] * 4)
+    q = _quant(real_app)
+    peaks = [{'rank': 1, 'ppm': 3.000}, {'rank': 2, 'ppm': 3.012},
+             {'rank': 3, 'ppm': 2.000}]
+    monkeypatch.setattr(q.peak_stage, 'peaks', peaks, raising=False)
+    monkeypatch.setattr(q.peak_stage, 'noise_std', 1.0, raising=False)
+    q._last_run_settings = {'local_baseline_var': False, 'icoshift_var': False,
+                            'blk_sub_var': False, 'bl_model_quant_var': False}
+    q._last_groups = {'G': [0, 1, 2, 3]}
+    q._last_blk_indices = []
+    neighbour = {'hmdb_id': 'B', 'metabolite': 'B', '_nh': 1.0,
+                 '_areas_per_sample': [30.0] * 4,
+                 '_concs_per_sample': [3.0] * 4, 'conc_mm': 3.0,
+                 '_multiplet_window': [1.99, 2.01]}
+    row = {'hmdb_id': 'A', 'metabolite': 'A', '_not_quantified': True,
+           'status': 'n.q.', 'conc_mm': float('nan')}
+    q._quant_results = [neighbour, row]
+    before_b = dict(neighbour)
+    choice = {'line_ranks': [2, 1], 'protons': 2, 'line_weights': None,
+              'predicted_ppms': [3.012, 3.000], 'label': '3.006 ppm d'}
+    assert q.quantify_with_signal(row, choice) is None
+    # 100 of area for 2 protons, at the run's 0.1 mM per unit per proton
+    assert row['conc_mm'] == pytest.approx(5.0, rel=0.03)
+    assert row['status'] == '●○○' and not row['_not_quantified']
+    assert neighbour == before_b
+    path = str(tmp_path / 'p.nmrproj')
+    assert pm.save_project(path)
+    saved = project_file.read(path)['qnt']
+    assert saved['quant_peak_overrides']['A']['line_ranks'] == [2, 1]
+    assert saved['quant_results'][1]['_analyst_signal'] == '3.006 ppm d'
+    q.undo_signal_choice(row)
+    assert row['_not_quantified'] and 'A' not in q._quant_peak_overrides
+    q._quant_results = []
+    q._quant_peak_overrides = {}

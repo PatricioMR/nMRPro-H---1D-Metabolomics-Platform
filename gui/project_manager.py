@@ -1151,6 +1151,15 @@ class ProjectManager:
         self._poll_writer()
         return self._writer
 
+    def autosave_before_run(self):
+        """Autosave now, ahead of a run of minutes (annotation,
+        quantification) during which the analyst cannot save: if it goes
+        wrong, what they had before it is on disk. Never stops the run."""
+        try:
+            self.autosave_now()
+        except Exception as e:
+            self._autosave_failed(e)
+
     def _poll_writer(self):
         if self._writer is not None and self._writer.is_alive():
             self.app.root.after(200, self._poll_writer)

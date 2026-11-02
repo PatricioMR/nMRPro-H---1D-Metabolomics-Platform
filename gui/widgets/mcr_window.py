@@ -1489,7 +1489,10 @@ class MCRWindow:
             overrides = getattr(qstage, '_quant_peak_overrides', None) if qstage else None
             if overrides:
                 for mid, rk in list(overrides.items()):
-                    if rk in rank_map:
+                    if isinstance(rk, dict):    # a signal chosen by hand
+                        rk['line_ranks'] = [rank_map.get(r, r)
+                                            for r in rk.get('line_ranks') or ()]
+                    elif rk in rank_map:
                         overrides[mid] = rank_map[rk]
         except Exception as e:
             print(f'   _remap_peak_ranks (quant overrides) error: {e}')

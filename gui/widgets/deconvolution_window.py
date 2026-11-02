@@ -735,12 +735,14 @@ class DeconvolutionWindow:
                 'recorded on their rows. Numbers of other analytes may change.\n\n'
                 'Continue?', parent=self.win):
             return
+        before = getattr(self.qs, '_deconv_overrides', None)
         self.qs._deconv_overrides = {k: dict(v) for k, v in self._pending.items()}
         self._apply_btn.config(state='disabled')
         self._preview_lbl.config(text='Re-quantifying…')
         keep = self._current
         self._before_rows = [dict(r) for r in self._rows]
-        self.qs._safe_run(on_done=lambda: self._after_requant(keep))
+        self.qs._safe_run(on_done=lambda: self._after_requant(keep),
+                          on_cancel=lambda: self._requant_cancelled(before))
 
     def _run_now(self):
         if self._rows and not messagebox.askyesno(
@@ -751,7 +753,22 @@ class DeconvolutionWindow:
         self._preview_lbl.config(text='Quantifying…')
         keep = self._current
         self._before_rows = [dict(r) for r in self._rows]
-        self.qs._safe_run(on_done=lambda: self._after_requant(keep))
+        self.qs._safe_run(on_done=lambda: self._after_requant(keep),
+                          on_cancel=lambda: self._requant_cancelled(None))
+
+    def _requant_cancelled(self, before):
+        """The run was stopped: the table holds the numbers of the decisions
+        that were in force, so those are put back; the pending ones stay
+        pending."""
+        if before is not None:
+            self.qs._deconv_overrides = before
+        try:
+            if not self.win.winfo_exists():
+                return
+        except Exception:
+            return
+        self._apply_btn.config(state='normal')
+        self._preview_lbl.config(text='Cancelled: nothing was applied.')
 
     def _after_requant(self, mid):
         try:

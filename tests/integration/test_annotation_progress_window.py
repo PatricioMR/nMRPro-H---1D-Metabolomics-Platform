@@ -81,9 +81,9 @@ def test_a_worker_post_touches_no_tk_and_the_tick_shows_the_latest(root):
 
 
 def test_a_slow_item_makes_the_estimate_grow_not_freeze(root, monkeypatch):
-    from gui.widgets import annotation_progress as mod
+    from gui.widgets import annotation_progress as mod, run_progress
     now = [100.0]
-    monkeypatch.setattr(mod.time, 'monotonic', lambda: now[0])
+    monkeypatch.setattr(run_progress.time, "monotonic", lambda: now[0])
     prog = mod.AnnotationProgress(root, run_phases())
     prog.report('per_sample', 0, 100, unit='signals')
     now[0] += 10.0

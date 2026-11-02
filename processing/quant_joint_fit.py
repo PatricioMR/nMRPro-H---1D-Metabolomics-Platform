@@ -55,6 +55,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.optimize import lsq_linear, nnls
 
+from processing.quant_cascade import amplitude_cap
+
 
 # A shape's support: where it stands above this share of its own tallest
 # point. Lorentzian tails never reach zero; below a fiftieth they are not
@@ -120,6 +122,19 @@ PART_SHIFT_PASSES = 2
 # is being placed: the cascade's own tolerance for an analyte it did not
 # measure (quant_cascade.FIXED_TOLERANCE).
 NEIGHBOUR_TOLERANCE = 0.25
+# No analyte's amount may draw any of its signals taller than the trace
+# stands there (``quant_cascade.amplitude_cap``, the cascade's bound since
+# ADR-028). Without it the fit is free to buy one tall peak with an analyte
+# whose other lines stand on nothing: on the Mice ISS skin extract the
+# water's foot below the excluded band (4.65-4.70 ppm, 82 000 sigma) went to
+# eight compounds with a line there, saligenin's aromatic lines drawn at
+# 9 600 sigma over a trace of 3, and the overshoot of those phantom lines
+# zeroed the analytes underneath -- 175 of the 221 columns (92 with it).
+# GISSMO tube of 100, 600 MHz, three seeds: found 249 -> 254, strangers 57
+# -> 48, two dots 149/20 -> 156/8, three dots 41/0 -> 45/0, error median
+# 19 -> 17%, p90 68 -> 65%; scattered 5 mppm: found 211 -> 204, strangers
+# 111 -> 105, three dots 32/4 -> 36/4, p90 100 -> 81% (ADR-094).
+AMPLITUDE_CAP = True
 
 
 def _lorentz_unit(ppm, centre, fwhm):
@@ -181,7 +196,7 @@ def _dense(col, union, shift=0.0, width=1.0, *, ppm):
     return v
 
 
-def _solve(A, t):
+def _solve(A, t, hi=None):
     """Non-negative least squares: the amplitudes and the squared residual.
     The active-set solver -- tens of columns over thousands of points is
     exactly its case, and it is an order of magnitude faster than a
@@ -198,16 +213,28 @@ def _solve(A, t):
     ``Q't`` and its corner is the part of ``t`` outside ``A``'s span, so Q
     -- thousands of points by every column -- is never formed. Same
     problem, same answer to rounding (1e-13), half the time (0.17 -> 0.09 s
-    on 20 000 x 200)."""
+    on 20 000 x 200).
+
+    ``hi`` bounds each amplitude from above (AMPLITUDE_CAP); the bounded
+    active set then solves the same reduced problem."""
     m, n = A.shape
     if n == 0:
         return np.zeros(0), float(np.sum(t ** 2))
+    bounded = hi is not None and bool(np.any(np.isfinite(hi)))
     if m <= n:
-        x, rnorm = nnls(A, t, maxiter=50 * n)
-        return x, float(rnorm) ** 2
-    Ra = np.linalg.qr(np.column_stack([A, t]), mode='r')
-    x, rnorm = nnls(Ra[:n, :n], Ra[:n, n], maxiter=50 * n)
-    return x, float(rnorm) ** 2 + float(Ra[n, n]) ** 2
+        R, b, corner = A, t, 0.0
+    else:
+        Ra = np.linalg.qr(np.column_stack([A, t]), mode='r')
+        R, b, corner = Ra[:n, :n], Ra[:n, n], float(Ra[n, n]) ** 2
+    if not bounded:
+        x, rnorm = nnls(R, b, maxiter=50 * n)
+        return x, float(rnorm) ** 2 + corner
+    x = lsq_linear(R, b, bounds=(np.zeros(n), np.asarray(hi, float)),
+                   method='bvls').x
+    # the bounded solver leaves rounding (1e-17) where the active set's
+    # zero is exact, and a reference's support is what is above zero
+    x[np.abs(R).max(axis=0) * x <= 1e-12 * float(np.max(np.abs(b)))] = 0.0
+    return x, float(np.sum((R @ x - b) ** 2)) + corner
 
 
 # A sample fits only the columns its group's reference holds. Each sample
@@ -227,14 +254,25 @@ def _solve(A, t):
 REFERENCE_SUPPORT = True
 
 
-def _solve_on_support(A, t, keep):
+def _solve_on_support(A, t, keep, hi=None):
     """``_solve`` over the columns ``keep`` (indices); the others are zero."""
     if keep.size == 0 or keep.size == A.shape[1]:
-        return _solve(A, t)
-    x_sub, r2 = _solve(A[:, keep], t)
+        return _solve(A, t, hi)
+    x_sub, r2 = _solve(A[:, keep], t, None if hi is None else hi[keep])
     x = np.zeros(A.shape[1])
     x[keep] = x_sub
     return x, r2
+
+
+def _column_caps(part_sets, trace, weight, sigma, n_free=0):
+    """Each column's AMPLITUDE_CAP, from its signals' sparse curves
+    (``part_sets``, one list per column) over ``trace``; the free
+    components, and every column with the cap off, are unbounded."""
+    hi = np.full(len(part_sets) + n_free, np.inf)
+    if AMPLITUDE_CAP and sigma:
+        for j, parts in enumerate(part_sets):
+            hi[j] = amplitude_cap(parts, trace, weight, sigma)
+    return hi
 
 
 def _part_vec(comp, nh, ppm, union):
@@ -261,7 +299,8 @@ def _part_vec(comp, nh, ppm, union):
     return v
 
 
-def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
+def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm, *,
+                       sigma=None, progress=None):
     """Slide every signal of every column on its own over the mean trace,
     holding the best offset. Coordinate descent: one signal at a time, the
     rest of the group fitted with it. Returns ``{(mid, i): offset_ppm}``.
@@ -276,7 +315,10 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
     48% -> 55% on that tube).
 
     The offsets are written on the components (``shift_ppm``), so every
-    later curve of the column carries them."""
+    later curve of the column carries them. ``sigma`` bounds the group's
+    amounts (AMPLITUDE_CAP); None leaves them unbounded. ``progress(done,
+    total, unit, note)`` is told each analyte placed, and may raise to stop
+    the run."""
     reach = PART_SHIFT_REACH_LW * float(linewidth_ppm)
     # nearest zero first, and only a strict improvement moves a signal: a
     # signal whose analyte is not under it fits equally at every offset,
@@ -292,11 +334,36 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
          else np.zeros((union.size, 0)))
     n_c = V.shape[1]
     base = {id(comp): float(comp.shift_ppm) for c in cols for comp, _nh in c.parts}
+    ones = np.ones(t.size)
+
+    def part_cap(pv):
+        # one signal's AMPLITUDE_CAP; a column's is the least of its signals'
+        if not (AMPLITUDE_CAP and sigma):
+            return np.inf
+        idx = np.flatnonzero(pv)
+        if not idx.size:
+            return np.inf           # a signal outside the union draws nothing
+        return amplitude_cap([(idx, pv[idx])], t, ones, sigma)
+
+    # kept per signal and redone only for the signal that moved: rebuilt for
+    # every column at every step it was half the joint fit's time
+    caps = [[part_cap(pv) for pv in ps] for ps in parts]
     out = {}
+    # The group's amounts change only when a signal moves. Most do not --
+    # an analyte that is not there stays where it is listed -- and solving
+    # the whole group again for nothing was 60% of this function's time.
+    amp, moved = None, True
     for _pass in range(PART_SHIFT_PASSES):
         for k, col in enumerate(cols):
+            if progress is not None:
+                progress(_pass * len(cols) + k, PART_SHIFT_PASSES * len(cols),
+                         'analytes', 'placing each signal')
             # the group's amounts, with this column as it now stands
-            amp, _r2 = _solve(np.column_stack([V, F]), t)
+            if moved:
+                hi = np.array([min(c, default=np.inf) for c in caps]
+                              + [np.inf] * F.shape[1])
+                amp, _r2 = _solve(np.column_stack([V, F]), t, hi)
+                moved = False
             a_col, a_free = amp[:n_c], amp[n_c:]
             for i, (comp, nh) in enumerate(col.parts):
                 lo = comp.lo - abs(base[id(comp)]) - 2 * reach
@@ -323,6 +390,7 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
                 hi_b = np.array([np.inf] + [max(a * (1 + NEIGHBOUR_TOLERANCE), 1e-12)
                                             for a in nb])
                 Nb = [V[L, j] for j in near] + [F[L, j] for j in near_f]
+                was = comp.shift_ppm
                 best = None
                 for d in grid:
                     comp.shift_ppm = base[id(comp)] + d
@@ -337,9 +405,13 @@ def refine_part_shifts(cols, free_block, ppm, t, union, linewidth_ppm):
                     if best is None or r2 < best[0] * (1.0 - 1e-9):
                         best = (r2, d, pv)
                 comp.shift_ppm = base[id(comp)] + best[1]
+                out[(col.mid, i)] = best[1]
+                if comp.shift_ppm == was:
+                    continue            # the same curve: nothing changes
                 V[:, k] += best[2] - parts[k][i]
                 parts[k][i] = best[2]
-                out[(col.mid, i)] = best[1]
+                caps[k][i] = part_cap(best[2])
+                moved = True
     return out
 
 
@@ -385,7 +457,7 @@ def _reference_groups(groups, included):
 
 
 def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
-                  weight=None, baseline=None, groups=None):
+                  weight=None, baseline=None, groups=None, progress=None):
     """Fit the overlapping analytes together, per sample.
 
     ``columns`` is the cascade's ``Column`` for every quantified analyte.
@@ -409,6 +481,9 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     free constant or slope in the fit takes the pedestal the overlapping
     tails build under a crowded region, which is area, and hands it to
     nobody. None fits the trace as it stands.
+
+    ``progress(done, total, unit, note)`` is told how far the fit is, and
+    may raise to stop the run.
     """
     ppm = np.asarray(ppm, float)
     X = np.asarray(X, float)
@@ -445,7 +520,8 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
             continue
         offsets.update(refine_part_shifts([columns[k] for k in grp], None,
                                           ppm, mean[union], union,
-                                          linewidth_ppm))
+                                          linewidth_ppm, sigma=sigma,
+                                          progress=progress))
 
     # 2. What no signal's line now claims is not in the library.
     frees = free_components(columns, peaks, ppm, mean, sigma=sigma,
@@ -484,33 +560,42 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
         # the group's width once, on the mean trace: what broadens it
         # broadens every sample alike, and five widths in every sample
         # multiplied the fit by five for nothing the samples disagree on
+        def caps(sh, wsc):
+            parts = [columns[k].part_curves(ppm, sh, wsc) for k in cols_in]
+            return lambda trace: _column_caps(parts, trace, w, sigma,
+                                              len(frees_in))
+
         best_w = None
         for wsc in WIDTH_SCALES:
-            _x, r2 = _solve(design(0.0, wsc), mean[union])
+            _x, r2 = _solve(design(0.0, wsc), mean[union],
+                            caps(0.0, wsc)(mean))
             if best_w is None or r2 < best_w[0]:
                 best_w = (r2, wsc)
-        if WIDTH_PER_SAMPLE:
-            designs = [design(sh, wsc) for wsc in WIDTH_SCALES
-                       for sh in shifts]
-        else:
-            designs = [design(sh, best_w[1]) for sh in shifts]
+        grid = ([(sh, wsc) for wsc in WIDTH_SCALES for sh in shifts]
+                if WIDTH_PER_SAMPLE else [(sh, best_w[1]) for sh in shifts])
+        designs = [design(sh, wsc) for sh, wsc in grid]
+        cap_of = [caps(sh, wsc) for sh, wsc in grid]
         amps = {columns[k].mid: {} for k in cols_in}
         resid = []
         chosen = {}
         support_of = {}
         if REFERENCE_SUPPORT and len(included) > 1:
             for members in _reference_groups(groups, included):
-                ref = X[np.ix_(union, members)].mean(axis=1)
-                fits = [_solve(A, ref) for A in designs]
+                ref = X[:, members].mean(axis=1)
+                fits = [_solve(A, ref[union], cap(ref))
+                        for A, cap in zip(designs, cap_of)]
                 keep = np.flatnonzero(
                     fits[int(np.argmin([f[1] for f in fits]))][0] > 0)
                 support_of.update({s: keep for s in members})
-        for s in included:
+        for i_s, s in enumerate(included):
+            if progress is not None:
+                progress(i_s, len(included), 'samples', 'fitting each sample')
             t = X[union, s]
             best = None
             for i_d, A in enumerate(designs):
-                x_, r2 = (_solve(A, t) if s not in support_of else
-                          _solve_on_support(A, t, support_of[s]))
+                hi = cap_of[i_d](X[:, s])
+                x_, r2 = (_solve(A, t, hi) if s not in support_of else
+                          _solve_on_support(A, t, support_of[s], hi))
                 if best is None or r2 < best[0]:
                     best = (r2, x_, i_d)
             r2, x, i_d = best

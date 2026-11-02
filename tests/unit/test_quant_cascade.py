@@ -681,3 +681,16 @@ def test_the_cascade_measures_an_analyte_whose_signals_moved_apart():
     assert placed[0] == pytest.approx(0.0, abs=0.2 * LW)
     assert placed[1] == pytest.approx(off, abs=0.2 * LW)
     assert c['disagreement'] < 0.1
+
+
+def test_a_joint_fit_that_gave_zero_everywhere_says_so():
+    # Mice ISS v08: 23 rows left without a number by the joint fit's zero
+    # kept their dots and no reason said why
+    from processing.quant_engine import _joint_fit_reason
+    zero = {'joint_fit': {'group': ['a', 'b', 'c'], 'free': 1, 'residual': 0.5,
+                          'fitted': {0: 0.0, 1: 0.0}}}
+    said = _joint_fit_reason(zero)
+    assert said[0].startswith('Not quantified: the joint fit with 2 overlapping')
+    some = {'joint_fit': {'group': ['a', 'b'], 'free': 0, 'residual': 0.1,
+                          'fitted': {0: 0.0, 1: 3.0}}}
+    assert _joint_fit_reason(some)[0].startswith('Measured by fitting')

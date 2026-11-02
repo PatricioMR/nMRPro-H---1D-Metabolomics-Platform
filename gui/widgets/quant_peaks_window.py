@@ -4,11 +4,13 @@
 """
 Quant Peaks Window.
 
-Shows all candidate peaks for a given analyte with full quantification
-results (computed in _run via _all_peak_quant) per group.
-The user can select one and click Apply to override the peak used.
+Shows the signals an analyte can be quantified on: those of Good or Average
+quality whose peaks no other quantified analyte holds. The analyst selects a
+multiplet and clicks Quantify: that analyte alone is measured on it
+(QuantificationStage.quantify_with_signal), the rest of the table untouched,
+and the choice is applied again after every run. "Engine's choice" undoes it.
 
-Opened via right-click → "Quant Peaks" in the Quantification tree.
+Opened via right-click → "Quant Signals" in the Quantification tree.
 """
 import tkinter as tk
 from tkinter import ttk, messagebox
@@ -44,7 +46,7 @@ class QuantPeaksWindow:
         self.result = result
         # The window is visualisation-only at the peak level: quantification
         # works per multiplicity. The user selects a whole multiplet (header
-        # row) to use for the analyte; applying it re-quantifies every analyte.
+        # row) and quantifies this analyte alone on it.
         self._selected_hdr   = None   # iid of the currently selected header
         self._hdr_members    = {}     # hdr_iid → [candidate, ...]
         self._original_anchor = self._current_anchor_rank(result)
@@ -370,15 +372,18 @@ class QuantPeaksWindow:
         btn_frm = ttk.Frame(win)
         btn_frm.pack(fill='x', padx=10, pady=(2, 8))
 
-        self._apply_btn = ttk.Button(btn_frm, text='Use multiplet',
+        self._apply_btn = ttk.Button(btn_frm, text='Quantify',
                                      command=self._apply_selected, state='disabled')
         self._apply_btn.pack(side='right', padx=(4, 0))
+        self._undo_btn = ttk.Button(btn_frm, text="Engine's choice",
+                                    command=self._undo_choice)
+        self._undo_btn.pack(side='right', padx=(4, 0))
         ttk.Button(btn_frm, text='Close',
                    command=self._do_close).pack(side='right')
         self._info_lbl = ttk.Label(
             btn_frm,
             text='Select a multiplet (header row) to quantify this analyte with it.',
-            foreground='#555555')
+            foreground='#555555', wraplength=520)
         self._info_lbl.pack(side='left')
 
         self._tree.bind('<<TreeviewSelect>>', self._on_select)
@@ -527,7 +532,21 @@ class QuantPeaksWindow:
             if key not in _grp_order:
                 _grp_order[key] = []
             _grp_order[key].append(c)
-        signal_groups = list(_grp_order.values())
+        signal_groups, self._hidden = [], []
+        for members in _grp_order.values():
+            if any(c['is_current'] for c in members):
+                signal_groups.append(members)
+                continue
+            taken = self._taken_by(members)
+            if taken:
+                self._hidden.append(('another analyte\'s: '
+                                     + ', '.join(taken[:3])))
+            elif self._multiplet_quality(members) == 'bad':
+                self._hidden.append('Poor')
+            else:
+                signal_groups.append(members)
+        self._shown = sum(len(m) for m in signal_groups)
+        self._refresh_header_vars()
 
         for hdr_idx, members in enumerate(signal_groups):
             rep_c    = members[0]
@@ -542,6 +561,8 @@ class QuantPeaksWindow:
             j_str    = (rep_hit.get('j_coupling') or rep_hit.get('j_hz')
                         or (rep_c['_dp'] or {}).get('j_hz') or '')
             j_part   = f'  ·  J={j_str} Hz' if j_str else ''
+            j_part  += ('  ·  Good' if self._multiplet_quality(members) == 'good'
+                        else '  ·  Average')
             if dp_ppm:
                 hdr_text = (f'{dp_ppm:.4f} ppm  [{dp_mult.upper()}]'
                             f'  ·  {mult_lbl}  ·  {protons}H{j_part}'
@@ -603,76 +624,71 @@ class QuantPeaksWindow:
                f"Current peak: rank {self.result.get('_peak_rank', '?')} "
                f"@ {self.result.get('ppm', 0):.4f} ppm")
         self._hdr_var.set(hdr)
-        self._count_var.set(f'{len(self._candidates)} candidate peak(s)')
+        hidden = getattr(self, '_hidden', [])
+        self._count_var.set(
+            f"{getattr(self, '_shown', len(self._candidates))} peak(s) of Good "
+            f"or Average quality free for this analyte"
+            + (f'  ·  {len(hidden)} multiplet(s) hidden (Poor, or another '
+               f'analyte\'s)' if hidden else '')
+            + (f"  ·  quantified on the analyst's choice: "
+               f"{self.result.get('_analyst_signal')}"
+               if self.result.get('_analyst_signal') else ''))
 
-    @staticmethod
-    def _multiplet_anchor_rank(members):
-        """Anchor peak_rank used to force this multiplet in re-quantification.
+    def _my_ids(self):
+        return [v for v in dict.fromkeys(
+            str(self.result.get(f, '') or '')
+            for f in ('_mid', 'hmdb_id', 'bmrb_id', 'id')) if v]
 
-        The matched-peak anchor (hit['peak_rank']) is the rank annotation
-        recorded for the multiplet and the one present in the search `results`,
-        so _quant_peak_overrides resolves to the hit carrying THIS multiplet's
-        predicted_lines (not just a single line).
-        """
-        if not members:
-            return None
-        anchor = (members[0].get('hit') or {}).get('peak_rank')
-        if anchor is not None:
-            return anchor
-        for c in members:
-            if c.get('peak_rank') is not None:
-                return c['peak_rank']
-        return None
+    def _multiplet_quality(self, members):
+        """'good', 'bad' or None (Average) for a whole multiplet: the
+        analyst's mark on its row when there is one, else its lines' -- bad
+        only when every line is."""
+        ann = getattr(self.qs, 'annotation_stage', None)
+        child = getattr(ann, '_child_quality_marks', None) or {}
+        key = members[0].get('_dp_key') if members else None
+        if key:
+            for mid in self._my_ids():
+                q = child.get((mid, key[0]))
+                if q:
+                    return q
+        q = [self._effective_quality(c['peak_rank']) for c in members]
+        if q and all(v == 'bad' for v in q):
+            return 'bad'
+        return 'good' if 'good' in q else None
 
-    def _multiplet_conflicts(self, members):
-        """Names of OTHER metabolites annotated on any peak of this multiplet.
+    def _taken_by(self, members):
+        """The other quantified analytes whose integrated window holds one of
+        this multiplet's peaks: those signals are theirs."""
+        mine = set(self._my_ids())
+        ppms = [float(c['peak'].get('ppm', c['hit_ppm'])) for c in members]
+        out = []
+        for r in getattr(self.qs, '_quant_results', None) or ():
+            if str(r.get('hmdb_id', '')) in mine or r.get('_not_quantified'):
+                continue
+            segs = r.get('_integ_segments') or (
+                [r['_multiplet_window']] if r.get('_multiplet_window') else [])
+            if any(min(a, b) <= p <= max(a, b) for p in ppms for a, b in segs):
+                out.append(str(r.get('metabolite')))
+        return out
 
-        Authoritative source is _iid_to_subchild (identical to Annotation
-        Results); falls back to annotation_stage._metabolites.matched_peaks
-        when the annotation window is closed (e.g. loaded project).
-        """
-        my_ids = {str(self.result.get('hmdb_id', '') or ''),
-                  str(self.result.get('_mid', '') or ''),
-                  str(self.result.get('bmrb_id', '') or '')}
-        my_ids.discard('')
-        ranks = {c['peak_rank'] for c in members if c.get('peak_rank') is not None}
-        if not ranks:
-            return []
-
-        def _met_id(met):
-            for f in ('id', 'hmdb_id', 'bmrb_id'):
-                v = met.get(f)
-                if v is not None:
-                    return str(v)
-            return ''
-
-        others = {}
-        annot_win  = getattr(getattr(self.qs, 'app', None), '_annot_win', None)
-        iid_to_sc  = getattr(annot_win, '_iid_to_subchild', {}) or {}
-        if iid_to_sc:
-            for sc in iid_to_sc.values():
-                try:
-                    met, _dp, _mp, _ld, _li, npk = sc
-                except (ValueError, TypeError):
-                    continue
-                if npk is None:
-                    continue
-                mid = _met_id(met)
-                if not mid or mid in my_ids:
-                    continue
-                if npk.get('rank') in ranks:
-                    others[mid] = met.get('name', mid)
-        else:
-            ann_stage = getattr(self.qs, 'annotation_stage', None)
-            for met in (getattr(ann_stage, '_metabolites', []) or []):
-                mid = _met_id(met)
-                if not mid or mid in my_ids:
-                    continue
-                for mp in met.get('matched_peaks', []):
-                    if mp.get('peak_rank') in ranks:
-                        others[mid] = met.get('name', mid)
-                        break
-        return sorted(set(others.values()))
+    def _choice_of(self, members):
+        """The multiplet as ``quantify_with_signal`` reads it."""
+        from gui.stages._quant_adapter import pattern_evidence
+        rep_c = members[0]
+        hit = dict(rep_c.get('hit') or {})
+        dp = rep_c.get('_dp') or {}
+        if hit.get('protons') is None:
+            hit['protons'] = dp.get('protons')
+        if not hit.get('type') and not hit.get('multiplicity'):
+            hit['type'] = dp.get('type') or dp.get('multiplicity')
+        ordered = sorted(members, key=lambda c: -float(
+            c['peak'].get('ppm', c['hit_ppm'])))
+        ppm_c = rep_c.get('_dp_ppm') or float(np.mean(
+            [float(c['peak'].get('ppm', c['hit_ppm'])) for c in members]))
+        return {'line_ranks': [c['peak_rank'] for c in ordered
+                               if c.get('peak_rank') is not None],
+                'label': f"{ppm_c:.3f} ppm {rep_c.get('_dp_mult') or '?'}",
+                **pattern_evidence(hit)}
 
     def _on_click(self, event):
         iid = self._tree.identify_row(event.y)
@@ -705,76 +721,44 @@ class QuantPeaksWindow:
                 text='This multiplet already quantifies the analyte.')
             return
 
-        conflicts = self._multiplet_conflicts(members)
-        if conflicts:
-            self._apply_btn.config(state='disabled')
-            self._info_lbl.config(
-                text='Blocked — signal annotated for: ' + ', '.join(conflicts) + '.')
-            return
-
-        if self._multiplet_anchor_rank(members) is None:
-            self._apply_btn.config(state='disabled')
-            self._info_lbl.config(
-                text='No detected anchor signal for this multiplet.')
-            return
-
         self._apply_btn.config(state='normal')
         self._info_lbl.config(
-            text='Apply re-quantifies all analytes using this multiplet.')
+            text='Quantify measures only this analyte on this multiplet; the '
+                 'rest of the table stays as it is.')
 
     def _apply_selected(self):
         iid = self._selected_hdr
         if iid is None or iid not in self._hdr_members:
             return
-        members = self._hdr_members[iid]
-
-        # ── Block: signal annotated for another metabolite ───────────────────
-        conflicts = self._multiplet_conflicts(members)
-        if conflicts:
+        choice = self._choice_of(self._hdr_members[iid])
+        if not choice['line_ranks']:
+            self._info_lbl.config(text='No detected line in this multiplet.')
+            return
+        why = self.qs.quantify_with_signal(self.result, choice)
+        if why:
             messagebox.showwarning(
-                'Signal shared',
-                'This multiplet is also annotated for:\n  '
-                + '\n  '.join(conflicts)
-                + f'\n\nIt cannot be used to quantify '
-                  f'{self.result.get("metabolite", "")}.')
-            self._apply_btn.config(state='disabled')
+                'Cannot quantify on this signal',
+                f"{self.result.get('metabolite', '')} on {choice['label']}:"
+                f"\n\n{why}", parent=self.win)
             return
+        self._after_change(f"Quantified on {choice['label']}; nothing else "
+                           f"was re-measured.")
 
-        anchor = self._multiplet_anchor_rank(members)
-        if anchor is None:
-            self._info_lbl.config(text='No detected anchor signal for this multiplet.')
+    def _undo_choice(self):
+        if not self.result.get('_engine_row'):
+            self._info_lbl.config(text="This is already the engine's choice.")
             return
+        self.qs.undo_signal_choice(self.result)
+        self._after_change("Back to the engine's choice.")
 
-        if not messagebox.askyesno(
-                'Re-quantify all analytes',
-                'Changing the multiplet for this analyte re-runs quantification '
-                'for EVERY analyte.\n\nContinue?'):
-            return
-
-        hmdb_id = str(self.result.get('hmdb_id', ''))
-        if getattr(self.qs, '_quant_peak_overrides', None) is None:
-            self.qs._quant_peak_overrides = {}
-        self.qs._quant_peak_overrides[hmdb_id] = anchor
-
-        self._apply_btn.config(state='disabled')
-        self._info_lbl.config(text='Re-quantifying all analytes…')
-        # Full re-run (worker thread). Refresh the window when it finishes.
-        self.qs._safe_run(on_done=self._after_requant)
-
-    def _after_requant(self):
-        """Re-acquire this analyte's (rebuilt) result and refresh the window."""
+    def _after_change(self, note):
+        """The table and this window on the analyte's new numbers."""
         try:
-            if not self.win.winfo_exists():
-                return
+            self.qs._populate_tree()
         except Exception:
-            return
-        hmdb_id = str(self.result.get('hmdb_id', ''))
-        new = next((r for r in (getattr(self.qs, '_quant_results', []) or [])
-                    if str(r.get('hmdb_id', '')) == hmdb_id), None)
-        if new is not None:
-            self.result          = new
-            self._original_anchor = self._current_anchor_rank(new)
+            import traceback
+            traceback.print_exc()
+        self._original_anchor = self._current_anchor_rank(self.result)
         self._candidates = self._gather_candidates()
-        self._refresh_header_vars()
         self._populate_tree()
-        self._info_lbl.config(text='Re-quantified with the selected multiplet.')
+        self._info_lbl.config(text=note)

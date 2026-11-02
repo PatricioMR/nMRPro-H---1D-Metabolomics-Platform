@@ -159,7 +159,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
     def _show_splash(self):
         splash = tk.Toplevel(self.root)
         splash.overrideredirect(True)
-        splash.attributes('-topmost', True)
+        # Not topmost: the analyst switching to another window while the app
+        # loads must be able to put the logo behind it.
         splash.attributes('-transparentcolor', 'black')  # black = transparente
 
         try:

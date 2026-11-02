@@ -391,8 +391,8 @@ class _AnnotationSearchMixin:
             elapsed = time.monotonic() - t0
             self._status_ok(f'Rescue completed: +{len(rescued)} candidate match(es) in {elapsed:.2f}s.')
             settings = self._run_settings(mhz, tolerance)
-            prog = AnnotationProgress(
-                self.app.root, run_phases(search=False, mcr=settings['run_mcr']),
+            prog = self._run_progress(
+                run_phases(search=False, mcr=settings['run_mcr']),
                 subtitle=f'Rescue · {os.path.basename(db_path)}')
             self._finish_in_background(combined, settings, prog,
                                        len(good_peaks), db_path, elapsed)
@@ -1134,8 +1134,8 @@ class _AnnotationSearchMixin:
         # Everything the worker needs from the panels, read here: a Tk
         # variable read from another thread can block on the main loop.
         settings = self._run_settings(mhz, tolerance)
-        prog = AnnotationProgress(
-            self.app.root, run_phases(search=True, mcr=settings['run_mcr']),
+        prog = self._run_progress(
+            run_phases(search=True, mcr=settings['run_mcr']),
             subtitle=f'Database: {os.path.basename(db_path)}')
         prog.report('search', note='Opening the database…')
 
@@ -1263,6 +1263,14 @@ class _AnnotationSearchMixin:
             print(f'_rerun_mcr_for_peak error: {e}')
 
     # ── After the search ──────────────────────────────────────────────────────
+
+    def _run_progress(self, phases, **kw):
+        """The run's progress window, the project autosaved first: a run of
+        minutes the analyst cannot save during."""
+        _pm = getattr(self.app, '_project_mgr', None)
+        if _pm is not None:
+            _pm.autosave_before_run()
+        return AnnotationProgress(self.app.root, phases, **kw)
 
     def _run_settings(self, mhz, tolerance):
         """The panel values a run reads, taken on the Tk thread before the
@@ -1454,8 +1462,8 @@ class _AnnotationSearchMixin:
         except (ValueError, tk.TclError):
             mhz = 600.0
         settings = self._run_settings(mhz, tolerance)
-        prog = AnnotationProgress(
-            self.app.root, run_phases(search=True, mcr=settings['run_mcr']),
+        prog = self._run_progress(
+            run_phases(search=True, mcr=settings['run_mcr']),
             title=f'NMRPro-H — {prog_title}', subtitle=lib_label)
         prog.report('search', note=prog_text)
 
