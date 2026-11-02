@@ -66,7 +66,7 @@ the result.
 - **The validation is built in**: simulated spectra of known composition,
   exported run by run so every figure can be audited (see [Validation](#validation)).
 
-> **Status: Beta (v0.82).** The pipeline below is the one validated end to end.
+> **Status: Beta (v0.83).** The pipeline below is the one validated end to end.
 > MCR-based deconvolution stages are kept in the code, tested, and switched off
 > (`DECONVOLUTION_ENABLED` in [`app_paths.py`](app_paths.py)) until they have
 > their own validation.
