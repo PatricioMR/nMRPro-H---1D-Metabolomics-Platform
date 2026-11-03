@@ -314,6 +314,9 @@ class ProjectManager:
                 'last_groups':      getattr(qnt, '_last_groups',      None),
                 'last_blk_indices': getattr(qnt, '_last_blk_indices', None),
                 'last_non_blk':     getattr(qnt, '_last_non_blk_indices', None),
+                # how much of the spectrum the run resolved, for the report
+                'coverage': (getattr(qnt, '_quant_diagnostics', None)
+                             or {}).get('coverage'),
             }
 
         # ── Notation stage ────────────────────────────────────────────────────
@@ -726,6 +729,10 @@ class ProjectManager:
                     qnt._last_blk_indices = qnt_state['last_blk_indices']
                 if qnt_state.get('last_non_blk') is not None:
                     qnt._last_non_blk_indices = qnt_state['last_non_blk']
+                if qnt_state.get('coverage') is not None:
+                    qnt._quant_diagnostics = {
+                        **(getattr(qnt, '_quant_diagnostics', None) or {}),
+                        'coverage': qnt_state['coverage']}
                 # Repopulate the results table so it's visible immediately
                 try:
                     if results:

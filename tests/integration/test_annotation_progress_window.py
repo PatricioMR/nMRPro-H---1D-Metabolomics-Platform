@@ -95,3 +95,43 @@ def test_a_slow_item_makes_the_estimate_grow_not_freeze(root, monkeypatch):
     prog._tick()
     assert 'about 40 s left' in _texts(prog)[1]
     prog.close()
+
+
+def test_the_bar_never_goes_back_within_a_step(root):
+    """A step whose count restarts (a fit placing signals, then fitting each
+    sample) keeps its bar where it got to."""
+    from gui.widgets.run_progress import RunProgress
+    table = {'a': ('A', 1), 'b': ('B', 1)}
+    prog = RunProgress(root, ('a', 'b'), table, 'test')
+    prog.report('a', 9, 10)
+    high = prog._bar['value']
+    prog.report('a', 1, 32)
+    assert prog._bar['value'] == high
+    prog.report('a', 1, 32, frac=0.95)
+    assert prog._bar['value'] > high
+    prog.report('b')
+    assert prog._bar['value'] == 50.0
+    prog.close()
+
+
+def test_everything_stays_inside_the_window_when_the_text_grows(root):
+    """A long step and a long note wrap and the window grows with them: the
+    Cancel button at the bottom is never cut off."""
+    from gui.widgets.run_progress import RunProgress
+    root.deiconify()                # a transient of a hidden root is not drawn
+    root.geometry('900x600+50+50')
+    table = {'a': ('A step whose title is long enough to need a second line '
+                   'in the window', 1)}
+    prog = RunProgress(root, ('a',), table, 'test', subtitle='sub',
+                       on_cancel=lambda: None)
+    prog.report('a', 12, 32, 'samples', 'round 2, without 3 the fingerprint '
+                'contradicts · joint fit (B) · fitting each sample · and a '
+                'note long enough to wrap onto a third line of its own')
+    for _ in range(5):
+        root.update()
+    w = prog.win
+    assert w.winfo_height() >= w.winfo_reqheight()
+    for child in w.winfo_children():
+        assert child.winfo_y() + child.winfo_height() <= w.winfo_height()
+        assert child.winfo_x() + child.winfo_width() <= w.winfo_width()
+    prog.close()

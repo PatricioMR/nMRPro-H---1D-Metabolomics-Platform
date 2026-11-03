@@ -1114,6 +1114,37 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
 
 
 # ── Ponto de entrada ──────────────────────────────────────────────────────────
+def coverage_text(cov) -> str:
+    """How much of the spectrum the run resolved, for the report's first
+    page (processing.spectrum_coverage, ADR-065): the share of the detected
+    peaks the final model explains and the share of the signal area under
+    it. Said as not measured when the run kept no coverage."""
+    try:
+        peaks = int(cov['peaks'])
+        explained = int(cov['explained'])
+        area = float(cov['area_fraction'])
+    except (TypeError, KeyError, ValueError):
+        return ('Spectrum resolved: not measured -- run the quantification '
+                'with the cascade on.')
+    if peaks <= 0:
+        return 'Spectrum resolved: no detected peak above the noise to explain.'
+    share = int(round(100 * float(cov.get('explained_share', 0.5))))
+    snr = float(cov.get('min_snr', 5.0))
+    text = (f'Spectrum resolved: <b>{100 * explained / peaks:.0f}%</b> of the '
+            f'detected peaks ({explained} of {peaks}, SNR &ge; {snr:g})')
+    if np.isfinite(area):
+        text += f' and <b>{100 * area:.0f}%</b> of the signal area'
+    text += (f' are explained by the final model (a peak counts when the '
+             f'model reaches {share}% of its height; the internal standard, '
+             f'its 13C satellites and the excluded regions are left out).')
+    n_orph = int(cov.get('n_orphans', peaks - explained) or 0)
+    if n_orph:
+        text += (f' The {n_orph} unexplained peak(s) may be compounds outside '
+                 f'the library, signals away from their reference position or '
+                 f'shapes the fit misplaced.')
+    return text
+
+
 def project_peak_count(quant_stage, app):
     """The median number of peaks a sample of this project shows on its own,
     or None: what the report matches the validation mixtures against.
@@ -1291,6 +1322,10 @@ def generate_pdf(output_path: str, quant_stage, app,
     story.append(Paragraph(
         f'Quantified metabolites: <b>{len(results_sorted)}</b>  |  '
         f'Ordered by concentration (decreasing)',
+        styles['small']))
+    story.append(Spacer(1, 0.1 * cm))
+    story.append(Paragraph(coverage_text(
+        (getattr(quant_stage, '_quant_diagnostics', None) or {}).get('coverage')),
         styles['small']))
     story.append(PageBreak())
 

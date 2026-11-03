@@ -29,6 +29,19 @@ PHASES = {
 }
 
 
+# The phases a pass of the engine goes through, which 'recheck' and
+# 'accepted' run again: their bar moves through them in these shares.
+PASS = ('windows', 'shapes', 'joint', 'recheck', 'cascade')
+
+
+def pass_fraction(sub, frac):
+    """How far a repeated pass is when its own phase ``sub`` is ``frac``
+    done."""
+    w = [PHASES[p][1] for p in PASS]
+    i = PASS.index(sub)
+    return (sum(w[:i]) + min(max(frac, 0.0), 1.0) * w[i]) / sum(w)
+
+
 def run_phases(*, joint=True, cascade=True, accepted=False):
     """The phases one run goes through, in order."""
     return (('prepare', 'windows', 'shapes')
@@ -58,8 +71,12 @@ class EngineProgress:
     def cancelled(self) -> bool:
         return self._cancel.is_set()
 
-    def __call__(self, phase, done=0, total=0, unit='', note=''):
+    def __call__(self, phase, done=0, total=0, unit='', note='', frac=None,
+                 sub=None):
         if self._cancel.is_set():
             raise RunCancelled()
+        if sub in PASS:
+            frac = pass_fraction(sub, frac if frac is not None else
+                                 (done / total if total else 0.0))
         if self.window is not None and phase in self.phases:
-            self.window.post(phase, done, total, unit, note)
+            self.window.post(phase, done, total, unit, note, frac)

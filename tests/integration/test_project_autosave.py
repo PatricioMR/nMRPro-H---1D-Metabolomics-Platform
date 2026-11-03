@@ -324,3 +324,24 @@ def test_a_signal_chosen_for_one_analyte_moves_only_it_and_is_saved(
     assert row['_not_quantified'] and 'A' not in q._quant_peak_overrides
     q._quant_results = []
     q._quant_peak_overrides = {}
+
+
+def test_the_spectrum_resolved_is_saved_with_the_results(real_app, pm, tmp_path):
+    """The report quotes how much of the spectrum the run explained; a
+    reopened project must still say it."""
+    q = _quant(real_app)
+    cov = {'peaks': 270, 'explained': 111, 'area_fraction': 0.62,
+           'orphans': [(3.21, 40.0, 0.1)], 'n_orphans': 159,
+           'explained_share': 0.5, 'min_snr': 5.0}
+    q._quant_diagnostics = {'coverage': cov}
+    q._quant_results = [{'metabolite': 'x', 'conc_mm': 2.0}]
+    path = str(tmp_path / 'p.nmrproj')
+    assert pm.save_project(path)
+    q._quant_diagnostics = {}
+    _pretend_saved(pm)
+    assert pm.open_project(path)
+    got = q._quant_diagnostics['coverage']
+    assert (got['peaks'], got['explained'], got['n_orphans']) == (270, 111, 159)
+    assert got['area_fraction'] == 0.62
+    q._quant_results = []
+    q._quant_diagnostics = {}

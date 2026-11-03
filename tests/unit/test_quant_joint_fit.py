@@ -294,15 +294,18 @@ def test_the_fit_says_how_far_it_is_and_stops_when_told():
     seen = []
     joint_measure(_cols(a, b), [], PPM, X, range(4), sigma=5.0,
                   linewidth_ppm=LW,
-                  progress=lambda d, t, u='', n='': seen.append((u, d, t)))
-    assert ('analytes', 0, 2 * jf.PART_SHIFT_PASSES) in seen
-    assert [x for x in seen if x[0] == 'samples'] == [
+                  progress=lambda d, t, u='', n='', frac=None:
+                  seen.append((u, d, t, frac)))
+    assert ('analytes', 0, 2 * jf.PART_SHIFT_PASSES, 0.0) in seen
+    assert [x[:3] for x in seen if x[0] == 'samples'] == [
         ('samples', s, 4) for s in range(4)]
+    fracs = [x[3] for x in seen]
+    assert fracs == sorted(fracs) and fracs[-1] < 1.0,         'one fraction for the whole fit, never back to the start'
 
     class Stop(Exception):
         pass
 
-    def stop(d, t, u='', n=''):
+    def stop(d, t, u='', n='', frac=None):
         if u == 'samples':
             raise Stop
     with pytest.raises(Stop):

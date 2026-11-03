@@ -1432,10 +1432,12 @@ def quantify(*, candidates, peaks_by_rank, ppm, intensities, samples_info,
     the first). Up to AMOUNT_ROUNDS rounds. See ``_quantify_once`` for
     the rest.
 
-    ``progress(phase, done=0, total=0, unit='', note='')`` is told which
-    phase the run is in ('windows', 'shapes', 'joint', 'recheck',
-    'cascade', 'accepted') and how far; it may raise to stop the run, and
-    nothing the run has computed is kept.
+    ``progress(phase, done=0, total=0, unit='', note='', frac=None,
+    sub=None)`` is told which phase the run is in ('windows', 'shapes',
+    'joint', 'recheck', 'cascade', 'accepted'), how far (``frac`` of the
+    phase when the count alone does not say it) and, in a phase that runs
+    the others again ('recheck', 'accepted'), which of them ``sub`` is; it
+    may raise to stop the run, and nothing the run has computed is kept.
     """
     args = dict(locals())
     accepted_alone = ({str(m) for m in analyst_accepted or ()}
@@ -1549,10 +1551,10 @@ def _under(progress, phase, note=''):
     labels = {'windows': 'windows', 'shapes': 'shared windows (A)',
               'joint': 'joint fit (B)', 'cascade': 'cascade (C)'}
 
-    def rep(key, done=0, total=0, unit='', note_=''):
+    def rep(key, done=0, total=0, unit='', note_='', frac=None, sub=None):
         progress(phase, done, total, unit,
                  ' · '.join(x for x in (note, labels.get(key, key), note_)
-                            if x))
+                            if x), frac=frac, sub=sub or key)
     return rep
 
 
@@ -1561,8 +1563,8 @@ def _within(progress, phase):
     phase's loop."""
     if progress is None:
         return None
-    return lambda done, total, unit='', note='': progress(
-        phase, done, total, unit, note)
+    return lambda done, total, unit='', note='', frac=None: progress(
+        phase, done, total, unit, note, frac=frac)
 
 
 ACCEPTED_NOTHING_MEASURED = (

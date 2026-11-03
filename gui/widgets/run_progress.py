@@ -21,14 +21,19 @@ WIDTH = 480
 WRAP = WIDTH - 40           # the text wraps inside the window, never past it
 
 
-def bar_percent(table, phases, key, done, total):
-    """Overall percent of the run when phase ``key`` has done ``done`` of
-    ``total`` items; a phase without a count sits at its start. ``table``
-    is ``{key: (title, share of the bar)}``."""
+def phase_percent(table, phases, key, frac):
+    """Overall percent of the run when phase ``key`` is ``frac`` done.
+    ``table`` is ``{key: (title, share of the bar)}``."""
     weights = [table[k][1] for k in phases]
     i = list(phases).index(key)
-    frac = min(max(done / total, 0.0), 1.0) if total else 0.0
+    frac = min(max(float(frac), 0.0), 1.0)
     return 100.0 * (sum(weights[:i]) + frac * weights[i]) / sum(weights)
+
+
+def bar_percent(table, phases, key, done, total):
+    """Overall percent of the run when phase ``key`` has done ``done`` of
+    ``total`` items; a phase without a count sits at its start."""
+    return phase_percent(table, phases, key, done / total if total else 0.0)
 
 
 def time_left(elapsed, done, total):
@@ -60,6 +65,7 @@ class RunProgress:
         self._t0 = time.monotonic()
         self._phase = None
         self._phase_t0 = self._t0
+        self._frac = 0.0            # how far the phase on screen has got
         self._pending = None        # written by a worker, read by _tick
         self._taken = None
         self._shown = None
@@ -111,31 +117,38 @@ class RunProgress:
         self._tick()
         self.win.update()
 
-    def report(self, key, done=0, total=0, unit='', note='', eta=True):
+    def report(self, key, done=0, total=0, unit='', note='', eta=True,
+               frac=None):
         """Show phase ``key`` at ``done`` of ``total`` ``unit``. Tk thread.
         ``eta`` off for items of very unequal length, whose rate predicts
-        nothing."""
+        nothing. ``frac`` is how far the whole phase is when the count is
+        only one of its steps' (a fit placing signals, then fitting each
+        sample); the bar follows it and never goes back within a phase,
+        while the text shows the step's own count."""
         if self._closed:
             return
         # a late update queued by an earlier phase must not move the bar back
         if (self._phase is not None
                 and self.phases.index(key) < self.phases.index(self._phase)):
             return
-        self._shown = (key, done, total, unit, note, eta)
         now = time.monotonic()
         if key != self._phase:
-            self._phase, self._phase_t0 = key, now
+            self._phase, self._phase_t0, self._frac = key, now, 0.0
+        f = frac if frac is not None else (done / total if total else 0.0)
+        self._frac = max(self._frac, min(max(float(f), 0.0), 1.0))
+        self._shown = (key, done, total, unit, note, eta, frac)
         n = self.phases.index(key) + 1
         step = f'Step {n} of {len(self.phases)} — {self.table[key][0]}'
         if self.cancelled:
             step = 'Cancelling — stopping at the next safe point…'
         self._step_lbl.config(text=step)
-        self._bar['value'] = bar_percent(self.table, self.phases, key, done,
-                                         total)
+        self._bar['value'] = phase_percent(self.table, self.phases, key,
+                                           self._frac)
         parts = []
         if total:
             parts.append(f'{done} of {total} {unit}'.strip())
-            left = time_left(now - self._phase_t0, done, total) if eta else None
+            left = (time_left(now - self._phase_t0, self._frac, 1.0)
+                    if eta else None)
             if left is not None:
                 parts.append(f'about {format_seconds(left)} left')
         if note:
@@ -143,12 +156,12 @@ class RunProgress:
         self._detail_lbl.config(text='  ·  '.join(parts))
         self.win.update_idletasks()
 
-    def post(self, key, done=0, total=0, unit='', note=''):
+    def post(self, key, done=0, total=0, unit='', note='', frac=None):
         """``report`` from any thread: the state is only stored, and the
         window shows the latest at its next tick. Nothing here calls Tk, so a
         worker never waits on the main loop and a loop over thousands of
         items costs nothing."""
-        self._pending = (key, done, total, unit, note)
+        self._pending = (key, done, total, unit, note, True, frac)
 
     def cancel(self):
         """Ask the run to stop. Tk thread; the worker sees ``cancelled``."""

@@ -122,6 +122,9 @@ PART_SHIFT_PASSES = 2
 # is being placed: the cascade's own tolerance for an analyte it did not
 # measure (quant_cascade.FIXED_TOLERANCE).
 NEIGHBOUR_TOLERANCE = 0.25
+# The share of the fit's time that placing the signals takes, for the
+# progress the fit reports: 193 of 309 s on the Mice ISS study.
+PLACING_SHARE = 0.6
 # No analyte's amount may draw any of its signals taller than the trace
 # stands there (``quant_cascade.amplitude_cap``, the cascade's bound since
 # ADR-028). Without it the fit is free to buy one tall peak with an analyte
@@ -482,8 +485,9 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     tails build under a crowded region, which is area, and hands it to
     nobody. None fits the trace as it stands.
 
-    ``progress(done, total, unit, note)`` is told how far the fit is, and
-    may raise to stop the run.
+    ``progress(done, total, unit, note, frac=)`` is told how far the fit
+    is -- the count of the step it is in, and ``frac`` of the whole fit --
+    and may raise to stop the run.
     """
     ppm = np.asarray(ppm, float)
     X = np.asarray(X, float)
@@ -513,15 +517,24 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     #    components, and took their analytes' area.
     offsets: dict = {}
     col_sup = supports()
-    for grp in _groups(col_sup):
+    col_groups = _groups(col_sup)
+    n_place = max(sum(len(g) for g in col_groups), 1)
+    placed = 0
+    for grp in col_groups:
         union = np.unique(np.concatenate([col_sup[k] for k in grp]))
         union = union[w[union] > 0]
         if union.size < 3:
+            placed += len(grp)
             continue
-        offsets.update(refine_part_shifts([columns[k] for k in grp], None,
-                                          ppm, mean[union], union,
-                                          linewidth_ppm, sigma=sigma,
-                                          progress=progress))
+
+        def placing(done, total, unit='', note='', _at=placed, _n=len(grp)):
+            progress(done, total, unit, note, frac=PLACING_SHARE * (
+                _at + _n * done / max(total, 1)) / n_place)
+        offsets.update(refine_part_shifts(
+            [columns[k] for k in grp], None, ppm, mean[union], union,
+            linewidth_ppm, sigma=sigma,
+            progress=placing if progress is not None else None))
+        placed += len(grp)
 
     # 2. What no signal's line now claims is not in the library.
     frees = free_components(columns, peaks, ppm, mean, sigma=sigma,
@@ -541,7 +554,8 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
     shifts = np.linspace(-step, step, SHIFT_STEPS) if SHIFT_STEPS > 1 else [0.0]
 
     out: dict = {}
-    for grp in _groups(nodes):
+    fit_groups = _groups(nodes)
+    for i_g, grp in enumerate(fit_groups):
         cols_in = [k for k in grp if k < n_col]
         frees_in = [k - n_col for k in grp if k >= n_col]
         if not cols_in or len(grp) < 2:
@@ -589,7 +603,9 @@ def joint_measure(columns, peaks, ppm, X, included, *, sigma, linewidth_ppm,
                 support_of.update({s: keep for s in members})
         for i_s, s in enumerate(included):
             if progress is not None:
-                progress(i_s, len(included), 'samples', 'fitting each sample')
+                progress(i_s, len(included), 'samples', 'fitting each sample',
+                         frac=PLACING_SHARE + (1 - PLACING_SHARE) * (
+                             i_g + i_s / len(included)) / len(fit_groups))
             t = X[union, s]
             best = None
             for i_d, A in enumerate(designs):
