@@ -67,3 +67,25 @@ validation/out/
 
 # v06 build: HMDB bulk index cache (~170 MB), rebuilt from NMR Databases/hmdb_bulk
 hmdb_api_download/_hmdb_v06_index.json
+
+# ── Reference-library build downloads (re-fetched by hmdb_api_download/download_*.py
+#    with HMDB_API_KEY set; inputs of the build, not source) ──────────────────
+hmdb_api_download/nmr/
+hmdb_api_download/ontology/
+hmdb_api_download/base/
+hmdb_api_download/hmdb_index.db*
+hmdb_api_download/_probe_*.json
+hmdb_api_download/_pw_*.json
+hmdb_api_download/_pg1.json
+hmdb_api_download/_schema.*
+hmdb_api_download/_errors.log
+hmdb_api_download/_progress.log
+
+# ── Local scratch at the repo root ──────────────────────────────────────────
+/build_out.txt
+/p.html
+/nmrpro_h (*).spec
+# Intermediate libraries of the build (v01) and its validation output: rebuilt
+# by the scripts, never shipped (the app offers app_paths.REFERENCE_DATABASES).
+databases/*_v01.db
+hmdb_api_download/_pattern_fit_validation.csv

@@ -529,16 +529,26 @@ app_paths.py       version (single source), resource paths, feature switches
 gui/               Tkinter interface
   stages/          visualization · peak_detection · annotation · quantification ·
                    statistics (+ parked MCR stages)
-  widgets/         signal list, annotation results, deconvolution review, PDF report…
+  widgets/         signal list, annotation results, STOCSY, deconvolution review,
+                   PDF report…
 processing/        signal processing and scientific logic (no GUI imports)
-data/              loaders, library access, project file, quality reference
 controllers/       orchestration and analysis defaults
+plotting/          spectrum drawing helpers
+data/              loaders, library access, project file, quality reference
+utils/             logo, icon, background workers
 databases/         BMRB-derived SQLite libraries (read-only at runtime)
-validation/        simulated benches, ablation, exports
-hmdb_api_download/ reference-library build and verification scripts
+validation/        simulated benches, ablation, exports (not needed to run the app)
+hmdb_api_download/ reference-library build and verification scripts (not needed
+                   to run the app)
 installer/         Inno Setup script
 tests/             unit · integration · smoke (pytest)
 ```
+
+To run the program only `main.py`, `app_paths.py`, `gui/`, `processing/`,
+`controllers/`, `plotting/`, `data/`, `utils/` and `databases/` are needed.
+The raw downloads the library build starts from (HMDB spectra, ontology, index)
+are not kept in the repository: `hmdb_api_download/download_*.py` fetch them again
+with your own HMDB API key in the `HMDB_API_KEY` environment variable.
 
 Architecture rules: no signal-processing logic in controllers or plotting; SQL is
 always parameterised; schemas change only by explicit migration.
