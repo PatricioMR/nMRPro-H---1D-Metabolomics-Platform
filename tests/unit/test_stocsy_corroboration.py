@@ -312,9 +312,11 @@ def test_detection_correlates_over_the_included_samples():
     import inspect
 
     from gui.stages import peak_detection_stage as pds
-    src = inspect.getsource(pds.PeakDetectionStage.detect_peaks)
+    assert 'self.build_peak_correlation()' in inspect.getsource(
+        pds.PeakDetectionStage.detect_peaks)
+    src = inspect.getsource(pds.PeakDetectionStage.build_peak_correlation)
     assert 'included_sample_indices(self.app.samples_info' in src
-    assert 'included=_incl_corr' in src
+    assert 'included=incl' in src
 
 
 class TestTheMatrixIsComputedInOneGo:

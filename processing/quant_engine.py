@@ -97,6 +97,16 @@ def _cv_percent(values):
 _DOTS = {3: STATUS_STRONG, 2: STATUS_FAIR, 1: STATUS_WEAK}
 
 
+def raise_confidence(row, level) -> None:
+    """A finished row at ``level`` dots, in every field they are read from: the
+    table and the report print ``status``, the counts read ``_confidence``. What
+    raises a row is evidence of its identity, so that is at least as much now."""
+    row['_confidence'] = level
+    row['status'] = _DOTS[level]
+    if '_identity_level' in row:
+        row['_identity_level'] = max(int(row['_identity_level'] or 0), level)
+
+
 def _structural_evidence(signal, dj_gold_hz=None):
     """How much of the expected evidence this signal's SHAPE carried.
 
@@ -453,9 +463,11 @@ def _identity_evidence(*, confirmed=0, contradicted=0, corroborated=False,
     analyte's window is never more than two, whatever its own signals
     say elsewhere -- the amount is what that window had left over.
 
-    An analyte the cascade brought in is never more than two: its lines
-    were never confirmed one by one. Two when its own signals agree on
-    the amount to within CASCADE_AGREEMENT_GOOD, one otherwise.
+    An analyte the cascade brought in is never more than two here: its
+    lines were never confirmed one by one. Two when its own signals agree
+    on the amount to within CASCADE_AGREEMENT_GOOD, one otherwise. What
+    can take it further comes after the measurement: another signal of its
+    listing moving with the amount (processing.signal_links, ADR-101).
 
     A singlet standing on the study's own drift is two. It has no shape to
     confirm, but an analyte really in the mixture moves WITH the study --

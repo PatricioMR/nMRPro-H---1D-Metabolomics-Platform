@@ -548,7 +548,7 @@ def _metabolite_matched_ranks(met_id, all_peaks_by_id, observed_peaks,
 
 
 def _stocsy_partner_count(met_id, peak_rank, all_peaks_by_id, observed_peaks,
-                          tolerance, peak_corr):
+                          tolerance, peak_corr, n_samples=None):
     """How many of this analyte's other resonances co-vary with this peak.
 
     The evidence that separates two analytes whose contested signal is
@@ -561,7 +561,7 @@ def _stocsy_partner_count(met_id, peak_rank, all_peaks_by_id, observed_peaks,
         peak_rank,
         _metabolite_matched_ranks(met_id, all_peaks_by_id, observed_peaks,
                                   tolerance),
-        peak_corr)
+        peak_corr, n_samples=n_samples)
 
 
 def _stocsy_coherence(met_id, all_peaks_by_id, observed_peaks, tolerance,

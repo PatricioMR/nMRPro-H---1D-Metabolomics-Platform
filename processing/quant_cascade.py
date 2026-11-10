@@ -875,7 +875,7 @@ CASCADE_SCORE_INTERCEPT = -0.78118
 # 0.7 raised nothing): tubes of 18 and 50, 600 MHz, three seeds, real / strangers
 # at two dots, 18: 22/0 -> 30/0, 50: 67/8 -> 73/13; with a common drift of 13
 # and 4 of scatter, 18: 19/5 -> 27/6, 50: 44/15 -> 58/18. Three dots untouched
-# (cascade rows are never three) and the number found does not change.
+# (no cascade row was three then) and the number found does not change.
 # 0.2 instead of 0.15 (ADR-077, 2026-10-11): the engine since then (spin-system
 # m*, joint fit reach of two linewidths) leaves the strangers lower. Over the
 # analytes the cascade took in, three seeds, real / strangers at 0.15 -> 0.2:

@@ -20,6 +20,7 @@ import json
 
 import numpy as np
 
+from processing import signal_links, stocsy_evidence
 from processing.annotation_scoring import (
     DJ_GOLD_HZ_DEFAULT, SCORING_DEFAULTS, annotate_drift_spread, is_singlet_like,
     reference_drift, study_drift)
@@ -27,14 +28,16 @@ from processing.multiplet_line_selector import multiplet_line_peaks
 from processing.quant_engine import canonical_order, quantify, study_position_band
 from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
+    pattern_evidence,
     baseline_anchors, integrate_sample, lorentzian_captured_fraction)
 from processing.quant_concentration import standard_per_proton
 from processing.quant_predicted_window import (
     project_drift, project_noise)
 from processing.quant_snr import noise_level, representative_snr, window_snr
-from processing.spectral_regions import measure_linewidth_ppm
+from processing.spectral_regions import FALLBACK_LINEWIDTH_PPM, measure_linewidth_ppm
 from processing.quantification import Candidate, eligible_metabolite_ids
 from processing.sample_selection import included_sample_indices
+from processing.signal_lines import manual_lines, singlet_on_peak
 
 
 # A singlet's peak is chosen again, against the study's reference drift, among
@@ -84,49 +87,13 @@ def reselect_singlets(metabolites, peaks_by_rank):
                     < SINGLET_RESELECT_MARGIN_PPM):
                 mps.append(mp)
                 continue
-            mp2 = dict(mp)
-            mp2['peak_ppm'] = float(best['ppm'])
-            mp2['peak_rank'] = best['rank']
-            mp2['ppm_diff'] = abs(float(best['ppm']) - float(db))
-            mp2['predicted_lines'] = [{'ppm': float(best['ppm']), 'measured': True,
-                                       'rel_intensity': 1.0}]
-            if common is not None:
-                mp2['ppm_off_drift'] = abs(float(best['ppm']) - float(db) - common)
-            mp2['obs_snr'] = best.get('snr', mp.get('obs_snr'))
+            mp2 = singlet_on_peak(mp, best, common)
             mp2['reselected'] = True
             mps.append(mp2)
             touched = True
             changed += 1
         out.append(dict(met, matched_peaks=mps) if touched else met)
     return out if changed else metabolites
-
-
-def pattern_evidence(mp) -> dict:
-    """What measuring an annotated signal needs of it (quant_engine.
-    measure_signal): its protons, its lines' weights, where its lines are.
-    The election's candidates and the analyst's choice of a signal read the
-    same three."""
-    return {
-        # Divided by the listed protons, the stoichiometry -- not by those
-        # measured under the profile on the reference spectrum, which carry
-        # its artefacts (see quant_cascade.signal_protons).
-        'protons': mp.get('protons'),
-        # A measured pattern's relative line heights, for the capture
-        # correction; a first-order multiplet carries none and the engine
-        # falls back to the binomial pattern.
-        'line_weights': ([float(l.get('rel_intensity') or 1.0)
-                          for l in (mp.get('predicted_lines') or ())]
-                         if (mp.get('type') or mp.get('multiplicity'))
-                         == 'm*' else None),
-        # Where the database says the lines are. Only read when detection
-        # found none of them, to bound what could have been there -- never
-        # to place a peak.
-        'predicted_ppms': [l.get('ppm') for l
-                           in (mp.get('predicted_lines') or ())
-                           if l.get('ppm') is not None]
-                          or ([mp.get('ppm')]
-                              if mp.get('ppm') is not None else []),
-    }
 
 
 def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
@@ -201,7 +168,10 @@ def build_candidates(metabolites, peaks_by_rank, *, quality_marks=None,
             # and the engine measures it from its shape.
             _pf = mp.get('pattern_fit') or {}
             _shape = None
-            if (_pf.get('snr') is not None and mp.get('peak_ppm') is not None
+            # Lines the analyst chose are found one by one: the signal is
+            # measured on them, not on the shape (processing.signal_lines).
+            if (manual_lines(mp) is None
+                    and _pf.get('snr') is not None and mp.get('peak_ppm') is not None
                     and mp.get('study_linewidth_hz')
                     and mp.get('pattern_field_mhz')):
                 _shape = {
@@ -693,9 +663,12 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
     # the metabolites (drift spread, fingerprint verdicts). Written onto the
     # annotation's list, a second run started from the first one's values --
     # the same Mice ISS project quantified 45 analytes, then 39 on every run
-    # after, with nothing changed but that.
+    # after, with nothing changed but that. What the last run marked on the
+    # annotation's list is the one thing written there, and it goes first.
+    annotated = list(metabolites or ())
+    signal_links.forget_marks(annotated, quality_marks)
     metabolites = reselect_singlets(
-        canonical_order(copy.deepcopy(list(metabolites or ()))), peaks_by_rank)
+        canonical_order(copy.deepcopy(annotated)), peaks_by_rank)
     arr = np.asarray(intensities, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
@@ -717,7 +690,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         anchor_met_ids=anchor_metabolite_ids(anchor_lines),
         manual_good_ids=manual_good_ids(quality_marks))
 
-    _lw = measure_linewidth_ppm(ppm, arr, peaks) or 0.008
+    _lw = measure_linewidth_ppm(ppm, arr, peaks) or FALLBACK_LINEWIDTH_PPM
     std_areas = standard_areas_from_peak(ref_peak, ppm, arr,
                                          local_baseline=local_baseline,
                                          linewidth_ppm=_lw,
@@ -744,7 +717,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
                               quality_marks=quality_marks,
                               eligible_ids=eligible,
                               pool=_pool if resolve_shared else None)
-    return _for_display(_rows_indexed_by_sample(quantify(
+    rows = _rows_indexed_by_sample(quantify(
         candidates=_cands,
         residual_pool=_pool,
         peaks_by_rank=peaks_by_rank,
@@ -811,4 +784,15 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         metabolites=metabolites,
         field_mhz=project_field_mhz(metabolites),
         progress=progress,
-    ), n_s), metabolites, peaks_by_rank)
+    ), n_s)
+    if stocsy_evidence.STOCSY_LIFT:
+        rows = stocsy_evidence.lift_by_covariation(
+            rows, metabolites, peaks, samples_info)
+    if signal_links.SIGNAL_LINKS:
+        rows = signal_links.apply_links(
+            rows, annotated, metabolites, peaks, ppm, arr, samples_info,
+            tolerance=float((annotation_params or SCORING_DEFAULTS)['dppm_gold']),
+            noise_sigma=(float(noise_sigma) if noise_sigma not in (None, 0)
+                         else project_noise(peaks)),
+            local_baseline=local_baseline, align=align, manual_marks=quality_marks)
+    return _for_display(rows, metabolites, peaks_by_rank)

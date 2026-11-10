@@ -501,6 +501,9 @@ class ProjectManager:
                         text=f'✅ {len(pd.peaks)} signals detected', foreground='green')
                     try: app.btn_peak_list.config(state='normal')
                     except Exception: pass
+                    _warn = pd.build_peak_correlation()
+                    if _warn.strip():
+                        print(f'  STOCSY restore: {_warn.strip()}')
             except Exception as _e:
                 print(f'  pd UI restore: {_e}')
 
@@ -662,6 +665,7 @@ class ProjectManager:
                     (qnt_state.get('deconv_overrides', {}) or {}).items()}
                 # Rows and overrides both restored: the button reads them.
                 app.refresh_deconv_button()
+                app.refresh_stocsy_button()
                 _integ_loaded = qnt_state.get('integ')
                 if _integ_loaded == 'Lorentz':
                     _integ_loaded = 'Multiplet'   # 'Lorentz Fit' mode was removed

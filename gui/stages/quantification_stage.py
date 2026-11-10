@@ -416,7 +416,9 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._tip(_c, 'Adds analytes the election missed: the quantified '
                       'analytes are subtracted and the residual is explained '
                       'jointly, one amount per analyte.\n'
-                      'It only adds, at two dots at most. On the validation '
+                      'It only adds, at two dots unless another of its '
+                      'signals moves with the measured amount across the '
+                      'samples. On the validation '
                       'mixtures it finds two to three times more compounds, '
                       'with more false rows.')
         self.cascade_advice_label = ttk.Label(

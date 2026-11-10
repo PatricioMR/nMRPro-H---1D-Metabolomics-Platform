@@ -22,6 +22,8 @@ from __future__ import annotations
 import numpy as np
 from typing import Any
 
+from processing.signal_lines import manual_lines, peaks_at
+
 # ── Thresholds ────────────────────────────────────────────────────────────────
 NNLS_CLEAN_THRESHOLD    = 0.70   # own_frac ≥ this → line is clean
 NNLS_MARGINAL_THRESHOLD = 0.40   # own_frac in [0.40, 0.70) → marginal (accepted)
@@ -384,8 +386,15 @@ def multiplet_line_peaks(hit, pk_by_rank):
     predicted-line peaks count. A singlet falls back to the anchor peak when its
     single line cannot be matched.
 
+    Lines the analyst chose (``processing.signal_lines``) replace the matched
+    ones: the peaks standing at their δ, and nothing in place of one that is
+    gone.
+
     Returns a list of detected-peak dicts (may be empty).
     """
+    chosen = manual_lines(hit)
+    if chosen is not None:
+        return peaks_at(chosen, pk_by_rank)
     pls = hit.get('predicted_lines') or []
     pl_ppms = [float(l['ppm']) for l in pls if 'ppm' in l]
     # Tolerance from the multiplet's own line spacing (J/MHz): a line's match

@@ -149,6 +149,7 @@ def _write_annotation_log(metabolites, stats):
                             f'{x["verdict"]}{held}\n')
     except Exception:
         pass
+from processing import signal_links
 from processing.annotation_quality import promote_singlets, quality_verdict
 from processing.annotation_quality import (
     metabolite_has_anchor, metabolite_tier)
@@ -1783,9 +1784,14 @@ class AnnotationResultsWindow:
             ann_stage = (getattr(self.app, 'stages', {}) or {}).get('annotation')
             _tol = float(getattr(ann_stage, 'tolerance', 0.05) or 0.05)
         except Exception:
+            ann_stage = None
             _tol = 0.05
         _sigma_ppm = _tol / 2.0
         _field_sc  = self._get_field_mhz()
+        # Scored and judged again: what the last quantification marked on these
+        # signals goes first, or they are read where it left them (signal_links).
+        signal_links.forget_marks(self.metabolites,
+                                  getattr(ann_stage, '_quality_marks', {}) if ann_stage else {})
 
         for met in (self.metabolites if mets is None else mets):
             s_found = coverage_fraction(

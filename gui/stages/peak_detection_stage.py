@@ -338,6 +338,7 @@ class PeakDetectionStage(BaseStage):
             s2, text="📈 Show/Hide Estimated Baseline",
             command=self.toggle_baseline, state="disabled")
         self.btn_show_baseline.pack(fill=tk.X, pady=2)
+
         self._baseline_drawn = False
         self._baseline_line = None
 
@@ -773,31 +774,68 @@ class PeakDetectionStage(BaseStage):
 
             # Build graph STOCSY correlation matrix from area_per_sample vectors.
             _overlay_step("Computing peak correlations…")
-            try:
-                from processing.stocsy import compute_peak_correlation_matrix
-                _aint = getattr(self.app, 'all_intensities', None)
-                _n_s  = (int(_aint.shape[1])
-                         if _aint is not None and _aint.ndim == 2 else 0)
-                self._n_samples_pk = _n_s
-                # Correlated over the analytical samples only. A blank drags
-                # every peak to nothing at once, and that shared descent reads
-                # as co-variation between molecules that have nothing to do
-                # with each other.
-                _incl_corr = included_sample_indices(self.app.samples_info,
-                                                     _n_s)
-                self._peak_corr = (
-                    compute_peak_correlation_matrix(self.peaks,
-                                                    included=_incl_corr)
-                    if len(_incl_corr) >= 3 else {})
-            except Exception:
-                self._peak_corr = {}
+            _stocsy_warn = self.build_peak_correlation()
 
             _destroy_overlay()
             messagebox.showinfo(
                 "Success",
-                f"Detected {len(self.peaks)} signals")
+                f"Detected {len(self.peaks)} signals{_stocsy_warn}")
 
         overlay.after(100, _poll)
+
+    def build_peak_correlation(self):
+        """Graph STOCSY matrix over the detected peaks, kept in ``_peak_corr``.
+
+        Derived state: it is not saved with the project, so it is rebuilt
+        here after detection and after a project is opened -- annotating a
+        reopened project must read the same correlations it read before
+        saving. Returns the warning to show the analyst ('' when none).
+        """
+        warn = ''
+        try:
+            from processing.stocsy import (
+                STOCSY_MIN_SAMPLES, SKIP_REASONS, peak_correlation_report)
+            aint = getattr(self.app, 'all_intensities', None)
+            n_s = (int(aint.shape[1])
+                   if aint is not None and aint.ndim == 2 else 0)
+            # Correlated over the analytical samples only. A blank drags
+            # every peak to nothing at once, and that shared descent reads
+            # as co-variation between molecules that have nothing to do
+            # with each other.
+            incl = included_sample_indices(self.app.samples_info, n_s)
+            # The scoring weighs the correlation by how many samples it was
+            # taken over: the analytical ones, not every column.
+            self._n_samples_pk = len(incl)
+            if len(incl) >= STOCSY_MIN_SAMPLES:
+                rep = peak_correlation_report(self.peaks, included=incl)
+                self._peak_corr = rep['corr']
+                lost = {r: why for r, why in rep['skipped'].items()
+                        if why != 'flat'}
+                if lost:
+                    why = sorted({SKIP_REASONS[w] for w in lost.values()})
+                    warn = (f"\n\n⚠ {len(lost)} signal(s) left out of "
+                            f"the STOCSY correlation: {'; '.join(why)}.")
+            else:
+                self._peak_corr = {}
+                warn = (f"\n\n⚠ Only {len(incl)} analytical sample(s): "
+                        f"STOCSY needs at least {STOCSY_MIN_SAMPLES}, so "
+                        "signals are not corroborated by co-variation.")
+        except Exception as exc:
+            self._peak_corr = {}
+            warn = f"\n\n⚠ STOCSY correlation failed: {exc}"
+        return warn
+
+    def build_stocsy_analysis(self):
+        """The STOCSY analysis of the detected signals over the study's
+        corrected spectra (read-only)."""
+        from controllers.stocsy_controller import StocsyAnalysis
+        corrected = self.app.corrected_intensities()
+        if corrected is None:
+            corrected = self.app.all_intensities
+        return StocsyAnalysis(
+            self.app.ppm, corrected, self.peaks, self.app.samples_info,
+            excluded_regions=parse_regions(self.excluded_regions_var.get()),
+            noise_std=self.noise_std)
 
     def _keep_detection_alignment(self, details):
         """Carry detection's rigid alignment to the project's spectra.

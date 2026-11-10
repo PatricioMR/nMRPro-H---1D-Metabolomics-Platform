@@ -27,12 +27,15 @@ DOTS = {3: '●●●', 2: '●●○', 1: '●○○'}
 MEANING = {
     3: 'Identity confirmed by the compound’s own signals: a multiplet '
        'complete with its coupling inside the gate, or its signals agreeing '
-       'on one amount in the ratio of their protons; nothing of its listing '
-       'missing at that amount.',
+       'on one amount in the ratio of their protons, with nothing of its '
+       'listing missing at that amount. A compound otherwise at two dots '
+       'reaches this level when its signals move together across the '
+       'samples, which is worth one dot and no more.',
     2: 'Identity supported, not confirmed line by line: most of its listing '
        'covered, a singlet moving with the study’s drift, a cascade '
        'identification its model scores at 70% or more, or an amount taken '
-       'from what a neighbour’s window left.',
+       'from what a neighbour’s window left. A candidate reaches this level '
+       'when its signals move together across the samples.',
     1: 'A candidate: identified by shape alone, a single listed signal with '
        'nothing to corroborate it, a signal of its listing missing at the '
        'measured amount, a cascade identification its model scores between '

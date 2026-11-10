@@ -373,6 +373,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
         _btn('View', view_menu)
 
+        # ── Analysis ─────────────────────────────────────────────────────────
+        analysis_menu = _menu(mb_frame)
+        analysis_menu.add_command(label='🔗 STOCSY — analyte signals…',
+                                  command=self.open_stocsy)
+        _btn('Analysis', analysis_menu)
+
         # ── Help ─────────────────────────────────────────────────────────────
         help_menu = _menu(mb_frame)
         help_menu.add_command(label='About NMRPro-H…', command=self._show_about)
@@ -624,6 +630,13 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             _btn_bar, text="🔬 Annotation Results",
             command=self.open_annot_shortcut, state="disabled")
         self.btn_annot_shortcut.pack(side=tk.LEFT, padx=4)
+
+        # Enabled once a quantification exists (refresh_stocsy_button): the
+        # window audits what the quantification measured.
+        self.btn_stocsy_shortcut = ttk.Button(
+            _btn_bar, text="🔗 STOCSY",
+            command=self.open_stocsy, state="disabled")
+        self.btn_stocsy_shortcut.pack(side=tk.LEFT, padx=4)
 
         # Enabled by refresh_deconv_button once a quantification resolved a
         # window by shape (ADR-015); opens the review of what was decided.
@@ -1633,6 +1646,18 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         except Exception:
             pass
 
+    def _quant_rows(self):
+        qs = self.stages.get('quantification')
+        return list(getattr(qs, '_quant_results', None) or ())
+
+    def refresh_stocsy_button(self):
+        """The STOCSY button is on once there is a quantification to audit."""
+        try:
+            self.btn_stocsy_shortcut.config(
+                state='normal' if self._quant_rows() else 'disabled')
+        except Exception:
+            pass
+
     def open_deconv_shortcut(self):
         """Open the review of the windows the quantification resolved by
         shape (gui.widgets.deconvolution_window), so the analyst can see what
@@ -1644,6 +1669,63 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         # opens even before the first run: the window offers to run it and
         # then shows what will be deconvolved
         qs._open_deconvolution_window()
+
+    def open_stocsy(self, met_id=None):
+        """Open the STOCSY window, the audit of the quantification: the
+        quantified analytes on the left, each with what the quantification
+        measured and its signals read line by line. Opened again, it is
+        rebuilt from the project as it is now and returns to the analyte and
+        reference it was on."""
+        pd = self.stages.get('peak_detection')
+        if pd is None or not pd.peaks or not self._quant_rows():
+            messagebox.showinfo('STOCSY', 'Quantify first: the STOCSY window audits what the '
+                                'quantification measured.', parent=self.root)
+            return
+        from controllers.signal_lines import SignalLineEditor
+        from controllers.stocsy_analytes import AnalyteBrowser
+        from gui.widgets.stocsy_window import StocsyWindow
+        keep = {}
+        old = getattr(self, '_stocsy_win', None)
+        if old is not None:
+            try:
+                if old.win.winfo_exists():
+                    keep = old.state()
+                    old.win.destroy()
+            except Exception:
+                pass
+        try:
+            analysis = pd.build_stocsy_analysis()
+            ann, qs = self.stages.get('annotation'), self.stages.get('quantification')
+            browser = AnalyteBrowser(analysis, getattr(ann, '_metabolites', None),
+                                     getattr(qs, '_quant_results', None))
+            editor = (SignalLineEditor(lambda: ann._metabolites, lambda: ann._quality_marks)
+                      if ann is not None and getattr(ann, '_metabolites', None)
+                      and hasattr(ann, '_quality_marks') else None)
+            xlim = self.ax.get_xlim()
+            try:
+                tolerance = float(ann.tolerance_var.get())
+            except (AttributeError, ValueError, tk.TclError):
+                tolerance = None                    # the window falls back to the default
+        except Exception as exc:
+            messagebox.showerror('STOCSY', f'Could not open STOCSY: {exc}',
+                                 parent=self.root)
+            return
+        self._stocsy_win = StocsyWindow(
+            self.root, analysis, browser=browser,
+            view_region=(max(xlim), min(xlim)),
+            group_colors=getattr(self, 'group_colors', {}),
+            initial={'met_id': met_id} if met_id else keep,
+            editor=editor, on_change=self._on_signal_lines_changed, tolerance_ppm=tolerance)
+
+    def _on_signal_lines_changed(self, _met_id):
+        """Lines chosen in the STOCSY window: an open Annotation Results
+        window shows the signal with them."""
+        win = getattr(self, '_annot_win', None)
+        try:
+            if win is not None and win.win.winfo_exists():
+                win._populate()
+        except Exception as exc:
+            print(f'[STOCSY] annotation window not refreshed: {exc}')
 
     def open_annot_shortcut(self):
         """Open Annotation Results — singleton.

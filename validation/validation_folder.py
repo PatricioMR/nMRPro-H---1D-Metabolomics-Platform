@@ -21,6 +21,8 @@ SUBFOLDERS = {
     'figures': '08_Figuras',               # validation.composition_figure (both fields)
     'real': '09_Amostras_reais',           # validation.real_samples (old projects re-analysed)
     'artifacts': '10_Artefatos',           # validation.artifact_bench (spoiled samples)
+    'stocsy': '11_STOCSY',                 # validation.stocsy_bench (what STOCSY is worth)
+    'signal_links': '12_Sinais_ligados',   # processing.signal_links before and after (by hand, ADR-101)
     'archive': '99_Arquivo',               # earlier versions' exports
 }
 

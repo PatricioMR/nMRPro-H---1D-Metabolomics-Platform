@@ -999,7 +999,8 @@ def search_database(*, db_path, db_type, peaks_to_search, annotatable_peaks,
             # claimants -- which is the majority of them.
             r['stocsy_partners'] = _stocsy_partner_count(
                 _met_id_coh, r.get('peak_rank'), all_peaks_by_id,
-                peaks_to_search, tolerance, _pk_corr)
+                peaks_to_search, tolerance, _pk_corr,
+                n_samples=_n_samp_st or None)
             # Database provenance is recorded, not multiplied into the
             # score. Scaling by 0.82 (BMRB) meant a signal needed a raw
             # 0.915 to reach the 0.75 Good threshold, and the Annotation

@@ -97,7 +97,8 @@ QUANTIFICATION = {
 
 
 # How crowded a spectrum must be before the cascade is worth its false rows.
-# The cascade adds analytes the election missed, at two dots at most. On the
+# The cascade adds analytes the election missed, at two dots unless another of
+# their signals moves with the measured amount (ADR-101). On the
 # GISSMO bench (three seeds each, 2026-10-01), analytes it added at two dots
 # against strangers it added at two dots:
 #

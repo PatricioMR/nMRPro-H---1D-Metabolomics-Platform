@@ -640,6 +640,7 @@ class _QuantCompMixin:
 
         def _finish_ui():
             self.app.refresh_deconv_button()
+            self.app.refresh_stocsy_button()
             self._prog_report('results', 'VIP scores')
             try:
                 self._compute_vip_scores()

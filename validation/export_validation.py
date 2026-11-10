@@ -215,9 +215,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawTextHelpFormatter)
     ap.add_argument('out', help='the validation folder (writes <out>/01_Tabela_PDF)')
-    ap.add_argument('--stress-label', default='atual',
-                    help='bench_runs label of the scattered runs (same engine '
-                         'and defaults as the quality table)')
+    ap.add_argument('--stress-label', default=None,
+                    help='bench_runs label of the scattered runs, measured on the '
+                         'same engine and defaults as the quality table; absent, '
+                         'they are left out rather than read from an older engine')
     ap.add_argument('--check', action='store_true',
                     help='verify the per-sample truth replay on one tube first')
     a = ap.parse_args()
@@ -231,6 +232,8 @@ def main():
     names = _sample_names()
     analyte_rows, sample_rows, summary = [], [], []
     for regime in REGIMES:
+        if regime != 'padrao' and not a.stress_label:
+            continue
         for field in FIELDS:
             for n in TUBES:
                 runs = []

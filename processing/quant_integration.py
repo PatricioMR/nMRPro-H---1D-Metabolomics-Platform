@@ -943,3 +943,31 @@ def pattern_lines(predicted_ppms, found_ppms, *, weights=None, tolerance=None):
     total = float(sum(w))
     share = float(sum(wi for wi, m in zip(w, mask) if m)) / total
     return ppms, w, mask, share
+
+
+def pattern_evidence(mp) -> dict:
+    """What measuring an annotated signal needs of it (quant_engine.
+    measure_signal): its protons, its lines' weights, where its lines are.
+    The election's candidates and the analyst's choice of a signal read the
+    same three."""
+    return {
+        # Divided by the listed protons, the stoichiometry -- not by those
+        # measured under the profile on the reference spectrum, which carry
+        # its artefacts (see quant_cascade.signal_protons).
+        'protons': mp.get('protons'),
+        # A measured pattern's relative line heights, for the capture
+        # correction; a first-order multiplet carries none and the engine
+        # falls back to the binomial pattern.
+        'line_weights': ([float(l.get('rel_intensity') or 1.0)
+                          for l in (mp.get('predicted_lines') or ())]
+                         if (mp.get('type') or mp.get('multiplicity'))
+                         == 'm*' else None),
+        # Where the database says the lines are. Only read when detection
+        # found none of them, to bound what could have been there -- never
+        # to place a peak.
+        'predicted_ppms': [l.get('ppm') for l
+                           in (mp.get('predicted_lines') or ())
+                           if l.get('ppm') is not None]
+                          or ([mp.get('ppm')]
+                              if mp.get('ppm') is not None else []),
+    }

@@ -35,6 +35,7 @@ import numpy as np
 
 from processing.quant_integration import pascal_weights
 from processing.signal_quality import SIGNAL_AVERAGE, SIGNAL_GOOD
+from processing.stocsy import critical_r
 
 # ── Multiplicity vocabulary ───────────────────────────────────────────────────
 # Broad set: everything that carries no usable J evidence for scoring.
@@ -1474,7 +1475,8 @@ STOCSY_BAND_CAP = 3
 
 
 def corroborating_partners(peak_rank, partner_ranks, peak_corr,
-                           min_r: float = STOCSY_MIN_R) -> int:
+                           min_r: float = STOCSY_MIN_R,
+                           n_samples=None) -> int:
     """How many of this analyte's other detected signals co-vary with this one.
 
     Statistical total correlation spectroscopy: resonances belonging to the
@@ -1498,11 +1500,18 @@ def corroborating_partners(peak_rank, partner_ranks, peak_corr,
     mean would let an analyte with four uncorrelated database signals lose to
     one with none.
 
+    ``n_samples`` raises the bar where 0.80 is not significant: with five
+    samples r = 0.80 is reached by chance one time in ten, and the partner
+    must clear the p < 0.05 critical value instead (0.88 at five, 0.81 at
+    six). From eight samples up 0.80 is already above it and nothing changes.
+
     Returns 0 when the correlation matrix is unavailable — which must read as
     "no corroboration measured", never as "corroboration refuted".
     """
     if not peak_corr or peak_rank is None:
         return 0
+    if n_samples:
+        min_r = max(float(min_r), critical_r(int(n_samples) - 2))
     n = 0
     for other in partner_ranks or ():
         if other is None or other == peak_rank:

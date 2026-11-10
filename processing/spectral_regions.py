@@ -107,6 +107,10 @@ def _interp_crossing(x0, y0, x1, y1, level):
         float(x1) - float(x0)) / (float(y1) - float(y0))
 
 
+# What the quantification assumes when the trace gives no linewidth.
+FALLBACK_LINEWIDTH_PPM = 0.008
+
+
 def measure_linewidth_ppm(ppm, intensity, peaks, n_top=30):
     """The study's linewidth, measured on the trace rather than on the peak list.
 
