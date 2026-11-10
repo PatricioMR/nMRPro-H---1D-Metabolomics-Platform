@@ -66,7 +66,7 @@ the result.
 - **The validation is built in**: simulated spectra of known composition,
   exported run by run so every figure can be audited (see [Validation](#validation)).
 
-> **Status: Beta (v0.83).** The pipeline below is the one validated end to end.
+> **Status: Beta (v0.84).** The pipeline below is the one validated end to end.
 > MCR-based deconvolution stages are kept in the code, tested, and switched off
 > (`DECONVOLUTION_ENABLED` in [`app_paths.py`](app_paths.py)) until they have
 > their own validation.
@@ -160,7 +160,7 @@ trace is modelled as a non-negative sum of reference shapes, sample by sample
 | Base (always on) | one window | window integration, with the Lorentzian tail of each resolved neighbour computed from its measured area and subtracted | [`processing/quant_integration.py`](processing/quant_integration.py), [`processing/quant_deconvolution.py`](processing/quant_deconvolution.py) |
 | **A · Resolve windows by shapes** | one window | the balance of a window two winners contest; a window holding another accepted analyte's signal divided by their shapes (the intruder bounded by twice its clean amount; the remainder reported, not assigned); complex multiplets (m*) identified and measured by their shape — the reference profile, or the GISSMO spin system solved at the study's field (Dashti 2017; Weljie 2006) | [`processing/quant_shared.py`](processing/quant_shared.py), [`processing/quant_shape.py`](processing/quant_shape.py), [`processing/pattern_shape.py`](processing/pattern_shape.py), [`processing/spin_patterns.py`](processing/spin_patterns.py) |
 | **B · Joint fit** | a region of overlapping signals | the overlapping analytes fitted together, each as one column of all its listed signals (area per proton), with a free Lorentzian at every detected peak no quantified analyte explains; each signal may slide up to two linewidths; unreported candidates enter as columns; columns placed at the peak the election matched (BATMAN, Hao 2012; ASICS, Tardivel 2017; Canlet 2023; COLMAR1d) | [`processing/quant_joint_fit.py`](processing/quant_joint_fit.py) |
-| **C · Residual cascade** | the whole residual | analytes the election never gave a peak, found by forward selection on what the quantified ones leave (orthogonal matching pursuit, Pati 1993) with a joint non-negative refit; each signal caps the amplitude at what the trace holds; reported with a concentration when a logistic score over 12 features reaches 0.2 (0.4 after the 60th entry), at two dots at most | [`processing/quant_cascade.py`](processing/quant_cascade.py) |
+| **C · Residual cascade** | the whole residual | analytes the election never gave a peak, found by forward selection on what the quantified ones leave (orthogonal matching pursuit, Pati 1993) with a joint non-negative refit; each signal caps the amplitude at what the trace holds; reported with a concentration when a logistic score over 12 features reaches 0.2 (0.4 after the 60th entry), at two dots unless another of its signals is linked to the measured amount (see Confidence dots) | [`processing/quant_cascade.py`](processing/quant_cascade.py) |
 
 **Review.** A deconvolution window lists every row that was split, fitted jointly
 or found by the cascade, and every identification left without a number, with
@@ -230,8 +230,21 @@ Code: [`processing/quant_engine.py`](processing/quant_engine.py),
   not scored here;
 - *identity* — what the analyte's other expected signals say at the measured
   amount;
-- *window* — a shared or split window, and any cascade result, cannot exceed two
-  dots.
+- *window* — a shared or split window cannot exceed two dots, nor can a cascade
+  result unless a second signal is linked (below).
+
+Then the samples are asked. An analyte whose own signals hold two or more pairs
+that co-vary (r ≥ 0.80, Cloarec 2005) is raised one dot
+([`processing/stocsy_evidence.py`](processing/stocsy_evidence.py)). And each row's
+measured amounts become the reference: another signal of its listing whose apex
+co-varies with them, within the groups and past the critical r for the peaks
+tried, in the ratio of its protons (within 50%; Wei 2011), is **linked**. A row
+at two dots with a linked signal, and no share of a window, rises to three,
+cascade rows included; one the first step already raised stays, because
+co-variation is worth one dot. A listed singlet linked on the very peak the position step
+chose, or the singlet the amount was measured on with another signal linked, is
+marked Good. These steps change no analyte and no amount
+([`processing/signal_links.py`](processing/signal_links.py), ADR-101).
 
 The dots are internal evidence summaries, not MSI levels (Sumner 2007); the
 precision each was measured to have is printed in the PDF.
@@ -303,10 +316,12 @@ validation table for the project's field.
 
 ## Validation
 
-All figures below were measured with default settings. The quality table and
-the composition series are from the v0.83 engine (joint fit amplitude cap,
-ADR-094; peak counts unchanged since v0.75); the mechanism and quantification
-step tables are from v0.8. Every run is exported with its project file,
+All figures below were measured with default settings. The quality table is from
+the v0.84 engine: the same analytes and amounts as v0.83, with the dots of the
+co-variation steps (ADR-097, ADR-101). The composition series are from v0.83 (joint
+fit amplitude cap, ADR-094; peak counts unchanged since v0.75), so their dots are
+from before those steps. The mechanism and quantification step tables are from
+v0.8. Every run is exported with its project file,
 per-sample truth and per-analyte results.
 
 ### Quality table printed in the PDF
@@ -319,12 +334,12 @@ project in; see `processing/peak_count.py`):
 
 | Field | Analytes | Peaks | Found | False per tube | Median error | p90 error | ●●● real / false | ●● real / false | ● real / false |
 |---|---|---|---|---|---|---|---|---|---|
-| 600 MHz | 18 | 92 | 96 ± 3% | 8.0 ± 0.0 | 7 ± 1% | 26 ± 9% | 6.0 ± 1.0 / 0.0 ± 0.0 | 9.7 ± 1.1 / 0.0 ± 0.0 | 1.7 ± 0.6 / 8.0 ± 0.0 |
-| 600 MHz | 50 | 196 | 89 ± 6% | 17.0 ± 6.6 | 16 ± 1% | 51 ± 16% | 11.7 ± 0.6 / 0.0 ± 0.0 | 18.0 ± 1.0 / 1.7 ± 1.5 | 15.0 ± 2.6 / 15.3 ± 5.1 |
-| 600 MHz | 100 | 290 | 85 ± 4% | 16.0 ± 1.7 | 16 ± 1% | 66 ± 9% | 15.0 ± 3.0 / 0.0 ± 0.0 | 52.0 ± 1.7 / 2.7 ± 0.6 | 17.7 ± 6.4 / 13.3 ± 2.1 |
-| 500 MHz | 18 | 87 | 94 ± 6% | 6.3 ± 1.5 | 13 ± 4% | 30 ± 12% | 6.0 ± 1.0 / 0.3 ± 0.6 | 9.7 ± 0.6 / 0.3 ± 0.6 | 1.3 ± 2.3 / 5.7 ± 0.6 |
-| 500 MHz | 50 | 187 | 84 ± 7% | 17.7 ± 3.8 | 17 ± 8% | 44 ± 16% | 10.7 ± 2.5 / 0.3 ± 0.6 | 20.0 ± 5.6 / 1.7 ± 0.6 | 11.3 ± 1.1 / 15.7 ± 3.1 |
-| 500 MHz | 100 | 272 | 78 ± 7% | 23.7 ± 5.7 | 22 ± 2% | 81 ± 4% | 12.0 ± 2.6 / 1.0 ± 0.0 | 47.7 ± 3.5 / 4.7 ± 3.2 | 18.0 ± 4.6 / 18.0 ± 4.6 |
+| 600 MHz | 18 | 92 | 96 ± 3% | 8.0 ± 0.0 | 7 ± 1% | 26 ± 9% | 8.7 ± 0.6 / 0.0 ± 0.0 | 7.0 ± 1.0 / 0.0 ± 0.0 | 1.7 ± 0.6 / 8.0 ± 0.0 |
+| 600 MHz | 50 | 196 | 89 ± 6% | 17.0 ± 6.6 | 16 ± 1% | 51 ± 16% | 14.7 ± 1.2 / 0.0 ± 0.0 | 16.0 ± 1.7 / 1.7 ± 1.5 | 14.0 ± 3.6 / 15.3 ± 5.1 |
+| 600 MHz | 100 | 290 | 85 ± 4% | 16.0 ± 1.7 | 16 ± 1% | 66 ± 9% | 21.3 ± 2.9 / 0.0 ± 0.0 | 46.3 ± 4.2 / 2.7 ± 0.6 | 17.0 ± 7.2 / 13.3 ± 2.1 |
+| 500 MHz | 18 | 87 | 94 ± 6% | 6.3 ± 1.5 | 13 ± 4% | 30 ± 12% | 8.7 ± 1.5 / 0.3 ± 0.6 | 7.3 ± 0.6 / 0.3 ± 0.6 | 1.0 ± 1.7 / 5.7 ± 0.6 |
+| 500 MHz | 50 | 187 | 84 ± 7% | 17.7 ± 3.8 | 17 ± 8% | 44 ± 16% | 15.0 ± 3.6 / 0.3 ± 0.6 | 16.3 ± 6.8 / 1.7 ± 0.6 | 10.7 ± 1.5 / 15.7 ± 3.1 |
+| 500 MHz | 100 | 272 | 78 ± 7% | 23.7 ± 5.7 | 22 ± 2% | 81 ± 4% | 15.3 ± 2.1 / 1.0 ± 0.0 | 45.0 ± 2.0 / 4.7 ± 3.2 | 17.3 ± 5.7 / 18.0 ± 4.6 |
 
 Found = analytes in the tube reported with a concentration / analytes in the
 tube. Error = |measured / true − 1| of the found analytes; the median and p90
@@ -578,6 +593,7 @@ round-trips have integration tests, including a deterministic re-run.
 - Grubbs FE. Procedures for detecting outlying observations in samples. *Technometrics* 1969;11:1–21.
 - Rosner B. Percentage points for a generalized ESD many-outlier procedure. *Technometrics* 1983;25:165–172.
 - Cloarec O et al. Statistical total correlation spectroscopy: an exploratory approach for latent biomarker identification from metabolic 1H NMR data sets. *Anal Chem* 2005;77:1282–1289.
+- Wei S et al. Ratio analysis nuclear magnetic resonance spectroscopy for selective metabolite identification in complex samples. *Anal Chem* 2011;83:7616–7623.
 - Miller JN, Miller JC. *Statistics and Chemometrics for Analytical Chemistry*, 6th ed. Pearson, 2010.
 - Burnham KP, Anderson DR. *Model Selection and Multimodel Inference*, 2nd ed. Springer, 2002.
 
