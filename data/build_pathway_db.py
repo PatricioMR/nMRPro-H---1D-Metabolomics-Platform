@@ -28,7 +28,7 @@ from pathlib import Path
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-API_KEY   = '81YFiiU1.IsjP29ju8C544CuvAfZE3z37WI71OKl0'
+API_KEY   = os.environ.get('HMDB_API_KEY', '')  # your own HMDB API key
 MII_URL   = f'http://35.184.189.38/api/hmdb/metabolites/pathways/?api-key={API_KEY}'
 BATCH_SZ   = 10     # IDs per request (MII API max=10)
 BATCH_DELAY = 2.0   # seconds between batches (avoid 429)

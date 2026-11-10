@@ -21,7 +21,7 @@ import urllib.error
 import sqlite3
 
 socket.setdefaulttimeout(40)
-KEY = "81YFiiU1.IsjP29ju8C544CuvAfZE3z37WI71OKl0"
+KEY = os.environ.get("HMDB_API_KEY", "")  # your own HMDB API key
 ROOT = os.path.dirname(os.path.abspath(__file__))
 IDX = os.path.join(ROOT, "hmdb_index.db")
 PROG = os.path.join(ROOT, "_idx_progress.log")

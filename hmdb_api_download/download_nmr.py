@@ -21,7 +21,7 @@ import time
 import urllib.request
 import urllib.error
 
-KEY = "81YFiiU1.IsjP29ju8C544CuvAfZE3z37WI71OKl0"
+KEY = os.environ.get("HMDB_API_KEY", "")  # your own HMDB API key
 ROOT = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(os.path.dirname(ROOT), "databases", "HMDB_General.db")
 OUT = os.path.join(ROOT, "nmr")
