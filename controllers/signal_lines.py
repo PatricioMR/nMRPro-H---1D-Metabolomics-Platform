@@ -62,6 +62,20 @@ class SignalLineEditor:
         mp['annotation_quality'] = 'good'
         return rank
 
+    def classify(self, met_id, mp_index, quality):
+        """Mark the signal Good (``'good'``), Average (None) or Poor
+        (``'bad'``), as the Annotation Results window does with Ctrl+1/2/3:
+        its verdict, and the mark the project keeps on its anchor peak."""
+        mp = self._mp(met_id, mp_index)
+        mets = self._mets() if callable(self._mets) else self._mets
+        met = next(m for m in mets if str(m.get('id')) == str(met_id))
+        key = (met['id'], mp.get('peak_rank'))
+        mp['annotation_quality'] = quality
+        if quality:
+            self.marks[key] = quality
+        else:
+            self.marks.pop(key, None)
+
     def restore(self, met_id, mp_index):
         """Give the signal back the annotation's own lines, anchor and
         verdict."""

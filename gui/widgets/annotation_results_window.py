@@ -2421,6 +2421,31 @@ class AnnotationResultsWindow:
             self._classify_child(iid, quality)
         elif iid in self._iid_to_subchild:
             self._classify_subchild(iid, quality)
+        notify = getattr(self.app, 'on_annotation_quality_changed', None)
+        if notify is not None:
+            notify()
+
+    def focus_signal(self, met_id, mp) -> bool:
+        """Select the row of the analyte's signal ``mp`` (a matched peak) and
+        show it, as a click would; the analyte's own row when the signal has
+        none. False when the analyte has no row (a filter hides it)."""
+        mid = str(met_id)
+        found = next((iid for iid, (_r, met, m, _p) in self._iid_to_row.items()
+                      if str(met.get('id')) == mid and m is mp), None)
+        found = found or next((iid for iid, (met, _dp, m) in self._iid_to_child.items()
+                               if str(met.get('id')) == mid and m is mp), None)
+        found = found or next((iid for iid, (_r, met, _m, _p) in self._iid_to_row.items()
+                               if str(met.get('id')) == mid), None)
+        if found is None or not self.tree.exists(found):
+            return False
+        self.tree.selection_set(found)
+        self.tree.focus(found)
+        self.tree.see(found)
+        self._on_select()
+        self.win.deiconify()
+        self.win.lift()
+        self.win.focus_force()
+        return True
 
     def _classify_one(self, iid, quality):
         """Classify a parent peak-assignment row ('good'/'bad'/None=Average)."""

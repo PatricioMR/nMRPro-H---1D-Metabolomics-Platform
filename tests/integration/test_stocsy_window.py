@@ -63,9 +63,15 @@ def test_it_opens_on_what_the_quantification_measured_for_the_first_analyte(root
     assert w.met_id == 'MA' and w.ref_i == 'q' and w.ref.kind == 'quant'
     assert 'what the quantification measured' in w.ref_lbl.cget('text')
     assert 'Cascade' in w.ref_lbl.cget('text') and '7 H' in w.ref_lbl.cget('text')
-    first = w.sig_tree.get_children()[0]
-    assert first == 'q' and str(w.sig_tree.item(first)['values'][0]) == '◉'
-    assert w.sought_i == _idx(w, 1.30)                     # the listed signal at the δ it reported
+    # no row of its own: the listed signal it measured carries the mark
+    assert 'q' not in w.sig_tree.get_children()
+    measured = str(_idx(w, 1.30))                          # the listed signal at the δ it reported
+    assert w.sought_i == _idx(w, 1.30) and w.quant_view
+    assert str(w.sig_tree.item(measured)['values'][0]) == '◉▶'
+    assert 'ref' in w.sig_tree.item(measured)['tags']
+    assert 'measured by the quantification' in str(w.sig_tree.item(measured)['values'][-1])
+    marks = [str(w.sig_tree.item(i)['values'][0]) for i in w.sig_tree.get_children()]
+    assert sum('◉' in m for m in marks) == 1
     w.win.destroy()
 
 
@@ -128,12 +134,11 @@ def test_the_spectrum_runs_from_high_to_low_delta_in_ppm(root):
     w.win.destroy()
 
 
-def test_clicking_the_quantification_row_shows_the_lines_it_integrated(root):
+def test_clicking_the_signal_it_measured_shows_the_lines_it_integrated(root):
     w = _window(root, _browser(quant=True))
     _click_signal(w, root, 4.10)
-    w.sig_tree.selection_set('q')
-    w.sig_tree.event_generate('<<TreeviewSelect>>')
-    root.update()
+    assert not w.quant_view
+    _click_signal(w, root, 1.30)
     assert w.quant_view and w.sought_i == _idx(w, 1.30) and w.ticked == [1]
     assert w._hw() == pytest.approx(0.01 + w.tolerance / 10, abs=1e-3)   # its window, 1.29-1.31
     assert 'the quantification integrated' in w.sought_lbl.cget('text')
@@ -166,13 +171,12 @@ def test_the_signals_list_shows_the_annotations_delta_ppm_and_delta_j(root):
 
 # ── choosing ─────────────────────────────────────────────────────────────────
 
-def test_clicking_another_analyte_changes_the_reference_and_clears_the_typed_protons(root):
+def test_clicking_another_analyte_changes_the_reference(root):
     w = _window(root)
-    w.h_ref_var.set('9')
     w.an_tree.selection_set('MB')
     w.an_tree.event_generate('<<TreeviewSelect>>')
     root.update()
-    assert w.met_id == 'MB' and w.h_ref_var.get() == ''
+    assert w.met_id == 'MB'
     assert 'Other' in w.title_lbl.cget('text')
     w.win.destroy()
 
@@ -216,9 +220,11 @@ def test_the_quantification_can_be_made_the_reference_again(root):
     w.sig_tree.selection_set(str(_idx(w, 2.05)))
     w._ref_from_signal()
     assert w.ref.kind == 'signal'
-    w.sig_tree.selection_set('q')
+    assert 'ref' in w.sig_tree.item(str(_idx(w, 2.05)))['tags']
+    w.sig_tree.selection_set(str(_idx(w, 1.30)))              # the signal it measured
     w._ref_from_signal()
     assert w.ref_i == 'q' and w.ref.kind == 'quant'
+    assert 'ref' in w.sig_tree.item(str(_idx(w, 1.30)))['tags']
     w.win.destroy()
 
 
@@ -240,16 +246,6 @@ def test_a_wider_window_lists_more_peaks(root):
     w.hw_var.set('5')
     w._rebuild()
     assert len(w.cand_rows) > n
-    w.win.destroy()
-
-
-def test_the_protons_typed_for_the_reference_change_the_quantification_gap(root):
-    w = _window(root)
-    gap = w.cand_rows[0]['gap']
-    w.h_ref_var.set('6')
-    w._rebuild()
-    assert w.cand_rows[0]['gap'] != pytest.approx(gap)
-    assert 'set by hand' in w.ref_lbl.cget('text')
     w.win.destroy()
 
 
@@ -447,14 +443,60 @@ def test_searching_around_a_peak_moves_the_window_to_it(root):
     w.win.destroy()
 
 
-def test_the_protons_typed_without_an_analyte_are_the_ones_used(root):
-    from controllers.stocsy_analytes import AnalyteBrowser
+def test_without_an_analyte_a_peak_counts_one_proton(root):
     from tests.unit.test_stocsy_analytes import _study
     w = _window(root, _ab(_study()))
-    w.h_ref_var.set('3')
-    w.h_sought_var.set('2')
-    w._rebuild()
-    assert w.ref.protons == 3 and w.sought.protons == 2 and w.cand_rows[0]['protons'] == 2
+    assert w.ref.protons == 1 and w.sought.protons == 1 and w.cand_rows[0]['protons'] == 1
+    assert 'assumed 1' in w.ref_lbl.cget('text')
+    w.win.destroy()
+
+
+# ── groups, keyboard ─────────────────────────────────────────────────────────
+
+def test_the_groups_box_offers_every_sample_and_each_group(root):
+    w = _window(root)
+    assert list(w.group_cb.cget('values')) == ['All samples', 'G1', 'G2']
+    assert w._group() is None
+    w.win.destroy()
+
+
+def test_a_group_draws_its_mean_and_its_own_r(root):
+    w = _window(root, _browser(quant=True))
+    y_all = w.ax_spec.collections[0].get_segments() if w.ax_spec.collections else None
+    w.group_var.set('G2')
+    w.group_cb.event_generate('<<ComboboxSelected>>')
+    root.update()
+    lo, hi = sorted(w.ax_spec.get_xlim())
+    sel = (w.an.ppm >= lo) & (w.an.ppm <= hi)
+    seg = w.ax_spec.collections[0].get_segments()
+    ys = np.r_[[s[0][1] for s in seg], seg[-1][1][1]]
+    assert np.allclose(ys, w.an.mean_spectrum('G2')[sel])
+    assert y_all is not None and not np.allclose(ys, [s[0][1] for s in y_all] + [y_all[-1][1][1]])
+    assert 'G2' in w.ax_spec.get_ylabel() and 'au' in w.ax_spec.get_ylabel()
+    assert 'group G2' in w.ax_spec.get_title()
+    w.win.destroy()
+
+
+def test_the_arrow_keys_have_a_row_to_start_from_after_every_refill(root):
+    w = _window(root, _browser(quant=True))
+    assert w.sig_tree.focus() == str(w.sought_i)
+    _click_signal(w, root, 4.10)
+    assert w.sig_tree.focus() == str(_idx(w, 4.10))
+    assert w.win_tree.focus() != ''
+    assert w.an_tree.focus() == 'MA'
+    w.win.destroy()
+
+
+def test_the_arrow_keys_walk_the_signals_one_after_another(root):
+    w = _window(root, _browser(quant=True))
+    kids = w.sig_tree.get_children()
+    start = kids.index(w.sig_tree.focus())                   # 1.30, the last (high δ first)
+    assert start > 1
+    w.sig_tree.focus_force()
+    for step in (1, 2):
+        w.sig_tree.event_generate('<Up>')
+        root.update()
+        assert w.sought_i == int(kids[start - step])         # the refill kept a row to move from
     w.win.destroy()
 
 
@@ -664,4 +706,144 @@ def test_sending_a_module_to_the_stocsy_window_shows_its_signals_around_the_clea
     assert w.met_id is None and w.ref.ranks == [8]
     assert {r['rank'] for r in w.cand_rows if r['kind'] == 'peak'} >= {6, 7, 8}
     assert w._hw() > 0.1
+    w.win.destroy()
+
+
+def test_the_stage_says_when_the_spectra_were_replaced_after_detection():
+    """Aligned again (or the alignment reverted) after detection: the window
+    reads the current spectra, the peaks' areas are detection's, and it says so."""
+    from types import SimpleNamespace
+    from gui.stages.peak_detection_stage import PeakDetectionStage
+    from tests.unit.test_stocsy_controller import _study
+    ppm, X, peaks, info = _study()
+    app = SimpleNamespace(ppm=ppm, all_intensities=X, samples_info=info,
+                          corrected_intensities=lambda: app.all_intensities)
+    st = SimpleNamespace(app=app, peaks=peaks, noise_std=None, _spectra_at_detection=X,
+                         excluded_regions_var=SimpleNamespace(get=lambda: ''))
+    said = lambda an: any('after the signals were detected' in n for n in an.notes())
+    assert not said(PeakDetectionStage.build_stocsy_analysis(st))
+    app.all_intensities = X.copy()                               # the Align dialog replaces the array
+    an = PeakDetectionStage.build_stocsy_analysis(st)
+    assert said(an) and np.allclose(an.X, app.all_intensities)
+
+
+# ── Ctrl+1/2/3, as in the Annotation Results ─────────────────────────────────
+
+def _press(w, root, key):
+    w.win.focus_force()
+    w.win.event_generate(f'<Control-Key-{key}>')
+    root.update()
+
+
+def test_ctrl_3_marks_the_signal_read_poor_and_ctrl_2_takes_the_mark_away(root, monkeypatch):
+    w, mets, marks, asked, changed = _editable(root, monkeypatch)
+    mp = mets[0]['matched_peaks'][w.browser.signals('MA')[w.sought_i]['mp_index']]
+    w._classify('bad')
+    assert mp['annotation_quality'] == 'bad' and marks == {('MA', mp['peak_rank']): 'bad'}
+    assert changed == ['MA'] and not asked
+    assert w.sig_tree.item(str(w.sought_i))['values'][8] == '✗ Poor'
+    w._classify(None)
+    assert mp['annotation_quality'] is None and marks == {}
+    w.win.destroy()
+
+
+def test_ctrl_1_with_its_own_lines_marks_it_good_without_asking(root, monkeypatch):
+    w, mets, marks, asked, changed = _editable(root, monkeypatch)
+    mp = mets[0]['matched_peaks'][w.browser.signals('MA')[w.sought_i]['mp_index']]
+    _press(w, root, '1')
+    assert mp['annotation_quality'] == 'good' and marks == {('MA', mp['peak_rank']): 'good'}
+    assert not asked
+    w.win.destroy()
+
+
+def test_ctrl_1_with_other_lines_ticked_saves_them_as_the_signal(root, monkeypatch):
+    from processing.signal_lines import manual_lines
+    w, mets, marks, asked, changed = _editable(root, monkeypatch)
+    w._toggle(8)
+    w._toggle(10)
+    w._classify('good')
+    mp = mets[0]['matched_peaks'][1]
+    assert asked and manual_lines(mp) == pytest.approx([4.115, 4.095])
+    assert marks == {('MA', mp['peak_rank']): 'good'}
+    w.win.destroy()
+
+
+def test_the_window_says_the_quality_keys_where_it_can_mark(root, monkeypatch):
+    w, *_ = _editable(root, monkeypatch)
+    texts = [c.cget('text') for c in w.title_lbl.master.winfo_children()
+             if isinstance(c, tk.ttk.Label)]
+    assert any('Ctrl+1' in t and 'Ctrl+3' in t and 'Annotation Results' in t for t in texts)
+    w.win.destroy()
+    w2 = _window(root)                                       # read-only: nothing to mark
+    texts = [c.cget('text') for c in w2.title_lbl.master.winfo_children()
+             if isinstance(c, tk.ttk.Label)]
+    assert not any('Ctrl+1' in t for t in texts)
+    w2.win.destroy()
+
+
+def test_the_quality_column_speaks_the_annotations_words(root, monkeypatch):
+    w, mets, *_ = _editable(root, monkeypatch)
+    cols = list(w.sig_tree['columns'])
+    words = {str(w.sig_tree.item(i)['values'][cols.index('q')]) for i in w.sig_tree.get_children()}
+    assert words <= {'✓ Good', '~ Average', '✗ Poor', '—'}
+    w.win.destroy()
+
+
+# ── in step with the other windows ───────────────────────────────────────────
+
+def test_a_verdict_changed_in_the_annotation_shows_here(root, monkeypatch):
+    w, mets, *_ = _editable(root, monkeypatch)
+    i = w.sought_i
+    mp = mets[0]['matched_peaks'][w.browser.signals('MA')[i]['mp_index']]
+    mp['annotation_quality'] = 'bad'                       # as the Annotation Results' Ctrl+3
+    w.refresh_from_annotation()
+    assert w.sig_tree.item(str(i))['values'][8] == '✗ Poor' and w.sought_i == i
+    w.win.destroy()
+
+
+def test_a_reload_keeps_the_place_and_lists_a_peak_added_since(root):
+    from controllers.stocsy_analytes import AnalyteBrowser
+    from tests.unit.test_stocsy_analytes import _mets, _quant_rows, _study, detection_areas
+    w = _window(root, _browser(quant=True))
+    _click_signal(w, root, 4.10)
+    w.group_var.set('G2')
+    before = {r['rank'] for r in w.cand_rows if r['kind'] == 'peak'}
+    an = _study()
+    shoulder = dict(an.peaks[2], rank=99, ppm=4.099)        # split off line 2 in the Signal List
+    an2 = type(an)(an.ppm, np.column_stack([an.X]), list(an.peaks.values()) + [shoulder],
+                   [{'index': i, 'label': g, 'type': 'Sample', 'name': n}
+                    for i, (g, n) in enumerate(zip(an.groups, an.sample_names))], noise_std=1.0)
+    w.reload(an2, AnalyteBrowser(an2, _mets(), _quant_rows(), measure=detection_areas(an2)))
+    root.update()
+    assert w.met_id == 'MA' and w.sought_i == _idx(w, 4.10) and w._group() == 'G2'
+    assert {r['rank'] for r in w.cand_rows if r['kind'] == 'peak'} == before | {99}
+    w.win.destroy()
+
+
+def test_right_click_takes_the_signal_to_the_annotation_and_the_peak_to_the_list(root, monkeypatch):
+    from tests.unit.test_stocsy_analytes import _mets
+    shown, popped = [], []
+    monkeypatch.setattr(tk.Menu, 'tk_popup', lambda self, x, y: popped.append(self))
+    mets = _mets()
+    w = _window(root, _browser(quant=True, mets=mets),
+                show_signal=lambda m, mp: shown.append(('signal', m, mp)),
+                show_peak=lambda r: shown.append(('peak', r)))
+    i = _idx(w, 4.10)
+    w.sig_tree.see(str(i))
+    root.update()
+    y = w.sig_tree.bbox(str(i))[1] + 2
+    w._sig_menu(type('E', (), {'y': y, 'x_root': 0, 'y_root': 0})())
+    assert w.sought_i == i                                   # the right-click reads it, as a click
+    menu = popped[-1]
+    labels = [menu.entrycget(k, 'label') for k in range(menu.index('end') + 1)
+              if menu.type(k) == 'command']
+    assert labels[0] == 'Show this signal in the Annotation Results'
+    menu.invoke(0)
+    assert shown[-1] == ('signal', 'MA', mets[0]['matched_peaks'][w.browser.signals('MA')[i]['mp_index']])
+    w.win_tree.see('p8')
+    root.update()
+    w._win_menu(type('E', (), {'y': w.win_tree.bbox('p8')[1] + 2, 'x_root': 0, 'y_root': 0})())
+    assert w.focus == 8
+    popped[-1].invoke(0)
+    assert shown[-1] == ('peak', 8)
     w.win.destroy()

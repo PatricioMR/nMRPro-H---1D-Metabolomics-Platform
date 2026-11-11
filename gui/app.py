@@ -1682,7 +1682,6 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                                 'quantification measured.', parent=self.root)
             return
         from controllers.signal_lines import SignalLineEditor
-        from controllers.stocsy_analytes import AnalyteBrowser
         from gui.widgets.stocsy_window import StocsyWindow
         keep = {}
         old = getattr(self, '_stocsy_win', None)
@@ -1694,10 +1693,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             except Exception:
                 pass
         try:
-            analysis = pd.build_stocsy_analysis()
-            ann, qs = self.stages.get('annotation'), self.stages.get('quantification')
-            browser = AnalyteBrowser(analysis, getattr(ann, '_metabolites', None),
-                                     getattr(qs, '_quant_results', None))
+            analysis, browser = self._stocsy_inputs()
+            ann = self.stages.get('annotation')
             editor = (SignalLineEditor(lambda: ann._metabolites, lambda: ann._quality_marks)
                       if ann is not None and getattr(ann, '_metabolites', None)
                       and hasattr(ann, '_quality_marks') else None)
@@ -1715,11 +1712,64 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             view_region=(max(xlim), min(xlim)),
             group_colors=getattr(self, 'group_colors', {}),
             initial={'met_id': met_id} if met_id else keep,
-            editor=editor, on_change=self._on_signal_lines_changed, tolerance_ppm=tolerance)
+            editor=editor, on_change=self._on_signal_lines_changed, tolerance_ppm=tolerance,
+            show_signal=self.show_signal_in_annotation, show_peak=self.show_peak_in_list)
+
+    def _stocsy_inputs(self):
+        """The STOCSY analysis of the project as it is now, and the analytes
+        over it."""
+        from controllers.stocsy_analytes import AnalyteBrowser
+        analysis = self.stages['peak_detection'].build_stocsy_analysis()
+        ann, qs = self.stages.get('annotation'), self.stages.get('quantification')
+        return analysis, AnalyteBrowser(analysis, getattr(ann, '_metabolites', None),
+                                        getattr(qs, '_quant_results', None))
+
+    def _open_stocsy_win(self):
+        win = getattr(self, '_stocsy_win', None)
+        try:
+            return win if win is not None and win.win.winfo_exists() else None
+        except tk.TclError:
+            return None
+
+    def on_signals_edited(self):
+        """The Signal List split, added or removed a signal: an open STOCSY
+        window is rebuilt where it stands, the new peaks among its candidates."""
+        win = self._open_stocsy_win()
+        if win is None:
+            return
+        try:
+            win.reload(*self._stocsy_inputs())
+        except Exception as exc:
+            messagebox.showwarning('STOCSY', f'The STOCSY window could not follow the '
+                                   f'edit: {exc}\nOpen it again.', parent=self.root)
+
+    def on_annotation_quality_changed(self):
+        """A verdict changed in the Annotation Results: an open STOCSY window
+        shows it."""
+        win = self._open_stocsy_win()
+        if win is not None:
+            win.refresh_from_annotation()
+
+    def show_signal_in_annotation(self, met_id, mp):
+        """From the STOCSY window: the Annotation Results, on that signal."""
+        self.open_annot_shortcut()
+        win = getattr(self, '_annot_win', None)
+        if win is None or not win.focus_signal(met_id, mp):
+            messagebox.showinfo('STOCSY', 'That signal has no row in the Annotation Results '
+                                '(a quality filter may hide it).', parent=self.root)
+
+    def show_peak_in_list(self, rank):
+        """From the STOCSY window: the Signal List, on that peak."""
+        self.open_peak_list()
+        if self._peak_list_win is not None:
+            self._peak_list_win.focus_peak_rank(rank)
 
     def _on_signal_lines_changed(self, _met_id):
-        """Lines chosen in the STOCSY window: an open Annotation Results
-        window shows the signal with them."""
+        """Lines or a verdict chosen in the STOCSY window: the project has
+        changed, and an open Annotation Results window shows the signal so."""
+        pm = getattr(self, 'project_manager', None)
+        if pm is not None:
+            pm.mark_dirty()
         win = getattr(self, '_annot_win', None)
         try:
             if win is not None and win.win.winfo_exists():

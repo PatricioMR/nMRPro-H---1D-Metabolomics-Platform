@@ -1276,6 +1276,9 @@ class PeakListWindow:
         if stage is not None:
             stage.color_peaks(force=True)
         self._populate()
+        notify = getattr(self.app, 'on_signals_edited', None)
+        if notify is not None:
+            notify()
         if select is None:
             self._current_peak = None
             children = self.tree.get_children()

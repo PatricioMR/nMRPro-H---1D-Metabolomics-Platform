@@ -181,3 +181,48 @@ def test_the_analysis_never_touches_the_peaks_it_was_given():
     an.trace(1)
     for b, p in zip(before, peaks):
         assert np.array_equal(b, p['area_per_sample'], equal_nan=True)
+
+
+# ── one group at a time ──────────────────────────────────────────────────────
+
+def test_the_groups_offered_are_those_with_enough_samples_to_correlate():
+    from processing.stocsy import STOCSY_MIN_SAMPLES
+    ppm, X, peaks, info = _study()
+    info[0]['label'] = 'G3'                           # a group of one sample
+    an = StocsyAnalysis(ppm, X, peaks, info)
+    assert an.group_names() == ['G1', 'G2']
+    assert all(an.groups.count(g) >= STOCSY_MIN_SAMPLES for g in an.group_names())
+
+
+def test_a_groups_mean_spectrum_is_the_mean_of_its_samples():
+    ppm, X, peaks, info = _study()
+    an = StocsyAnalysis(ppm, X, peaks, info)
+    assert np.allclose(an.mean_spectrum('G2'), X[:, 6:].mean(axis=1))
+    assert np.allclose(an.mean_spectrum(), X.mean(axis=1))
+
+
+def test_a_groups_trace_correlates_over_its_samples_only():
+    """Signal 1 sits at 2.0 ppm: inside G1 its trace is r of its own six samples."""
+    ppm, X, peaks, info = _study()
+    an = StocsyAnalysis(ppm, X, peaks, info)
+    vec = an.M[an._row[1]]
+    tr = an.trace_of(vec, 'one', 'G1')
+    i = int(np.argmin(np.abs(ppm - 2.0)))
+    assert tr['r'][i] == pytest.approx(np.corrcoef(vec[:6], X[i, :6])[0, 1], abs=1e-9)
+    assert an.trace_of(vec, 'one', 'G1') is tr and an.trace_of(vec, 'one') is not tr
+    assert an.group_basis('G1').n == 6
+
+
+def test_a_groups_basis_keeps_the_studys_pqn_factors():
+    ppm, X, peaks, info = _study(dilution_cv=0.3)
+    an = StocsyAnalysis(ppm, X, peaks, info)
+    an.set_options(normalize='pqn')
+    assert np.allclose(an.group_basis('G2').factors, an.basis.factors[6:])
+
+
+def test_spectra_replaced_after_detection_are_said():
+    ppm, X, peaks, info = _study()
+    assert not any('after the signals were detected' in n
+                   for n in StocsyAnalysis(ppm, X, peaks, info).notes())
+    an = StocsyAnalysis(ppm, X, peaks, info, spectra_changed=True)
+    assert any('after the signals were detected' in n for n in an.notes())

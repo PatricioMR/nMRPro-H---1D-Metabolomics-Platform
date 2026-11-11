@@ -688,6 +688,9 @@ class PeakDetectionStage(BaseStage):
             raw = details.get('peaks', [])
             elapsed = _result['elapsed']
             self._keep_detection_alignment(details)
+            # the spectra the per-sample areas were measured on (STOCSY says
+            # when they have been replaced since)
+            self._spectra_at_detection = self.app.all_intensities
 
             self.processor.ppm = np.asarray(self.app.ppm, dtype=float)
             self.processor.mean_intensity = details.get('reference_intensity')
@@ -832,10 +835,12 @@ class PeakDetectionStage(BaseStage):
         corrected = self.app.corrected_intensities()
         if corrected is None:
             corrected = self.app.all_intensities
+        at = getattr(self, '_spectra_at_detection', None)
         return StocsyAnalysis(
             self.app.ppm, corrected, self.peaks, self.app.samples_info,
             excluded_regions=parse_regions(self.excluded_regions_var.get()),
-            noise_std=self.noise_std)
+            noise_std=self.noise_std,
+            spectra_changed=at is not None and at is not self.app.all_intensities)
 
     def _keep_detection_alignment(self, details):
         """Carry detection's rigid alignment to the project's spectra.

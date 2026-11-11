@@ -11,20 +11,22 @@ like its reference.
 
 An audit of the quantification. Pick a quantified analyte on the left: the
 reference is what the quantification measured for it (its per-sample areas and
-protons, whatever the mode), and its listed signals appear -- the ones the
-annotation found (a multiplet whole, its lines added) and the ones it did not
--- each set against that reference. Click a signal and every detected peak
+protons, whatever the mode), on the listed signal marked as the one it
+measured, and its listed signals appear -- the ones the annotation found (a
+multiplet whole, its lines added) and the ones it did not -- each set against
+that reference. Click a signal and every detected peak
 around it is read as a possible line of it, with the share of the signal's
 protons the line holds: r and ratio to the reference, the ratio its share
 expects, how far what it quantifies is from what the reference quantifies.
 The ticked peaks make up the signal, compared whole. Tick and untick to try
 other lines; "Save the ticked lines" writes them on the annotation
 (``controllers.signal_lines``), to be measured at the next quantification.
-Without an analyte any detected peak can be the reference, with the protons
-typed in.
+Without an analyte any detected peak can be the reference, counted as 1 H.
 
 Correlation, normalisation (PQN) and within-group centring are set once, on
-the left, and apply to everything on screen alike.
+the left, and apply to everything on screen alike. "Groups" draws the spectrum
+as one group's mean, coloured by r over that group's samples only: whether the
+signals move together inside a group, not only across the study.
 
 Only "Save the ticked lines" and "Restore the annotation's lines" change the
 project.
@@ -44,6 +46,8 @@ from matplotlib.figure import Figure
 from controllers.analysis_defaults import ANNOTATION
 from controllers.stocsy_analytes import AnalyteBrowser
 from controllers.stocsy_controller import NOISE_FLOOR_FACTOR
+from gui.utils.quality_palette import (
+    QUALITY_LABEL, SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR, tier_from_annotation_quality)
 from processing.quant_integration import MIN_TRUSTED_CAPTURE
 from processing.signal_lines import peaks_at
 
@@ -82,6 +86,14 @@ def _per_h(row):
     return _area(a / h) if h and a is not None and np.isfinite(a) else '—'
 
 
+def _quality(signal):
+    """The annotation's verdict in the Annotation Results' words; a listed
+    signal the annotation did not match has none."""
+    if signal.get('mp_index') is None:
+        return '—'
+    return QUALITY_LABEL[tier_from_annotation_quality(signal['quality'] or None)]
+
+
 def _expected(row, ref):
     """The ratio to the reference the row's protons expect."""
     h = row.get('protons')
@@ -106,6 +118,7 @@ _WIN_COLS = (
     ('who', 'Annotated as', 120, None),
 )
 _QUANT = 'q'                # the reference is what the quantification measured
+_ALL = 'All samples'        # the spectrum over the whole study
 
 
 class StocsyWindow:
@@ -116,14 +129,18 @@ class StocsyWindow:
     its colour in the main plot; ``initial`` is a ``state()`` to open on.
     ``editor`` (a ``controllers.signal_lines.SignalLineEditor``) writes the
     analyst's lines; without it the window only reads. ``on_change(met_id)``
-    is told when it did."""
+    is told when it did. ``show_signal(met_id, matched_peak)`` and
+    ``show_peak(rank)`` take the analyst to the signal in the Annotation
+    Results and to the peak in the Signal List (right-click); without them
+    those entries are off."""
 
     def __init__(self, parent, analysis, *, browser=None, view_region=None,
                  group_colors=None, initial=None, editor=None, on_change=None,
-                 tolerance_ppm=None):
+                 tolerance_ppm=None, show_signal=None, show_peak=None):
         self.an = analysis
         self.browser = browser or AnalyteBrowser(analysis)
         self.editor, self.on_change = editor, on_change
+        self.show_signal, self.show_peak = show_signal, show_peak
         # the annotation's match tolerance: how far from its listing a line is
         # looked for, and so how far around a signal the window looks
         self.tolerance = float(tolerance_ppm or ANNOTATION['tolerance_ppm'])
@@ -131,7 +148,6 @@ class StocsyWindow:
         self.ticked = []                           # the peaks that make the signal
         self.changed = set()                       # analytes whose lines were saved here
         self.group_colors = dict(group_colors or {})
-        self._mean = analysis.X.mean(axis=1) if analysis.X.size else np.zeros(0)
         self.met_id = None
         self.ref_i = self.sought_i = None          # signals of the analyte
         self.ref_rank = self.sought_rank = None    # peaks, with no analyte
@@ -149,6 +165,8 @@ class StocsyWindow:
         self._fill_analytes()
         self._open_on(initial or {}, view_region)
         self.win.protocol('WM_DELETE_WINDOW', self.win.destroy)
+        for key, quality in (('1', 'good'), ('2', None), ('3', 'bad')):
+            self.win.bind(f'<Control-Key-{key}>', lambda _e, q=quality: self._classify(q))
         self.show()
         self._proportions()
 
@@ -274,20 +292,24 @@ class StocsyWindow:
         hw.grid(row=3, column=1, padx=2)
         hw.bind('<Return>', lambda _e: self._rebuild())
         ttk.Label(hdr, text='ppm').grid(row=3, column=2, padx=(0, 14))
-        self.h_ref_var, self.h_sought_var = tk.StringVar(), tk.StringVar()
-        for col, (lab, var) in enumerate((('H of the reference', self.h_ref_var),
-                                          ('H of the sought signal', self.h_sought_var))):
-            ttk.Label(hdr, text=lab).grid(row=3, column=3 + 2 * col, padx=2)
-            e = ttk.Entry(hdr, textvariable=var, width=4)
-            e.grid(row=3, column=4 + 2 * col, padx=(0, 10))
-            e.bind('<Return>', lambda _e: self._rebuild())
-            e.bind('<FocusOut>', lambda _e: self._rebuild())
-        ttk.Label(hdr, text='(empty: from the listing; without an analyte, 1)',
-                  foreground='#777777', font=('Arial', 8)).grid(row=3, column=7, padx=4)
+        ttk.Label(hdr, text='Groups').grid(row=3, column=3, padx=2)
+        self.group_var = tk.StringVar(value=_ALL)
+        self.group_cb = ttk.Combobox(hdr, textvariable=self.group_var, width=18,
+                                     values=[_ALL] + self.an.group_names(), state='readonly')
+        self.group_cb.grid(row=3, column=4, padx=(0, 10))
+        self.group_cb.bind('<<ComboboxSelected>>', lambda _e: self._draw_spectrum())
+        ttk.Label(hdr, text='(the spectrum below: the mean of these samples, r over them)',
+                  foreground='#777777', font=('Arial', 8)).grid(row=3, column=5, padx=4)
         self.color_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(hdr, text='Colour the spectrum by r to the reference',
                         variable=self.color_var, command=self._draw_spectrum
-                        ).grid(row=4, column=0, columnspan=6, sticky=tk.W)
+                        ).grid(row=4, column=0, columnspan=4, sticky=tk.W)
+        if self.editor is not None:
+            ttk.Label(hdr, foreground='#0044cc', font=('Arial', 9, 'bold'), text=(
+                f"Quality of the signal read:  Ctrl+1 {QUALITY_LABEL[SIGNAL_GOOD]}  ·  "
+                f"Ctrl+2 {QUALITY_LABEL[SIGNAL_AVERAGE]}  ·  Ctrl+3 {QUALITY_LABEL[SIGNAL_POOR]}"
+                "  —  the same mark as in the Annotation Results")
+                      ).grid(row=4, column=4, columnspan=4, sticky=tk.W, padx=(10, 0))
 
         split = ttk.PanedWindow(right, orient=tk.VERTICAL)
         split.pack(fill=tk.BOTH, expand=True, pady=(2, 0))
@@ -342,14 +364,18 @@ class StocsyWindow:
 
     def _build_signals_tab(self):
         fr = self._tab('Analyte signals',
-                       'The reference (◉, red) is what the quantification measured: its per-sample areas and '
-                       'the H it divided them by. Below, the signals the analyte\'s listing expects, each set '
-                       'against it. Click one to read its lines (▶, blue) in the next tab -- one not detected '
-                       'too: the peaks around where it is listed. Double-click to use '
-                       'a signal as the reference instead. A multiplet is its lines added up; ✎ = lines chosen '
+                       'The signals the analyte\'s listing expects. The one the quantification measured is '
+                       'marked ◉ in red: the reference is what it measured there, its per-sample areas and the '
+                       'H it divided them by, and every signal is set against it. Click it to see the region '
+                       'and the lines the quantification integrated; click another to read its lines (▶, blue) '
+                       'in the next tab -- one not detected too: the peaks around where it is listed. '
+                       'Double-click a signal to use it as the reference instead, the ◉ one to go back. The '
+                       'arrow keys move through the list; Ctrl+1 / 2 / 3 mark the signal read Good / Average / '
+                       'Poor, as in the Annotation Results (Good with other lines ticked saves them as its '
+                       'lines); right-click takes a signal to the Annotation Results. A multiplet is its lines '
+                       'added up; ✎ = lines chosen '
                        'by hand. Δδ and ΔJ are the annotation\'s: how far the signal stands from its listing '
-                       'and how far its splitting is from the listed J. Click the red row to see the region '
-                       'and the lines the quantification integrated. '
+                       'and how far its splitting is from the listed J. '
                        'Quant. diff = the typical difference, per sample, between what the signal '
                        'quantifies (area ÷ H) and what the reference quantifies: 0 means the same '
                        'quantification in every sample.')
@@ -361,6 +387,7 @@ class StocsyWindow:
             ('dq', 'Quant. diff (%)', 92), ('why', 'Note', 160)), 8)
         self.sig_tree.bind('<<TreeviewSelect>>', lambda _e: self._on_sig_select())
         self.sig_tree.bind('<Double-1>', lambda _e: self._ref_from_signal())
+        self.sig_tree.bind('<Button-3>', self._sig_menu)
 
     def _build_window_tab(self):
         fr = self._tab('Lines of the signal',
@@ -373,7 +400,8 @@ class StocsyWindow:
                        'has r near 1, its ratio near the expected one and a small spread; another compound\'s '
                        'line does not. The first row is the signal the ticked lines make, whole. Click "In '
                        'signal" (or double-click, or Space) to tick or untick a peak; the numbers follow. Click '
-                       'a heading to sort.')
+                       'a heading to sort. Right-click a peak to see it in the Signal List: a signal split or '
+                       'added there appears here at once.')
         self.win_tree = self._tree(fr, [(c, t, w) for c, t, w, _k in _WIN_COLS], 10)
         for cid, title, _w, key in _WIN_COLS:
             if key is not None:
@@ -385,6 +413,7 @@ class StocsyWindow:
         self.win_tree.bind('<Button-1>', self._on_win_click, add='+')
         self.win_tree.bind('<Double-1>', lambda _e: self._toggle_selected())
         self.win_tree.bind('<space>', lambda _e: self._toggle_selected())
+        self.win_tree.bind('<Button-3>', self._win_menu)
         bf = ttk.Frame(fr)
         bf.pack(fill=tk.X, pady=(4, 0))
         ttk.Button(bf, text='Tick / untick',
@@ -444,15 +473,18 @@ class StocsyWindow:
             met = mets[0]['id']
         if met is not None and self.an_tree.exists(str(met)):
             self.met_id = met
-            self._quietly(lambda: (self.an_tree.selection_set(str(met)), self.an_tree.see(str(met))))
+            self._quietly(lambda: (self.an_tree.selection_set(str(met)), self.an_tree.focus(str(met)),
+                                   self.an_tree.see(str(met))))
             n = len(self.browser.signals(met))
             ref = initial.get('ref_i')
             keep = ((ref == _QUANT and self.browser.quant_target(met) is not None)
                     or (isinstance(ref, int) and ref < n))
             self.ref_i = ref if keep else self._default_reference()
             sought = initial.get('sought_i')
-            self._set_sought(sought if isinstance(sought, int) and sought < n
-                             else self._default_sought())
+            if isinstance(sought, int) and sought < n:
+                self._set_sought(sought)
+            elif not self._show_quant():
+                self._set_sought(self._default_sought())
             self._rebuild()
             return
         self.met_id = None
@@ -507,17 +539,29 @@ class StocsyWindow:
         half = (max(pred) - min(pred)) / 2 if pred else 0.0
         self.hw_var.set(f'{self.tolerance + half:.3f}')
 
-    def _show_quant(self):
-        """What the quantification measured, in the spectrum: the listed
-        signal nearest the δ it reported, its window, and the lines it
-        integrated ticked."""
+    def _quant_index(self):
+        """The listed signal the quantification measured: the one nearest the
+        δ it reported; None without a quantification of the analyte."""
+        if not self.met_id or self.browser.quant_target(self.met_id) is None:
+            return None
         row = self.browser.quantification(self.met_id) or {}
         at = float(row.get('ppm') or np.nan)
         sigs = self.browser.signals(self.met_id)
         found = [i for i, s in enumerate(sigs) if np.isfinite(s['ppm'])]
         if not np.isfinite(at) or not found:
-            return
-        self._set_sought(min(found, key=lambda i: abs(sigs[i]['ppm'] - at)))
+            return None
+        return min(found, key=lambda i: abs(sigs[i]['ppm'] - at))
+
+    def _show_quant(self) -> bool:
+        """What the quantification measured, in the spectrum: its signal, its
+        window, and the lines it integrated ticked. False when there is none
+        to show."""
+        qi = self._quant_index()
+        if qi is None:
+            return False
+        row = self.browser.quantification(self.met_id) or {}
+        at = float(row.get('ppm'))
+        self._set_sought(qi)
         win = row.get('_multiplet_window')
         lo, hi = (sorted(float(v) for v in win) if win and len(win) == 2
                   else (at - self._hw(), at + self._hw()))
@@ -525,6 +569,7 @@ class StocsyWindow:
         lines = [float(x) for x in row.get('_line_ppms') or () if lo <= float(x) <= hi]
         self.ticked = [int(p['rank']) for p in peaks_at(lines, self.an.peaks)]
         self.quant_view = True
+        return True
 
     # ── analytes list ────────────────────────────────────────────────────────
 
@@ -547,7 +592,8 @@ class StocsyWindow:
                 text=('No annotation here: pick the peaks in the spectrum.'
                       if not self.browser.has_annotation else 'No analyte matches.'))
         if keep is not None and self.an_tree.exists(str(keep)):
-            self._quietly(lambda: self.an_tree.selection_set(str(keep)))
+            self._quietly(lambda: (self.an_tree.selection_set(str(keep)),
+                                   self.an_tree.focus(str(keep))))
 
     def _on_analyte(self):
         sel = self.an_tree.selection()
@@ -556,9 +602,8 @@ class StocsyWindow:
         self.met_id = sel[0]
         self.ref_i = self._default_reference()
         self.focus = None
-        self.h_ref_var.set('')
-        self.h_sought_var.set('')
-        self._set_sought(self._default_sought())
+        if not self._show_quant():
+            self._set_sought(self._default_sought())
         self._rebuild()
 
     def _no_analyte(self):
@@ -571,11 +616,13 @@ class StocsyWindow:
         self.ticked = [self.sought_rank] if self.sought_rank is not None else []
         self._rebuild()
 
+    def _options(self) -> dict:
+        return {'method': self.method_var.get().lower(),
+                'normalize': 'pqn' if self.norm_var.get() == 'PQN' else 'none',
+                'within_groups': self.within_var.get()}
+
     def _on_options(self):
-        self.an.set_options(
-            method=self.method_var.get().lower(),
-            normalize='pqn' if self.norm_var.get() == 'PQN' else 'none',
-            within_groups=self.within_var.get())
+        self.an.set_options(**self._options())
         self.browser.reset()
         self._fill_analytes()
         self._show_notes()
@@ -592,34 +639,25 @@ class StocsyWindow:
         except ValueError:
             return self.tolerance
 
-    @staticmethod
-    def _typed(var):
-        try:
-            v = float(var.get())
-        except ValueError:
-            return None
-        return v if v > 0 else None
+    def _group(self):
+        """The group the spectrum is drawn over; None for every sample."""
+        g = self.group_var.get()
+        return None if g == _ALL else g
 
     def _sought_signal(self):
-        """The signal whose lines are read (a copy: its H may be typed)."""
+        """The signal whose lines are read (a copy); a bare peak counts 1 H."""
         if self.met_id:
             if self.sought_i is None:
                 return None
-            s = dict(self.browser.signals(self.met_id)[self.sought_i])
-        elif self.sought_rank in self.an.peaks:
+            return dict(self.browser.signals(self.met_id)[self.sought_i])
+        if self.sought_rank in self.an.peaks:
             s = self.browser.peak_signal(self.sought_rank)
-        else:
-            return None
-        typed = self._typed(self.h_sought_var)
-        if typed:
-            s['protons'] = typed
-        elif not self.met_id:
-            s['protons'] = self._typed(self.h_ref_var) or 1
-        return s
+            s['protons'] = 1
+            return s
+        return None
 
     def _targets(self):
         """The reference, the signal read and what its ticked lines make."""
-        h_ref = self._typed(self.h_ref_var)
         if self.met_id:
             if self.ref_i == _QUANT:
                 self.ref = self.browser.quant_target(self.met_id)
@@ -627,12 +665,10 @@ class StocsyWindow:
                 self.ref = (self.browser.signal_target(self.met_id, self.ref_i)
                             if self.ref_i is not None else None)
         else:
-            self.ref = (self.browser.peak_target(self.ref_rank, h_ref or 1)
+            self.ref = (self.browser.peak_target(self.ref_rank, 1)
                         if self.ref_rank in self.an.peaks else None)
             if self.ref is not None and self.ref.vector is None:
                 self.ref = None
-        if self.ref is not None and h_ref:
-            self.ref.protons = h_ref
         self.sought_sig = self._sought_signal()
         self.sought = (self.browser.lines_target(self.sought_sig, self.ticked)
                        if self.sought_sig is not None else None)
@@ -664,7 +700,6 @@ class StocsyWindow:
             self.ref_lbl.config(text='Reference: none (no signal varies across the samples)')
             self.sought_lbl.config(text='')
             return
-        typed_ref = self._typed(self.h_ref_var)
         if self.ref.kind == 'quant':
             row = self.browser.quantification(self.met_id) or {}
             win = row.get('_multiplet_window')
@@ -672,13 +707,12 @@ class StocsyWindow:
             self.ref_lbl.config(text=(
                 f"◉ Reference: what the quantification measured — {row.get('_integ_mode') or '?'}, "
                 f"{row.get('_multiplicity') or '?'} δ {float(row.get('ppm') or np.nan):.3f}, "
-                f"{_h(self.ref.protons)} H ({'set by hand' if typed_ref else 'its own'})"
+                f"{_h(self.ref.protons)} H"
                 + (f", window {min(win):.3f}–{max(win):.3f} ppm" if win and len(win) == 2 else '')
                 + (f", lines {lines}" if lines else '')
                 + '; its per-sample areas as reported'))
         else:
-            src = ('set by hand' if typed_ref else 'from the listing' if self.met_id
-                   else 'assumed 1')
+            src = 'from the listing' if self.met_id else 'assumed 1'
             self.ref_lbl.config(text=f"◉ Reference: {self.ref.label}  ·  {_h(self.ref.protons)} H ({src})")
         s = self.sought_sig
         if s is None:
@@ -686,9 +720,7 @@ class StocsyWindow:
             return
         n = sum(1 for r in self.cand_rows if r['kind'] == 'peak')
         share = self._ticked_share()
-        typed = self._typed(self.h_sought_var)
-        src = ('set by hand' if typed else 'from the listing' if self.met_id
-               else 'as the reference' if self._typed(self.h_ref_var) else 'assumed 1')
+        src = 'from the listing' if self.met_id else 'assumed 1'
         at = s['ppm'] if np.isfinite(s['ppm']) else s['db_ppm']
         self.sought_lbl.config(text=(
             f"▶ Signal read: {s['type'] or 'peak'} δ {at:.3f}  ·  {_h(s['protons'])} H ({src})  ·  "
@@ -697,6 +729,8 @@ class StocsyWindow:
             + (f" — under {100 * MIN_TRUSTED_CAPTURE:.0f}%, the quantification does not scale "
                "it to the whole signal" if share is not None and share < MIN_TRUSTED_CAPTURE else '')
             + ('  ·  ticked: the lines the quantification integrated' if self.quant_view else '')
+            + (f"  ·  complex multiplet: every peak in {s['region'][1]:.3f}–{s['region'][0]:.3f} ppm "
+               "(shaded) is a line" if s.get('region') else '')
             + ('  ·  ✎ lines chosen by hand' if s.get('manual') else '')
             + ('  ·  saved here: run the Quantification again to measure it'
                if self.met_id in self.changed else '')))
@@ -720,42 +754,43 @@ class StocsyWindow:
         tree.delete(*tree.get_children())
         if not self.met_id:
             return
-        qt = self.browser.quant_target(self.met_id)
-        if qt is not None:
-            row = self.browser.quantification(self.met_id) or {}
-            qrow = self.browser.compare(self.ref, [qt])[0] if self.ref is not None else None
-            is_ref = self.ref_i == _QUANT
-            tree.insert('', tk.END, iid=_QUANT, tags=['ref'] if is_ref else [], values=(
-                '◉' if is_ref else '', '—', _f(qt.ppm, '.4f'), '—', '—', _h(qt.protons),
-                row.get('_multiplicity') or '—', len(row.get('_line_ppms') or ()) or '—',
-                row.get('_integ_mode') or 'quantified', _f(qt.snr, '.0f'),
-                '—' if is_ref or qrow is None else _f(qrow['r'], '+.2f'),
-                _f(qrow['ratio']) if qrow else '—', _diff(qrow) if qrow else '—',
-                'what the quantification measured'))
+        qi = self._quant_index()
+        mode = (self.browser.quantification(self.met_id) or {}).get('_integ_mode') or 'quantified'
         rows = dict(self.sig_rows)
         for i, s in enumerate(self.browser.signals(self.met_id)):
             row = rows.get(i)
+            is_ref = self.ref is not None and (i == qi if self.ref_i == _QUANT else i == self.ref_i)
             tags = []
-            if i == self.ref_i and self.ref is not None:
+            if is_ref:
                 tags.append('ref')
             elif i == self.sought_i:
                 tags.append('sought')
             if not s['usable']:
                 tags.append('weak')
+            note = '✎ lines chosen by hand' if s['manual'] else s['why']
+            if s.get('stored_lines'):
+                note = (f"the annotation kept {s['stored_lines']} lines; the {len(s['lines'])} "
+                        'nearest are shown' + (f'; {note}' if note else ''))
+            if i == qi:
+                note = f'measured by the quantification ({mode})' + (f'; {note}' if note else '')
             tree.insert('', tk.END, iid=str(i), tags=tags, values=(
-                '◉' if i == self.ref_i else '▶' if i == self.sought_i else '',
+                ('◉▶' if is_ref and i == self.sought_i else '◉' if is_ref
+                 else '▶' if i == self.sought_i else ''),
                 _f(s['db_ppm'], '.4f'), _f(s['ppm'], '.4f'),
                 _f(s['ppm_diff'], '.4f'), _f(s['delta_j_hz'], '.2f'),
                 _h(s['protons']), s['type'] or '—',
-                len(s['lines']) or '—', s['quality'] or '—', _f(s['snr'], '.0f'),
+                len(s['lines']) or '—', _quality(s), _f(s['snr'], '.0f'),
                 _f(row['r'], '+.2f') if row and not row['is_ref'] else '—',
-                _f(row['ratio']) if row else '—', _diff(row) if row else '—',
-                '✎ lines chosen by hand' if s['manual'] else s['why']))
+                _f(row['ratio']) if row else '—', _diff(row) if row else '—', note))
         self._select_signal()
 
     def _select_signal(self):
-        if self.sought_i is not None and self.sig_tree.exists(str(self.sought_i)):
-            self._quietly(lambda: self.sig_tree.selection_set(str(self.sought_i)))
+        """Select the signal read and give it the keyboard focus: a refilled
+        table has no focused row, and without one the arrow keys do nothing."""
+        iid = str(self.sought_i)
+        if self.sought_i is not None and self.sig_tree.exists(iid):
+            self._quietly(lambda: (self.sig_tree.selection_set(iid), self.sig_tree.focus(iid),
+                                   self.sig_tree.see(iid)))
 
     def _quietly(self, fn):
         """Run ``fn`` (a selection set from here) without its selection events
@@ -854,19 +889,18 @@ class StocsyWindow:
         sel = self.sig_tree.selection()
         if self._sync or not sel:
             return
-        if sel[0] == _QUANT:
-            self.focus = None
-            self.h_sought_var.set('')
-            self._show_quant()
-            self._rebuild()
-            return
         i = int(sel[0])
-        if i == self.sought_i:
+        if i == self._quant_index():
+            if not (self.quant_view and i == self.sought_i):
+                self.focus = None
+                self._show_quant()
+                self._rebuild()
+            return
+        if i == self.sought_i and not self.quant_view:
             return
         # A signal not detected is read too: the peaks around where it is
         # listed, none ticked, may show it.
         self.focus = None
-        self.h_sought_var.set('')
         self._set_sought(i)
         self._rebuild()
 
@@ -874,16 +908,15 @@ class StocsyWindow:
         sel = self.sig_tree.selection()
         if not sel:
             return
-        if sel[0] == _QUANT:
-            self.ref_i = _QUANT
+        i = int(sel[0])
+        if i == self._quant_index():
+            self.ref_i = _QUANT                 # back to what the quantification measured
         else:
-            i = int(sel[0])
             if not self.browser.signals(self.met_id)[i]['usable']:
                 messagebox.showinfo('STOCSY', 'That signal was not detected, or no line of it varies '
                                     'across the samples: it cannot be the reference.', parent=self.win)
                 return
             self.ref_i = i
-        self.h_ref_var.set('')
         self._rebuild()
 
     def _selected_peak(self):
@@ -934,9 +967,14 @@ class StocsyWindow:
         self._select_rows()
 
     def _select_rows(self):
-        if self.focus is not None and self.win_tree.exists(f'p{self.focus}'):
-            self._quietly(lambda: (self.win_tree.selection_set(f'p{self.focus}'),
-                                   self.win_tree.see(f'p{self.focus}')))
+        """Select the peak in focus; with none, give the first row the
+        keyboard focus so the arrow keys have somewhere to start."""
+        tree = self.win_tree
+        if self.focus is not None and tree.exists(f'p{self.focus}'):
+            iid = f'p{self.focus}'
+            self._quietly(lambda: (tree.selection_set(iid), tree.focus(iid), tree.see(iid)))
+        elif tree.get_children() and not tree.focus():
+            tree.focus(tree.get_children()[0])
 
     def _ref_from_candidate(self):
         rank = self._selected_peak()
@@ -952,7 +990,6 @@ class StocsyWindow:
         self._quietly(lambda: self.an_tree.selection_remove(self.an_tree.selection()))
         self.ref_rank, self.sought_rank = rank, sought
         self.ticked = [r for r in self.ticked if r in self.an.peaks] or [sought]
-        self.h_ref_var.set('')
         self._rebuild()
 
     def _sought_from_candidate(self):
@@ -964,7 +1001,6 @@ class StocsyWindow:
         self.sought_rank = rank
         self.ticked = [rank]
         self.focus = None
-        self.h_sought_var.set('')
         self._rebuild()
 
     # ── the analyst's lines ──────────────────────────────────────────────────
@@ -1000,6 +1036,101 @@ class StocsyWindow:
         self.editor.apply(self.met_id, s['mp_index'], peaks)
         self._after_edit()
 
+    def _classify(self, quality):
+        """Ctrl+1/2/3: the signal read is Good, Average or Poor. Good with
+        lines ticked other than its own is "Save the ticked lines" (which
+        marks it Good); the lines the quantification integrated are only
+        shown, not taken as a choice."""
+        s = self.sought_sig
+        if self.editor is None or not self.met_id or s is None or s.get('mp_index') is None:
+            return
+        if (quality == 'good' and not self.quant_view and self.ticked
+                and sorted(self.ticked) != sorted(s['lines'])):
+            self._save_lines()
+            return
+        self.editor.classify(self.met_id, s['mp_index'], quality)
+        self._after_edit()
+
+    def reload(self, analysis, browser):
+        """The project changed under the window (a signal split, added or
+        removed in the Signal List): read it again, on the same analyte,
+        reference and signal, with the same correlation settings."""
+        state = self.state()
+        self.an, self.browser = analysis, browser
+        self.an.set_options(**self._options())
+        names = analysis.group_names()
+        self.group_cb.config(values=[_ALL] + names)
+        if self._group() not in names:
+            self.group_var.set(_ALL)
+        self.focus = None
+        self._show_notes()
+        self._fill_analytes()
+        self._open_on(state, None)
+
+    # ── right-click ──────────────────────────────────────────────────────────
+
+    def _popup(self, menu, event):
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+
+    def _sig_menu(self, event):
+        """On a listed signal: read it, then take it to the Annotation
+        Results, mark it, or make it the reference."""
+        iid = self.sig_tree.identify_row(event.y)
+        if not iid or not self.met_id:
+            return
+        self.sig_tree.selection_set(iid)
+        self._on_sig_select()
+        s = self.browser.signals(self.met_id)[int(iid)]
+        matched = s.get('mp_index') is not None
+        menu = tk.Menu(self.win, tearoff=0)
+        menu.add_command(label='Show this signal in the Annotation Results',
+                         command=lambda: self._show_in_annotation(int(iid)),
+                         state='normal' if self.show_signal and matched else 'disabled')
+        menu.add_separator()
+        for key, quality in (('1', 'good'), ('2', None), ('3', 'bad')):
+            menu.add_command(
+                label=f'Mark {QUALITY_LABEL[tier_from_annotation_quality(quality)]}',
+                accelerator=f'Ctrl+{key}', command=lambda q=quality: self._classify(q),
+                state='normal' if self.editor is not None and matched else 'disabled')
+        menu.add_separator()
+        menu.add_command(label='Use as the reference', accelerator='double-click',
+                         command=self._ref_from_signal)
+        self._popup(menu, event)
+
+    def _show_in_annotation(self, i):
+        s = self.browser.signals(self.met_id)[i]
+        mp = self.browser.metabolite(self.met_id)['matched_peaks'][s['mp_index']]
+        self.show_signal(self.met_id, mp)
+
+    def _win_menu(self, event):
+        """On a peak of the window: take it to the Signal List (to split or
+        add a signal there), tick it, or make it the reference."""
+        iid = self.win_tree.identify_row(event.y)
+        if not iid.startswith('p'):
+            return
+        rank = int(iid[1:])
+        self.win_tree.selection_set(iid)
+        self._set_focus(rank)
+        menu = tk.Menu(self.win, tearoff=0)
+        menu.add_command(label=f'Show peak #{rank} in the Signal List',
+                         command=lambda: self.show_peak(rank),
+                         state='normal' if self.show_peak else 'disabled')
+        menu.add_separator()
+        menu.add_command(label='Tick / untick as a line of the signal', accelerator='Space',
+                         command=lambda: self._toggle(rank))
+        menu.add_command(label='Use as the reference', command=self._ref_from_candidate)
+        self._popup(menu, event)
+
+    def refresh_from_annotation(self):
+        """The Annotation Results changed a verdict: read every analyte's
+        signals again, so this window shows the annotation's marks."""
+        self.browser.forget()
+        self._fill_analytes()
+        self._rebuild()
+
     def _restore_lines(self):
         s = self.sought_sig
         if (self.editor is None or not self.met_id or s is None or s.get('mp_index') is None
@@ -1033,7 +1164,9 @@ class StocsyWindow:
         s = self.sought_sig
         at = (s['ppm'] if s is not None and np.isfinite(s['ppm']) else
               s['db_ppm'] if s is not None else self.ref.ppm if self.ref is not None else np.nan)
-        if not np.isfinite(at) or self._mean.size == 0:
+        group = self._group()
+        mean = self.an.mean_spectrum(group)
+        if not np.isfinite(at) or mean.size == 0:
             ax.text(0.5, 0.5, 'No peak to show', transform=ax.transAxes, ha='center')
             self.cax.set_visible(False)
             self.cv_spec.draw_idle()
@@ -1047,12 +1180,13 @@ class StocsyWindow:
             self.cax.set_visible(False)
             self.cv_spec.draw_idle()
             return
-        x, y = ppm[sel], self._mean[sel]
-        tr = crit = None
+        x, y = ppm[sel], mean[sel]
+        basis = self.an.basis if group is None else self.an.group_basis(group)
+        crit = basis.r_critical
+        tr = None
         if self.ref is not None:
             key = ('ref', self.met_id, self.ref.kind, self.ref.label, tuple(self.ref.ranks))
-            tr = self.an.trace_of(self.ref.vector, key)['r'][sel]
-            crit = self.an.basis.r_critical
+            tr = self.an.trace_of(self.ref.vector, key, group)['r'][sel]
         colour = self.color_var.get() and tr is not None
         self.cax.set_visible(bool(colour))
         if colour:
@@ -1068,7 +1202,7 @@ class StocsyWindow:
         ax.set_ylim(float(np.nanmin(y)) - 0.04 * span, float(np.nanmax(y)) + 0.22 * span)
         ax.set_xlim(hi, lo)                                  # δ decreases left to right
         ax.set_xlabel('δ (ppm)', fontsize=8)
-        ax.set_ylabel('Mean intensity (au)', fontsize=8)
+        ax.set_ylabel('Mean intensity (au)' if group is None else f'Mean of {group} (au)', fontsize=8)
         ax.tick_params(labelsize=7)
         if tr is not None and not np.isfinite(tr).any():
             ax.text(0.5, 0.80, f'grey: nothing here varies more than {NOISE_FLOOR_FACTOR:g}× the noise '
@@ -1091,9 +1225,15 @@ class StocsyWindow:
                 ax.text(p, 0.97, f'#{r}', fontsize=7, color=col, ha='center', va='bottom',
                         transform=mark, clip_on=False,
                         fontweight='bold' if big or r == self.focus else 'normal')
+        region = (s or {}).get('region')
+        if region:
+            ax.axvspan(region[1], region[0], color=_SOUGHT, alpha=0.10, lw=0)
         if self.focus is not None:
             ax.axvline(self.an.ppm_of(self.focus), color='black', lw=0.8, ls=':')
-        ax.set_title('red ▼ reference lines · blue ▼ ticked lines of the signal read · grey ▼ other peaks · '
+        scope = (f'all {basis.n} samples' if group is None
+                 else f'group {group}: mean and r of its {basis.n} samples')
+        ax.set_title(f'{scope}, |r| ≥ {crit:.2f} significant · red ▼ reference lines · '
+                     'blue ▼ ticked lines of the signal read · grey ▼ other peaks · '
                      'click a peak to see its numbers', fontsize=7, pad=14)
         self.cv_spec.draw_idle()
 
@@ -1216,8 +1356,6 @@ class StocsyWindow:
         self.hw_var.set(f'{max(max(ppms) - min(ppms), 0.05) / 2 + 0.05:.2f}')
         self.sought_rank = min(usable, key=lambda r: abs(self.an.ppm_of(r) - np.mean(ppms)))
         self.ticked = [self.sought_rank]
-        self.h_ref_var.set('')
-        self.h_sought_var.set('')
         self._rebuild()
         self.nb.select(1)
         self.show()

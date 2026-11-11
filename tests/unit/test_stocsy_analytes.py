@@ -378,3 +378,50 @@ class TestGrid:
         assert len(out) == len(rows)
         assert sum(1 for k in out[0] if k.startswith('S')) == N
         assert out[0]['reference'] == ref.label and out[0]['in_signal'] is True
+
+
+class TestComplexMultiplet:
+    """A measured pattern (m*) is read as the region its lines span, every
+    peak in it a line: line by line its close lines fell on one apex."""
+
+    def _pattern(self, lines):
+        mets = _mets()
+        mets[0]['matched_peaks'][1].update(type='m*', predicted_lines=[{'ppm': p} for p in lines])
+        return _ab(_study(), mets, [{'hmdb_id': 'MA', '_confidence': 3}])
+
+    def test_every_peak_in_the_span_of_its_lines_is_a_line(self):
+        b = self._pattern([4.116, 4.104, 4.099, 4.096])               # four lines over three peaks
+        s = b.signals('MA')[_index(b, 'MA', 4.10)]
+        assert s['lines'] == [10, 8, 2] and s['region'] == pytest.approx((4.118, 4.094))
+
+    def test_a_peak_outside_the_span_is_not_taken(self):
+        b = self._pattern([4.106, 4.094])
+        s = b.signals('MA')[_index(b, 'MA', 4.10)]
+        assert sorted(s['lines']) == [2, 8]
+
+    def test_a_letter_has_no_region(self):
+        b = _browser()
+        assert all(s['region'] is None for s in b.signals('MA'))
+
+
+class TestLetterLines:
+    """A letter shows no more lines than it has, the ones nearest where the
+    signal stands; the annotation's own list is left as it is."""
+
+    def _crowded(self, n_expected):
+        mets = _mets()
+        mp = mets[0]['matched_peaks'][1]                          # the doublet at 4.10
+        mp.update(peak_ppm=4.10, _n_exp_lines=n_expected,
+                  predicted_lines=[{'ppm': p} for p in (4.115, 4.105, 4.095)])
+        return _ab(_study(), mets, [{'hmdb_id': 'MA', '_confidence': 3}]), mp
+
+    def test_a_doublet_handed_three_lines_shows_the_two_nearest(self):
+        b, mp = self._crowded(2)
+        s = b.signals('MA')[_index(b, 'MA', 4.10)]
+        assert s['lines'] == [8, 2] and s['stored_lines'] == 3
+        assert len(mp['predicted_lines']) == 3                    # the annotation is not touched
+
+    def test_a_letter_with_its_own_count_is_left_alone(self):
+        b, _mp = self._crowded(3)
+        s = b.signals('MA')[_index(b, 'MA', 4.10)]
+        assert s['lines'] == [10, 8, 2] and s['stored_lines'] is None

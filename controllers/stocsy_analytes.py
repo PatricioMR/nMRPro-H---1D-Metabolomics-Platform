@@ -28,7 +28,9 @@ the analyst's choice is written by ``controllers.signal_lines``.
 import numpy as np
 
 from controllers.stocsy_controller import StocsyAnalysis
-from processing.multiplet_line_selector import line_match_tolerance, multiplet_line_peaks
+from processing.annotation_scoring import PATTERN_MULT
+from processing.multiplet_line_selector import (
+    LINE_MATCH_FLOOR, line_match_tolerance, multiplet_line_peaks)
 from controllers.analysis_defaults import QUANTIFICATION
 from processing.quant_engine import measure_signal
 from processing.quant_integration import MIN_TRUSTED_CAPTURE, pattern_evidence
@@ -83,8 +85,13 @@ class AnalyteBrowser:
         pairs of each analyte); the signals do not."""
         self._summary.clear()
 
-    def forget(self, met_id):
-        """Read the analyte's signals again (its lines were changed)."""
+    def forget(self, met_id=None):
+        """Read the analyte's signals again (its lines or verdict were
+        changed); every analyte's, without one."""
+        if met_id is None:
+            self._signals.clear()
+            self._summary.clear()
+            return
         self._signals.pop(met_id, None)
         self._summary.pop(met_id, None)
 
@@ -169,8 +176,13 @@ class AnalyteBrowser:
         for k, mp in enumerate(met.get('matched_peaks') or ()):
             rank = mp.get('peak_rank')
             rank = int(rank) if rank is not None else None
-            found = [int(p['rank']) for p in multiplet_line_peaks(mp, self.an.peaks)
-                     if p.get('rank') is not None]
+            region = self._pattern_region(mp)
+            found = ([r for r in sorted(self.an.peaks, key=lambda r: -self.an.ppm_of(r))
+                      if region[1] <= self.an.ppm_of(r) <= region[0]] if region else
+                     [int(p['rank']) for p in multiplet_line_peaks(mp, self.an.peaks)
+                      if p.get('rank') is not None])
+            stored = len(found)
+            found = self._letter_lines(mp, found) if region is None else found
             lines = [r for r in found if self.an.can_seed(r)]
             seen.append(float(mp.get('db_ppm', np.nan)))
             peaks = [self.an.peaks[r] for r in (lines or found) if r in self.an.peaks]
@@ -186,7 +198,8 @@ class AnalyteBrowser:
                 'why': '' if lines else self._why(found[0] if found else rank),
                 'evidence': pattern_evidence(mp), 'met_id': met_id,
                 'ppm_diff': _num(mp.get('ppm_diff')), 'delta_j_hz': _num(mp.get('delta_j_hz')),
-                'manual': manual_lines(mp) is not None, 'mp_index': k})
+                'manual': manual_lines(mp) is not None, 'mp_index': k, 'region': region,
+                'stored_lines': stored if stored > len(found) else None})
         for dp in met.get('db_peaks') or ():
             ppm = float(dp.get('ppm_center', dp.get('ppm_start', np.nan)))
             if any(abs(ppm - s) <= _SAME_DB_PPM for s in seen):
@@ -197,10 +210,39 @@ class AnalyteBrowser:
                          'anchor_usable': False, 'why': 'not detected', 'evidence': {},
                          'met_id': met_id,
                          'ppm_diff': np.nan, 'delta_j_hz': np.nan,
-                         'manual': False, 'mp_index': None})
+                         'manual': False, 'mp_index': None, 'region': None, 'stored_lines': None})
         rows.sort(key=lambda s: -s['db_ppm'] if np.isfinite(s['db_ppm']) else 0.0)
         self._signals[met_id] = rows
         return rows
+
+    @staticmethod
+    def _pattern_region(mp):
+        """(high, low) ppm of a complex multiplet (``m*``): the span its
+        measured pattern's lines cover, plus the tightest line tolerance on
+        each side. A pattern is read as a region, every peak in it a line, as
+        the quantification measures it: line by line, its close lines fall on
+        one apex and it shrank to one or two peaks. None for a letter, and
+        for one the analyst gave its lines by hand."""
+        if (mp.get('type') or '').strip() != PATTERN_MULT or manual_lines(mp) is not None:
+            return None
+        ppms = [float(l['ppm']) for l in mp.get('predicted_lines') or () if l.get('ppm') is not None]
+        if not ppms:
+            return None
+        return max(ppms) + LINE_MATCH_FLOOR, min(ppms) - LINE_MATCH_FLOOR
+
+    def _letter_lines(self, mp, found):
+        """No more lines than the letter has: the ones nearest where the
+        signal stands, high δ first. In a crowded window the annotation can
+        keep every peak around the anchor as a line (taurine's triplet at
+        3.25 ppm on the 100-analyte bench tube kept five). Only shown so here:
+        capping them in the annotation itself moved the election of the whole
+        tube and raised its false identifications (ADR-102)."""
+        n = mp.get('_n_exp_lines')
+        if not n or len(found) <= int(n) or manual_lines(mp) is not None:
+            return found
+        at = float(mp.get('peak_ppm') or mp.get('db_ppm') or 0.0)
+        near = sorted(found, key=lambda r: abs(self.an.ppm_of(r) - at))[:int(n)]
+        return sorted(near, key=lambda r: -self.an.ppm_of(r))
 
     def _why(self, rank) -> str:
         if rank is None or rank not in self.an.peaks:
@@ -418,7 +460,7 @@ class AnalyteBrowser:
                 'ppm': self.an.ppm_of(rank), 'db_ppm': self.an.ppm_of(rank),
                 'protons': protons, 'type': '', 'evidence': {}, 'manual': False,
                 'ppm_diff': np.nan, 'delta_j_hz': np.nan,
-                'mp_index': None}
+                'mp_index': None, 'region': None, 'stored_lines': None}
 
     def line_rows(self, ref: Target, signal, ticked, half_width) -> list:
         """``signal`` (a row of ``signals`` or ``peak_signal``) read line by

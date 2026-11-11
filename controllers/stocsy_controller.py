@@ -24,7 +24,7 @@ from processing.signal_structure import (
     STRUCTURE_MIN_SNR, first_component, group_means, group_tests,
     mean_pairwise_r, sample_components, sample_distance, signal_modules)
 from processing.stocsy import (
-    AREA_NOISE_KAPPA, SKIP_REASONS, area_noise, build_basis,
+    AREA_NOISE_KAPPA, SKIP_REASONS, STOCSY_MIN_SAMPLES, Basis, area_noise, build_basis,
     covariation_parts, dilution_spread, fixed_ratio, peak_vectors,
     pqn_factors, rank_partners, stocsy_trace)
 
@@ -56,7 +56,7 @@ class StocsyAnalysis:
     analyst changes (correlation, normalisation, within-group)."""
 
     def __init__(self, ppm, intensities, peaks, samples_info, *,
-                 excluded_regions=(), noise_std=None):
+                 excluded_regions=(), noise_std=None, spectra_changed=False):
         self.ppm = np.asarray(ppm, dtype=float)
         X = np.asarray(intensities, dtype=float)
         if X.ndim == 1:
@@ -92,6 +92,11 @@ class StocsyAnalysis:
         self._modules_cache = {}
         self.area_sigma, self.kappa = self._area_noise(
             samples_info, noise_std)
+        # The spectra were replaced after the signals were detected (aligned
+        # again, or the alignment reverted): the trace reads the spectra as
+        # they are, the signals' per-sample areas are still detection's.
+        self.spectra_changed = bool(spectra_changed)
+        self._group_basis = {}
 
     # ── options ──────────────────────────────────────────────────────────────
 
@@ -105,6 +110,7 @@ class StocsyAnalysis:
         self._basis = None
         self._trace_cache.clear()
         self._modules_cache.clear()
+        self._group_basis.clear()
 
     @property
     def basis(self):
@@ -149,15 +155,51 @@ class StocsyAnalysis:
         key = int(seed_rank)
         return self.trace_of(self.M[self._row[key]], key)
 
-    def trace_of(self, vector, key):
+    def trace_of(self, vector, key, group=None):
         """STOCSY over the whole spectrum of any per-sample vector (a signal
-        made of several peaks, say); ``key`` names it in the cache."""
-        if key not in self._trace_cache:
-            self._trace_cache[key] = stocsy_trace(
-                self.ppm, self.X, np.asarray(vector, dtype=float), self.basis,
-                masked_regions=self.excluded_regions,
+        made of several peaks, say); ``key`` names it in the cache. With a
+        ``group``, over that group's samples only (``group_basis``)."""
+        ck = (key, group)
+        if ck not in self._trace_cache:
+            if group is None:
+                X, vec, basis = self.X, np.asarray(vector, dtype=float), self.basis
+            else:
+                idx = self.group_samples(group)
+                X, basis = self.X[:, idx], self.group_basis(group)
+                vec = np.asarray(vector, dtype=float)[idx]
+            self._trace_cache[ck] = stocsy_trace(
+                self.ppm, X, vec, basis, masked_regions=self.excluded_regions,
                 min_std_factor=NOISE_FLOOR_FACTOR)
-        return self._trace_cache[key]
+        return self._trace_cache[ck]
+
+    # ── one group at a time ──────────────────────────────────────────────────
+
+    def group_names(self):
+        """The groups with enough samples for a correlation of their own, in
+        the order the study lists them."""
+        return [g for g in dict.fromkeys(self.groups)
+                if self.groups.count(g) >= STOCSY_MIN_SAMPLES]
+
+    def group_samples(self, group):
+        return [i for i, g in enumerate(self.groups) if g == group]
+
+    def mean_spectrum(self, group=None):
+        """The mean of every sample, or of one group's."""
+        if not self.X.size:
+            return np.zeros(0)
+        X = self.X if group is None else self.X[:, self.group_samples(group)]
+        return X.mean(axis=1)
+
+    def group_basis(self, group) -> Basis:
+        """The correlation inside one group: its samples, the method and the
+        PQN factors in use (taken over the whole study, as everywhere), no
+        centring -- one group has no group difference to remove."""
+        if group not in self._group_basis:
+            idx = self.group_samples(group)
+            f = self.basis.factors
+            self._group_basis[group] = Basis(
+                len(idx), factors=None if f is None else f[idx], method=self.method)
+        return self._group_basis[group]
 
     def partners(self, seed_rank, region=None):
         """Peaks co-varying with the seed, strongest r first, each with its
@@ -379,6 +421,12 @@ class StocsyAnalysis:
 
     def notes(self):
         notes = []
+        if self.spectra_changed:
+            notes.append('The spectra changed after the signals were detected '
+                         '(aligned again, or the alignment reverted): the '
+                         'spectrum here is the current one, the signals\' '
+                         'per-sample areas are from detection. Run the Detection '
+                         'again to measure them on these spectra.')
         if self.blanks_left_out:
             notes.append(f'{self.blanks_left_out} blank/excluded sample(s) '
                          'left out; correlating '
