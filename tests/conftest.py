@@ -16,6 +16,41 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+
+# ── Windows the tests open stay off the analyst's screen ──────────────────────
+# The interface tests build real Tk windows (a window that is never mapped has
+# no size, no focus and no events to test). Mapped where the analyst works,
+# they flash over the screen and raise themselves (StocsyWindow.show). Every
+# Toplevel opens far off-screen instead, and a position asked for later is
+# moved there too; sizes are kept, so the layout is still what is tested.
+_OFF_SCREEN = '+-30000+-30000'
+
+
+def pytest_configure(config):
+    try:
+        import re
+        import tkinter as tk
+    except ImportError:
+        return
+    if (not hasattr(tk, 'Toplevel') or not hasattr(tk, 'Wm')       # stubbed (tests/unit)
+            or getattr(tk.Toplevel, '_off_screen', False)):
+        return
+    init, geometry = tk.Toplevel.__init__, tk.Wm.wm_geometry
+
+    def off_screen_init(self, *args, **kwargs):
+        init(self, *args, **kwargs)
+        geometry(self, _OFF_SCREEN)
+
+    def off_screen_geometry(self, new=None):
+        if new is None:
+            return geometry(self)
+        size = re.match(r'^(=?\d+x\d+)?', str(new)).group(1) or ''
+        return geometry(self, size + _OFF_SCREEN)
+
+    tk.Toplevel.__init__ = off_screen_init
+    tk.Toplevel.geometry = tk.Toplevel.wm_geometry = off_screen_geometry
+    tk.Toplevel._off_screen = True
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 NMR_CSV  = os.path.join(os.path.expanduser('~'), 'Downloads',
                         'MRP_PlasmaSamplesCurve_030226.csv')
