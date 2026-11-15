@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.8%20Beta-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.84%20Beta-blue">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
@@ -516,6 +516,13 @@ PyInstaller (`nmrpro_h.spec`) followed by Inno Setup (`installer/nmrpro_h.iss`)
    warrants it), keep or switch the three overlap groups (A windows by shapes,
    B joint fit, C cascade), run; review the deconvolution and read the
    concentrations with their confidence.
+   **STOCSY** (🔗 button, or *Analysis ▸ STOCSY*) audits an analyte by its
+   signals: the one the quantification measured is marked ◉, every other signal
+   shows its r with it, over all samples or within one group (the spectrum is
+   then that group's mean). Ctrl+1 / 2 / 3 marks a signal Good / Average / Poor,
+   the same mark as in the Annotation Results. Right-click a signal to open it in
+   the Annotation Results, or a line to open its peak in the Signal List; a
+   window split there appears in STOCSY at once.
 5. **Statistics** — choose groups and test, view PCA/PLS-DA/OPLS-DA, export CSV
    and the PDF report.
 
