@@ -125,7 +125,7 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
                   foreground='gray').pack(side=tk.LEFT)
 
         mf = ttk.Frame(s3); mf.pack(fill=tk.X, pady=2)
-        ttk.Label(mf, text='Internal library:', width=18).pack(side=tk.LEFT)
+        ttk.Label(mf, text='Mode:', width=18).pack(side=tk.LEFT)
         self.internal_library_mode_var = tk.StringVar(value='Metabolomics (default)')
         self.internal_library_mode = ttk.Combobox(
             mf,
@@ -155,35 +155,29 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
         self.internal_library_mode_var.trace_add('write', self._on_lib_mode_change)
 
         bf = ttk.Frame(s3); bf.pack(fill=tk.X, pady=5)
+        # one search: the database for metabolomics, the solvent's library of
+        # regions for lipidomics
         self.btn_search_internal = ttk.Button(
-            bf, text='🔍 Search in Database',
-            command=self.search_internal_db)
+            bf, text='🔍 Search in Database', command=self.search)
         self.btn_search_internal.pack(
             side=tk.LEFT, expand=True, fill=tk.X, padx=2)
-        self.btn_search_online = ttk.Button(
-            bf, text='📚 Internal Library',
-            command=self.search_builtin_library)
-        self.btn_search_online.pack(
-            side=tk.LEFT, expand=True, fill=tk.X, padx=2)
 
-        mcr_bf = ttk.Frame(s3); mcr_bf.pack(fill=tk.X, pady=(0, 5))
+        # The variable stays (projects save it; mcr_requested reads it); the box
+        # is shown only in a release that ships deconvolution
+        # (app_paths.DECONVOLUTION_ENABLED, as the JG-Deconv stage).
         self.mcr_run_var = tk.BooleanVar(value=False)
-        self._mcr_run_cb = ttk.Checkbutton(
-            mcr_bf, text='🔬 Run MCR Deconvolution',
-            variable=self.mcr_run_var)
-        self._mcr_run_cb.pack(side=tk.LEFT, padx=2)
-        # Deconvolution is not part of this release (app_paths.
-        # DECONVOLUTION_ENABLED, as the JG-Deconv stage): shown, not offered.
+        self._mcr_run_cb = None
         from app_paths import DECONVOLUTION_ENABLED
-        if not DECONVOLUTION_ENABLED:
-            self._mcr_run_cb.state(['disabled'])
+        if DECONVOLUTION_ENABLED:
+            mcr_bf = ttk.Frame(s3); mcr_bf.pack(fill=tk.X, pady=(0, 5))
+            self._mcr_run_cb = ttk.Checkbutton(
+                mcr_bf, text='🔬 Run MCR Deconvolution',
+                variable=self.mcr_run_var)
+            self._mcr_run_cb.pack(side=tk.LEFT, padx=2)
 
         self.internal_status = ttk.Label(
-            s3, text='Internal DB: ready', foreground='gray')
+            s3, text='Database: ready', foreground='gray')
         self.internal_status.pack(anchor=tk.W, pady=2)
-        self.hmdb_status = ttk.Label(
-            s3, text='Internal DB: ready', foreground='gray')
-        self.hmdb_status.pack(anchor=tk.W, pady=2)
 
         info_frame = ttk.LabelFrame(
             self.frame, text='📊 Current Signals', padding=5)
@@ -258,13 +252,13 @@ class AnnotationStage(BaseStage, _AnnotationSearchMixin):
             self._lipid_tooltip_win = None
 
     def _apply_lipidomics_ui_state(self):
-        """Disable peak/J/MCR/external-DB options that do not apply to the
-        region-integration lipidomics workflow."""
+        """Disable the peak/J/MCR options that do not apply to the
+        region-integration lipidomics workflow. The search button stays: in
+        lipidomics it integrates the solvent's library of regions."""
         is_lipid = (self.internal_library_mode_var.get() == 'Lipidomics')
         targets = [getattr(self, n, None) for n in (
             '_tolerance_entry', '_spectrometer_entry', '_exclude_water_cb',
-            '_water_lo_entry', '_water_hi_entry', '_mcr_run_cb',
-            'btn_search_internal')]
+            '_water_lo_entry', '_water_hi_entry', '_mcr_run_cb')]
         if not getattr(self, '_lipid_tips_attached', False):
             for w in targets:
                 if w is not None:

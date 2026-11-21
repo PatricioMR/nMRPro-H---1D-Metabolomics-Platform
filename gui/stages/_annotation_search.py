@@ -6,12 +6,12 @@ _AnnotationSearchMixin — all search and rescue methods for AnnotationStage.
 
 Extracted from annotation_stage.py to isolate:
   • _rescue_unassigned_with_mcr — rescue pass with relaxed DB search + MCR
+  • search                      — the panel's one search: database or lipid library
   • search_internal_db          — main DB fingerprint search (threaded)
   • _rerun_mcr_for_peak         — re-run MCR on a single peak
   • _post_search_passes / _finish_in_background — per-sample reading and
     MCR on the worker thread, then _open_results_window on the Tk thread
-  • search_builtin_library      — built-in CSV library search
-  • search_hmdb_online          — placeholder for online search
+  • search_lipidomics_library   — the solvent's built-in library of lipid regions
   • _export                     — CSV export of results
 """
 import tkinter as tk
@@ -849,6 +849,17 @@ class _AnnotationSearchMixin:
                   f'skipped {_n} peak(s)')
         return kept
 
+    def search(self):
+        """The panel's search: the chosen database (.db) in metabolomics, the
+        solvent's built-in library of lipid regions in lipidomics."""
+        try:
+            mode = str(self.internal_library_mode_var.get())
+        except (AttributeError, tk.TclError):
+            mode = ''
+        if mode == 'Lipidomics':
+            return self.search_lipidomics_library()
+        return self.search_internal_db()
+
     def search_internal_db(self):
         if not self.peaks:
             messagebox.showinfo('Info',
@@ -1407,37 +1418,20 @@ class _AnnotationSearchMixin:
 
     # ── Built-in library search ───────────────────────────────────────────────
 
-    def search_builtin_library(self):
-        """Search the built-in NMR metabolite library without a file picker."""
+    def search_lipidomics_library(self):
+        """Integrate every region of the solvent's built-in lipidomics library
+        (processing.lipidomics): region integration, no peak matching."""
         import pandas as pd
 
-        mode = 'Metabolomics (default)'
-        try:
-            mode = str(getattr(self, 'internal_library_mode_var').get())
-        except Exception:
-            pass
-        is_lipidomics = (mode == 'Lipidomics')
-
-        if not self.peaks and not is_lipidomics:
-            messagebox.showinfo('Info',
-                'No signals detected.\nRun Signal Detection first.')
-            return
-
+        mode = 'Lipidomics'
         from app_paths import asset_path
-        solvent = None
-        if mode == 'Lipidomics':
-            from processing import lipidomics as _lp
-            solvent = self.lipid_solvent() if hasattr(self, 'lipid_solvent') \
-                else _lp.DEFAULT_SOLVENT
-            lib_name = _lp.library_filename(solvent)
-            lib_label = f'Internal Lipidomics DB ({solvent})'
-            prog_title = 'Searching Lipidomics Library'
-            prog_text = f'Integrating built-in lipidomics regions ({solvent})…'
-        else:
-            lib_name = 'nmr_metabolite_library.csv'
-            lib_label = 'Internal Library'
-            prog_title = 'Searching Internal Library'
-            prog_text = 'Searching built-in NMR metabolite library…'
+        from processing import lipidomics as _lp
+        solvent = self.lipid_solvent() if hasattr(self, 'lipid_solvent') \
+            else _lp.DEFAULT_SOLVENT
+        lib_name = _lp.library_filename(solvent)
+        lib_label = f'Internal Lipidomics DB ({solvent})'
+        prog_title = 'Searching Lipidomics Library'
+        prog_text = f'Integrating built-in lipidomics regions ({solvent})…'
 
         lib_path = asset_path('data', lib_name)
         if not os.path.isfile(lib_path):
@@ -1447,14 +1441,9 @@ class _AnnotationSearchMixin:
 
         tolerance = float(self.tolerance_var.get())
         good_peaks = self._exclude_water_peaks(
-            [p for p in self.peaks if p.get('rank') is not None])
-        if (not is_lipidomics) and (not good_peaks):
-            messagebox.showinfo('No Signals',
-                'No detected signals found.\n\n'
-                'Run Signal Detection first.')
-            return
+            [p for p in (self.peaks or []) if p.get('rank') is not None])
 
-        self.hmdb_status.config(text='Internal DB: searching…', foreground='blue')
+        self.internal_status.config(text='Lipid library: integrating…', foreground='blue')
         self.app.root.update()
 
         try:
@@ -1470,85 +1459,40 @@ class _AnnotationSearchMixin:
         def _search():
             try:
                 df = pd.read_csv(lib_path)
-                all_results, peaks_matched = [], set()
+                all_results = []
                 t0 = time.monotonic()
-                if is_lipidomics:
-                    # Lipidomics is pure region integration: integrate EVERY library
-                    # region, independent of detected peaks (no peak picking, no
-                    # selection). Regions and library are owned by processing/lipidomics.
-                    from processing import lipidomics as _lp
-                    for ridx, reg in enumerate(_lp.build_regions(df)):
-                        all_results.append({
-                            'name':          reg['name'],
-                            'id':            reg['id'],
-                            'ppm':           reg['ppm'],
-                            'ppm_center':    reg['ppm'],
-                            'start_ppm':     reg['start_ppm'],
-                            'end_ppm':       reg['end_ppm'],
-                            'multiplicity':  'm',
-                            'match_type':    reg['signal'] or 'lipid_region',
-                            'type':          reg['signal'] or 'lipid_region',
-                            'database':      lib_label,
-                            'source':        lib_label,
-                            'protons':       1,
-                            'peak_ppm':      reg['ppm'],
-                            'peak_rank':     -(ridx + 1),
-                            'composite_score': 0.0,
-                            'multiplet_score': 0.0,
-                            'multiplet_detail': reg['comment'],
-                            'is_lipidomics': True,
-                            'lipid_solvent': solvent,
-                        })
-                else:
-                    for peak in good_peaks:
-                        p_lo = min(peak.get('start_ppm', peak['ppm']),
-                                   peak.get('end_ppm',   peak['ppm'])) - tolerance
-                        p_hi = max(peak.get('start_ppm', peak['ppm']),
-                                   peak.get('end_ppm',   peak['ppm'])) + tolerance
-                        mask = (df['start_ppm'] <= p_hi) & (df['end_ppm'] >= p_lo)
-                        for _, row in df[mask].iterrows():
-                            mult = str(row.get('multiplicity', '') or '')
-                            signal = str(row.get('signal', '') or '').strip()
-                            note = str(row.get('comment', '') or '').strip()
-                            raw_id = row.get('id', '')
-                            try:
-                                row_id = str(int(raw_id))
-                            except Exception:
-                                row_id = str(raw_id)
-                            all_results.append({
-                                'name':          str(row.get('name', 'Unknown')),
-                                'id':            row_id,
-                                'ppm':           (row['start_ppm'] + row['end_ppm']) / 2.0,
-                                'ppm_center':    (row['start_ppm'] + row['end_ppm']) / 2.0,
-                                'start_ppm':     float(row['start_ppm']),
-                                'end_ppm':       float(row['end_ppm']),
-                                'multiplicity':  mult,
-                                'match_type':    signal or mult or 'internal_library',
-                                'type':          signal or mult or 'internal_library',
-                                'database':      lib_label,
-                                'source':        lib_label,
-                                'protons':       1,
-                                'peak_ppm':      peak['ppm'],
-                                'peak_rank':     peak['rank'],
-                                'composite_score': 0.0,
-                                'multiplet_score': 0.0,
-                                'multiplet_detail': note,
-                                'is_lipidomics': False,
-                            })
-                            peaks_matched.add(peak['rank'])
+                # Lipidomics is pure region integration: integrate EVERY library
+                # region, independent of detected peaks (no peak picking, no
+                # selection). Regions and library are owned by processing/lipidomics.
+                for ridx, reg in enumerate(_lp.build_regions(df)):
+                    all_results.append({
+                        'name':          reg['name'],
+                        'id':            reg['id'],
+                        'ppm':           reg['ppm'],
+                        'ppm_center':    reg['ppm'],
+                        'start_ppm':     reg['start_ppm'],
+                        'end_ppm':       reg['end_ppm'],
+                        'multiplicity':  'm',
+                        'match_type':    reg['signal'] or 'lipid_region',
+                        'type':          reg['signal'] or 'lipid_region',
+                        'database':      lib_label,
+                        'source':        lib_label,
+                        'protons':       1,
+                        'peak_ppm':      reg['ppm'],
+                        'peak_rank':     -(ridx + 1),
+                        'composite_score': 0.0,
+                        'multiplet_score': 0.0,
+                        'multiplet_detail': reg['comment'],
+                        'is_lipidomics': True,
+                        'lipid_solvent': solvent,
+                    })
                 elapsed = time.monotonic() - t0
                 n_m = len(all_results)
-                n_p = len(peaks_matched)
 
                 def _show():
-                    if is_lipidomics:
-                        self.hmdb_status.config(
-                            text=f'Internal DB: {n_m} lipid regions loaded',
-                            foreground='green')
-                    else:
-                        self.hmdb_status.config(
-                            text=f'Internal DB: {n_m} matches ({n_p}/{len(good_peaks)} signals)',
-                            foreground='green')
+                    self.internal_status.config(
+                        text=f'Lipid library: {n_m} regions integrated',
+                        foreground='green')
 
                 def _tag_library():
                     if self._last_results_args is not None:
@@ -1565,17 +1509,6 @@ class _AnnotationSearchMixin:
                     prog, 'Library search failed', exc))
 
         threading.Thread(target=_search, daemon=True).start()
-
-    # ── Online search ─────────────────────────────────────────────────────────
-
-    def search_hmdb_online(self):
-        if not self.peaks:
-            messagebox.showinfo('Info',
-                'No signals detected.\nRun Signal Detection first.')
-            return
-        messagebox.showinfo('BMRB Online',
-            'Online search not implemented in this version.\n'
-            'Use Search Internal DB with a BMRB .db file.')
 
     # ── Export ────────────────────────────────────────────────────────────────
 

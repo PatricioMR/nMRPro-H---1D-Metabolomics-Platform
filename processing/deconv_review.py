@@ -323,12 +323,6 @@ def counts(items) -> dict:
     return out
 
 
-def row_counts(rows) -> dict:
-    """``counts`` straight from the quantification rows, by ``kind_of``: what
-    the review will list, without building its items."""
-    return counts([{'kind': k} for k in map(kind_of, rows or ()) if k is not None])
-
-
 def counts_text(c) -> str:
     """The review's contents in a line: shared windows, joint fits, cascade,
     no number, and the rejected when there are any."""

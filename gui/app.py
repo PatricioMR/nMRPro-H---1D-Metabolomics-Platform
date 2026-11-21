@@ -669,9 +669,12 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         except Exception as e:
             print(f'❌ PlotManager: {e}')
 
-        # Status bar
+        # Status bar (the autosave writes its time here). Packed ahead of the
+        # main content: Tk takes room from the last packed first, and the tall
+        # Quantification panel pushed the bar off the window.
         status_frame = ttk.Frame(self.root)
-        status_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2)
+        status_frame.pack(side=tk.BOTTOM, fill=tk.X, padx=5, pady=2,
+                          before=self.main_container)
         self.status_label = ttk.Label(status_frame, text="Ready", foreground="gray")
         self.status_label.pack(side=tk.LEFT)
         self.samples_count_label = ttk.Label(status_frame, text="", foreground="gray")

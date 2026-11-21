@@ -432,18 +432,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # no longer reaches the engine.
         self.max_disagreement_var = tk.DoubleVar(
             value=QUANTIFICATION['max_disagreement_pct'])
-        self._deconv_btn = ttk.Button(
-            s2, text='Review deconvolution…',
-            command=lambda: self._open_deconvolution_window(
-                self._selected_review_id()))
-        self._deconv_btn.pack(anchor=tk.W, padx=4, pady=(1, 0))
-        # what the review holds, so the analyst sees there is something to
-        # look at before opening it
-        self._deconv_info = ttk.Label(
-            s2, text='Run the quantification to see what was deconvolved.',
-            font=('Arial', 8), foreground='#777', wraplength=300,
-            justify=tk.LEFT)
-        self._deconv_info.pack(anchor=tk.W, padx=8, pady=(0, 3))
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
         ic_row0 = ttk.Frame(s2); ic_row0.pack(fill=tk.X, pady=1)
@@ -852,23 +840,6 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             stat))
             except Exception as _ins_err:
                 print(f'[Quant tree] insert failed for {iid!r}: {_ins_err}')
-        self._refresh_deconv_button()
-
-    def _refresh_deconv_button(self):
-        """The review button says how much there is to review; the figure's
-        button is live when the selected analyte was deconvolved."""
-        from processing.deconv_review import counts_text, row_counts
-        btn = getattr(self, '_deconv_btn', None)
-        if btn is None:
-            return
-        rows = self._quant_results or []
-        c = row_counts(rows)
-        n = sum(c.values())
-        btn.config(text=f'Review deconvolution ({n})…' if n else 'Review deconvolution…')
-        self._deconv_info.config(
-            text=(counts_text(c) if n else
-                  'Nothing was deconvolved.' if rows else
-                  'Run the quantification to see what was deconvolved.'))
         self._refresh_deconv_here()
 
     def _selected_review_id(self):
