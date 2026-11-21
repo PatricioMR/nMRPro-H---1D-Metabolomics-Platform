@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.84%20Beta-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.85%20Beta-blue">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
@@ -66,7 +66,7 @@ the result.
 - **The validation is built in**: simulated spectra of known composition,
   exported run by run so every figure can be audited (see [Validation](#validation)).
 
-> **Status: Beta (v0.84).** The pipeline below is the one validated end to end.
+> **Status: Beta (v0.85).** The pipeline below is the one validated end to end.
 > MCR-based deconvolution stages are kept in the code, tested, and switched off
 > (`DECONVOLUTION_ENABLED` in [`app_paths.py`](app_paths.py)) until they have
 > their own validation.
