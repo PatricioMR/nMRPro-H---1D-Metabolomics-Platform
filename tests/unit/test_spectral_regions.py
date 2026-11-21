@@ -186,11 +186,23 @@ def test_what_was_excluded_is_read_from_the_run_first():
     import inspect
 
     from gui.stages import _quant_computation as qc
-    src = inspect.getsource(qc._QuantCompMixin._run)
-    i_run = src.index("getattr(self.peak_stage, '_excluded_regions', None)")
+    assert 'excluded_regions_of(self.peak_stage)' in inspect.getsource(qc._QuantCompMixin._run)
+    src = inspect.getsource(qc.excluded_regions_of)
+    i_run = src.index("getattr(peak_stage, '_excluded_regions', None)")
     i_field = src.index('excluded_regions_var')
     assert i_run < i_field, 'the field must not be consulted first'
-    assert 'if _excl is None:' in src[i_run:i_field]
+    assert 'if regions is not None:' in src[i_run:i_field]
+
+    class _Stage:
+        _excluded_regions = [(4.5, 5.0)]
+
+        class excluded_regions_var:
+            @staticmethod
+            def get():
+                return '1.0-2.0'
+    assert qc.excluded_regions_of(_Stage)[0] == [(4.5, 5.0)]
+    _Stage._excluded_regions = None
+    assert qc.excluded_regions_of(_Stage)[1] == 'from the field, not recorded by the run'
 
 
 def test_the_applied_exclusion_survives_a_save():

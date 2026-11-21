@@ -347,6 +347,21 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         f.close()
 
 
+def excluded_regions_of(peak_stage):
+    """``(regions, source)``: what detection applied, when this session ran
+    it or a save recorded it. Otherwise the field, which is what a loaded
+    project's detection was given -- silently using nothing is worse than
+    using the best evidence available and saying where it came from."""
+    regions = getattr(peak_stage, '_excluded_regions', None)
+    if regions is not None:
+        return regions, 'as detected'
+    try:
+        return (parse_regions(peak_stage.excluded_regions_var.get()),
+                'from the field, not recorded by the run')
+    except (ValueError, AttributeError):
+        return [], 'from the field, not recorded by the run'
+
+
 class _QuantCompMixin:
     """Mixin — mixed into QuantificationStage.  Uses self.* freely."""
 
@@ -489,19 +504,7 @@ class _QuantCompMixin:
             print(f'[Quant] ambiguity check unavailable: {_amb_exc}')
             ambiguous = set()
 
-        # What detection applied, when this session ran it or a save recorded
-        # it. Otherwise the field, which is what a loaded project's detection
-        # was given -- silently using nothing is worse than using the best
-        # evidence available and saying where it came from.
-        _excl = getattr(self.peak_stage, '_excluded_regions', None)
-        _excl_src = 'as detected'
-        if _excl is None:
-            _excl_src = 'from the field, not recorded by the run'
-            try:
-                _excl = parse_regions(
-                    self.peak_stage.excluded_regions_var.get())
-            except (ValueError, AttributeError):
-                _excl = []
+        _excl, _excl_src = excluded_regions_of(self.peak_stage)
         _excluded_used = (f'{format_regions(_excl)} ({_excl_src})' if _excl
                           else 'none')
 

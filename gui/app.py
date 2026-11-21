@@ -377,6 +377,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
         analysis_menu = _menu(mb_frame)
         analysis_menu.add_command(label='🔗 STOCSY — analyte signals…',
                                   command=self.open_stocsy)
+        analysis_menu.add_command(label='RP-Method — resolution plot…',
+                                  command=self.open_rp_method)
         _btn('Analysis', analysis_menu)
 
         # ── Help ─────────────────────────────────────────────────────────────
@@ -1645,6 +1647,27 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
                 else 'disabled')
         except Exception:
             pass
+
+    def open_rp_method(self):
+        """Open (or raise and refresh) the resolution plot: the spectrum
+        against what the quantification resolved of it, the residual, and
+        the candidates for what is missing."""
+        qs = self.stages.get('quantification')
+        if qs is None or not self._quant_rows():
+            messagebox.showinfo('RP-Method', 'Quantify first: the resolution plot '
+                                'sets the spectrum against what the quantification '
+                                'resolved of it.', parent=self.root)
+            return
+        win = getattr(self, '_rp_win', None)
+        try:
+            if win is not None and win.win.winfo_exists():
+                win.refresh()
+                win.win.lift()
+                return
+        except tk.TclError:
+            pass
+        from gui.widgets.rp_method_window import RPMethodWindow
+        self._rp_win = RPMethodWindow(self, qs, self.stages.get('annotation'))
 
     def _quant_rows(self):
         qs = self.stages.get('quantification')
