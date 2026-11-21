@@ -13,6 +13,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from plotting import contributions
+from processing import quant_quality
 from plotting.fit_curve import (FIT_ABOVE_TRACE, fit_group, fit_over_trace,
                                 fit_warnings)
 
@@ -24,6 +25,16 @@ from ._quant_helpers import (
 )
 
 INK = '#1a1a19'
+_LEVEL_COLOUR = {quant_quality.GOOD: '#1a7a1a', quant_quality.WARN: '#856404',
+                 quant_quality.POOR: '#9a0000'}
+_QUALITY_TIP = (
+    'Quantification quality: whether the number can be trusted\n'
+    '(the dots say whether the analyte is there). Per group; the worst is shown.\n'
+    'Poor: found in fewer samples than the group has, its own signals\n'
+    '  disagree beyond the limit, or replicates spread CV >= 40%.\n'
+    'Warn: CV >= 20%, the fit holds more than 1.25x the trace under the\n'
+    '  signal, or the amplitude was held at its cap (an upper bound).\n'
+    'Reference bench, tube of 100: median |error| Good 14%, Warn 26%, Poor 68%.')
 # the view keeps at least this much spectrum on each side of the analyte's
 # region, so the neighbours that share it are in the picture
 VIEW_PAD_PPM = 0.02
@@ -211,10 +222,11 @@ class _QuantVisMixin:
             handles.append(Patch(facecolor=col, alpha=contributions.FILL_ALPHA,
                                  edgecolor=col, lw=2.0 if is_sel else 0.8,
                                  label=short))
-        # outside the axes: inside it covers the traces
-        leg = ax.legend(handles=handles, fontsize=6.5, loc='upper left',
-                        bbox_to_anchor=(1.005, 1.0), borderaxespad=0.0,
-                        framealpha=0.85, edgecolor='#cccccc')
+        # inside, where it covers least: beside the axes it took a quarter
+        # of the width from a narrow panel
+        leg = ax.legend(handles=handles, fontsize=6, loc='best',
+                        framealpha=0.75, edgecolor='#cccccc', handlelength=1.2,
+                        borderpad=0.3, labelspacing=0.25)
         for txt, (_n, _c, is_sel) in zip(leg.get_texts()[1:], reversed(drawn)):
             if is_sel:
                 txt.set_fontweight('bold')
@@ -516,20 +528,10 @@ class _QuantVisMixin:
                         if ppm_lo < xv < ppm_hi:
                             ax1.axvline(xv, color='#1565C0', lw=0.8, ls=':',
                                         alpha=0.6)
-            # Who is who: the signal's own lines in the peak marker the rest
-            # of the software uses (red, dotted), a foreign peak between them
-            # in light grey. A legacy row without line positions falls back
-            # to the apex, which is only the whole signal for a singlet.
-            _own_lines = r.get('_line_ppms')
-            if _own_lines is None:
-                _h0 = (r.get('_hits') or [{}])[0]
-                _is_singlet = r.get('_is_singlet')
-                if _is_singlet is None:
-                    _is_singlet = ((_h0.get('multiplicity') or _h0.get('type')
-                                    or '').strip().lower()
-                                   in ('s', 'br s', 'brs', 'bs', ''))
-                _own_lines = [p['ppm']] if _is_singlet else []
-            for _lp in _own_lines:
+            # Who is who: a singlet's line in the peak marker the rest of the
+            # software uses (red, dotted) -- a multiplet is its filled shape --
+            # and a foreign peak inside the window in light grey.
+            for _lp in contributions.own_line_marks(r):
                 ax1.axvline(_lp, color='#e63946', lw=0.9, ls=':', alpha=0.7)
             for _fp in r.get('_foreign_inside') or ():
                 ax1.axvline(_fp, color='#b0b0b0', lw=0.9, ls=':', alpha=0.9)
@@ -547,7 +549,8 @@ class _QuantVisMixin:
                          if all_int.ndim > 1 else all_int[_e_lo:_e_hi + 1])
             if _y_in_win.size > 0:
                 _y_top = float(np.max(_y_in_win))
-                ax1.set_ylim(bottom=0, top=max(_y_top * 1.25, 1e-3))
+                # room above the tallest trace for the legend
+                ax1.set_ylim(bottom=0, top=max(_y_top * 1.4, 1e-3))
 
         elif ppm_arr is not None and all_int is not None and region_window:
             lo_ppm = float(min(region_window[0], region_window[1]))
@@ -577,8 +580,8 @@ class _QuantVisMixin:
                     lo_rg, hi_rg = float(min(lo_rg, hi_rg)), float(max(lo_rg, hi_rg))
                     ax1.axvline(lo_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
                     ax1.axvline(hi_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
-                # the analyte's own lines, as the peak view marks them
-                for _lp in r.get('_line_ppms') or ():
+                # a singlet's line, as the peak view marks it
+                for _lp in contributions.own_line_marks(r):
                     if view_lo <= float(_lp) <= view_hi:
                         ax1.axvline(float(_lp), color='#e63946', lw=0.9,
                                     ls=':', alpha=0.7)
@@ -658,6 +661,15 @@ class _QuantVisMixin:
         ax2.grid(True, axis='y', alpha=0.2, ls=':')
         self._cv_bar.draw()
 
+        # ── Quantification quality, per group (processing.quant_quality) ─
+        _quality = {}
+        for g, idxs in groups.items():
+            _cols = [i for i in idxs if i < n_s]
+            _trace = (np.mean(all_int[:, _cols], axis=1)
+                      if _cols and all_int is not None and all_int.ndim == 2 else None)
+            _quality[g] = quant_quality.assess(r, g, ppm=ppm_arr, trace=_trace)
+        _q_worst = quant_quality.worst(q['level'] for q in _quality.values())
+
         # ── Quality card (top) ───────────────────────────────────────────
         ax3 = self._ax_card
         ax3.clear()
@@ -702,6 +714,8 @@ class _QuantVisMixin:
             ('Norm',         norm_mode,                                          '#555'),
             ('Mean SNR',     f"{_snr_global:.1f}",                              _snr_col),
         ]
+        if _q_worst is not None:
+            top_card.append(('Quant. quality', _q_worst, _LEVEL_COLOUR[_q_worst]))
         if r.get('_used_mcr') and r.get('_mcr'):
             mcr_m   = r['_mcr'].get('metrics', {})
             lof     = mcr_m.get('lof', float('nan'))
@@ -751,6 +765,9 @@ class _QuantVisMixin:
                             'C = (A_met / nH_met) / (A_IS / nH_IS) × C_IS × dil',
             'Area %':       'Mean area as % of total spectrum area (non-BLK).',
             'Area (a.u.)':  'Mean raw trapezoid area (arbitrary units, no IS norm).',
+            'Quant. quality': _QUALITY_TIP + ''.join(
+                f"\n\n{g}: {q['level']}" + ''.join(f"\n  - {x}" for x in q['reasons'])
+                for g, q in _quality.items() if q['level'] is not None),
         }
         self._card_row_tips = {}
         y = 0.97
@@ -775,7 +792,7 @@ class _QuantVisMixin:
         ax4.set_title('Groups', fontsize=7.5, fontweight='bold', pad=2)
 
         _conc_col_hdr = 'Conc (mM)' if norm_mode in ('IS', 'IS+PQN') else ('Area %' if norm_mode == 'Total' else 'Area')
-        hdr_cols = ['Group', _conc_col_hdr, 'CV%', 'SNR', 'Quality']
+        hdr_cols = ['Group', _conc_col_hdr, 'CV%', 'SNR', 'Quant. Q']
         hdr_x    = [0.01, 0.22, 0.50, 0.65, 0.80]
         for hx, ht in zip(hdr_x, hdr_cols):
             ax4.text(hx, 0.97, ht, fontsize=6.5, fontweight='bold', color='#333',
@@ -815,16 +832,11 @@ class _QuantVisMixin:
                     g_snr = 0.0
             else:
                 g_snr = r.get('snr', 0)
-            g_cv_v = cv_groups.get(g, float('nan'))
-            _g_crit = []
-            if np.isfinite(g_cv_v):
-                _g_crit.append(0 if g_cv_v < 20 else 1 if g_cv_v < 40 else 2)
-            if g_snr > 0:
-                _g_crit.append(0 if g_snr > 10 else 1 if g_snr > 5 else 2)
-            _g_worst = max(_g_crit) if _g_crit else 1
-            g_stat = ('Good' if _g_worst == 0 else 'Warn' if _g_worst == 1 else 'Poor')
-            g_stat_col = ('#1a7a1a' if g_stat == 'Good'
-                          else '#856404' if g_stat == 'Warn' else '#9a0000')
+            # the quantification quality of the group's number; a blank
+            # has none (it is what the window collects without the analyte)
+            _gq = (_quality.get(g) or {}).get('level')
+            g_stat = _gq or '—'
+            g_stat_col = _LEVEL_COLOUR.get(_gq, '#555')
             g_col = _app_colors.get(g, '#333')
             if norm_mode in ('IS', 'IS+PQN'):
                 conc_str = f'{g_mean:.4f}'
@@ -839,5 +851,12 @@ class _QuantVisMixin:
                 ax4.text(hx, row_y, rv, fontsize=6.5, color=rc,
                          transform=ax4.transAxes, va='top')
             row_y -= 0.13
+        # why a group is not Good, under the table (hover Quant. quality for all)
+        for g, q in _quality.items():
+            if q['level'] in (quant_quality.WARN, quant_quality.POOR) and q['reasons']:
+                ax4.text(0.01, row_y, f"{g}: {q['reasons'][0]}", fontsize=6,
+                         color=_LEVEL_COLOUR[q['level']], transform=ax4.transAxes,
+                         va='top', wrap=True, clip_on=True)
+                row_y -= 0.11
 
         self._cv_card.draw()

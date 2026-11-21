@@ -73,3 +73,12 @@ def test_the_stage_draws_on_the_fit_group_when_the_snr_group_holds_little():
     assert _QuantVisMixin._analytes_group(row, groups) == 'B'
     assert _QuantVisMixin._analytes_group({'_snr_group': 'A'}, groups) == 'A'
     assert _QuantVisMixin._analytes_group({}, groups) == 'A'
+
+
+def test_only_a_singlet_gets_its_line_marked():
+    assert pc.own_line_marks({'_is_singlet': True, '_line_ppms': [2.4]}) == [2.4]
+    assert pc.own_line_marks({'_multiplicity': 't', '_line_ppms': [2.39, 2.40, 2.41]}) == []
+    assert pc.own_line_marks({'_multiplicity': 's', '_peak': {'ppm': 3.27}}) == [3.27]
+    hit = {'_hits': [{'multiplicity': 'dd'}], '_line_ppms': [1.0, 1.01, 1.02, 1.03]}
+    assert pc.own_line_marks(hit) == []
+

@@ -153,7 +153,7 @@ def test_the_crop_leaves_the_gap_around_a_foreign_peak_unpainted():
     row = {'metabolite': 'Taurine', 'hmdb_id': 'TAU', 'ppm': 3.2,
            '_integ_mode': 'Multiplet', '_multiplet_window': [3.18, 3.22],
            '_integ_segments': [[3.18, cut - lw / 2], [cut + lw / 2, 3.22]],
-           '_foreign_inside': [cut], '_line_ppms': lines}
+           '_foreign_inside': [cut], '_line_ppms': lines, '_multiplicity': 't'}
     fig, _r2 = _report()._peak_crop_fig(PPM, X, row, [], {})
     ax = fig.axes[0]
     assert ax.collections, 'the pieces are filled'
@@ -164,8 +164,8 @@ def test_the_crop_leaves_the_gap_around_a_foreign_peak_unpainted():
     marks = {round(float(ln.get_xdata()[0]), 6): ln.get_color()
              for ln in ax.get_lines() if len(ln.get_xdata()) == 2}
     assert marks.get(round(cut, 6)) == '#b0b0b0', 'the foreign peak, grey'
-    for c in lines:
-        assert marks.get(round(c, 6)) == '#e63946', 'each own line, red'
+    # a multiplet is its filled shape: its lines are not marked one by one
+    assert '#e63946' not in marks.values()
 
 
 def test_the_crop_draws_one_mean_per_group_and_fills_the_best():

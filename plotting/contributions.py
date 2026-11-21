@@ -30,7 +30,7 @@ from plotting.fit_curve import BASELINE_LINE
 # the curves are computed in processing; this module only draws them (and
 # keeps the names the figure scripts and the report import from here)
 from processing.analyte_models import (  # noqa: F401
-    fit_curves, inside, integral_piece, method, shape_copy, span,
+    fit_curves, inside, integral_piece, method, own_line_marks, shape_copy, span,
     window_components)
 
 # categorical slots in fixed order (dataviz reference palette)

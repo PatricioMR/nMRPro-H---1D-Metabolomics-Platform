@@ -56,6 +56,32 @@ def span(row, ppm):
     return float(ppm[p['start_idx']]), float(ppm[p['end_idx']])
 
 
+def is_singlet_row(row) -> bool:
+    """Whether the row's signal is a singlet: what the quantification
+    recorded (``_is_singlet``), else the multiplicity of the signal it was
+    matched on, read as the annotation reads it (``is_singlet_like``)."""
+    flag = row.get('_is_singlet')
+    if flag is not None:
+        return bool(flag)
+    from processing.annotation_scoring import is_singlet_like
+    hit = (row.get('_hits') or [{}])[0] or {}
+    kind = (row.get('_multiplicity') or hit.get('multiplicity') or hit.get('type') or '')
+    return is_singlet_like(str(kind).strip().lower() or 's', strict=True)
+
+
+def own_line_marks(row) -> list:
+    """The positions a figure marks with the software's peak marker (red,
+    dotted): a singlet's line only. A multiplet is drawn as its filled shape,
+    and its lines marked one by one only crowded the figure."""
+    if not is_singlet_row(row):
+        return []
+    lines = row.get('_line_ppms')
+    if lines:
+        return [float(v) for v in lines]
+    p = row.get('_peak') or {}
+    return [float(p['ppm'])] if p.get('ppm') is not None else []
+
+
 def inside(sp, lo, hi) -> bool:
     return sp is not None and min(sp) < hi and max(sp) > lo
 

@@ -401,9 +401,10 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
                     bbox=dict(fc='white', alpha=0.8, lw=0))
 
     if contributions.method(result) == 'integral' and lo_f < hi_f:
-        # Who is who: the signal's own lines in the software's peak marker
-        # (red, dotted), a foreign peak between them in light grey.
-        for _lp in result.get('_line_ppms') or ():
+        # Who is who: a singlet's line in the software's peak marker (red,
+        # dotted) -- a multiplet is its filled shape -- and a foreign peak
+        # inside the window in light grey.
+        for _lp in contributions.own_line_marks(result):
             ax.axvline(_lp, color='#e63946', lw=0.8, ls=':', alpha=0.6,
                        zorder=4)
         for _fp in result.get('_foreign_inside') or ():
@@ -813,6 +814,23 @@ def _references_section(results, styles) -> list:
 
 
 # ── Bloco de 1 analito ───────────────────────────────────────────────────────
+def _quant_quality_line(r, ppm, all_int, samples_info) -> str:
+    """The quantification quality of each group's number
+    (``processing.quant_quality``), coloured, with the first reason for a
+    group that is not Good -- the card's, on the report."""
+    from processing import quant_quality as qq
+    colour = {qq.GOOD: '#1a7a1a', qq.WARN: '#856404', qq.POOR: '#9a0000'}
+    ppm_f = np.asarray(ppm, dtype=float)
+    parts = []
+    for g, trace in _group_means(all_int, samples_info):
+        q = qq.assess(r, g, ppm=ppm_f, trace=trace)
+        if q['level'] is None:
+            continue
+        why = f' ({q["reasons"][0]})' if q['level'] != qq.GOOD and q['reasons'] else ''
+        parts.append(f'<font color="{colour[q["level"]]}"><b>{g}: {q["level"]}</b></font>{why}')
+    return '  |  '.join(parts)
+
+
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
                    crop_w_cm, crop_h_cm, unit='mM', precision=None, rows=None):
@@ -967,6 +985,9 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         rows.append([P('Concentration'), P(cl)])
     for cv in cv_lines:
         rows.append([P('CV%'), P(cv)])
+    q_line = _quant_quality_line(r, ppm, all_int, samples_info)
+    if q_line:
+        rows.append([P('Quant. quality'), P(q_line, uni=True)])
     if dev_line:
         rows.append([P('vs Theoretical'), P(dev_line)])
 
