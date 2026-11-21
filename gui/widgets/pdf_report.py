@@ -24,10 +24,9 @@ import matplotlib.ticker as ticker
 
 from scipy.optimize import curve_fit
 
-from plotting.fit_curve import (FIT_ABOVE_TRACE, VIEW_ZOOM_BELOW, draw_fit_curve,
-                                fit_group, fit_over_trace, fit_view_top,
-                                fit_warnings)
-from processing.quant_integration import baseline_and_signal, baseline_under
+from plotting import contributions
+from plotting.fit_curve import (FIT_ABOVE_TRACE, VIEW_ZOOM_BELOW, fit_group,
+                                fit_over_trace, fit_view_top, fit_warnings)
 
 import os
 from pathlib import Path
@@ -231,12 +230,46 @@ def _over_trace_text(ratio) -> str:
             f'signal')
 
 
+def _crop_legends(ax, grp, group_colors, drawn, shown):
+    """The groups, upper right, when there is more than one; upper left the
+    analytes of the crop (this one in bold) and the curves named after what
+    they are (fit, shape fit, components, baseline, Lorentz)."""
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    names = {str(g) for g, _y in grp}
+    if len(grp) > 1:
+        ax.add_artist(ax.legend(
+            handles=[Line2D([], [], color=_grp_color(group_colors, g),
+                            lw=1.6 if shown is not None and str(g) == str(shown) else 0.8,
+                            label=g) for g, _y in grp],
+            fontsize=6, loc='upper right', framealpha=0.7, edgecolor='#cccccc'))
+    order = list(reversed(drawn))
+    handles = [Patch(facecolor=c, alpha=contributions.FILL_ALPHA, edgecolor=c,
+                     lw=1.6 if sel else 0.6,
+                     label=(n if len(n) <= 26 else n[:25] + '\u2026'))
+               for n, c, sel in order]
+    seen = set()
+    for ln in ax.get_lines():
+        lb = ln.get_label()
+        if lb and not lb.startswith('_') and lb not in seen and lb not in names:
+            seen.add(lb)
+            handles.append(ln)
+    if handles:
+        leg = ax.legend(handles=handles, fontsize=5.5, loc='upper left',
+                        framealpha=0.7, edgecolor='#cccccc')
+        for txt, (_n, _c, sel) in zip(leg.get_texts(), order):
+            if sel:
+                txt.set_fontweight('bold')
+
+
 # ── Recorte espectral centrado no pico ───────────────────────────────────────
 def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
-                   width_in=5.0, height_in=3.0):
+                   width_in=5.0, height_in=3.0, rows=None):
     """
-    Recorte centrado em r['ppm']. Todas as amostras em baixa opacidade + média
-    por grupo a cheio. Se Lorentz: sobrepõe curva ajustada a vermelho tracejado.
+    Recorte centrado em r['ppm']: a média de cada grupo, e cada analito de
+    ``rows`` que cai no recorte desenhado pelo que deu o seu número
+    (``plotting.contributions``, ADR-103), este por cima e mais carregado.
+    Se Lorentz: sobrepõe curva ajustada a vermelho tracejado.
     """
     peak    = result.get('_peak') or {}
     ppm_ctr = result.get('ppm', 0.0)
@@ -260,27 +293,27 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         ppm_lo = min(ppm_lo, float(min(_focus)))
         ppm_hi = max(ppm_hi, float(max(_focus)))
         ppm_ctr = (ppm_lo + ppm_hi) / 2.0
+    # and a window shared by shapes, whole: the components it was cut into
+    _dcw = (result.get('_deconv') or {}).get('window')
+    if _dcw:
+        ppm_lo = min(ppm_lo, float(min(_dcw)))
+        ppm_hi = max(ppm_hi, float(max(_dcw)))
+        ppm_ctr = (ppm_lo + ppm_hi) / 2.0
     half_span = max((ppm_hi - ppm_lo) / 2.0, 0.015)
     pad       = max(half_span * 2.0, 0.05)
     win_lo, win_hi = ppm_ctr - pad, ppm_ctr + pad
 
     ppm_f = np.asarray(ppm, dtype=float)
-    step  = abs(float(ppm_f[1] - ppm_f[0])) if len(ppm_f) > 1 else 0.001
-    ppm_max = float(ppm_f.max())
-    i_lo  = max(0,            int((ppm_max - win_hi) / step))
-    i_hi  = min(len(ppm_f)-1, int((ppm_max - win_lo) / step))
+    # By membership, not by counting steps down from the axis maximum: that
+    # assumed δ stored decreasing, and on an axis stored increasing (the
+    # bench projects) cut the mirror image of the region -- another analyte.
+    _in_crop = np.nonzero((ppm_f >= win_lo) & (ppm_f <= win_hi))[0]
+    i_lo, i_hi = ((int(_in_crop.min()), int(_in_crop.max())) if _in_crop.size
+                  else (0, -1))
     if i_lo >= i_hi:
         i_lo, i_hi = max(0, lo_idx - 15), min(len(ppm_f)-1, hi_idx + 15)
 
     x = ppm_f[i_lo:i_hi + 1]
-
-    si = samples_info or []
-    n  = all_int.shape[1] if all_int.ndim > 1 else 1
-
-    _jr_frac     = result.get('_j_resolve_frac')
-    _show_deconv = (result.get('_used_j_resolve')
-                    and _jr_frac is not None
-                    and 0.0 < float(_jr_frac) < 1.0)
 
     fig, ax = plt.subplots(figsize=(width_in, height_in))
     fig.patch.set_facecolor('white')
@@ -289,13 +322,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     y_peak_max = -np.inf
     all_ys     = []
 
-    # Outline is ALWAYS the total observed peak — the same crop the user sees in
-    # the J-Resolve visualizer. For an NNLS-resolved analyte the fill below paints
-    # only THIS analyte's resolved fraction of that shared peak (blue outline =
-    # full peak, green fill = the analyte), mirroring the visualizer's stacked
-    # contribution fill. A non-deconv analyte fills its own whole peak in blue.
-    _INTEG_COL    = '#2e6da4'   # blue — peak outline / standard fill
-    _ANALYTE_FILL = '#43a047'   # green — this analyte's resolved portion
+    _INTEG_COL = '#2e6da4'      # the trace when the study has no groups
     # One mean per group, as the quantification stage draws them; blanks
     # and the global mean are not traces anybody measured. The fill and
     # every overlay sit on the group whose mean stands highest in the
@@ -323,9 +350,6 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     _y_mean_full = _best_full[i_lo:i_hi+1]
     if not _grp:
         ax.plot(x, _y_mean_full, color=_INTEG_COL, lw=1.5, zorder=3)
-    elif len(_grp) > 1:
-        ax.legend(fontsize=6, loc='upper right', framealpha=0.7,
-                  edgecolor='#cccccc')
     y_peak_max = float(np.max(_y_mean_full))
     all_ys.append(_y_mean_full)
 
@@ -344,128 +368,39 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         lo_f = max(lo_idx, i_lo)
         hi_f = min(hi_idx, i_hi)
 
-    # A multiplet quantified as a shape (ADR-013): what was integrated is the
-    # copy of the reference's shape that fits under the mean trace, not the
-    # trace itself. Filled as such, with the fitted curve over it.
-    _shape_ev = result.get('_shape_fit')
-    _shape_drawn = False
+    # Every analyte of the crop as what gave its number (ADR-103): this one
+    # heavier, the neighbours it shares the region with in their own colours,
+    # on the mean of the group the number was read on. A fit is the fitted
+    # signal on the baseline it stood on, a shape the copy of the reference
+    # that fits under the trace (ADR-013), a window resolved by shape every
+    # component as the fit placed it (ADR-015), an integral the window above
+    # the baseline subtracted, on the pieces summed.
+    _fg, _ = _best_group(_grp, _in_win, prefer=_shown)
+    _rows = list(rows) if rows is not None else []
+    if not any(r_ is result for r_ in _rows):
+        _rows.append(result)
+    _drawn = contributions.draw_analytes(
+        ax, _rows, result, ppm_f, _best_full, _fg, float(x.min()), float(x.max()),
+        contributions.stable_palette(_rows, ppm_f),
+        lambda amps: _group_amplitude(amps, samples_info, _fg))
+
     _fit_group = None
-    # An amount from a fit (joint fit, cascade) is drawn as the fit.
-    if result.get('_fit_curve'):
-        try:
-            _fg, _ = _best_group(_grp, _in_win, prefer=_shown)
-            _shape_drawn = draw_fit_curve(ax, result['_fit_curve'], _fg,
-                                          _ANALYTE_FILL)
-            _fit_group = _fg
-            if _shape_drawn:
-                ax.legend(fontsize=6, loc='upper left', framealpha=0.7,
-                          edgecolor='#cccccc')
-                _warn = fit_warnings(result['_fit_curve'])
-                _over = fit_over_trace(result['_fit_curve'], _fg, ppm_f,
-                                       _best_full)
-                # the card says the same as the figure: read back by it
-                result['_fit_over_trace'] = _over
-                if _over is not None and _over > FIT_ABOVE_TRACE:
-                    _warn.append(_over_trace_text(_over))
-                if _warn:
-                    ax.text(0.98, 0.97, '\n'.join(_warn),
-                            transform=ax.transAxes, fontsize=6, ha='right',
-                            va='top', color='#b71c1c',
-                            bbox=dict(fc='white', alpha=0.8, lw=0))
-        except Exception:
-            _shape_drawn = False
-    if (not _shape_drawn and _shape_ev
-            and result.get('_integ_mode', '') == 'Shape'):
-        try:
-            from processing.pattern_shape import _amplitude
-            from processing.quant_shape import shape_model
-            _built = shape_model({'shape_fit': _shape_ev}, ppm_f)
-            if _built is not None:
-                _xs, _ms, (_slo, _shi) = _built
-                _sel = (ppm_f >= _slo) & (ppm_f <= _shi)
-                _t = _best_full[_sel]
-                _sig = float(result.get('_noise_sigma') or 0.0)
-                if _sig <= 0:
-                    _sig = float(np.std(_t[:max(3, len(_t) // 10)]) or 1.0)
-                _a, _sup = _amplitude(_t, _ms, _sig)
-                _order = np.argsort(_xs)
-                ax.fill_between(_xs[_order], 0, _a * _ms[_order],
-                                alpha=0.35, color=_ANALYTE_FILL, linewidth=0,
-                                zorder=2)
-                _ex = result.get('_shape_explained')
-                _lbl = ('Shape fit'
-                        + (f'  (explains {100 * float(_ex):.0f}%)'
-                           if _ex is not None else ''))
-                ax.plot(_xs[_order], _a * _ms[_order], color='#2e7d32',
-                        lw=1.4, ls='--', zorder=5, label=_lbl)
-                ax.legend(fontsize=6, loc='upper left',
-                          framealpha=0.7, edgecolor='#cccccc')
-                _shape_drawn = True
-        except Exception:
-            _shape_drawn = False
+    if (contributions.method(result) == 'fit'
+            and contributions.fit_curves(result['_fit_curve'], _fg) is not None):
+        _fit_group = _fg
+        _warn = fit_warnings(result['_fit_curve'])
+        _over = fit_over_trace(result['_fit_curve'], _fg, ppm_f, _best_full)
+        # the card says the same as the figure: read back by it
+        result['_fit_over_trace'] = _over
+        if _over is not None and _over > FIT_ABOVE_TRACE:
+            _warn.append(_over_trace_text(_over))
+        if _warn:
+            ax.text(0.98, 0.97, '\n'.join(_warn),
+                    transform=ax.transAxes, fontsize=6, ha='right',
+                    va='top', color='#b71c1c',
+                    bbox=dict(fc='white', alpha=0.8, lw=0))
 
-    # A window resolved by shape (ADR-015): this analyte's component filled,
-    # the others' drawn, so the reader sees what the number was cut from.
-    _dc = result.get('_deconv')
-    if _dc and not _shape_drawn:
-        try:
-            from processing.quant_shared import component_from_record
-            _wlo, _whi = _dc['window']
-            _sel = (ppm_f >= _wlo) & (ppm_f <= _whi)
-            _xs = ppm_f[_sel]
-            _order = np.argsort(_xs)
-            _mid = result.get('hmdb_id')
-            _dg, _ = _best_group(_grp, _in_win, prefer=_shown)
-            for _rec in _dc.get('components', ()):
-                _c = component_from_record(_rec)
-                if _c is None:
-                    continue
-                _amps = (_dc.get('amplitudes') or {}).get(_rec['met_id']) or {}
-                if not _amps:
-                    continue
-                # the curve the fit used (shift, width and shape it chose),
-                # whose area times the amplitude is the table's area -- not
-                # the reference's model before the fit moved it
-                _m = np.asarray(_c.curve(_xs), dtype=float)
-                _y = _group_amplitude(_amps, samples_info, _dg) * _m
-                if _rec['met_id'] == _mid:
-                    ax.fill_between(_xs[_order], 0, _y[_order], alpha=0.35,
-                                    color=_ANALYTE_FILL, linewidth=0, zorder=2)
-                    ax.plot(_xs[_order], _y[_order], color='#2e7d32', lw=1.4,
-                            ls='--', zorder=5, label=_rec.get('label', ''))
-                else:
-                    ax.plot(_xs[_order], _y[_order], color='#c62828', lw=1.0,
-                            ls=':', zorder=4, label=_rec.get('label', ''))
-            ax.legend(fontsize=6, loc='upper left', framealpha=0.7,
-                      edgecolor='#cccccc')
-            _shape_drawn = True
-        except Exception:
-            _shape_drawn = False
-
-    # Single-colour fill of the integrated area (NNLS → this analyte's fraction).
-    if lo_f < hi_f and not _shape_drawn:
-        xf = ppm_f[lo_f:hi_f + 1]
-        yf = _best_full[lo_f:hi_f + 1]
-        _line_fracs = result.get('_jr_line_fracs') if _show_deconv else None
-        if _show_deconv and _line_fracs:
-            # Per-line fractions: paint each point by the fraction of its nearest
-            # predicted line, so legs that NNLS resolved differently show their own
-            # share — the same per-leg reality folded into the quantified area.
-            _lps = np.asarray([p for p, _ in _line_fracs], dtype=float)
-            _lfs = np.asarray([f for _, f in _line_fracs], dtype=float)
-            _near = np.argmin(np.abs(xf[:, None] - _lps[None, :]), axis=1)
-            yf = yf * _lfs[_near]
-        elif _show_deconv:
-            yf = yf * float(_jr_frac)
-        _fill_col = _ANALYTE_FILL if _show_deconv else _INTEG_COL
-        # Only the pieces the area was summed over: a foreign peak between
-        # two lines leaves a gap, and the gap is not painted.
-        _segs = result.get('_integ_segments') or []
-        _in_seg = None
-        if len(_segs) > 1:
-            _in_seg = np.zeros(xf.shape, dtype=bool)
-            for _a, _b in _segs:
-                _in_seg |= (xf >= min(_a, _b)) & (xf <= max(_a, _b))
+    if contributions.method(result) == 'integral' and lo_f < hi_f:
         # Who is who: the signal's own lines in the software's peak marker
         # (red, dotted), a foreign peak between them in light grey.
         for _lp in result.get('_line_ppms') or ():
@@ -481,30 +416,6 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
                     or result.get('_missing_lines') or ()):
             ax.axvline(_rl, color='#9e9e9e', lw=0.8, ls='--', alpha=0.9,
                        zorder=3)
-        # The area the number came from: between the trace and the local
-        # baseline the integration subtracted, only where the trace stands
-        # above it (processing.quant_integration.integrate_sample), on the
-        # pieces it summed.
-        _order_f = np.argsort(xf)
-        _use_bl = result.get('_local_baseline', True)
-        _anch = result.get('_baseline_anchors')
-        if _anch and _use_bl and not _show_deconv:
-            _base = baseline_under(xf, ppm_f, _best_full, _anch)
-        else:
-            _base = np.empty_like(yf)
-            _base[_order_f], _ = baseline_and_signal(yf[_order_f],
-                                                     local_baseline=_use_bl)
-        if _use_bl and xf.size >= 2:
-            ax.plot(xf, _base, color='#ff6666', lw=0.8, ls='--', alpha=0.7,
-                    zorder=3, label='baseline')
-        _above = yf >= _base
-        ax.fill_between(xf, _base, yf,
-                        where=(_above if _in_seg is None
-                               else (np.asarray(_in_seg) & _above)),
-                        alpha=0.35, color=_fill_col, linewidth=0, zorder=2)
-
-    # Média global para Lorentz overlay
-    y_mean = _best_full[i_lo:i_hi+1]
 
     # ── Overlay Lorentziana ───────────────────────────────────────────────
     lorentz_r2 = float('nan')
@@ -539,21 +450,10 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
             ax.plot(x_plot, baseline_plot + A * shape_plot,
                     color='#e53935', lw=1.4, ls='--', zorder=5,
                     label=f'Lorentz  R²={lorentz_r2:.4f}')
-            ax.legend(fontsize=6, loc='upper left',
-                      framealpha=0.7, edgecolor='#cccccc')
         except Exception:
             pass
 
-    if _show_deconv:
-        ax.text(0.02, 0.97,
-                f'JG-Deconv: {float(_jr_frac) * 100:.1f}% of peak',
-                transform=ax.transAxes, fontsize=6, va='top',
-                color='#1565C0',
-                bbox=dict(fc='white', alpha=0.75, lw=0))
-        if not (result.get('_lorentz') and
-                result.get('_integ_mode', '').lower() == 'lorentz'):
-            ax.legend(fontsize=6, loc='upper left',
-                      framealpha=0.7, edgecolor='#cccccc')
+    _crop_legends(ax, _grp, group_colors, _drawn, _shown)
 
     # Centrar Y: topo do pico a ~85%
     y_base = min((float(np.min(y)) for y in all_ys), default=0.0)
@@ -565,7 +465,7 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     # taller (a neighbour's peak): the axis is cut on the fit, the traces run
     # off it, and the figure says so.
     _view = (fit_view_top(result['_fit_curve'], _fit_group)
-             if _shape_drawn and _fit_group is not None else None)
+             if _fit_group is not None else None)
     if _view is not None and _view < VIEW_ZOOM_BELOW * ax.get_ylim()[1]:
         ax.set_ylim(min(0.0, y_base) - 0.04 * _view, _view)
         ax.text(0.02, 0.02, 'y axis cut on the fit: the traces run off it',
@@ -915,10 +815,10 @@ def _references_section(results, styles) -> list:
 # ── Bloco de 1 analito ───────────────────────────────────────────────────────
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
-                   crop_w_cm, crop_h_cm, unit='mM', precision=None):
+                   crop_w_cm, crop_h_cm, unit='mM', precision=None, rows=None):
     crop_fig, lorentz_r2 = _peak_crop_fig(
         ppm, all_int, r, samples_info, group_colors,
-        width_in=crop_w_cm * 0.55, height_in=crop_h_cm * 0.55)
+        width_in=crop_w_cm * 0.55, height_in=crop_h_cm * 0.55, rows=rows)
     crop_img = _fig_to_rl_image(crop_fig, crop_w_cm, crop_h_cm, dpi=130)
 
     conc   = r.get('conc_mm', float('nan'))
@@ -932,7 +832,9 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
         _cos = (r.get('_cosine_by_group') or {}).get(_sg)
         snr_s += f'  (group {_sg}' + (f', cosine {_cos:.2f}' if _cos is not None else '') + ')'
     _dg = r.get('_drawn_group')
-    if _dg is not None and str(_dg) != str(_sg):
+    if _dg is not None and _sg is None:
+        snr_s += f'; figure drawn on group {_dg}, where the fit found the most'
+    elif _dg is not None and str(_dg) != str(_sg):
         snr_s += (f'; figure drawn on group {_dg}, where the fit found the '
                   f'most (the fit holds next to none in {_sg})')
 
@@ -1347,7 +1249,7 @@ def generate_pdf(output_path: str, quant_stage, app,
             r, ppm, all_int, si, gc, theoretical,
             styles, avail_w,
             crop_w_cm=crop_w_cm, crop_h_cm=crop_h_cm, unit=unit,
-            precision=precision)
+            precision=precision, rows=results)
         spacer = Spacer(1, 0.15 * cm)
         story.append(KeepTogether([block, spacer]))
 

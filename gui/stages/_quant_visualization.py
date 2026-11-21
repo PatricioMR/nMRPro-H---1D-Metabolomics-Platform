@@ -12,8 +12,9 @@ import tkinter as tk
 import numpy as np
 import matplotlib.pyplot as plt
 
-from plotting.fit_curve import draw_fit_curve
-from processing.quant_integration import baseline_and_signal, baseline_under
+from plotting import contributions
+from plotting.fit_curve import (FIT_ABOVE_TRACE, fit_group, fit_over_trace,
+                                fit_warnings)
 
 from ._quant_reasons import short_reasons
 from ._quant_helpers import (
@@ -21,6 +22,11 @@ from ._quant_helpers import (
     _lorentz_amplitude, _lorentz_shape,
     _linear_baseline,
 )
+
+INK = '#1a1a19'
+# the view keeps at least this much spectrum on each side of the analyte's
+# region, so the neighbours that share it are in the picture
+VIEW_PAD_PPM = 0.02
 
 
 class _QuantVisMixin:
@@ -36,6 +42,7 @@ class _QuantVisMixin:
         r = next((x for x in self._quant_results
                   if x.get('hmdb_id', x['metabolite']) == iid), None)
         if r:
+            self._refresh_deconv_here()
             try:
                 self._draw_detail(r)
             except Exception as _e:
@@ -168,6 +175,71 @@ class _QuantVisMixin:
 
     # ── Detail plot ───────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _analytes_group(r, groups):
+        """The group whose mean the analytes are drawn on: the one the row's
+        SNR was read on, or for a fit the one ``fit_group`` picks (as the
+        PDF does); the first group when the row names none of them."""
+        g = r.get('_snr_group')
+        if r.get('_fit_curve'):
+            g = fit_group(r['_fit_curve'], g)
+        match = next((k for k in groups if g is not None and str(k) == str(g)), None)
+        return match if match is not None else next(iter(groups), None)
+
+    def _draw_analytes(self, ax, r, ppm, all_int, groups, group, lo, hi):
+        """Every quantified analyte between ``lo`` and ``hi`` as what produced
+        its number, on the mean of ``group``, with a legend naming them."""
+        from matplotlib.lines import Line2D
+        from matplotlib.patches import Patch
+        from gui.widgets.pdf_report import _group_amplitude
+        if group is None or all_int is None or all_int.ndim != 2:
+            return
+        cols = [i for i in groups[group] if i < all_int.shape[1]]
+        if not cols:
+            return
+        trace = np.mean(all_int[:, cols], axis=1)
+        rows = [x for x in self._quant_results
+                if x is r or not (x.get('_not_quantified') or x.get('_is_is'))]
+        palette = contributions.stable_palette(rows, ppm)
+        si = self.app.samples_info or []
+        drawn = contributions.draw_analytes(
+            ax, rows, r, ppm, trace, group, lo, hi, palette,
+            lambda amps: _group_amplitude(amps, si, group))
+        handles = [Line2D([], [], color=INK, lw=1.3, label=f'{group} mean')]
+        for name, col, is_sel in reversed(drawn):
+            short = name if len(name) <= 28 else name[:27] + '…'
+            handles.append(Patch(facecolor=col, alpha=contributions.FILL_ALPHA,
+                                 edgecolor=col, lw=2.0 if is_sel else 0.8,
+                                 label=short))
+        # outside the axes: inside it covers the traces
+        leg = ax.legend(handles=handles, fontsize=6.5, loc='upper left',
+                        bbox_to_anchor=(1.005, 1.0), borderaxespad=0.0,
+                        framealpha=0.85, edgecolor='#cccccc')
+        for txt, (_n, _c, is_sel) in zip(leg.get_texts()[1:], reversed(drawn)):
+            if is_sel:
+                txt.set_fontweight('bold')
+
+    @staticmethod
+    def _fit_notes(ax, r, ppm, all_int, groups, group):
+        """What the reader must know before trusting a fitted amount, as the
+        report writes it: a fit standing above the trace it was fitted to,
+        a fitted signal other than the one elected, signals held at the
+        position limit."""
+        fit = r.get('_fit_curve')
+        if contributions.method(r) != 'fit' or group is None:
+            return
+        notes = fit_warnings(fit)
+        cols = [i for i in groups.get(group, ()) if i < all_int.shape[1]]
+        if cols:
+            over = fit_over_trace(fit, group, ppm, np.mean(all_int[:, cols], axis=1))
+            if over is not None and over > FIT_ABOVE_TRACE:
+                notes.append(f'the fit holds {over:.2f}x the area the trace '
+                             f'has under this signal')
+        if notes:
+            ax.text(0.98, 0.97, '\n'.join(notes), transform=ax.transAxes,
+                    fontsize=7, ha='right', va='top', color='#b71c1c',
+                    bbox=dict(fc='white', alpha=0.8, lw=0), zorder=7)
+
     def _draw_detail(self, r):
         ppm_arr = self.app.ppm
         # Draw the SAME (baseline-corrected) matrix the integration used, so the
@@ -198,6 +270,7 @@ class _QuantVisMixin:
         cmap = plt.cm.get_cmap('tab10', max(len(groups), 1))
         g_colors = {g: (_app_colors.get(g) or cmap(i))
                     for i, g in enumerate(groups)}
+        shown_g = self._analytes_group(r, groups)
 
         # A row drawn over a region rather than around a detected peak:
         # a lipid window, or a cascade row, which has no peak of its own --
@@ -241,26 +314,25 @@ class _QuantVisMixin:
                     lo_i = int(_idx_mw.min())
                     hi_i = int(_idx_mw.max())
 
-            pad  = max(8, (hi_i - lo_i))
-            lo_e = max(0, lo_i - pad)
-            hi_e = min(len(ppm_arr) - 1, hi_i + pad)
+            # the view holds the whole of what the number was cut from (a
+            # shared window, a fitted signal) and the neighbours around it
+            _ext = [float(ppm_arr[lo_i]), float(ppm_arr[hi_i])]
+            if r.get('_deconv'):
+                _ext += [float(v) for v in r['_deconv']['window']]
+            if (r.get('_fit_curve') or {}).get('focus'):
+                _ext += [float(v) for v in r['_fit_curve']['focus']]
+            _num = contributions.number_region(r, ppm_arr, shown_g)
+            if _num:
+                _ext += list(_num)
+            _idx_ext = np.where((ppm_arr >= min(_ext)) & (ppm_arr <= max(_ext)))[0]
+            _e_lo = int(_idx_ext.min()) if _idx_ext.size else lo_i
+            _e_hi = int(_idx_ext.max()) if _idx_ext.size else hi_i
+            _step = abs(float(ppm_arr[1] - ppm_arr[0])) if len(ppm_arr) > 1 else 1.0
+            pad  = max(8, (hi_i - lo_i), int(VIEW_PAD_PPM / _step))
+            lo_e = max(0, _e_lo - pad)
+            hi_e = min(len(ppm_arr) - 1, _e_hi + pad)
             x_view = ppm_arr[lo_e:hi_e + 1]
             x_reg  = ppm_arr[lo_i:hi_i + 1]
-
-            # J-Resolve fractional deconvolution: fraction of this peak
-            # attributed to this metabolite by NNLS (0 < frac ≤ 1).
-            # When < 1, show raw in grey background + scaled contribution in colour.
-            _jr_frac = r.get('_j_resolve_frac')
-            _show_deconv = (_jr_frac is not None
-                            and 0.0 < _jr_frac < 1.0
-                            and r.get('_used_j_resolve'))
-
-            if _show_deconv:
-                # Grey background = raw full peak (context for the reader)
-                _y_raw_mean = (np.mean(all_int[lo_e:hi_e + 1, :], axis=1)
-                               if all_int.ndim > 1 else all_int[lo_e:hi_e + 1])
-                ax1.plot(x_view, _y_raw_mean, color='#aaaaaa', lw=1.0,
-                         alpha=0.45, ls='--', zorder=1, label='Raw (shared signal)')
 
             for g, idxs in groups.items():
                 col = g_colors[g]
@@ -279,20 +351,19 @@ class _QuantVisMixin:
                             x_src[sort_idx], y_s[sort_idx])
                         if x_view[0] > x_view[-1]:   # NMR: decreasing ppm
                             y_aligned = y_aligned[::-1]
-                        if _show_deconv:
-                            y_aligned = y_aligned * _jr_frac
                         ax1.plot(x_view, y_aligned, color=col, lw=0.6, alpha=0.35)
                         ys.append(y_aligned)
                     else:
-                        y_plot = y_s * _jr_frac if _show_deconv else y_s
-                        ax1.plot(x_view, y_plot, color=col, lw=0.6, alpha=0.35)
-                        ys.append(y_plot)
+                        ax1.plot(x_view, y_s, color=col, lw=0.6, alpha=0.35)
+                        ys.append(y_s)
                 if ys:
                     gm = np.mean(ys, axis=0)
-                    _shown = r.get('_snr_group') is not None and str(g) == str(r.get('_snr_group'))
-                    ax1.plot(x_view, gm, color=col, lw=2.6 if _shown else 1.4,
-                             alpha=0.95 if _shown else 0.7,
-                             label=(f'{g}  (SNR, cosine read here)' if _shown else g))
+                    _shown = g == shown_g
+                    # the mean the analytes are drawn on, in ink as in the
+                    # strategies figure; the other groups in their colours
+                    ax1.plot(x_view, gm, color=INK if _shown else col,
+                             lw=1.3 if _shown else 1.0,
+                             alpha=1.0 if _shown else 0.7, zorder=4)
 
                     if integ_mode == 'Lorentz':
                         s_idxs = [i for i in idxs if i < n_s]
@@ -417,40 +488,11 @@ class _QuantVisMixin:
                 _in_seg = np.zeros(x_reg.shape, dtype=bool)
                 for _a, _b in _segs:
                     _in_seg |= (x_reg >= min(_a, _b)) & (x_reg <= max(_a, _b))
-            # The area the number came from: between the trace and the local
-            # baseline the integration subtracted, and only where the trace
-            # stands above it -- what runs under the baseline counted
-            # nothing (quant_integration.integrate_sample), as the PDF
-            # draws it.
-            _use_bl = r.get('_local_baseline', True)
-            _anch = r.get('_baseline_anchors')
-            _fit = r.get('_fit_curve')
-            _ord_r = np.argsort(x_reg)
-            for g, idxs in groups.items():
-                s_idxs = [i for i in idxs if i < n_s]
-                # an amount a fit gave is drawn as the fit, not as a window
-                if _fit and draw_fit_curve(ax1, _fit, g,
-                                           g_colors.get(g, '#888'),
-                                           label=f'{g} {_fit.get("label", "fit")}',
-                                           alpha=0.18):
-                    continue
-                if s_idxs:
-                    y_g = np.mean(all_int[lo_i:hi_i+1, s_idxs], axis=1)
-                    if _show_deconv:
-                        y_g = y_g * _jr_frac
-                    if _anch and _use_bl and not _show_deconv:
-                        _b = baseline_under(
-                            x_reg, ppm_arr,
-                            np.mean(all_int[:, s_idxs], axis=1), _anch)
-                    else:
-                        _b = np.empty_like(y_g)
-                        _b[_ord_r], _ = baseline_and_signal(
-                            y_g[_ord_r], local_baseline=_use_bl)
-                    _above = y_g >= _b
-                    ax1.fill_between(x_reg, _b, y_g,
-                                     where=(_above if _in_seg is None
-                                            else (_in_seg & _above)),
-                                     alpha=0.14, color=g_colors.get(g, '#888'))
+            # Every analyte of the view as what produced its number
+            # (plotting.contributions): this one heavier, its neighbours in
+            # their own colours, on the mean of ``shown_g``.
+            self._draw_analytes(ax1, r, ppm_arr, all_int, groups, shown_g,
+                                float(x_view.min()), float(x_view.max()))
             _bbs = r.get('_below_baseline_share')
             if _bbs is not None and float(_bbs) >= 0.25:
                 ax1.text(0.98, 0.93,
@@ -460,17 +502,14 @@ class _QuantVisMixin:
                          va='top', color='#b71c1c',
                          bbox=dict(fc='white', alpha=0.75, lw=0))
 
-            if _show_deconv:
-                ax1.text(0.02, 0.93,
-                         f'JG-Deconv: {_jr_frac * 100:.1f}% of signal',
-                         transform=ax1.transAxes, fontsize=7,
-                         va='top', color='#1565C0',
-                         bbox=dict(fc='white', alpha=0.75, lw=0))
-
-            ppm_lo = float(ppm_arr[lo_i])
-            ppm_hi = float(ppm_arr[hi_i])
+            # The bounds of what the number was read from -- a fit's focus
+            # signal, a shape's window, a shared window -- not the anchor
+            # peak's own feet, which a fit or a shape runs past.
+            ppm_lo, ppm_hi = (_num if _num else
+                              (float(ppm_arr[lo_i]), float(ppm_arr[hi_i])))
             for xv in (ppm_lo, ppm_hi):
                 ax1.axvline(xv, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
+            self._fit_notes(ax1, r, ppm_arr, all_int, groups, shown_g)
             if _in_seg is not None:
                 for _a, _b in _segs:
                     for xv in (_a, _b):
@@ -502,10 +541,10 @@ class _QuantVisMixin:
             v_hi = float(x_view.max())
             ax1.set_xlim(v_hi, v_lo)
 
-            # Clamp Y-axis to the integration window so out-of-window peaks
-            # (visible only as context) don't dominate the scale.
-            _y_in_win = (all_int[lo_i:hi_i + 1, :]
-                         if all_int.ndim > 1 else all_int[lo_i:hi_i + 1])
+            # Clamp Y-axis to what the number was cut from so out-of-window
+            # peaks (visible only as context) don't dominate the scale.
+            _y_in_win = (all_int[_e_lo:_e_hi + 1, :]
+                         if all_int.ndim > 1 else all_int[_e_lo:_e_hi + 1])
             if _y_in_win.size > 0:
                 _y_top = float(np.max(_y_in_win))
                 ax1.set_ylim(bottom=0, top=max(_y_top * 1.25, 1e-3))
@@ -527,17 +566,15 @@ class _QuantVisMixin:
                         ax1.plot(x_view, y_s, color=col, lw=0.6, alpha=0.35)
                     if ys:
                         gm = np.mean(ys, axis=0)
-                        ax1.plot(x_view, gm, color=col, lw=1.8, alpha=0.95, label=g)
+                        _shown = g == shown_g
+                        ax1.plot(x_view, gm, color=INK if _shown else col,
+                                 lw=1.3 if _shown else 1.0,
+                                 alpha=1.0 if _shown else 0.7, zorder=4)
 
-                _fit = r.get('_fit_curve')
-                for g in groups:
-                    if _fit:
-                        draw_fit_curve(ax1, _fit, g, g_colors.get(g, '#888'),
-                                       label=f'{g} {_fit.get("label", "fit")}',
-                                       alpha=0.18)
+                self._draw_analytes(ax1, r, ppm_arr, all_int, groups, shown_g,
+                                    float(x_view.min()), float(x_view.max()))
                 for lo_rg, hi_rg in region_marks:
                     lo_rg, hi_rg = float(min(lo_rg, hi_rg)), float(max(lo_rg, hi_rg))
-                    ax1.axvspan(lo_rg, hi_rg, color='#1565C0', alpha=0.13, zorder=0)
                     ax1.axvline(lo_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
                     ax1.axvline(hi_rg, color='#1565C0', lw=1.0, ls='--', alpha=0.6)
                 # the analyte's own lines, as the peak view marks them
@@ -549,10 +586,15 @@ class _QuantVisMixin:
                 ax1.set_xlim(float(x_view.max()), float(x_view.min()))
 
         ax1.set_xlabel('δ (ppm)', fontsize=8)
-        ax1.set_ylabel('Intensity', fontsize=8)
+        ax1.set_ylabel('Intensity (a.u.)', fontsize=8)
         name  = r['metabolite']
         _mw_t = r.get('_multiplet_window')
-        if (integ_mode in ('Multiplet', 'Cascade') and _mw_t
+        _how = contributions.method_name(r) or integ_mode
+        _num_t = (contributions.number_region(r, ppm_arr, shown_g)
+                  if ppm_arr is not None else None)
+        if _num_t and contributions.method(r) != 'integral':
+            ppm_s = f"{_num_t[0]:.4f}–{_num_t[1]:.4f}"
+        elif (integ_mode in ('Multiplet', 'Cascade') and _mw_t
                 and _mw_t[0] is not None):
             _t_lo = min(float(_mw_t[0]), float(_mw_t[1]))
             _t_hi = max(float(_mw_t[0]), float(_mw_t[1]))
@@ -563,7 +605,7 @@ class _QuantVisMixin:
             ppm_s = f"{min(region_window):.4f}-{max(region_window):.4f}"
         else:
             ppm_s = '?'
-        ax1.set_title(f'{name}  {ppm_s} ppm  [{integ_mode}]',
+        ax1.set_title(f'{name}  {ppm_s} ppm  [{_how}]',
                       fontsize=9, fontweight='bold')
         ax1.tick_params(labelsize=7)
         ax1.grid(True, alpha=0.2, ls=':')
@@ -623,7 +665,8 @@ class _QuantVisMixin:
         conc      = r.get('conc_mm', float('nan'))
         stat      = r.get('status', 'good')
         cv_groups = r.get('cv_by_group', {})
-        integ_lbl = {'Area': 'Trapz', 'Lorentz': 'Lorentz Fit'}.get(integ_mode, integ_mode)
+        integ_lbl = (contributions.method_name(r)
+                     or {'Area': 'Trapz', 'Lorentz': 'Lorentz Fit'}.get(integ_mode, integ_mode))
         if r.get('_used_mcr'):
             integ_lbl = 'MCR-ALS'
         bg = '#f0fff0' if stat == 'good' else '#fffde7' if stat == 'warn' else '#fff0f0'
@@ -639,7 +682,10 @@ class _QuantVisMixin:
                     '#856404' if _snr_global > 5 else '#9a0000')
 
         _mw_c = r.get('_multiplet_window')
-        if integ_mode == 'Multiplet' and _mw_c and _mw_c[0] is not None:
+        if _num_t and contributions.method(r) != 'integral':
+            _ppm_label = 'Region'
+            _ppm_value = f"{_num_t[0]:.4f}–{_num_t[1]:.4f}"
+        elif integ_mode == 'Multiplet' and _mw_c and _mw_c[0] is not None:
             _c_lo = min(float(_mw_c[0]), float(_mw_c[1]))
             _c_hi = max(float(_mw_c[0]), float(_mw_c[1]))
             _ppm_label = 'Region'
@@ -656,10 +702,6 @@ class _QuantVisMixin:
             ('Norm',         norm_mode,                                          '#555'),
             ('Mean SNR',     f"{_snr_global:.1f}",                              _snr_col),
         ]
-        if r.get('_used_j_resolve') and r.get('_j_resolve_frac') is not None:
-            _jr_f = r['_j_resolve_frac']
-            _jr_col = '#1565C0'
-            top_card.append(('JG-Deconv', f'{_jr_f * 100:.1f}% of signal', _jr_col))
         if r.get('_used_mcr') and r.get('_mcr'):
             mcr_m   = r['_mcr'].get('metrics', {})
             lof     = mcr_m.get('lof', float('nan'))
@@ -705,9 +747,6 @@ class _QuantVisMixin:
                             'Good: > 0.99  |  Warn: 0.95–0.99  |  Poor: < 0.95',
             'Iters':        'Number of MCR-ALS iterations until convergence\n'
                             '(max 200). Fewer iterations = faster convergence.',
-            'JG-Deconv':    'Fraction of this shared peak attributed to this metabolite\n'
-                            'by NNLS deconvolution in JG-Deconv.\n'
-                            'Spectrum and area are scaled by this fraction.',
             'Conc (mM)':    'Mean concentration across non-BLK samples (mM).\n'
                             'C = (A_met / nH_met) / (A_IS / nH_IS) × C_IS × dil',
             'Area %':       'Mean area as % of total spectrum area (non-BLK).',

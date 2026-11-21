@@ -42,11 +42,11 @@ import numpy as np
 from validation.quant_steps import FIELD, _path
 from validation.replicates import reported
 from validation.validation_folder import subfolder
+from plotting import contributions as pc
+from plotting.contributions import MUTED, SLOTS
+from plotting.contributions import inside as _inside, method as _method, region_bar as _bar, span as _span
 
-INK, MUTED, SURFACE = '#1a1a19', '#6b6a64', '#ffffff'
-# categorical slots in fixed order (dataviz reference palette), one per analyte
-SLOTS = ('#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948')
-WINDOW_FILL = '#ecebe6'
+INK, SURFACE = '#1a1a19', '#ffffff'
 BAND_FILL = '#e9f1fc'
 STEPS = (('base', 'Base: window integration with neighbour correction'),
          ('plus_a', '+ A: shared-window decomposition'),
@@ -54,30 +54,6 @@ STEPS = (('base', 'Base: window integration with neighbour correction'),
          ('full', '+ C: residual cascade (complete engine)'))
 # the room the spectrum panels keep above the trace for the insets
 HEADROOM = 1.55
-
-
-def _method(row):
-    """What produced the row's number, in the order ``pdf_report`` reads it."""
-    if row.get('_fit_curve') and (row.get('_joint_fit') or row.get('_by_cascade')):
-        return 'fit'
-    if row.get('_integ_mode') == 'Shape' and row.get('_shape_fit'):
-        return 'shape'
-    if row.get('_deconv'):
-        return 'deconv'
-    return 'integral'
-
-
-def _span(row, ppm):
-    if _method(row) == 'fit':
-        return row['_fit_curve']['focus']
-    mw = row.get('_multiplet_window')
-    if mw:
-        return mw
-    return ppm[row['start_idx']], ppm[row['end_idx']]
-
-
-def _inside(span, lo, hi):
-    return span is not None and min(span) < hi and max(span) > lo
 
 
 def _where(row, ppm):
@@ -95,131 +71,17 @@ def _error(row, truth, group):
     return (got / float(want) - 1.0 if want else np.nan), got
 
 
-def _fit_curves(fit, group):
-    """(x, base, focus top) of a fit record for ``group``, as
-    ``plotting.fit_curve.draw_fit_curve`` builds them; None without an
-    amplitude there."""
-    g = str(group)
-    a = (fit.get('amp_by_group') or {}).get(g)
-    unit = (fit.get('unit_by_group') or {}).get(g)
-    if a is None or unit is None:
-        return None
-    x = np.asarray(fit['ppm'], dtype=float)
-    o = np.argsort(x)
-    base = (fit.get('baseline_by_group') or {}).get(g)
-    base = np.zeros_like(x) if base is None else np.asarray(base, dtype=float)
-    focus = (fit.get('focus_unit_by_group') or {}).get(g, unit)
-    return x[o], base[o], (base + float(a) * np.asarray(focus, dtype=float))[o]
-
-
-def _draw_fit(ax, row, truth, col, group, lo, hi, kept=False):
-    """A joint fit or a cascade entry: the signal the area is read from,
-    filled (hatched when the analyte is not in the tube); outlined only when
-    it is a joint fit the cascade step kept."""
-    cur = _fit_curves(row['_fit_curve'], group)
-    if cur is None:
-        return
-    xs, base, top = cur
-    keep = (xs >= lo - 0.05) & (xs <= hi + 0.05)
-    xs, base, top = xs[keep], base[keep], top[keep]
-    if kept:
-        ax.plot(xs, top, color=col, lw=1.1, ls='--', zorder=3)
-        return
-    false = row['hmdb_id'] not in truth
-    ax.fill_between(xs, base, top, color=col, alpha=0.45, lw=0, zorder=2,
-                    hatch='////' if false else None, edgecolor=col if false else None)
-    ax.plot(xs, top, color=col, lw=1.0, zorder=3)
-
-
-def _draw_shape(ax, row, ppm, trace, col):
-    """A multiplet quantified by its shape: the copy of the reference shape
-    that fits under the trace (``pdf_report._peak_crop_fig``)."""
-    from processing.pattern_shape import _amplitude
-    from processing.quant_shape import shape_model
-    built = shape_model({'shape_fit': row['_shape_fit']}, ppm)
-    if built is None:
-        return
-    xs, ms, (slo, shi) = built
-    t = trace[(ppm >= slo) & (ppm <= shi)]
-    sig = float(row.get('_noise_sigma') or 0.0) or float(np.std(t[:max(3, len(t) // 10)]) or 1.0)
-    a, _sup = _amplitude(t, ms, sig)
-    o = np.argsort(xs)
-    ax.fill_between(xs[o], 0, a * ms[o], color=col, alpha=0.45, lw=0, zorder=2)
-    ax.plot(xs[o], a * ms[o], color=col, lw=1.0, zorder=3)
-
-
-def _draw_integral(ax, row, ppm, trace, col):
-    """The window above the baseline the integration subtracted, on the
-    pieces it summed (``pdf_report._peak_crop_fig``)."""
-    from processing.quant_integration import baseline_and_signal, baseline_under
-    lo, hi = sorted(_span(row, ppm))
-    sel = (ppm >= lo) & (ppm <= hi)
-    xf, yf = ppm[sel], trace[sel]
-    use_bl = row.get('_local_baseline', True)
-    if row.get('_baseline_anchors') and use_bl:
-        base = baseline_under(xf, ppm, trace, row['_baseline_anchors'])
-    else:
-        o = np.argsort(xf)
-        base = np.empty_like(yf)
-        base[o], _ = baseline_and_signal(yf[o], local_baseline=use_bl)
-    where = yf >= base
-    segs = row.get('_integ_segments') or []
-    if len(segs) > 1:
-        piece = np.zeros(xf.shape, dtype=bool)
-        for a, b in segs:
-            piece |= (xf >= min(a, b)) & (xf <= max(a, b))
-        where &= piece
-    ax.fill_between(xf, base, yf, where=where, color=col, alpha=0.5, lw=0, zorder=2)
-
-
 def _draw_window(ax, dc, ppm, group, colour_of, label_at=None):
-    """A shared window resolved by shapes: the window shaded and every
-    component as the decomposition placed it (``pdf_report``); a component
-    ``colour_of`` gives no colour is drawn as a grey dotted line."""
     from gui.widgets.pdf_report import _group_amplitude
-    from processing.quant_shared import component_from_record
     from validation import mixture_bench as mb
-    wlo, whi = dc['window']
-    ax.axvspan(wlo, whi, color=WINDOW_FILL, zorder=0)
-    if label_at is not None:
-        ax.text(label_at + 0.002, 0.45, f'shared window\n{wlo:.3f}–{whi:.3f} ppm',
-                transform=ax.get_xaxis_transform(), ha='right', va='top', fontsize=8.5, color=MUTED)
-    sel = (ppm >= wlo) & (ppm <= whi)
-    xs = ppm[sel]
-    for rec in dc.get('components', ()):
-        c = component_from_record(rec)
-        amps = (dc.get('amplitudes') or {}).get(rec['met_id']) or {}
-        if c is None or not amps:
-            continue
-        y = _group_amplitude(amps, mb.SAMPLES, group) * np.asarray(c.curve(xs), dtype=float)
-        col = colour_of(rec['met_id'])
-        if col is None:
-            ax.plot(xs, y, color=MUTED, lw=0.8, ls=':', zorder=3)
-            continue
-        ax.fill_between(xs, 0, y, color=col, alpha=0.45, lw=0, zorder=2)
-        ax.plot(xs, y, color=col, lw=1.0, zorder=3)
-
-
-def _bar(ax, span, col, level, lo, hi):
-    """The region selected for an analyte, a bar at the top of the panel, cut
-    at the edges of the view."""
-    a, b = max(min(span), lo), min(max(span), hi)
-    if a < b:
-        y = 0.97 - 0.035 * level
-        ax.plot([a, b], [y, y], transform=ax.get_xaxis_transform(), color=col, lw=3.0,
-                solid_capstyle='butt', zorder=6)
+    pc.draw_window(ax, dc, ppm, lambda amps: _group_amplitude(amps, mb.SAMPLES, group),
+                   colour_of, label_at=label_at)
 
 
 def _draw_row(ax, x, vid, truth, ppm, trace, col, group, lo, hi):
-    """Draw what produced one row's number; a shared window is drawn by the
-    caller, once for all its components."""
-    m = _method(x)
-    if m == 'fit':
-        _draw_fit(ax, x, truth, col, group, lo, hi, kept=vid == 'full' and not x.get('_by_cascade'))
-    elif m == 'shape':
-        _draw_shape(ax, x, ppm, trace, col)
-    elif m == 'integral':
-        _draw_integral(ax, x, ppm, trace, col)
+    pc.draw_row(ax, x, ppm, trace, group, col, lo, hi,
+                kept=vid == 'full' and not x.get('_by_cascade'),
+                false=x['hmdb_id'] not in truth)
 
 
 def _inset(ax, slot, x, vid, truth, ppm, trace, col, group, name):

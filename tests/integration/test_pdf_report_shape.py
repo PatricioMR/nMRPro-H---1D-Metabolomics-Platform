@@ -398,3 +398,22 @@ def test_without_pqn_the_report_adds_nothing():
     qs, app = _pqn_stage({0: 1.0, 3: 0.5}, norm='IS')
     cells = _cells(_report()._params_table(qs, app))
     assert not any(str(r[0]).startswith('PQN') for r in cells)
+
+
+def test_the_crop_is_the_analytes_region_on_an_axis_stored_increasing():
+    """The bench projects store δ increasing. Counting steps down from the
+    axis maximum cut the mirror image of the region there: an analyte at
+    2.43 ppm was drawn over 7.1 ppm."""
+    if not _real_matplotlib():
+        pytest.skip('matplotlib is stubbed in this session')
+    import matplotlib
+    matplotlib.use('Agg')
+    ppm = np.linspace(-0.5, 10.0, 70001)
+    y = 100.0 / (1.0 + ((ppm - 2.43) / 0.002) ** 2)
+    X = np.column_stack([y, y])
+    row = {'metabolite': 'X', 'hmdb_id': 'X', 'ppm': 2.43,
+           '_integ_mode': 'Multiplet', '_multiplet_window': [2.425, 2.435]}
+    for axis, data in ((ppm, X), (ppm[::-1], X[::-1])):
+        fig, _r2 = _report()._peak_crop_fig(axis, data, row, [], {})
+        lo, hi = sorted(fig.axes[0].get_xlim())
+        assert lo < 2.43 < hi, (lo, hi)

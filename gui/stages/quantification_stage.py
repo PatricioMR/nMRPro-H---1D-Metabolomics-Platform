@@ -432,9 +432,18 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         # no longer reaches the engine.
         self.max_disagreement_var = tk.DoubleVar(
             value=QUANTIFICATION['max_disagreement_pct'])
-        ttk.Button(s2, text='Review deconvolution…',
-                   command=lambda: self._open_deconvolution_window()).pack(
-                       anchor=tk.W, padx=4, pady=(1, 3))
+        self._deconv_btn = ttk.Button(
+            s2, text='Review deconvolution…',
+            command=lambda: self._open_deconvolution_window(
+                self._selected_review_id()))
+        self._deconv_btn.pack(anchor=tk.W, padx=4, pady=(1, 0))
+        # what the review holds, so the analyst sees there is something to
+        # look at before opening it
+        self._deconv_info = ttk.Label(
+            s2, text='Run the quantification to see what was deconvolved.',
+            font=('Arial', 8), foreground='#777', wraplength=300,
+            justify=tk.LEFT)
+        self._deconv_info.pack(anchor=tk.W, padx=8, pady=(0, 3))
 
         ttk.Separator(s2, orient='horizontal').pack(fill=tk.X, pady=(6, 2))
         ic_row0 = ttk.Frame(s2); ic_row0.pack(fill=tk.X, pady=1)
@@ -701,6 +710,13 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
         self._tb_spec = NavigationToolbar2Tk(self._cv_spec, f_spec, pack_toolbar=False)
         self._tb_spec.update()
         self._tb_spec.pack(side=tk.BOTTOM, fill=tk.X)
+        # from the figure straight to the review of what it shows
+        self._deconv_here_btn = ttk.Button(
+            self._tb_spec, text='Review this deconvolution ▸',
+            command=lambda: self._open_deconvolution_window(
+                self._selected_review_id()))
+        self._deconv_here_btn.pack(side=tk.RIGHT, padx=4)
+        self._deconv_here_btn.config(state='disabled')
         self._cv_spec.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
         # Bar chart frame
@@ -836,6 +852,40 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             stat))
             except Exception as _ins_err:
                 print(f'[Quant tree] insert failed for {iid!r}: {_ins_err}')
+        self._refresh_deconv_button()
+
+    def _refresh_deconv_button(self):
+        """The review button says how much there is to review; the figure's
+        button is live when the selected analyte was deconvolved."""
+        from processing.deconv_review import counts_text, row_counts
+        btn = getattr(self, '_deconv_btn', None)
+        if btn is None:
+            return
+        rows = self._quant_results or []
+        c = row_counts(rows)
+        n = sum(c.values())
+        btn.config(text=f'Review deconvolution ({n})…' if n else 'Review deconvolution…')
+        self._deconv_info.config(
+            text=(counts_text(c) if n else
+                  'Nothing was deconvolved.' if rows else
+                  'Run the quantification to see what was deconvolved.'))
+        self._refresh_deconv_here()
+
+    def _selected_review_id(self):
+        """The selected row's id when the review lists it, else None."""
+        from processing.deconv_review import kind_of
+        tree = getattr(self, '_tree', None)
+        sel = tree.selection() if tree is not None else ()
+        if not sel:
+            return None
+        r = next((x for x in self._quant_results or ()
+                  if str(x.get('hmdb_id', x.get('metabolite'))) == sel[0]), None)
+        return str(r.get('hmdb_id')) if r is not None and kind_of(r) else None
+
+    def _refresh_deconv_here(self):
+        b = getattr(self, '_deconv_here_btn', None)
+        if b is not None:
+            b.config(state='normal' if self._selected_review_id() else 'disabled')
 
     def _on_tree_right_click(self, event):
         """Show context menu on right-click in quantification tree."""

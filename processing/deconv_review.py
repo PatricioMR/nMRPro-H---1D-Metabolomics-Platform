@@ -323,6 +323,20 @@ def counts(items) -> dict:
     return out
 
 
+def row_counts(rows) -> dict:
+    """``counts`` straight from the quantification rows, by ``kind_of``: what
+    the review will list, without building its items."""
+    return counts([{'kind': k} for k in map(kind_of, rows or ()) if k is not None])
+
+
+def counts_text(c) -> str:
+    """The review's contents in a line: shared windows, joint fits, cascade,
+    no number, and the rejected when there are any."""
+    return (f"{c[KIND_SHARED]} shared window(s) · {c[KIND_JOINT]} joint fit · "
+            f"{c[KIND_CASCADE]} cascade · {c[KIND_CANDIDATE]} with no number"
+            + (f" · {c[KIND_REJECTED]} rejected" if c[KIND_REJECTED] else ''))
+
+
 def change_summary(before, after, *, moved=0.10) -> dict:
     """What a re-quantification changed, by metabolite id, between two row
     lists: ``{'entered': [names], 'left': [names], 'moved': [(name, ratio)],

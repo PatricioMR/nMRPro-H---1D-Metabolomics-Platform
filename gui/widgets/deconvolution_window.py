@@ -12,9 +12,12 @@ and the analyst's say over it:
   No number       identified, but the fit could not place it / the part that
                   is its own is too small (a candidate, not an identification)
 
-For each one the figure draws the spectrum of a group, the analyte filled, the
-others that stand there dotted, the baseline, the sum, and what the fit leaves
-unexplained -- the curves the fit records carry, the ones the report draws. The
+For each one the figure draws the spectrum of a group, every analyte that
+stands there filled in its own colour -- the colour it has in the stage's
+viewer and in the report (``plotting.contributions.stable_palette``), this one
+heavier, its name in that colour in the table below -- the baseline, the sum,
+and what the fit leaves unexplained: the curves the fit records carry, the
+ones the report draws. The
 analyst can accept (quantify it over what the engine refused), reject (leave
 it out of the election, the fit and the cascade) or keep the engine's choice;
 for a shared window also leave an analyte out of it or keep it whole.
@@ -34,16 +37,16 @@ import numpy as np
 
 from processing.deconv_review import (
     KIND_CANDIDATE, KIND_CASCADE, KIND_HELP, KIND_JOINT, KIND_REJECTED,
-    KIND_SHARED, KIND_TEXT, clean_decision, counts, decisions_changed,
+    KIND_SHARED, KIND_TEXT, clean_decision, counts, counts_text, decisions_changed,
     change_summary, change_text, describe_decision, item_window, region_curves,
     review_items, set_decision, unexplained_share, VIEW_PAD_PPM)
 from processing.quant_shared import (
     SEPARABLE_MIN, component_curves, refit_record)
 from processing.sample_selection import included_sample_indices
+from plotting import contributions
 from plotting.fit_curve import fit_group
 
-_OWNER = '#2e7d32'
-_OTHER = '#c62828'
+_INK = '#1a1a19'
 _SUM = '#333333'
 _LEFT = '#8d6e63'
 _BASE = '#ff8a65'
@@ -52,6 +55,37 @@ _DOTS = {0: '—', 1: '●', 2: '●●', 3: '●●●'}
 # What a quantified row at each confidence looks like in the list.
 _KIND_ORDER = (KIND_SHARED, KIND_JOINT, KIND_CASCADE, KIND_CANDIDATE,
                KIND_REJECTED)
+
+
+def measured_matrix(qs):
+    """``(ppm, X, included)``: the spectrum the run measured on -- the
+    corrected one only when the run integrated on the baseline model -- and
+    the samples it included."""
+    app = qs.app
+    ppm = np.asarray(app.ppm, dtype=float)
+    settings = getattr(qs, '_last_run_settings', None) or {}
+    use_model = bool(settings.get('bl_model_quant_var', qs.bl_model_quant_var.get()))
+    X = app.corrected_intensities() if use_model else app.all_intensities
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
+    inc = included_sample_indices(app.samples_info or [], X.shape[1])
+    return ppm, X, inc
+
+
+def run_groups(qs) -> dict:
+    """``{group: [sample indices]}`` of the last run, blanks left out;
+    without them (a project written outside the app keeps none), the
+    analyst's labels -- the grouping the run itself uses (``sample_groups``)
+    -- so there is a group to draw the fits on."""
+    g = getattr(qs, '_last_groups', None) or {}
+    if not g:
+        from gui.stages._quant_adapter import sample_groups
+        app = qs.app
+        n = (np.asarray(app.all_intensities).shape[-1]
+             if app.all_intensities is not None else None)
+        g = sample_groups(app.samples_info or [], n)
+    return {str(k): list(v) for k, v in g.items() if k != 'BLK'}
 
 
 class DeconvolutionWindow:
@@ -73,6 +107,7 @@ class DeconvolutionWindow:
         self._items = []
         self._by_id = {}
         self._rows = []
+        self._palette = {}
         self._current = None
         self._pending = {}
         self._kind_vars = {k: tk.BooleanVar(value=True) for k in _KIND_ORDER}
@@ -92,23 +127,10 @@ class DeconvolutionWindow:
                 (getattr(self.qs, '_deconv_overrides', {}) or {}).items()}
 
     def _matrix(self):
-        """The spectrum the run measured on: the corrected one only when the
-        run integrated on the baseline model."""
-        app = self.qs.app
-        ppm = np.asarray(app.ppm, dtype=float)
-        settings = getattr(self.qs, '_last_run_settings', None) or {}
-        use_model = bool(settings.get(
-            'bl_model_quant_var', self.qs.bl_model_quant_var.get()))
-        X = app.corrected_intensities() if use_model else app.all_intensities
-        X = np.asarray(X, dtype=float)
-        if X.ndim == 1:
-            X = X.reshape(-1, 1)
-        inc = included_sample_indices(app.samples_info or [], X.shape[1])
-        return ppm, X, inc
+        return measured_matrix(self.qs)
 
     def _groups(self) -> dict:
-        g = getattr(self.qs, '_last_groups', None) or {}
-        return {str(k): list(v) for k, v in g.items() if k != 'BLK'}
+        return run_groups(self.qs)
 
     def _sample_names(self, n):
         si = self.qs.app.samples_info or []
@@ -123,6 +145,11 @@ class DeconvolutionWindow:
         self._items = review_items(self._rows, self._pending)
         self._by_id = {i['id']: i for i in self._items}
         self._row_of = {str(r.get('hmdb_id')): r for r in self._rows}
+        try:
+            self._palette = contributions.stable_palette(
+                self._rows, np.asarray(self.qs.app.ppm, dtype=float))
+        except Exception:
+            self._palette = {}
         self._fill_tree()
         pick = (select if select in self._by_id else
                 self._current if self._current in self._by_id else None)
@@ -329,10 +356,7 @@ class DeconvolutionWindow:
             self._summary.config(text='No quantification yet.')
         else:
             self._summary.config(text=(
-                f"{c[KIND_SHARED]} shared window(s) · {c[KIND_JOINT]} joint fit · "
-                f"{c[KIND_CASCADE]} cascade · {c[KIND_CANDIDATE]} with no number"
-                + (f" · {c[KIND_REJECTED]} rejected" if c[KIND_REJECTED] else '')
-                + (f"   —   {n} decision(s) waiting" if n else '')))
+                counts_text(c) + (f"   —   {n} decision(s) waiting" if n else '')))
         self._apply_btn.config(
             text=f'Apply {n} decision(s) & re-quantify' if n else 'Apply & re-quantify',
             state='normal' if n else 'disabled')
@@ -463,7 +487,12 @@ class DeconvolutionWindow:
         for m, inc_on, label, nh, amp, share, note in rows:
             if inc_on is not None:
                 self._include[m] = tk.BooleanVar(value=inc_on)
-            self._ctree.insert('', tk.END, iid=m, values=(
+            # the name in the colour its curve has in the figure
+            tag = f'c_{m}'
+            self._ctree.tag_configure(
+                tag, foreground=self._colour(m),
+                font=('Arial', 9, 'bold') if m == it['id'] else ('Arial', 9))
+            self._ctree.insert('', tk.END, iid=m, tags=(tag,), values=(
                 '' if inc_on is None else ('☑' if inc_on else '☐'),
                 label, nh, amp, share, note))
 
@@ -495,6 +524,9 @@ class DeconvolutionWindow:
 
     # ── The figure ────────────────────────────────────────────────────────
 
+    def _colour(self, mid) -> str:
+        return self._palette.get(str(mid), contributions.MUTED)
+
     def _view_group(self):
         v = self._view_var.get()
         return v[len('group '):] if v.startswith('group ') else None
@@ -507,6 +539,16 @@ class DeconvolutionWindow:
             except ValueError:
                 return None
         return None
+
+    def _draw_component(self, ax, x, y, base, m, name, own):
+        """One analyte of the region filled in its colour on the baseline
+        the fit stood on; this one heavier and drawn above the others."""
+        col = self._colour(m)
+        lo = np.zeros_like(y) if base is None else base
+        ax.fill_between(x, lo, lo + y, alpha=contributions.FILL_ALPHA if own else 0.25,
+                        color=col, lw=0, zorder=3 if own else 2)
+        ax.plot(x, lo + y, color=col, lw=2.0 if own else 1.0, zorder=5 if own else 4,
+                label=name)
 
     def _draw(self):
         ax = self.ax
@@ -542,8 +584,8 @@ class DeconvolutionWindow:
             trace = np.mean(X[:, idx], axis=1)
             who = f'group {g}' if g else 'mean of included samples'
         order = np.argsort(ppm[sel])
-        ax.plot(ppm[sel][order], trace[sel][order], color='#1f77b4', lw=1.3,
-                label=f'spectrum ({who})', zorder=3)
+        ax.plot(ppm[sel][order], trace[sel][order], color=_INK, lw=1.2,
+                label=f'spectrum ({who})', zorder=6)
         ax.axvspan(lo, hi, color='#000000', alpha=0.05, zorder=0)
         total = None
         base = None
@@ -553,14 +595,7 @@ class DeconvolutionWindow:
                 if m == 'baseline':
                     base = y
                     continue
-                if m == mid:
-                    ax.fill_between(x, 0 if base is None else base, y if base is None else y + base,
-                                    alpha=0.3, color=_OWNER, lw=0, zorder=2)
-                    ax.plot(x, y if base is None else y + base, color=_OWNER,
-                            lw=1.5, ls='--', zorder=5, label=name)
-                else:
-                    ax.plot(x, y if base is None else y + base, color=_OTHER, lw=1.0,
-                            ls=':', zorder=4, label=name)
+                self._draw_component(ax, x, y, base, m, name, m == mid)
                 total = y if total is None else total + y
             if base is not None and total is not None:
                 ax.plot(x, base, color=_BASE, lw=0.8, ls='--', alpha=0.8,
@@ -568,13 +603,9 @@ class DeconvolutionWindow:
         elif d:
             curves = component_curves(d, ppm, sample=s_idx)
             for rec, x, y in curves:
-                if rec['met_id'] == mid:
-                    ax.fill_between(x, 0, y, alpha=0.3, color=_OWNER, lw=0, zorder=2)
-                    ax.plot(x, y, color=_OWNER, lw=1.5, ls='--', zorder=5,
-                            label=rec.get('label', mid))
-                else:
-                    ax.plot(x, y, color=_OTHER, lw=1.0, ls=':', zorder=4,
-                            label=rec.get('label', rec['met_id']))
+                self._draw_component(ax, x, y, None, rec['met_id'],
+                                     rec.get('label', rec['met_id']),
+                                     rec['met_id'] == mid)
                 total = y if total is None else total + y
         if total is not None:
             xs = x
