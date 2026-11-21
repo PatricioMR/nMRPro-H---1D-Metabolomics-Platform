@@ -23,6 +23,7 @@ SUBFOLDERS = {
     'artifacts': '10_Artefatos',           # validation.artifact_bench (spoiled samples)
     'stocsy': '11_STOCSY',                 # validation.stocsy_bench (what STOCSY is worth)
     'signal_links': '12_Sinais_ligados',   # processing.signal_links before and after (by hand, ADR-101)
+    'quant_quality': '13_Qualidade_quantificacao',  # validation.quant_quality_bench (ADR-105)
     'archive': '99_Arquivo',               # earlier versions' exports
 }
 
