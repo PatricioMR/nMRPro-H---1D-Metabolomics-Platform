@@ -327,3 +327,28 @@ class TestCorroborationBar:
     @pytest.mark.parametrize('n', [8, 12, 40])
     def test_from_eight_samples_nothing_changes(self, n):
         assert corroborating_partners(1, [2], {(1, 2): 0.80}, n_samples=n) == 1
+
+
+def test_the_trace_follows_a_peak_that_moves_between_samples():
+    """A peak whose amount is the seed but which stands up to 3 mppm off in
+    some samples: held at one point its r is lost; followed, it is the
+    seed's. A peak of another compound stays uncorrelated either way."""
+    from processing.stocsy import Basis, TRACE_FOLLOW_PPM, stocsy_trace
+    rng = np.random.default_rng(3)
+    ppm = np.linspace(3.0, 1.0, 20001)               # 0.1 mppm per point
+    n = 12
+    seed = rng.lognormal(0.0, 0.3, n)
+    other = rng.lognormal(0.0, 0.3, n)
+    shift = rng.uniform(-0.003, 0.003, n)
+
+    def lor(c, w=0.0015):
+        return w ** 2 / ((ppm - c) ** 2 + w ** 2)
+
+    X = np.column_stack([seed[s] * lor(2.0 + shift[s]) + other[s] * lor(1.5)
+                         + rng.normal(0, 1e-3, ppm.size) for s in range(n)])
+    at, away = np.argmin(abs(ppm - 2.0)), np.argmin(abs(ppm - 1.5))
+    still = stocsy_trace(ppm, X, seed, Basis(n))['r']
+    followed = stocsy_trace(ppm, X, seed, Basis(n), follow_ppm=TRACE_FOLLOW_PPM)['r']
+    assert followed[at] > 0.95
+    assert followed[at] > still[at] + 0.2
+    assert abs(followed[away]) < 0.8

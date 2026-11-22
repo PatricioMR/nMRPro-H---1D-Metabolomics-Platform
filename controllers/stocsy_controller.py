@@ -26,7 +26,7 @@ from processing.signal_structure import (
 from processing.stocsy import (
     AREA_NOISE_KAPPA, SKIP_REASONS, STOCSY_MIN_SAMPLES, Basis, area_noise, build_basis,
     covariation_parts, dilution_spread, fixed_ratio, peak_vectors,
-    pqn_factors, rank_partners, stocsy_trace)
+    pqn_factors, rank_partners, stocsy_trace, TRACE_FOLLOW_PPM)
 
 # Above this spread (sd/mean) of the PQN factors the samples differ in how
 # concentrated they are by more than the study's own variation. Measured on
@@ -169,7 +169,7 @@ class StocsyAnalysis:
                 vec = np.asarray(vector, dtype=float)[idx]
             self._trace_cache[ck] = stocsy_trace(
                 self.ppm, X, vec, basis, masked_regions=self.excluded_regions,
-                min_std_factor=NOISE_FLOOR_FACTOR)
+                min_std_factor=NOISE_FLOOR_FACTOR, follow_ppm=TRACE_FOLLOW_PPM)
         return self._trace_cache[ck]
 
     # ── one group at a time ──────────────────────────────────────────────────

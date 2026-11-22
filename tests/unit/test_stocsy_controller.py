@@ -208,7 +208,9 @@ def test_a_groups_trace_correlates_over_its_samples_only():
     vec = an.M[an._row[1]]
     tr = an.trace_of(vec, 'one', 'G1')
     i = int(np.argmin(np.abs(ppm - 2.0)))
-    assert tr['r'][i] == pytest.approx(np.corrcoef(vec[:6], X[i, :6])[0, 1], abs=1e-9)
+    from processing.stocsy import TRACE_FOLLOW_PPM, follow_peaks
+    seen = follow_peaks(ppm, X, TRACE_FOLLOW_PPM)      # the trace follows peaks
+    assert tr['r'][i] == pytest.approx(np.corrcoef(vec[:6], seen[i, :6])[0, 1], abs=1e-9)
     assert an.trace_of(vec, 'one', 'G1') is tr and an.trace_of(vec, 'one') is not tr
     assert an.group_basis('G1').n == 6
 

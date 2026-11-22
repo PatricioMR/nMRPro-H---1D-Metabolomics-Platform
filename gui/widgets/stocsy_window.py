@@ -23,6 +23,10 @@ other lines; "Save the ticked lines" writes them on the annotation
 (``controllers.signal_lines``), to be measured at the next quantification.
 Without an analyte any detected peak can be the reference, counted as 1 H.
 
+The spectrum is coloured by r to the reference, each point read at its
+highest within ``TRACE_FOLLOW_PPM`` in every sample, so a peak that moves a
+little between samples is followed rather than read on its flank.
+
 Correlation, normalisation (PQN) and within-group centring are set once, on
 the left, and apply to everything on screen alike. "Groups" draws the spectrum
 as one group's mean, coloured by r over that group's samples only: whether the
@@ -46,6 +50,7 @@ from matplotlib.figure import Figure
 from controllers.analysis_defaults import ANNOTATION
 from controllers.stocsy_analytes import AnalyteBrowser
 from controllers.stocsy_controller import NOISE_FLOOR_FACTOR
+from processing.stocsy import TRACE_FOLLOW_PPM
 from gui.utils.quality_palette import (
     QUALITY_LABEL, SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR, tier_from_annotation_quality)
 from processing.quant_integration import MIN_TRUSTED_CAPTURE
@@ -301,7 +306,8 @@ class StocsyWindow:
         ttk.Label(hdr, text='(the spectrum below: the mean of these samples, r over them)',
                   foreground='#777777', font=('Arial', 8)).grid(row=3, column=5, padx=4)
         self.color_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(hdr, text='Colour the spectrum by r to the reference',
+        ttk.Checkbutton(hdr, text=(f'Colour the spectrum by r to the reference (peaks followed '
+                                   f'±{1000 * TRACE_FOLLOW_PPM:.0f} mppm between samples)'),
                         variable=self.color_var, command=self._draw_spectrum
                         ).grid(row=4, column=0, columnspan=4, sticky=tk.W)
         if self.editor is not None:

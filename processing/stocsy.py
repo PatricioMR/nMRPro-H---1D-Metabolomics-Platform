@@ -58,6 +58,17 @@ STOCSY_MIN_SAMPLES = 5
 ANNOTATION_BAR = 0.80
 
 METHODS = ('pearson', 'spearman')
+
+# How far (ppm) the trace follows a peak from sample to sample: each point is
+# read as the highest value within this distance in every sample. A point
+# held still reads the flank of a peak that moved, and the height there moves
+# with the shift more than with the amount. Measured against the true amount
+# on GISSMO bench tubes (600 MHz, 3 seeds; vault STOCSY-alinhamento-por-amostra),
+# share of a compound's own clean peaks coloured above the critical r, point
+# -> +-4 mppm: standard tube of 100 54 -> 82%, signals moving per sample
+# (r75 ss7 sm4) 30 -> 57% (CV 12%) and 72 -> 89% (CV 50%); other compounds'
+# peaks 1-4% -> 2-3%. +-2 mppm follows less, +-6 loses on the standard tube.
+TRACE_FOLLOW_PPM = 0.004
 NORMALIZATIONS = ('none', 'pqn')
 
 # Why a peak was left out of the matrix. The analyst is told; a peak that
@@ -463,8 +474,23 @@ def fixed_ratio(seed_vec, M, sigma_seed, sigma_rows, *, min_valid=8,
 
 # ── Seed STOCSY: seed -> spectrum ────────────────────────────────────────────
 
+def follow_peaks(ppm, X, follow_ppm):
+    """``X`` with every point replaced, sample by sample, by the highest
+    value within ``follow_ppm`` of it: the apex of a peak that moved a little
+    between samples, read where it stands in each."""
+    from scipy.ndimage import maximum_filter1d
+    ppm = np.asarray(ppm, dtype=float)
+    X = np.asarray(X, dtype=float)
+    if not follow_ppm or ppm.size < 2:
+        return X
+    half = int(round(float(follow_ppm) / abs(float(ppm[1] - ppm[0]))))
+    if half < 1:
+        return X
+    return maximum_filter1d(X, size=2 * half + 1, axis=0, mode='nearest')
+
+
 def stocsy_trace(ppm, X, seed_vec, basis, *, masked_regions=(),
-                 min_std_factor=None):
+                 min_std_factor=None, follow_ppm=None):
     """Correlate ``seed_vec`` (one value per sample) with every spectral point.
 
     ``X`` is points x samples. Returns ``{'r', 'cov', 'std'}``, each over the
@@ -476,12 +502,14 @@ def stocsy_trace(ppm, X, seed_vec, basis, *, masked_regions=(),
     to NaN. ``min_std_factor`` sets to NaN the points whose spread across
     samples is under that many times the median spread: the median over the
     whole spectrum is the noise floor, and below it r is the correlation of
-    noise with the seed.
+    noise with the seed. ``follow_ppm`` reads each point as ``follow_peaks``
+    does, so a peak that moves between samples is followed.
     """
     ppm = np.asarray(ppm, dtype=float)
     X = np.asarray(X, dtype=float)
     if X.ndim == 1:
         X = X[:, None]
+    X = follow_peaks(ppm, X, follow_ppm)
     seed = np.asarray(seed_vec, dtype=float)[None, :]
     r = _pearson_cross(basis.apply(seed), basis.apply(X))[0]
     Xt, st = basis.apply(X, ranked=False), basis.apply(seed, ranked=False)
