@@ -93,6 +93,11 @@ def assess(row, group, *, ppm=None, trace=None) -> dict:
     return {'level': level, 'reasons': [r for _l, r in found], 'cv': cv}
 
 
+def rank(level) -> int:
+    """Sort key, best first: Good, Warn, Poor, then a row without a tier."""
+    return _RANK.get(level, len(_RANK))
+
+
 def worst(levels) -> str | None:
     """The worst of several groups' tiers; None when none has one."""
     ls = [lv for lv in levels if lv is not None]

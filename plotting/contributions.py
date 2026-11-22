@@ -222,16 +222,20 @@ def stable_palette(rows, ppm) -> dict:
     return {m: SLOTS[i % len(SLOTS)] for i, m in enumerate(order)}
 
 
-def draw_analytes(ax, rows, selected, ppm, trace, group, lo, hi, palette, amp_of):
+def draw_analytes(ax, rows, selected, ppm, trace, group, lo, hi, palette, amp_of,
+                  only_selected=False):
     """Every quantified row whose region falls in ``[lo, hi]`` drawn on
     ``trace`` (the mean of ``group``), each in its ``palette`` colour; the
     ``selected`` row drawn last, with a heavier outline, its whole fit and
-    the baseline subtracted.
+    the baseline subtracted. With ``only_selected``, the selected row
+    alone in colour: of a window it shares, the other components grey and
+    dotted (``draw_window``), the other analytes of the view not drawn.
     Returns ``[(name, colour, is_selected)]``, the selected last, for a
     legend."""
     key = lambda r: r.get('hmdb_id', r.get('metabolite'))
     sel_id = key(selected)
-    here = [r for r in rows if inside(span(r, ppm), lo, hi)]
+    here = [r for r in rows if inside(span(r, ppm), lo, hi)
+            and (not only_selected or key(r) == sel_id)]
     here.sort(key=lambda r: (key(r) == sel_id, -float(np.mean(span(r, ppm)))))
     windows, drawn = {}, []
     for r in here:
@@ -245,8 +249,10 @@ def draw_analytes(ax, rows, selected, ppm, trace, group, lo, hi, palette, amp_of
                      lw=2.0 if is_sel else 1.0, trim=True,
                      label=method_label(r) if is_sel else None)
         drawn.append((r, col, is_sel))
+    colour_of = ((lambda m: palette.get(m) if str(m) == str(sel_id) else None)
+                 if only_selected else palette.get)
     for dc in windows.values():
-        draw_window(ax, dc, ppm, amp_of, palette.get,
+        draw_window(ax, dc, ppm, amp_of, colour_of,
                     lw_of=lambda m: 2.0 if m == sel_id else 1.0)
     return [(r['metabolite'], col, is_sel) for r, col, is_sel in drawn]
 

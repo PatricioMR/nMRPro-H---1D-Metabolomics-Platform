@@ -64,3 +64,8 @@ def test_rows_without_a_number_have_no_level():
     assert qq.assess({'_is_is': True}, 'A')['level'] is None
     assert qq.worst(['Good', None, 'Warn']) == 'Warn'
     assert qq.worst([None]) is None
+
+
+def test_tiers_sort_best_first():
+    levels = [None, qq.POOR, qq.GOOD, qq.WARN]
+    assert sorted(levels, key=qq.rank) == [qq.GOOD, qq.WARN, qq.POOR, None]

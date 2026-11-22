@@ -60,3 +60,34 @@ def test_draw_fit_says_when_the_group_holds_no_amplitude():
         assert pc.draw_fit(ax, _fit_row('a', 2.40), 'A', '#000', 2.3, 2.5) is True
     finally:
         plt.close(fig)
+
+
+def test_only_the_selected_analyte_is_drawn_for_the_report():
+    trace = 2.0 * _lorentz(PPM, 2.40) + 1.5 * _lorentz(PPM, 2.41)
+    a, b = _fit_row('a', 2.40), _fit_row('b', 2.41)
+    plt = _plt()
+    fig, ax = plt.subplots()
+    try:
+        drawn = pc.draw_analytes(ax, [a, b], a, PPM, trace, 'A', 2.35, 2.45,
+                                 pc.stable_palette([a, b], PPM), lambda amps: 1.0,
+                                 only_selected=True)
+        assert drawn == [('a', pc.stable_palette([a, b], PPM)['a'], True)]
+        assert len(ax.collections) == 1
+    finally:
+        plt.close(fig)
+
+
+def test_a_cascade_fit_shows_the_residual_it_was_made_on():
+    from plotting.fit_curve import draw_fit_residual
+    fit = dict(_fit_row('a', 2.40)['_fit_curve'],
+               residual_by_group={'A': list(2.0 * _lorentz(PPM, 2.40))})
+    plt = _plt()
+    fig, ax = plt.subplots()
+    try:
+        assert draw_fit_residual(ax, fit, 'A')
+        (line,) = ax.get_lines()
+        assert line.get_label() == 'residual the fit was made on'
+        assert np.max(line.get_ydata()) == pytest.approx(2.0)
+        assert not draw_fit_residual(ax, fit, 'B'), 'no residual kept for B'
+    finally:
+        plt.close(fig)

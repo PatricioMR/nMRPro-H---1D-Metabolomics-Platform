@@ -493,6 +493,49 @@ def secondary_signals(rows, metabolites, ppm, residual, group, sigma, *, field_m
     return out
 
 
+def study_linewidth(metabolites):
+    """The study's linewidth (Hz) as the annotation measured it -- any
+    matched signal carries it -- or None: for a candidate whose own signal
+    has none."""
+    for met in metabolites or ():
+        for q in met.get('matched_peaks') or ():
+            if q.get('study_linewidth_hz'):
+                return float(q['study_linewidth_hz'])
+    return None
+
+
+def resolution(rows, ppm, trace, group, amp_of, *, metabolites=(), sigma=None,
+               field_mhz=None, tolerance_ppm=None, excluded=(), secondary=True,
+               min_snr=None) -> dict:
+    """The resolution plot of one group, as the RP-Method window and the
+    report both show it: ``resolve``, then -- with ``secondary`` and a noise
+    level -- the confirmed analytes' other signals taken off the residual
+    (``secondary_signals``), the share of the spectrum resolved
+    (``resolved_share``) and, with a noise level and ``min_snr``, the
+    residual's regions (``residual_regions``). ``resolve``'s keys plus
+    ``'secondary'`` (the signals taken), ``'share'`` (0-1, or None) and
+    ``'regions'``."""
+    ppm = np.asarray(ppm, dtype=float)
+    out = resolve(rows, ppm, trace, group, amp_of)
+    sec = []
+    if secondary and sigma:
+        sec = secondary_signals(rows, metabolites, ppm, out['residual'], group, sigma,
+                                field_mhz=field_mhz,
+                                study_lw_hz=study_linewidth(metabolites),
+                                tolerance_ppm=tolerance_ppm)
+        for c in sec:
+            v = on_axis(c['x'], c['y'], ppm)
+            out['resolved'] = out['resolved'] + v
+            out['residual'] = out['residual'] - v
+        out['curves'] = out['curves'] + sec
+    out['secondary'] = sec
+    out['share'] = resolved_share(ppm, trace, out['resolved'], out['baseline'], excluded)
+    out['regions'] = (residual_regions(ppm, trace, out['residual'], sigma, min_snr=min_snr,
+                                       excluded=excluded)
+                      if sigma and min_snr is not None else [])
+    return out
+
+
 def claimed_by(region, curves, sigma, edge_sigma=SLACK_SIGMA) -> list:
     """The analytes whose resolved curve stands above ``edge_sigma`` noise
     inside ``region``: on an over-claim, the ones claiming more than the

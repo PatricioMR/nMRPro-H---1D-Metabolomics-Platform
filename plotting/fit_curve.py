@@ -70,6 +70,27 @@ def draw_fit_curve(ax, fit, group, fill_colour, *, label=None,
     return True
 
 
+# black dash-dot: the analyte's own colour can be any of the palette's
+RESIDUAL_LINE = '#212121'
+
+
+def draw_fit_residual(ax, fit, group, *, label='residual the fit was made on') -> bool:
+    """The residual a cascade fit was made on (``residual_by_group``: the
+    spectrum less every other analyte at its fitted amount), on the
+    baseline the fit stood on -- the trace the fit is aligned to. False
+    when the record keeps none for ``group``."""
+    resid = (fit.get('residual_by_group') or {}).get(str(group))
+    if resid is None:
+        return False
+    x = np.asarray(fit['ppm'], dtype=float)
+    base = (fit.get('baseline_by_group') or {}).get(str(group))
+    base = np.zeros_like(x) if base is None else np.asarray(base, dtype=float)
+    o = np.argsort(x)
+    ax.plot(x[o], (base + np.asarray(resid, dtype=float))[o], color=RESIDUAL_LINE,
+            lw=0.9, ls='-.', alpha=0.9, zorder=4, label=label)
+    return True
+
+
 def fit_group(fit, prefer=None):
     """The group a figure of this fit draws: ``prefer`` (the group the row's
     signal-to-noise was read on) unless the fit holds less than

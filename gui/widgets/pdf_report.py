@@ -25,8 +25,8 @@ import matplotlib.ticker as ticker
 from scipy.optimize import curve_fit
 
 from plotting import contributions
-from plotting.fit_curve import (FIT_ABOVE_TRACE, VIEW_ZOOM_BELOW, fit_group,
-                                fit_over_trace, fit_view_top, fit_warnings)
+from plotting.fit_curve import (FIT_ABOVE_TRACE, VIEW_ZOOM_BELOW, draw_fit_residual,
+                                fit_group, fit_over_trace, fit_view_top, fit_warnings)
 
 import os
 from pathlib import Path
@@ -225,6 +225,110 @@ def _stacked_spectrum_fig(ppm, all_int, samples_info, group_colors,
     return fig
 
 
+def resolution_panels(quant_stage, app, annotation_stage=None, field_mhz=None):
+    """``[(group, out)]``: the RP-Method resolution plot of every group, as
+    the window computes it with its defaults (the confirmed analytes' other
+    signals subtracted) -- ``processing.resolution_plot.resolution`` on
+    ``rp_method_window.project_inputs`` -- so the report shows what the
+    window shows. Raises when the project has no run to read."""
+    from gui.widgets.rp_method_window import project_inputs
+    from processing import resolution_plot as rp
+    ppm, X, groups, rows, excluded, sigma, min_snr = project_inputs(quant_stage)
+    mets = list(getattr(annotation_stage, '_metabolites', None) or [])
+    try:
+        tol = float(annotation_stage.tolerance_var.get())
+    except Exception:
+        from controllers.analysis_defaults import ANNOTATION
+        tol = float(ANNOTATION['tolerance_ppm'])
+    si = getattr(app, 'samples_info', None) or []
+    out = []
+    for g, idx in groups.items():
+        trace = np.mean(X[:, idx], axis=1)
+        res = rp.resolution(rows, ppm, trace, g,
+                            lambda a, g=g: _group_amplitude(a, si, g),
+                            metabolites=mets, sigma=sigma, field_mhz=field_mhz,
+                            tolerance_ppm=tol, excluded=excluded, min_snr=min_snr)
+        res.update(ppm=ppm, trace=trace, excluded=excluded, rows=rows,
+                   is_height=is_height(rows, ppm, trace))
+        out.append((g, res))
+    return out
+
+
+def is_height(rows, ppm, trace):
+    """The internal standard's height on ``trace``: the highest point of
+    the region its number came from. None without an internal standard
+    row."""
+    ppm = np.asarray(ppm, dtype=float)
+    for r in rows:
+        if not r.get('_is_is'):
+            continue
+        sp = contributions.number_region(r, ppm)
+        if not sp and r.get('ppm') is not None:
+            sp = (float(r['ppm']) - 0.05, float(r['ppm']) + 0.05)
+        inside = (ppm >= min(sp) - 1e-9) & (ppm <= max(sp) + 1e-9) if sp else None
+        if inside is not None and inside.any():
+            h = float(np.max(np.asarray(trace)[inside]))
+            if h > 0:
+                return h
+    return None
+
+
+def resolved_text(group, res) -> str:
+    """The line under a group's resolution plot: the share resolved and the
+    residual's regions."""
+    share = res.get('share')
+    miss = sum(1 for g in res['regions'] if g['kind'] == 'missing')
+    over = len(res['regions']) - miss
+    sec = res.get('secondary') or []
+    from xml.sax.saxutils import escape
+    return (f"<b>{escape(str(group))}</b>: spectrum resolved <b>"
+            + (f"{100 * share:.0f}%" if share is not None else 'not measured')
+            + f"</b> of its signal area above the fits' baselines  ·  {miss} missing "
+            f"signal(s), {over} over-claim(s)"
+            + (f"  ·  {len(sec)} other signal(s) of {len({c['id'] for c in sec})} "
+               f"confirmed analyte(s) subtracted as their numbers predict"
+               if sec else ''))
+
+
+# The report's view of the resolution plot: where the metabolites are, at
+# half the internal standard's height, so the signals between the tallest
+# show (the RP-Method window keeps the whole spectrum).
+RP_REPORT_PPM = (0.0, 8.0)
+RP_REPORT_IS_SHARE = 0.5
+
+
+def _resolution_fig(group, res, width_in=13, height_in=4.2):
+    """A group's resolution plot, drawn as the RP-Method window draws it
+    (``plotting.resolution_plot``), over ``RP_REPORT_PPM`` and up to
+    ``RP_REPORT_IS_SHARE`` of the internal standard's height (the window's
+    scale without an internal standard); the region markers left out."""
+    from plotting import resolution_plot as rp_draw
+    fig, ax = plt.subplots(figsize=(width_in, height_in))
+    fig.patch.set_facecolor('white')
+    palette = contributions.stable_palette(res['rows'], res['ppm'])
+    rp_draw.draw_resolution(ax, res['ppm'], res['trace'], res, palette)
+    lo, hi, m = rp_draw.view_limits(res['ppm'], res['trace'], res['resolved'],
+                                    res['excluded'], RP_REPORT_PPM)
+    scale = 'y: whole height'
+    if res.get('is_height'):
+        m = RP_REPORT_IS_SHARE * res['is_height']
+        scale = f"y: {100 * RP_REPORT_IS_SHARE:.0f}% of the internal standard's height"
+    rp_draw.apply_limits(ax, lo, hi, m)
+    share = res.get('share')
+    ax.set_title(f"{group}: resolved "
+                 + (f"{100 * share:.0f}%" if share is not None else '—'),
+                 fontsize=10, loc='left')
+    ax.set_title(scale, fontsize=7, loc='right', color='#777777')
+    ax.tick_params(labelsize=8)
+    ax.xaxis.label.set_size(9)
+    ax.yaxis.label.set_size(8)
+    ax.yaxis.set_major_formatter(ticker.NullFormatter())
+    ax.legend(fontsize=7, loc='upper center', bbox_to_anchor=(0.5, -0.16), ncol=5,
+              frameon=False, handlelength=1.6, columnspacing=1.2)
+    fig.tight_layout(pad=0.4)
+    return fig
+
+
 def _over_trace_text(ratio) -> str:
     return (f'the fit holds {ratio:.2f}x the area the trace has under this '
             f'signal')
@@ -368,9 +472,9 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
         lo_f = max(lo_idx, i_lo)
         hi_f = min(hi_idx, i_hi)
 
-    # Every analyte of the crop as what gave its number (ADR-103): this one
-    # heavier, the neighbours it shares the region with in their own colours,
-    # on the mean of the group the number was read on. A fit is the fitted
+    # This analyte as what gave its number (ADR-103), alone in colour -- of a
+    # window it shares, the other components grey and dotted -- on the mean
+    # of the group the number was read on. A fit is the fitted
     # signal on the baseline it stood on, a shape the copy of the reference
     # that fits under the trace (ADR-013), a window resolved by shape every
     # component as the fit placed it (ADR-015), an integral the window above
@@ -382,7 +486,10 @@ def _peak_crop_fig(ppm, all_int, result, samples_info, group_colors,
     _drawn = contributions.draw_analytes(
         ax, _rows, result, ppm_f, _best_full, _fg, float(x.min()), float(x.max()),
         contributions.stable_palette(_rows, ppm_f),
-        lambda amps: _group_amplitude(amps, samples_info, _fg))
+        lambda amps: _group_amplitude(amps, samples_info, _fg), only_selected=True)
+    # a fit made on a residual: the residual it is aligned to
+    if contributions.method(result) == 'fit':
+        draw_fit_residual(ax, result['_fit_curve'], _fg)
 
     _fit_group = None
     if (contributions.method(result) == 'fit'
@@ -831,6 +938,24 @@ def _quant_quality_line(r, ppm, all_int, samples_info) -> str:
     return '  |  '.join(parts)
 
 
+def quality_order(results, ppm, all_int, samples_info) -> list:
+    """The analytes as the report lists them: by quantification quality,
+    the worst of their groups' tiers (``processing.quant_quality``), Good
+    first; within a tier by concentration, highest first."""
+    from processing import quant_quality as qq
+    ppm_f = np.asarray(ppm, dtype=float)
+    means = _group_means(all_int, samples_info)
+
+    def conc(r):
+        c = r.get('conc_mm', 0.0)
+        return float(c) if c is not None and np.isfinite(c) else 0.0
+
+    def tier(r):
+        return qq.worst(qq.assess(r, g, ppm=ppm_f, trace=y)['level'] for g, y in means)
+
+    return sorted(results, key=lambda r: (qq.rank(tier(r)), -conc(r)))
+
+
 def _analyte_block(r, ppm, all_int, samples_info, group_colors,
                    theoretical, styles, avail_w,
                    crop_w_cm, crop_h_cm, unit='mM', precision=None, rows=None):
@@ -1047,13 +1172,13 @@ def coverage_text(cov) -> str:
         explained = int(cov['explained'])
         area = float(cov['area_fraction'])
     except (TypeError, KeyError, ValueError):
-        return ('Spectrum resolved: not measured -- run the quantification '
+        return ('Engine coverage: not measured -- run the quantification '
                 'with the cascade on.')
     if peaks <= 0:
-        return 'Spectrum resolved: no detected peak above the noise to explain.'
+        return 'Engine coverage: no detected peak above the noise to explain.'
     share = int(round(100 * float(cov.get('explained_share', 0.5))))
     snr = float(cov.get('min_snr', 5.0))
-    text = (f'Spectrum resolved: <b>{100 * explained / peaks:.0f}%</b> of the '
+    text = (f'Engine coverage: <b>{100 * explained / peaks:.0f}%</b> of the '
             f'detected peaks ({explained} of {peaks}, SNR &ge; {snr:g})')
     if np.isfinite(area):
         text += f' and <b>{100 * area:.0f}%</b> of the signal area'
@@ -1138,10 +1263,7 @@ def generate_pdf(output_path: str, quant_stage, app,
     if not results:
         raise ValueError('Sem resultados de quantificacao.')
 
-    results_sorted = sorted(
-        results,
-        key=lambda r: r.get('conc_mm', 0.0) if np.isfinite(r.get('conc_mm', 0.0)) else 0.0,
-        reverse=True)
+    results_sorted = quality_order(results, ppm, all_int, si)
 
     theoretical = dict(getattr(quant_stage, '_validation_theoretical', {}) or {})
     styles  = _make_styles()
@@ -1232,19 +1354,47 @@ def generate_pdf(output_path: str, quant_stage, app,
     story.append(_params_table(quant_stage, app, annotation_stage=annotation_stage))
     story.append(Spacer(1, 0.3 * cm))
 
-    # Vista fixa -0.5–4 ppm
-    _ppm_range = (-0.5, 4.0)
-
-    # Stacked spectrum
-    story.append(Paragraph('Spectral Overview — All Samples by Group', styles['h2']))
-    wf_fig = _stacked_spectrum_fig(ppm, all_int, si, gc, width_in=13, height_in=4.5,
-                                   ppm_range=_ppm_range)
-    story.append(_fig_to_rl_image(wf_fig, width_cm=avail_w / cm,
-                                   height_cm=6.5, dpi=130))
+    # The resolution plot (RP-Method) of each group; without a run to read
+    # it from, the group means, and the reason said.
+    try:
+        panels = resolution_panels(quant_stage, app, annotation_stage, project_mhz)
+        _rp_error = None
+    except Exception as exc:
+        panels, _rp_error = [], exc
+    if panels:
+        story.append(Paragraph('Resolution Plot (RP-Method) — Spectrum vs. Resolved, '
+                               'by Group', styles['h2']))
+        for _g, _res in panels:
+            story.append(KeepTogether([
+                _fig_to_rl_image(_resolution_fig(_g, _res), width_cm=avail_w / cm,
+                                 height_cm=6.2, dpi=130),
+                Paragraph(resolved_text(_g, _res), styles['small']),
+                Spacer(1, 0.15 * cm)]))
+        story.append(Paragraph(
+            'Above the axis the group mean spectrum (black) and the residual (red): the '
+            'spectrum less the baselines the fits stood on, less everything resolved. '
+            'Below, mirrored, each analyte as the curve that gave its number (hatched: an '
+            'integral, the data it summed; dotted: another signal of a confirmed analyte, '
+            'as its own number predicts it). Resolved: the part of the spectrum area '
+            'above those baselines the curves account for, the internal standard, the '
+            'reference and the excluded regions left out. Missing and over-claim: '
+            'residual regions of at least the lone-singlet SNR, down a signal nothing '
+            'explains, up a fit above the spectrum.', styles['small']))
+    else:
+        story.append(Paragraph('Spectral Overview — All Samples by Group', styles['h2']))
+        wf_fig = _stacked_spectrum_fig(ppm, all_int, si, gc, width_in=13, height_in=4.5,
+                                       ppm_range=(-0.5, 4.0))
+        story.append(_fig_to_rl_image(wf_fig, width_cm=avail_w / cm,
+                                       height_cm=6.5, dpi=130))
+        from xml.sax.saxutils import escape
+        story.append(Paragraph('Resolution plot not drawn: '
+                               + escape(str(_rp_error or 'no group to draw')),
+                               styles['small']))
     story.append(Spacer(1, 0.2 * cm))
     story.append(Paragraph(
         f'Quantified metabolites: <b>{len(results_sorted)}</b>  |  '
-        f'Ordered by concentration (decreasing)',
+        f'Ordered by quantification quality (Good, Warn, Poor), then by '
+        f'concentration (decreasing)',
         styles['small']))
     story.append(Spacer(1, 0.1 * cm))
     story.append(Paragraph(coverage_text(

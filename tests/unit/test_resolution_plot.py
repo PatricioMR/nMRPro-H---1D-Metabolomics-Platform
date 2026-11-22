@@ -302,3 +302,26 @@ def test_a_singlet_is_taken_only_when_stocsy_linked_it():
     sec = rp.secondary_signals([row], [met], PPM, res, 'A', SIGMA)
     assert [x['why'] for x in sec] == ['singlet linked by STOCSY (r 0.94)']
 
+
+
+def test_resolution_is_resolve_with_the_share_and_the_regions(study):
+    """What the window and the report both show: one call."""
+    trace, rows = study
+    base = rp.resolve(rows, PPM, trace, 'A', lambda a: 1.0)
+    out = rp.resolution(rows, PPM, trace, 'A', lambda a: 1.0, sigma=SIGMA, min_snr=5.0)
+    assert np.allclose(out['residual'], base['residual'])
+    assert out['secondary'] == []
+    assert out['share'] == pytest.approx(
+        rp.resolved_share(PPM, trace, base['resolved'], base['baseline']))
+    assert {(g['kind'], round(g['apex_ppm'], 2)) for g in out['regions']} == {
+        (g['kind'], round(g['apex_ppm'], 2))
+        for g in rp.residual_regions(PPM, trace, base['residual'], SIGMA, min_snr=5.0)}
+    # without a noise level there are no regions to find, and nothing to subtract
+    bare = rp.resolution(rows, PPM, trace, 'A', lambda a: 1.0)
+    assert bare['regions'] == [] and bare['secondary'] == []
+
+
+def test_the_studys_linewidth_is_the_annotations():
+    mets = [{'matched_peaks': [{}]}, {'matched_peaks': [{'study_linewidth_hz': 1.8}]}]
+    assert rp.study_linewidth(mets) == 1.8
+    assert rp.study_linewidth([]) is None

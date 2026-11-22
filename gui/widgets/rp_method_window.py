@@ -30,10 +30,9 @@ import numpy as np
 
 from controllers.analysis_defaults import QUANTIFICATION
 from plotting import contributions
+from plotting import resolution_plot as rp_draw
 from processing import resolution_plot as rp
 
-_INK = '#1a1a19'
-_RESIDUAL = '#c62828'
 _MISSING_FILL = '#f6c9c9'
 _OVER_FILL = '#c9daf6'
 _ZOOM_PAD_PPM = 0.04
@@ -53,6 +52,38 @@ def _hz(v) -> str:
         return f'{float(v):.2f}'
     except (TypeError, ValueError):
         return str(v)
+
+
+def project_inputs(qs):
+    """``(ppm, X, groups, rows, excluded, sigma, min_snr)`` of the project as
+    the last run measured it: the spectra and groups it used, its rows, the
+    regions left out of the residual (detection's excluded regions, the
+    internal standard's window, the reference), the detection noise and the
+    lone-singlet minimum SNR. The RP-Method window and the report read the
+    project through this, so both show the same plot."""
+    from gui.stages._quant_computation import excluded_regions_of
+    from gui.widgets.deconvolution_window import measured_matrix, run_groups
+    ppm, X, inc = measured_matrix(qs)
+    groups = {g: [i for i in idx if i in set(inc)] for g, idx in run_groups(qs).items()}
+    groups = {g: idx for g, idx in groups.items() if idx} or {'all samples': list(inc)}
+    rows = list(getattr(qs, '_quant_results', []) or [])
+    excluded = list(excluded_regions_of(getattr(qs, 'peak_stage', None))[0] or [])
+    for r in rows:
+        if r.get('_is_is'):
+            sp = contributions.number_region(r, ppm)
+            if sp:
+                excluded.append(sp)
+    try:
+        ref = float(qs.ref_ppm_var.get())
+        excluded.append((ref - _REF_TOL_PPM, ref + _REF_TOL_PPM))
+    except (AttributeError, tk.TclError, ValueError):
+        pass
+    sigma = getattr(getattr(qs, 'peak_stage', None), 'noise_std', None)
+    try:
+        min_snr = float(qs.singlet_snr_var.get())
+    except (AttributeError, tk.TclError, ValueError):
+        min_snr = float(QUANTIFICATION['singlet_min_snr'])
+    return ppm, X, groups, rows, excluded, sigma, min_snr
 
 
 _HELP = (
@@ -101,29 +132,7 @@ class RPMethodWindow:
     # ── Data ──────────────────────────────────────────────────────────────
 
     def _inputs(self):
-        from gui.stages._quant_computation import excluded_regions_of
-        from gui.widgets.deconvolution_window import measured_matrix, run_groups
-        ppm, X, inc = measured_matrix(self.qs)
-        groups = {g: [i for i in idx if i in set(inc)] for g, idx in run_groups(self.qs).items()}
-        groups = {g: idx for g, idx in groups.items() if idx} or {'all samples': list(inc)}
-        rows = list(getattr(self.qs, '_quant_results', []) or [])
-        excluded = list(excluded_regions_of(getattr(self.qs, 'peak_stage', None))[0] or [])
-        for r in rows:
-            if r.get('_is_is'):
-                sp = contributions.number_region(r, ppm)
-                if sp:
-                    excluded.append(sp)
-        try:
-            ref = float(self.qs.ref_ppm_var.get())
-            excluded.append((ref - _REF_TOL_PPM, ref + _REF_TOL_PPM))
-        except (AttributeError, tk.TclError, ValueError):
-            pass
-        sigma = getattr(getattr(self.qs, 'peak_stage', None), 'noise_std', None)
-        try:
-            min_snr = float(self.qs.singlet_snr_var.get())
-        except (AttributeError, tk.TclError, ValueError):
-            min_snr = float(QUANTIFICATION['singlet_min_snr'])
-        return ppm, X, groups, rows, excluded, sigma, min_snr
+        return project_inputs(self.qs)
 
     def _metabolites(self):
         return (getattr(self.ann, '_metabolites', None) or []) if self.ann else []
@@ -280,27 +289,18 @@ class RPMethodWindow:
         g = self._group_var.get()
         trace = np.mean(X[:, groups[g]], axis=1)
         si = self.app.samples_info or []
-        out = rp.resolve(rows, ppm, trace, g, lambda a: _group_amplitude(a, si, g))
         mets, tol = self._metabolites(), self._tolerance()
-        sec = []
-        if self._secondary_var.get() and sigma:
-            sec = rp.secondary_signals(rows, mets, ppm, out['residual'], g, sigma,
-                                       field_mhz=self._field(),
-                                       study_lw_hz=self._study_linewidth(),
-                                       tolerance_ppm=tol)
-            for c in sec:
-                v = rp.on_axis(c['x'], c['y'], ppm)
-                out['resolved'] = out['resolved'] + v
-                out['residual'] = out['residual'] - v
-            out['curves'] = out['curves'] + sec
+        out = rp.resolution(rows, ppm, trace, g, lambda a: _group_amplitude(a, si, g),
+                            metabolites=mets, sigma=sigma, field_mhz=self._field(),
+                            tolerance_ppm=tol, excluded=excluded,
+                            secondary=self._secondary_var.get(), min_snr=min_snr)
+        sec = out['secondary']
         self._ppm, self._trace, self._rows, self._out = ppm, trace, rows, out
         self._palette = contributions.stable_palette(rows, ppm)
         self._excluded = excluded
         self._sigma = sigma
-        self._regions = (rp.residual_regions(ppm, trace, out['residual'], sigma,
-                                             min_snr=min_snr, excluded=excluded)
-                         if sigma else [])
-        share = rp.resolved_share(ppm, trace, out['resolved'], out['baseline'], excluded)
+        self._regions = out['regions']
+        share = out['share']
         self._summary_base = (
             (f'Group {g}: resolved {100 * share:.0f}%' if share is not None
              else f'Group {g}: resolved —')
@@ -368,48 +368,17 @@ class RPMethodWindow:
         if self._out is None:
             self.canvas.draw_idle()
             return
-        ppm, trace, out = self._ppm, self._trace, self._out
-        o = np.argsort(ppm)
-        x = ppm[o]
         sel = self._selected_region()
         if sel is not None:
             ax.axvspan(sel['lo'], sel['hi'], color=_MISSING_FILL if sel['kind'] == rp.MISSING
                        else _OVER_FILL, zorder=0, lw=0)
-        for kind, col, mk in ((rp.MISSING, _RESIDUAL, 'v'), (rp.OVER, '#1b3f8e', '^')):
-            xs = [g['apex_ppm'] for g in self._shown if g['kind'] == kind]
-            if xs:
-                ax.scatter(xs, [0.97] * len(xs), marker=mk, s=18, color=col, zorder=6,
-                           transform=ax.get_xaxis_transform(), clip_on=False,
-                           label='missing' if kind == rp.MISSING else 'over-claim')
-        ax.plot(x, trace[o], color=_INK, lw=0.8, zorder=4, label='spectrum')
-        ax.plot(x, out['residual'][o], color=_RESIDUAL, lw=0.7, zorder=5,
-                label='residual')
-        for c in out['curves']:
-            col = (contributions.MUTED if c['method'] == 'unreported'
-                   else self._palette.get(c['id'], contributions.MUTED))
-            if c['method'] == 'secondary':
-                # predicted by the analyte's own number, not fitted: lighter,
-                # dotted
-                ax.fill_between(c['x'], 0, -c['y'], color=col, lw=0, zorder=2, alpha=0.25)
-                ax.plot(c['x'], -c['y'], color=col, lw=0.9, ls=':', zorder=3)
-                continue
-            data = c['method'] == 'integral'
-            ax.fill_between(c['x'], 0, -c['y'], color=col, lw=0, zorder=2,
-                            alpha=0.25 if data else contributions.FILL_ALPHA,
-                            hatch='////' if data else None,
-                            edgecolor=col if data else None)
-        ax.plot(x, -out['resolved'][o], color='#555555', lw=0.6, zorder=3,
-                label='resolved ↓ (hatched: integral · dotted: predicted other signals)')
-        ax.axhline(0, color='#999999', lw=0.6, zorder=1)
+        rp_draw.draw_resolution(ax, self._ppm, self._trace, self._out, self._palette,
+                                self._shown)
         self._draw_fingerprints(sel)
         # outside the axes: inside it covers the spectrum
         # a strip under the axes: beside them it took a third of the width
         ax.legend(fontsize=6.5, loc='upper center', bbox_to_anchor=(0.5, -0.13), ncol=4,
                   frameon=False, handlelength=1.6, columnspacing=1.2)
-        ax.set_xlabel('δ ¹H (ppm)')
-        ax.set_ylabel('Intensity (a.u.)  —  ↑ spectrum   ↓ resolved')
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
         self._apply_view()
 
     def _field(self):
@@ -470,26 +439,13 @@ class RPMethodWindow:
                                zorder=7, label=label)
 
     def _study_linewidth(self):
-        """The study's linewidth as the annotation measured it (any matched
-        signal carries it): for a candidate whose own signal has none."""
-        for met in self._metabolites():
-            for q in met.get('matched_peaks') or ():
-                if q.get('study_linewidth_hz'):
-                    return float(q['study_linewidth_hz'])
-        return None
+        return rp.study_linewidth(self._metabolites())
 
     def _apply_view(self):
-        ax, ppm, trace = self.ax, self._ppm, self._trace
-        if self._view is None:
-            lo, hi = float(ppm.min()), float(ppm.max())
-        else:
-            lo, hi = self._view
-        sel = (ppm >= lo) & (ppm <= hi) & ~rp.excluded_mask(ppm, self._excluded)
-        top = float(np.max(trace[sel])) if sel.any() else 1.0
-        bot = float(np.max(self._out['resolved'][sel])) if sel.any() else 1.0
-        m = max(top, bot, 1e-12) * 1.1
-        ax.set_xlim(hi, lo)                     # δ decreases to the right
-        ax.set_ylim(-m, m)
+        ax = self.ax
+        lo, hi, m = rp_draw.view_limits(self._ppm, self._trace, self._out['resolved'],
+                                        self._excluded, self._view)
+        rp_draw.apply_limits(ax, lo, hi, m)
         for t in list(ax.texts):
             t.remove()
         if self._view is not None:
