@@ -53,7 +53,6 @@ class _QuantVisMixin:
         r = next((x for x in self._quant_results
                   if x.get('hmdb_id', x['metabolite']) == iid), None)
         if r:
-            self._refresh_deconv_here()
             try:
                 self._draw_detail(r)
             except Exception as _e:
@@ -685,10 +684,6 @@ class _QuantVisMixin:
         ax3.set_facecolor(bg)
         ax3.set_title('Signal Info', fontsize=8, fontweight='bold', pad=3)
 
-        ann_score = r.get('_ann_score', 0.0)
-        ann_score_col = ('#1a7a1a' if ann_score >= 0.8
-                         else '#856404' if ann_score >= 0.5 else '#9a0000')
-
         _snr_global = r.get('snr', 0)
         _snr_col = ('#1a7a1a' if _snr_global > 10 else
                     '#856404' if _snr_global > 5 else '#9a0000')
@@ -708,8 +703,6 @@ class _QuantVisMixin:
         top_card = [
             ('Metabolite',   r['metabolite'],                                    '#333'),
             (_ppm_label,     _ppm_value,                                         '#333'),
-            ('Width',        f"{p.get('width_ppm',0):.4f} ppm" if p else '?', '#333'),
-            ('Annot. Score', f"{ann_score:.3f}",                                ann_score_col),
             ('Integration',  integ_lbl,                                          '#555'),
             ('Norm',         norm_mode,                                          '#555'),
             ('Mean SNR',     f"{_snr_global:.1f}",                              _snr_col),
@@ -744,10 +737,6 @@ class _QuantVisMixin:
             'Region':       'Multiplet integration window [lo–hi] ppm.\n'
                             'Area is integrated across this entire region,\n'
                             'covering all predicted multiplet lines.',
-            'Width':        'Signal width at half-maximum (ppm).',
-            'Annot. Score': 'Composite annotation score (0–1).\n'
-                            'Combines multiplet pattern match + chemical shift\n'
-                            'deviation + database confidence.',
             'Integration':  'Method used to compute signal area per sample.',
             'Norm':         'Normalisation applied before concentration calculation.',
             'Mean SNR':     'Mean signal-to-noise ratio across non-BLK samples.\n'
