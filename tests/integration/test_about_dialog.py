@@ -74,6 +74,10 @@ def test_links_open_their_targets(dialog, monkeypatch):
 
 
 def test_escape_closes(dialog):
+    # a key goes where the focus is: after the other windows of a full run
+    # it is not this dialog unless it takes it
+    dialog.focus_force()
+    dialog.update()
     dialog.event_generate('<Escape>')
     dialog.update()
     assert not dialog.winfo_exists()
