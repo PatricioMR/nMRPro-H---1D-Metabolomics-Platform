@@ -75,12 +75,32 @@ def test_it_opens_on_what_the_quantification_measured_for_the_first_analyte(root
     w.win.destroy()
 
 
-def test_only_the_quantified_analytes_are_listed_once_there_is_a_quantification(root):
+def test_every_annotated_analyte_is_listed_and_quantified_only_is_a_filter(root):
+    """The analyst decides from the list which analytes go to the
+    quantification: the ones not quantified are there too, greyed."""
     from controllers.stocsy_analytes import AnalyteBrowser
     from tests.unit.test_stocsy_analytes import _mets, _study
     b = _ab(_study(), _mets(), [{'hmdb_id': 'MA', '_confidence': 3}])
     w = _window(root, b)
-    assert w.only_q_var.get() and w.an_tree.get_children() == ('MA',)
+    assert not w.only_q_var.get()
+    assert set(w.an_tree.get_children()) == {'MA', 'MB'}
+    assert 'unq' in w.an_tree.item('MB')['tags']
+    w.only_q_var.set(True)
+    w._fill_analytes()
+    assert w.an_tree.get_children() == ('MA',)
+    w.win.destroy()
+
+
+def test_the_signals_are_listed_reference_first_then_by_r(root):
+    w = _window(root)
+    order = list(w.sig_tree.get_children())
+    assert 'ref' in w.sig_tree.item(order[0])['tags']
+    rs = []
+    for i in order[1:]:
+        v = str(w.sig_tree.item(i)['values'][10])
+        if v not in ('—', ''):
+            rs.append(float(v))
+    assert rs == sorted(rs, reverse=True)
     w.win.destroy()
 
 
@@ -107,7 +127,7 @@ def test_the_listed_signals_say_which_was_not_found(root):
     w = _window(root)
     rows = [w.sig_tree.item(i)['values'] for i in w.sig_tree.get_children()]
     assert len(rows) == 4
-    assert 'not detected' in rows[0][-1]                              # 7.90 ppm, high δ first
+    assert 'not detected' in rows[-1][-1]                             # 7.90 ppm: no r, last
     assert [str(r[0]) for r in rows].count('◉') == 1 and [str(r[0]) for r in rows].count('▶') == 1
     w.win.destroy()
 
@@ -490,13 +510,16 @@ def test_the_arrow_keys_have_a_row_to_start_from_after_every_refill(root):
 def test_the_arrow_keys_walk_the_signals_one_after_another(root):
     w = _window(root, _browser(quant=True))
     kids = w.sig_tree.get_children()
-    start = kids.index(w.sig_tree.focus())                   # 1.30, the last (high δ first)
-    assert start > 1
+    start = kids.index(w.sig_tree.focus())
+    # two rows to walk, on whichever side of the focused one has them
+    key, sign = ('<Up>', -1) if start > 1 else ('<Down>', 1)
+    assert 0 <= start + 2 * sign < len(kids)
     w.sig_tree.focus_force()
     for step in (1, 2):
-        w.sig_tree.event_generate('<Up>')
+        w.sig_tree.event_generate(key)
         root.update()
-        assert w.sought_i == int(kids[start - step])         # the refill kept a row to move from
+        kids = w.sig_tree.get_children()                     # the order is kept on refill
+        assert w.sought_i == int(kids[start + sign * step])
     w.win.destroy()
 
 
@@ -846,4 +869,42 @@ def test_right_click_takes_the_signal_to_the_annotation_and_the_peak_to_the_list
     assert w.focus == 8
     popped[-1].invoke(0)
     assert shown[-1] == ('peak', 8)
+    w.win.destroy()
+
+
+def test_the_analyst_sets_how_far_the_spectrum_follows_a_peak(root):
+    """The width typed is the width the trace is read with, a value out of
+    range goes back, and the window opens again on it."""
+    w = _window(root)
+    assert w.an.follow_ppm == pytest.approx(0.004)
+    before = w.an.trace_of(w.ref.vector, 'k')
+    w.follow_var.set('12')
+    w._on_follow()
+    assert w.an.follow_ppm == pytest.approx(0.012)
+    assert w.an.trace_of(w.ref.vector, 'k') is not before, 'read again at the new width'
+    w.follow_var.set('abc')
+    w._on_follow()
+    assert w.follow_var.get() == '12' and w.an.follow_ppm == pytest.approx(0.012)
+    state = w.state()
+    w.win.destroy()
+    w2 = _window(root, initial=state)              # a new analysis, opened on the state
+    assert w2.an.follow_ppm == pytest.approx(0.012) and w2.follow_var.get() == '12'
+    w2.win.destroy()
+
+
+def test_the_analytes_are_listed_by_mean_r_highest_first(root):
+    w = _window(root)
+    rs = [w.an_tree.item(i)['values'][3] for i in w.an_tree.get_children()]
+    vals = [float(v) for v in rs if str(v) not in ('—', '', 'nan')]
+    assert vals == sorted(vals, reverse=True)
+    w.win.destroy()
+
+
+def test_an_analyte_the_analyst_verified_carries_the_mark_first_in_its_dots(root):
+    from tests.unit.test_stocsy_analytes import _mets, _study
+    b = _ab(_study(), _mets(), [{'hmdb_id': 'MA', '_confidence': 2, '_annotation_manual': True},
+                                {'hmdb_id': 'MB', '_confidence': 1}])
+    w = _window(root, b)
+    assert w.an_tree.set('MA', 'dots').startswith('◎')
+    assert not w.an_tree.set('MB', 'dots').startswith('◎')
     w.win.destroy()

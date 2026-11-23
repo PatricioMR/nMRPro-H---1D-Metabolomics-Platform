@@ -87,6 +87,9 @@ class StocsyAnalysis:
         self.method = 'pearson'
         self.normalize = 'none'
         self.within_groups = False
+        # how far the trace follows a peak from sample to sample (ppm); the
+        # analyst widens it for a study whose samples differ in pH
+        self.follow_ppm = TRACE_FOLLOW_PPM
         self._basis = None
         self._trace_cache = {}
         self._modules_cache = {}
@@ -99,6 +102,16 @@ class StocsyAnalysis:
         self._group_basis = {}
 
     # ── options ──────────────────────────────────────────────────────────────
+
+    def set_follow(self, follow_ppm) -> None:
+        """How far (ppm, >= 0) the trace follows a peak between samples:
+        each point read at its highest within this distance in every
+        sample (``processing.stocsy.follow_peaks``); 0 reads every point
+        where it stands."""
+        follow_ppm = max(float(follow_ppm), 0.0)
+        if follow_ppm != self.follow_ppm:
+            self.follow_ppm = follow_ppm
+            self._trace_cache.clear()
 
     def set_options(self, *, method=None, normalize=None, within_groups=None):
         if method is not None:
@@ -169,7 +182,7 @@ class StocsyAnalysis:
                 vec = np.asarray(vector, dtype=float)[idx]
             self._trace_cache[ck] = stocsy_trace(
                 self.ppm, X, vec, basis, masked_regions=self.excluded_regions,
-                min_std_factor=NOISE_FLOOR_FACTOR, follow_ppm=TRACE_FOLLOW_PPM)
+                min_std_factor=NOISE_FLOOR_FACTOR, follow_ppm=self.follow_ppm)
         return self._trace_cache[ck]
 
     # ── one group at a time ──────────────────────────────────────────────────

@@ -228,3 +228,18 @@ def test_spectra_replaced_after_detection_are_said():
                    for n in StocsyAnalysis(ppm, X, peaks, info).notes())
     an = StocsyAnalysis(ppm, X, peaks, info, spectra_changed=True)
     assert any('after the signals were detected' in n for n in an.notes())
+
+
+def test_the_trace_is_read_at_the_width_the_analyst_set():
+    from processing.stocsy import follow_peaks
+    ppm, X, peaks, info = _study()
+    an = StocsyAnalysis(ppm, X, peaks, info)
+    vec = an.M[an._row[1]]
+    an.set_follow(0.010)
+    tr = an.trace_of(vec, 'one', 'G1')
+    i = int(np.argmin(np.abs(ppm - 2.0)))
+    seen = follow_peaks(ppm, X, 0.010)
+    assert tr['r'][i] == pytest.approx(np.corrcoef(vec[:6], seen[i, :6])[0, 1], abs=1e-9)
+    an.set_follow(0.0)
+    assert an.trace_of(vec, 'one', 'G1')['r'][i] == pytest.approx(
+        np.corrcoef(vec[:6], X[i, :6])[0, 1], abs=1e-9)

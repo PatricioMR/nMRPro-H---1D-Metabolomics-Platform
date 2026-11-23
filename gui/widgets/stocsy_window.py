@@ -51,6 +51,7 @@ from controllers.analysis_defaults import ANNOTATION
 from controllers.stocsy_analytes import AnalyteBrowser
 from controllers.stocsy_controller import NOISE_FLOOR_FACTOR
 from processing.stocsy import TRACE_FOLLOW_PPM
+from gui.utils.verified_dot import with_mark
 from gui.utils.quality_palette import (
     QUALITY_LABEL, SIGNAL_AVERAGE, SIGNAL_GOOD, SIGNAL_POOR, tier_from_annotation_quality)
 from processing.quant_integration import MIN_TRUSTED_CAPTURE
@@ -123,6 +124,7 @@ _WIN_COLS = (
     ('who', 'Annotated as', 120, None),
 )
 _QUANT = 'q'                # the reference is what the quantification measured
+_FOLLOW_MAX_MPPM = 50       # the widest the coloured spectrum may follow a peak
 _ALL = 'All samples'        # the spectrum over the whole study
 
 
@@ -188,7 +190,22 @@ class StocsyWindow:
     def state(self) -> dict:
         """Where the analyst is, to open on it again."""
         return {'met_id': self.met_id, 'ref_i': self.ref_i, 'sought_i': self.sought_i,
-                'ref_rank': self.ref_rank, 'sought_rank': self.sought_rank}
+                'ref_rank': self.ref_rank, 'sought_rank': self.sought_rank,
+                'follow_ppm': self.an.follow_ppm}
+
+    def _on_follow(self):
+        """The width the coloured spectrum follows peaks by, as typed; a
+        value that is not a number in range goes back to the one in use."""
+        try:
+            v = float(self.follow_var.get().replace(',', '.'))
+        except ValueError:
+            v = -1.0
+        if not 0.0 <= v <= _FOLLOW_MAX_MPPM:
+            self.follow_var.set(f'{1000 * self.an.follow_ppm:g}')
+            return
+        if abs(v / 1000.0 - self.an.follow_ppm) > 1e-12:
+            self.an.set_follow(v / 1000.0)
+            self._draw_spectrum()
 
     # ── layout ───────────────────────────────────────────────────────────────
 
@@ -223,7 +240,9 @@ class StocsyWindow:
         ttk.Entry(top, textvariable=self.filter_var, width=18).pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=4)
         self.filter_var.trace_add('write', lambda *_: self._fill_analytes())
-        self.only_q_var = tk.BooleanVar(value=self.browser.has_quantification)
+        # every analyte the annotation found, quantified or not: the analyst
+        # decides from here which ones go to the quantification
+        self.only_q_var = tk.BooleanVar(value=False)
         self.only_q_chk = ttk.Checkbutton(
             af, text='Quantified only', variable=self.only_q_var,
             command=self._fill_analytes)
@@ -235,7 +254,7 @@ class StocsyWindow:
         self.an_tree = ttk.Treeview(
             tf, columns=('dots', 'found', 'pairs', 'r'), show='tree headings',
             selectmode='browse', height=18)
-        for c, t, w, a in (('#0', 'Analyte', 112, tk.W), ('dots', '', 36, tk.CENTER),
+        for c, t, w, a in (('#0', 'Analyte', 112, tk.W), ('dots', '', 46, tk.CENTER),
                            ('found', 'Found', 44, tk.CENTER),
                            ('pairs', 'Pairs', 38, tk.CENTER),
                            ('r', 'mean r', 46, tk.CENTER)):
@@ -307,10 +326,21 @@ class StocsyWindow:
         ttk.Label(hdr, text='(the spectrum below: the mean of these samples, r over them)',
                   foreground='#777777', font=('Arial', 8)).grid(row=3, column=5, padx=4)
         self.color_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(hdr, text=(f'Colour the spectrum by r to the reference (peaks followed '
-                                   f'±{1000 * TRACE_FOLLOW_PPM:.0f} mppm between samples)'),
+        col = ttk.Frame(hdr)
+        col.grid(row=4, column=0, columnspan=4, sticky=tk.W)
+        ttk.Checkbutton(col, text='Colour the spectrum by r to the reference, peaks followed ±',
                         variable=self.color_var, command=self._draw_spectrum
-                        ).grid(row=4, column=0, columnspan=4, sticky=tk.W)
+                        ).pack(side=tk.LEFT)
+        self.follow_var = tk.StringVar(value=f'{1000 * self.an.follow_ppm:g}')
+        fw = ttk.Spinbox(col, from_=0, to=_FOLLOW_MAX_MPPM, increment=1, width=4,
+                         textvariable=self.follow_var, command=self._on_follow)
+        fw.pack(side=tk.LEFT)
+        fw.bind('<Return>', lambda _e: self._on_follow())
+        fw.bind('<FocusOut>', lambda _e: self._on_follow())
+        ttk.Label(col, text='mppm between samples').pack(side=tk.LEFT, padx=(2, 0))
+        ttk.Label(col, foreground='#777777', font=('Arial', 8), text=(
+            f'  ({1000 * TRACE_FOLLOW_PPM:g} measured best; wider follows peaks that move with '
+            'pH, and may reach a neighbour)')).pack(side=tk.LEFT)
         if self.editor is not None:
             ttk.Label(hdr, foreground='#0044cc', font=('Arial', 9, 'bold'), text=(
                 f"Quality of the signal read:  Ctrl+1 {QUALITY_LABEL[SIGNAL_GOOD]}  ·  "
@@ -474,6 +504,9 @@ class StocsyWindow:
     # ── opening ──────────────────────────────────────────────────────────────
 
     def _open_on(self, initial, view_region):
+        if initial.get('follow_ppm') is not None:          # the width the analyst set
+            self.an.set_follow(initial['follow_ppm'])
+            self.follow_var.set(f"{1000 * self.an.follow_ppm:g}")
         mets = self.browser.analytes(only_quantified=self.only_q_var.get())
         met = initial.get('met_id')
         if met is None and mets and not initial.get('ref_rank'):
@@ -586,12 +619,17 @@ class StocsyWindow:
         quant = self.browser.has_quantification
         rows = self.browser.analytes(only_quantified=self.only_q_var.get(),
                                      text=self.filter_var.get())
+        # the analytes whose signals move together most first; without a
+        # mean r (fewer than two readable signals) last, in the browser's order
+        rows = sorted(rows, key=lambda a: (not np.isfinite(a['mean_r']),
+                                           -a['mean_r'] if np.isfinite(a['mean_r']) else 0.0))
         for a in rows:
             hand = any(s['manual'] for s in self.browser.signals(a['id']))
             self.an_tree.insert(
                 '', tk.END, iid=str(a['id']), text=a['name'] + ('  ✎' if hand else ''),
                 tags=('unq',) if quant and not a['dots'] else (),
-                values=(_DOTS[a['dots']], f"{a['detected']}/{a['expected']}",
+                values=(with_mark(self.browser.quantification(a['id']), _DOTS[a['dots']]),
+                        f"{a['detected']}/{a['expected']}",
                         a['pairs'] or '', _f(a['mean_r'])))
         if not rows:
             self.an_tree.insert(
@@ -768,7 +806,7 @@ class StocsyWindow:
         qi = self._quant_index()
         mode = (self.browser.quantification(self.met_id) or {}).get('_integ_mode') or 'quantified'
         rows = dict(self.sig_rows)
-        for i, s in enumerate(self.browser.signals(self.met_id)):
+        for i, s in self._signal_order(qi, rows):
             row = rows.get(i)
             is_ref = self.ref is not None and (i == qi if self.ref_i == _QUANT else i == self.ref_i)
             tags = []
@@ -794,6 +832,23 @@ class StocsyWindow:
                 _f(row['r'], '+.2f') if row and not row['is_ref'] else '—',
                 _f(row['ratio']) if row else '—', _diff(row) if row else '—', note))
         self._select_signal()
+
+    def _signal_order(self, qi, rows):
+        """``(index, signal)`` with the reference first, then by r to it,
+        highest first; the signals with no r (not read, not detected) last,
+        in listing order."""
+        sigs = list(enumerate(self.browser.signals(self.met_id)))
+        ref_i = qi if self.ref_i == _QUANT else self.ref_i
+
+        def key(item):
+            i, _s = item
+            if self.ref is not None and i == ref_i:
+                return (0, 0.0, i)
+            row = rows.get(i)
+            r = row.get('r') if row else None
+            ok = r is not None and np.isfinite(r)
+            return (1 if ok else 2, -float(r) if ok else 0.0, i)
+        return sorted(sigs, key=key)
 
     def _select_signal(self):
         """Select the signal read and give it the keyboard focus: a refilled
