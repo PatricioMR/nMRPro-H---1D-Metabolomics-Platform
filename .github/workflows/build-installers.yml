@@ -29,7 +29,7 @@ jobs:
             label: Windows x64
           - os: ubuntu-22.04          # oldest glibc we target: the AppImage runs on newer
             label: Linux x86_64
-          - os: macos-14
+          - os: macos-15
             label: macOS Apple Silicon
           - os: macos-15-intel
             label: macOS Intel
