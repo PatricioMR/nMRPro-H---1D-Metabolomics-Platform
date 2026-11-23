@@ -472,8 +472,16 @@ class DeconvolutionWindow:
             if win:
                 lo, hi = win
                 g = self._view_group()
-                curves = [c for c in region_curves(self._rows, ppm, lo, hi, g)
-                          if c[0] != 'baseline'] if g else []
+                if self._fit_like(it, d):
+                    curves = [c for c in region_curves(self._rows, ppm, lo, hi, g)
+                              if c[0] != 'baseline'] if g else []
+                else:
+                    # the fit's own record, as the figure draws it: a joint fit
+                    # that could not place the shape leaves the row without a
+                    # number, and region_curves reads only rows with one
+                    curves = [(str(rec['met_id']), str(rec.get('label', rec['met_id'])), x, y)
+                              for rec, x, y in component_curves(
+                                  d, ppm, sample=self._view_sample())]
                 areas = {c[0]: float(np.trapezoid(c[3], c[2])) for c in curves}
                 tot = sum(areas.values())
                 for mid, name, _x, _y in curves:
@@ -526,6 +534,12 @@ class DeconvolutionWindow:
 
     def _colour(self, mid) -> str:
         return self._palette.get(str(mid), contributions.MUTED)
+
+    @staticmethod
+    def _fit_like(it, d) -> bool:
+        """Drawn from the fit records the rows carry (``region_curves``);
+        otherwise from the analyte's own ``_deconv`` record."""
+        return it['kind'] in (KIND_JOINT, KIND_CASCADE) or not d
 
     def _view_group(self):
         v = self._view_var.get()
@@ -589,8 +603,7 @@ class DeconvolutionWindow:
         ax.axvspan(lo, hi, color='#000000', alpha=0.05, zorder=0)
         total = None
         base = None
-        fit_like = it['kind'] in (KIND_JOINT, KIND_CASCADE) or not d
-        if fit_like and g:
+        if self._fit_like(it, d) and g:
             for m, name, x, y in region_curves(self._rows, ppm, lo - pad, hi + pad, g):
                 if m == 'baseline':
                     base = y

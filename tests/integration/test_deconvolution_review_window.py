@@ -89,7 +89,7 @@ def window(real_app, monkeypatch):
         _row('plain', 'Plain integral', _confidence=3),
     ]
     calls = []
-    monkeypatch.setattr(q, '_safe_run', lambda on_done=None: calls.append(on_done))
+    monkeypatch.setattr(q, '_safe_run', lambda on_done=None, on_cancel=None: calls.append(on_done))
     asked = []
     monkeypatch.setattr(mod.messagebox, 'askyesno',
                         lambda *a, **k: (asked.append(a), True)[1])
@@ -226,7 +226,7 @@ def test_with_no_results_it_says_what_it_will_show_and_offers_to_run(real_app, m
     q = real_app.stages['quantification']
     q._quant_results = []
     runs = []
-    monkeypatch.setattr(q, '_safe_run', lambda on_done=None: runs.append(1))
+    monkeypatch.setattr(q, '_safe_run', lambda on_done=None, on_cancel=None: runs.append(1))
     win = mod.DeconvolutionWindow(real_app.root, q)
     win.win.withdraw()
     try:
@@ -273,3 +273,24 @@ def test_after_the_run_it_says_what_the_decisions_changed(window):
     window.calls[0]()                                   # the stage's on_done
     assert window.last_change['entered'] == ['Candidate']
     assert 'entered' in window._preview_lbl.cget('text')
+
+
+def test_a_joint_fit_with_no_number_lists_what_its_figure_draws(window, monkeypatch):
+    """A joint fit that could not place the shape keeps its ``_deconv``
+    record and no number. The figure drew its components from that record;
+    the table read only rows with a number and stood empty."""
+    from gui.widgets import deconvolution_window as mod
+    x = np.sort(PPM[(PPM > 1.4) & (PPM < 1.6)])
+    curves = [({'met_id': 'miss', 'label': 'Misplaced'}, x, 5.0 * np.ones_like(x)),
+              ({'met_id': 'other', 'label': 'Other'}, x, 3.0 * np.ones_like(x))]
+    monkeypatch.setattr(mod, 'component_curves', lambda d, ppm, sample=None: curves)
+    window.q._quant_results.append(_row(
+        'miss', 'Misplaced', _not_quantified=True, _rejection='fit_misplaced',
+        _confidence=0, ppm=1.5, _multiplet_window=[1.45, 1.55],
+        _deconv={'window': [1.45, 1.55], 'components': [{'met_id': 'miss'}]}))
+    window.refresh()
+    window._show('miss')
+    assert window._by_id['miss']['kind'] == 'candidate'
+    rows = {i: window._ctree.item(i, 'values') for i in window._ctree.get_children()}
+    assert set(rows) == {'miss', 'other'}
+    assert rows['miss'][4] == '62%' and rows['other'][4] == '38%'
