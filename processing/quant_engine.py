@@ -64,7 +64,8 @@ from processing.quant_shared import (
 from processing.quant_snr import (
     best_group, group_evidence, noise_level, representative_snr, window_snr)
 from processing.quantification import (
-    AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, EXCLUDED_REGION,
+    AMOUNT_CONTRADICTED, ANALYST_REJECTED, CASCADE_CROWDED, CO_ELECTED_UNRESOLVED,
+    EXCLUDED_REGION,
     FIT_MISPLACED, LOST_COMPETITION, NO_MEASURABLE_WINDOW, NOT_DETECTED,
     WINDOW_INTEGRAL_TEXT,
     OFF_THE_STUDY, PARTIAL_MULTIPLET, REJECTION_TEXT, SHAPE_UNIDENTIFIED,
@@ -2585,6 +2586,21 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
     for mid in _misplaced:
         measured.pop(mid, None)
         per_proton_areas.pop(mid, None)
+    # Two analytes kept on one peak because the analyst's Good mark took part
+    # in the contest (quantification.elect): the joint fit measures both, or
+    # the one the ranking put second leaves -- each integrating the whole
+    # window would count the peak twice.
+    _co_unresolved: dict = {}
+    for mid, partner in (getattr(election, 'co_elected', None) or {}).items():
+        if mid in measured and not measured[mid].get('joint_fit'):
+            _co_unresolved[mid] = partner
+            measured.pop(mid, None)
+            per_proton_areas.pop(mid, None)
+        elif mid in measured:
+            _pc = election.winners.get(partner)
+            measured[mid]['co_elected_with'] = (
+                (_pc.payload or {}).get('name') if _pc is not None
+                and isinstance(_pc.payload, dict) else None) or partner
 
     rows = []
     _withdrawn: dict = {}
@@ -2702,6 +2718,9 @@ def _quantify_once(*, candidates, peaks_by_rank, ppm, intensities,
         rows.append(_rejected_row(mid, reason))
     for mid, why in _misplaced.items():
         rows.append(_rejected_row(mid, FIT_MISPLACED, detail=f' Here {why}.'))
+    for mid, partner in _co_unresolved.items():
+        rows.append(_rejected_row(mid, CO_ELECTED_UNRESOLVED,
+                                  detail=f' The peak stays with {names.get(partner, partner)}.'))
     for mid, (n_found, n_all, share, missing) in partial.items():
         rows.append(_rejected_row(
             mid, PARTIAL_MULTIPLET,
@@ -3078,6 +3097,7 @@ def _row(mid, info, conc, by_group, good, level, dots, pqn_factors) -> dict:
                             + _own_drift_reason(info)
                             + _reselect_reason(info) + _mstar_reason(info)
                             + _manual_override_reason(info)
+                            + _co_elected_reason(info)
                             + _position_reason(info)
                             + _shape_reason(info)),
         '_hits': [sig.payload] if sig.payload is not None else [],
@@ -3286,6 +3306,17 @@ def _withdraw_off_drift(row, why) -> None:
     row['cv_by_group'] = {}
     row['_status_reasons'] = ([REJECTION_TEXT[SINGLET_OFF_DRIFT] + why]
                               + list(row.get('_status_reasons') or ()))
+
+
+def _co_elected_reason(info) -> list:
+    """Said of a row kept on a peak it shares with an analyte the analyst
+    marked Good (``quantification.elect``)."""
+    other = info.get('co_elected_with')
+    if other is None:
+        return []
+    return [f"Shares a peak with {other}: it ranked second in a contest the "
+            f"analyst's Good mark took part in, and was kept beside it; the "
+            f"joint fit measured both on the shared peak."]
 
 
 def _manual_override_reason(info) -> list:

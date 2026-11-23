@@ -1785,6 +1785,34 @@ def support_band(consistent, checked) -> int:
     return 0 if n_c * 2 >= n_k else 1
 
 
+def manual_gate(mp, params) -> str | None:
+    """Why the analyst's Good mark on this matched signal cannot make it
+    compete, or None when it may.
+
+    The mark is the analyst's judgement on identity; it does not replace the
+    two measurements the annotation holds every signal to (asked by the
+    analyst, 2026-11-22). The position within ``dppm_gold`` of the listing,
+    and for a multiplet a measured coupling within ``dj_bad_hz`` of it --
+    the thresholds of ``is_confirmed``. A singlet has no coupling to answer
+    to. The values are the annotation's, on the lines it matched."""
+    diff = mp.get('ppm_diff')
+    if diff is None:
+        return 'the annotation matched no peak to it, so its position was never measured'
+    if abs(float(diff)) >= float(params['dppm_gold']):
+        return (f"it stands {1000 * abs(float(diff)):.0f} mppm from its listing, past the "
+                f"{1000 * float(params['dppm_gold']):.0f} mppm the annotation allows")
+    mult = mp.get('type') or mp.get('multiplicity')
+    if is_singlet_like(mult or 's'):
+        return None
+    dj = mp.get('delta_j_hz')
+    if dj is None:
+        return 'its coupling was never measured (lines missing)'
+    if abs(float(dj)) >= float(params['dj_bad_hz']):
+        return (f"its coupling is {abs(float(dj)):.2f} Hz from the listed J, past the "
+                f"{float(params['dj_bad_hz']):.2f} Hz the annotation allows")
+    return None
+
+
 def is_competitor(cand) -> bool:
     """True when this candidate may compete for a peak at all.
 
@@ -1815,10 +1843,10 @@ class CandidateKey(NamedTuple):
     silently made it compare the cosine against the score's tie width. Named
     fields cost nothing at comparison time and make that impossible.
     """
-    manual: int
     tier: int
     dj: int
     ppm: int
+    manual: int
     quality: int
     fingerprint: int
     support: int
@@ -1853,13 +1881,15 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
 
     Order of the evidence, strongest first:
 
-    1. ``manual_quality == 'good'`` — the user looked at the spectrum and
-       decided. That judgement is evidence the pipeline does not have, so it
-       outranks every computed criterion. Manual 'bad' is handled by the
-       caller, which drops the candidate before ranking.
-    2. evidence tier — a confirmed multiplet beats an unconfirmed one, which
+    1. evidence tier — a confirmed multiplet beats an unconfirmed one, which
        beats a singlet.
-    3. ΔJ band, then Δppm band — see the module notes on why this order.
+    2. ΔJ band, then Δppm band — see the module notes on why this order.
+    3. ``manual_quality == 'good'`` — the analyst looked at the spectrum (the
+       STOCSY window, the Annotation Results) and decided. It settles a
+       contest that the tier, the coupling and the position leave tied; it
+       does not override them (asked by the analyst, 2026-11-22: the mark
+       still answers to J and Δppm, ``manual_gate``). Manual 'bad' is
+       handled by the caller, which drops the candidate before ranking.
     4. annotation quality — a candidate the annotation pipeline did not accept
        as Good must not beat one it did on a similarity tie-break.
     4b. fingerprint contradictions — how many of the analyte's OTHER listed
@@ -1926,7 +1956,6 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
                   cand.get('annotation_quality') or '').lower().strip()
     mult = cand.get('multiplicity') or cand.get('type')
     return CandidateKey(
-        manual=0 if manual == 'good' else 1,
         tier=candidate_tier(mult, cand.get('delta_j_hz'),
                             cand.get('n_found'), cand.get('n_expected'),
                             cand.get('lines_explained'),
@@ -1936,6 +1965,7 @@ def candidate_key(cand, *, dj_gold_hz: float, band_ppm: float = PPM_BAND_PPM):
         ppm=ppm_band(cand.get('ppm_off_drift')
                      if cand.get('ppm_off_drift') is not None
                      else cand.get('ppm_diff'), band_ppm),
+        manual=0 if manual == 'good' else 1,
         quality=0 if quality == 'good' else 1,
         fingerprint=int(cand.get('fp_contradicted') or 0),
         support=support_band(cand.get('fp_consistent'),
@@ -1957,8 +1987,8 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
     verified one and never creates an ambiguity of its own.
 
     Returns ``(ordered, ambiguous)``. ``ambiguous`` is True when the top two are
-    indistinguishable on every criterion — same manual mark, tier, ΔJ band,
-    Δppm band, quality and line-intensity band, with cosine and score inside
+    indistinguishable on every criterion — same tier, ΔJ band, Δppm band,
+    manual mark, quality and line-intensity band, with cosine and score inside
     their tie widths. An ambiguous contest
     has no winner: the caller must not quantify any of them from this peak.
     Reporting a number there would be inventing a decision the data does not
@@ -1976,7 +2006,7 @@ def rank_candidates(candidates, *, dj_gold_hz: float,
     # declare a contest ambiguous that the ranking had in fact settled, and an
     # ambiguous contest has no winner at all -- so the two analytes the new
     # criterion exists to separate would both end with nothing.
-    _banded = ('manual', 'tier', 'dj', 'ppm', 'quality', 'fingerprint',
+    _banded = ('tier', 'dj', 'ppm', 'manual', 'quality', 'fingerprint',
                'support', 'intensity', 'corroboration', 'drift')
     tied = all(getattr(k0, f) == getattr(k1, f) for f in _banded)
     # The score cannot settle two singlets: a singlet's score is its

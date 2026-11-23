@@ -25,6 +25,7 @@ import os
 import threading
 
 from ._quant_adapter import (
+    annotation_column as _annotation_column,
     blank_indices, dilution_and_correction, identity_columns as _identity_columns,
     CEILING, NOT_DETECTED, reported_cells, quantify_project, sample_groups,
     standard_vector, statistics_values)
@@ -681,6 +682,17 @@ class _QuantCompMixin:
             if _n_nq:
                 _msg += f'  ·  {_n_nq} not quantified'
             self._status_ok(_msg)
+            # a Good mark the gate took off is said, not dropped in silence
+            _refused = ((getattr(self, '_quant_diagnostics', None) or {})
+                        .get('manual_refused') or [])
+            if _refused:
+                from ._quant_adapter import manual_refused_reason
+                messagebox.showwarning(
+                    'Manual marks not applied',
+                    '\n\n'.join(f"{_it['name']}: {manual_refused_reason(_it)}"
+                                for _it in _refused[:10])
+                    + (f'\n\n… and {len(_refused) - 10} more.' if len(_refused) > 10 else ''),
+                    parent=self.app.root)
 
             self._update_peak_list_labels()
             self._close_progress_dialog()
@@ -1195,7 +1207,7 @@ class _QuantCompMixin:
                             for h in (f'CI95lo_{g}', f'CI95hi_{g}')]
                 quality_cols = (['ChemShift(ppm)', 'Width(ppm)', 'SNR', 'R2', 'Score',
                                  'IntegMode', 'Status', 'Norm',
-                                 'Confidence', 'Origin', 'IdentityBasis',
+                                 'Confidence', 'Annotation', 'Origin', 'IdentityBasis',
                                  'Ceiling_samples']
                                 + cv_hdrs + ci_hdrs)
 
@@ -1259,7 +1271,9 @@ class _QuantCompMixin:
                             _im or norm_mode_lbl,
                             status,
                             norm_mode_lbl,
-                            *_identity_columns(r),
+                            _identity_columns(r)[0],
+                            _annotation_column(r),
+                            *_identity_columns(r)[1:],
                             '; '.join(_ceil),
                         ] + cv_vals + ci_vals
 
@@ -1326,7 +1340,8 @@ class _QuantCompMixin:
                     conf, origin, basis = _identity_columns(r)
                     _table.append([name] + [f'{v:.6e}' if np.isfinite(v) else 'NA'
                                             for v in vals])
-                    _annot.append([name, r.get('hmdb_id', ''), conf, origin, basis,
+                    _annot.append([name, r.get('hmdb_id', ''), conf,
+                                   _annotation_column(r), origin, basis,
                                    sum(1 for v in vals if np.isfinite(v)),
                                    len(vals), len(ceil), '; '.join(ceil)])
                 with open(path, 'w', newline='', encoding='utf-8') as f:
@@ -1341,7 +1356,7 @@ class _QuantCompMixin:
                 _ann_path = os.path.splitext(path)[0] + '_annotations.csv'
                 with open(_ann_path, 'w', newline='', encoding='utf-8') as f:
                     w = csv.writer(f)
-                    w.writerow(['Feature', 'HMDB_ID', 'Confidence', 'Origin',
+                    w.writerow(['Feature', 'HMDB_ID', 'Confidence', 'Annotation', 'Origin',
                                 'IdentityBasis', 'N_measured', 'N_samples',
                                 'N_ceiling', 'Ceiling_samples'])
                     w.writerows(_annot)

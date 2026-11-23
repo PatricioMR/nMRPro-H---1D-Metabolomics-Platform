@@ -17,6 +17,7 @@ from processing import quant_quality
 from plotting.fit_curve import (FIT_ABOVE_TRACE, fit_group, fit_over_trace,
                                 fit_warnings)
 
+from gui.utils.verified_dot import VERIFIED_BLUE, VERIFIED_TEXT, VERIFIED_TIP, is_verified
 from ._quant_reasons import short_reasons
 from ._quant_helpers import (
     _fit_lorentz_mean, _fit_lorentz_mean_with_bl, _fit_lorentz_sample,
@@ -104,6 +105,8 @@ class _QuantVisMixin:
                     r.get('_status_reasons'),
                     not_quantified=bool(r.get('_not_quantified')))
                 text = '\n'.join(f'• {s}' for s in lines) if lines else '—'
+                if is_verified(r):
+                    text = VERIFIED_TIP + '\n' + text
                 self._show_tooltip(event, text)
                 self._tooltip_iid = iid
                 return
@@ -709,6 +712,8 @@ class _QuantVisMixin:
         ]
         if _q_worst is not None:
             top_card.append(('Quant. quality', _q_worst, _LEVEL_COLOUR[_q_worst]))
+        if is_verified(r):
+            top_card.append(('Analyst', f'● {VERIFIED_TEXT}', VERIFIED_BLUE))
         if r.get('_used_mcr') and r.get('_mcr'):
             mcr_m   = r['_mcr'].get('metrics', {})
             lof     = mcr_m.get('lof', float('nan'))
@@ -738,6 +743,10 @@ class _QuantVisMixin:
                             'Area is integrated across this entire region,\n'
                             'covering all predicted multiplet lines.',
             'Integration':  'Method used to compute signal area per sample.',
+            'Analyst':      'Blue dot: the analyst verified this analyte (a signal marked\n'
+                            'Good in the Annotation Results, or lines saved in the STOCSY\n'
+                            "window), beside the engine's dots. The exports say Manual in\n"
+                            'their Annotation column, the PDF beside the confidence.',
             'Norm':         'Normalisation applied before concentration calculation.',
             'Mean SNR':     'Mean signal-to-noise ratio across non-BLK samples.\n'
                             'SNR = signal max / noise level estimated at detection.',

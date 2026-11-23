@@ -364,6 +364,7 @@ def test_the_csv_marks_not_detected_and_carries_the_confidence(tmp_path, monkeyp
     ala = next(r for r in table if r[0] == 'L-Alanine')
     assert ala[head.index('Confidence')] == '1'
     assert ala[head.index('Origin')] == 'Cascade estimate'
+    assert ala[head.index('Annotation')] == 'Automatic'
     # the four sample columns are the last four: the blank is not measured, S1 and
     # S2 carry their numbers, S3's zero is a ceiling, '<value': the most the
     # sample can hold
@@ -388,7 +389,8 @@ def test_metaboanalyst_gets_na_for_not_detected_and_the_confidence_beside_it(
     assert ann[0][:3] == ['Feature', 'HMDB_ID', 'Confidence']
     head = ann[0]
     arow = next(r for r in ann if r[0] == 'L-Alanine')
-    assert arow[2] == '1' and arow[3] == 'Cascade estimate'
+    assert arow[2] == '1' and arow[head.index('Origin')] == 'Cascade estimate'
+    assert arow[head.index('Annotation')] == 'Automatic'
     assert arow[head.index('N_measured')] == '2'
     assert not any('LOD' in h for h in head)
     assert arow[head.index('N_ceiling')] == '1'

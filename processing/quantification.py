@@ -50,6 +50,7 @@ FIT_MISPLACED = 'fit_misplaced'
 SINGLET_OFF_DRIFT = 'singlet_off_drift'
 ANALYST_REJECTED = 'analyst_rejected'
 EXCLUDED_REGION = 'excluded_region'
+CO_ELECTED_UNRESOLVED = 'co_elected_unresolved'
 
 # The reason of a winner quantified on its predicted window, with no peak.
 WINDOW_INTEGRAL_TEXT = (
@@ -58,6 +59,12 @@ WINDOW_INTEGRAL_TEXT = (
     "neighbour's tail or noise; read the region before using it.")
 
 REJECTION_TEXT = {
+    CO_ELECTED_UNRESOLVED:
+        "Not quantified: it lost a contested peak in which the analyst's Good "
+        'mark took part, and both analytes were kept for the joint fit to '
+        'separate; the fit could not measure this one, so the peak stays with '
+        'the analyte whose evidence ranked first rather than being counted '
+        'twice.',
     ANALYST_REJECTED:
         'Not quantified: rejected by the analyst in the deconvolution review. '
         'It is left out of the election, of the joint fit and of the cascade, '
@@ -205,6 +212,15 @@ class Election:
     # analyst can act on; "lost 1.33 ppm to N-acetyl-L-alanine on a manual
     # Good mark" does.
     beaten: dict = field(default_factory=dict)
+    # met_id -> met_id of the analyte it shares a contested peak with: a
+    # contest the analyst's Good mark took part in keeps both claimants
+    # (``elect``); the joint fit separates them, or the one the ranking put
+    # second leaves (quant_engine, CO_ELECTED_UNRESOLVED).
+    co_elected: dict = field(default_factory=dict)
+
+
+def _is_manual(c) -> bool:
+    return str((c.evidence or {}).get('manual_quality') or '').lower() == 'good'
 
 
 def _sort_key(cand, *, dj_gold_hz, band_ppm=None):
@@ -254,8 +270,9 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
         if c.peak_rank is not None and c.peak_rank in amb:
             rejected.setdefault(c.met_id, AMBIGUOUS_RANK)
             continue
-        # a manual Good mark is the analyst verifying what the lines could
-        # not: it competes, and ranks first (candidate_key)
+        # a manual Good mark (already held to J and Δppm,
+        # annotation_scoring.manual_gate) is the analyst verifying what the
+        # lines could not: it competes, and settles ties (candidate_key)
         _manual = str((c.evidence or {}).get('manual_quality') or '').lower() == 'good'
         if (not is_competitor(c.evidence) and not _manual
                 and not (c.evidence or {}).get('mstar_compete')):
@@ -288,6 +305,28 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
     claimed: set = set()
     holder: dict = {}          # rank -> the Candidate that holds it
     beaten: dict = {}
+    co_elected: dict = {}
+
+    def _co_elect(c, ranks) -> bool:
+        """Keep ``c`` beside the holder of ``ranks`` when the analyst's Good
+        mark is on either side of the contest (asked by the analyst,
+        2026-11-22): the mark settles which signal is whose, the joint fit
+        then measures both on the shared peak. Only a detected candidate that
+        competes, of an analyte with no window yet."""
+        if c.met_id in winners or not _detected(c):
+            return False
+        holders = list({id(holder[r]): holder[r] for r in ranks if r in holder}.values())
+        if not holders or not (_is_manual(c) or any(_is_manual(h) for h in holders)):
+            return False
+        partner = sorted(holders, key=lambda h: (not _is_manual(h), str(h.met_id)))[0]
+        winners[c.met_id] = c
+        # keyed on the one that leaves if the fit cannot separate them: the
+        # one the ranking put second, marked or not
+        co_elected[c.met_id] = partner.met_id
+        for r in ({c.peak_rank} if c.peak_rank is not None else set()) | set(c.line_ranks):
+            claimed.add(r)
+            holder.setdefault(r, c)
+        return True
 
     def _record_loss(c, rank):
         w = holder.get(rank)
@@ -302,11 +341,12 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
         if not _detected(c) and c.met_id in has_detected:
             continue
         if c.peak_rank is not None and c.peak_rank in claimed:
-            if c.met_id not in winners:
+            if c.met_id not in winners and not _co_elect(
+                    c, {c.peak_rank} | set(c.line_ranks)):
                 _record_loss(c, c.peak_rank)
             continue
         if c.line_ranks & claimed:
-            if c.met_id not in winners:
+            if c.met_id not in winners and not _co_elect(c, c.line_ranks & claimed):
                 _record_loss(c, sorted(c.line_ranks & claimed)[0])
             continue
         if c.met_id in winners:
@@ -347,7 +387,8 @@ def elect(candidates: Iterable[Candidate], *, dj_gold_hz: float,
             rejected.setdefault(mid, NO_ELIGIBLE_SIGNAL)
 
     return Election(winners=winners, rejected=rejected,
-                    claimed_peaks=frozenset(claimed), beaten=beaten)
+                    claimed_peaks=frozenset(claimed), beaten=beaten,
+                    co_elected=co_elected)
 
 
 def eligible_metabolite_ids(metabolites, *, anchor_met_ids=(),

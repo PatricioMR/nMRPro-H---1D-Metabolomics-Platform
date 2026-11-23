@@ -70,11 +70,18 @@ class TestWhoMayCompete:
         assert out.rejected['A'] == UNVERIFIED_MULTIPLET
 
     def test_a_manual_good_mark_lets_an_unverified_multiplet_compete(self):
-        """The analyst verified what the lines could not."""
+        """The analyst verified what the lines could not: it competes, ranks
+        below the verified rival, and is kept beside it on the shared peak
+        for the joint fit to separate."""
         out = elect([_c('A', 10, n_found=2, n_exp=3, mult='t', dj=None,
                         manual_quality='good'),
                      _c('B', 10)], dj_gold_hz=GOLD)
-        assert set(out.winners) == {'A'}
+        assert set(out.winners) == {'A', 'B'}
+        assert out.co_elected == {'A': 'B'}
+
+    def test_without_a_manual_mark_the_loser_is_not_kept(self):
+        out = elect([_c('A', 10, dj=2.0), _c('B', 10, dj=0.05)], dj_gold_hz=GOLD)
+        assert set(out.winners) == {'B'} and out.co_elected == {}
 
     def test_an_ambiguous_rank_has_no_winner(self):
         out = elect([_c('A', 10), _c('B', 10)],
@@ -310,11 +317,19 @@ class TestALossSaysWhoAndWhy:
         return [Candidate('LAC', 5, frozenset({5, 6}), dict(ev)),
                 Candidate('NAA', 5, frozenset({5, 6}), {**ev, **naa})]
 
-    def test_a_manual_mark_is_named_as_the_reason(self):
+    def test_a_manual_mark_settles_a_tie_and_keeps_the_rival_beside_it(self):
+        """Tied on J and Δppm, the marked one ranks first; the other is not
+        beaten but kept on the shared peak for the joint fit."""
+        from processing.quantification import elect
+        e = elect(self._pair(manual_quality='good'), dj_gold_hz=0.2)
+        assert set(e.winners) == {'LAC', 'NAA'}
+        assert e.co_elected == {'LAC': 'NAA'} and 'LAC' not in e.beaten
+
+    def test_a_manual_mark_that_loses_on_j_is_kept_second(self):
         from processing.quantification import elect
         e = elect(self._pair(delta_j_hz=0.35, ppm_diff=0.05,
                              manual_quality='good'), dj_gold_hz=0.2)
-        assert e.beaten['LAC'] == [(5, 'NAA', 'a manual Good mark')]
+        assert e.co_elected == {'NAA': 'LAC'}
 
     def test_delta_j_is_named_when_it_decided(self):
         from processing.quantification import elect
@@ -341,5 +356,9 @@ class TestALossSaysWhoAndWhy:
             samples_info=[{'label': 'A', 'type': 'Sample'}], included=[0],
             groups={'A': [0]}, dj_gold_hz=0.2, use_pqn=False,
             deconvolve=False)}
-        assert any('Lost peak #5 to NAA on a manual Good mark' in t
-                   for t in rows['LAC']['_status_reasons'])
+        # the marked NAA lost on J and was kept beside LAC; with no joint fit
+        # to separate them it leaves, and says why and to whom
+        from processing.quantification import CO_ELECTED_UNRESOLVED
+        assert rows['NAA'].get('_rejection') == CO_ELECTED_UNRESOLVED
+        assert any('stays with LAC' in t for t in rows['NAA']['_status_reasons'])
+        assert not rows['LAC'].get('_not_quantified')

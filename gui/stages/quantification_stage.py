@@ -35,6 +35,7 @@ from .base_stage import BaseStage
 from ._quant_helpers import _STD_PRESETS
 from ._quant_visualization import _QuantVisMixin
 from ._quant_computation import _QuantCompMixin
+from gui.utils.verified_dot import with_mark
 
 
 class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
@@ -830,7 +831,7 @@ class QuantificationStage(BaseStage, _QuantVisMixin, _QuantCompMixin):
                             f'{area:.4e}',
                             f'{snr:.1f}',
                             vip_s,
-                            stat))
+                            with_mark(r, stat)))
             except Exception as _ins_err:
                 print(f'[Quant tree] insert failed for {iid!r}: {_ins_err}')
 

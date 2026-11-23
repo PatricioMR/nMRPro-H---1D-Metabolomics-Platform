@@ -121,3 +121,10 @@ def test_the_digest_follows_the_content():
     c = _state()
     c['all_intensities'][100, 0] += 500.0
     assert pf.snapshot(a).digest != pf.snapshot(c).digest
+
+
+def test_a_row_the_analyst_confirmed_by_hand_stays_manual_after_save_and_load():
+    from data import project_file as pf
+    row = {'hmdb_id': 'HMDB1', 'metabolite': 'X', '_annotation_manual': True}
+    back = pf.decode(pf.encode(pf.snapshot({'qnt': {'quant_results': [row]}})))
+    assert back['qnt']['quant_results'][0]['_annotation_manual'] is True

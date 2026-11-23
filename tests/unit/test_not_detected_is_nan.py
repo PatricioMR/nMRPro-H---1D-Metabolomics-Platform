@@ -134,3 +134,49 @@ def test_the_statistics_read_measurements_only_unless_asked_otherwise():
 def test_the_ceiling_is_the_window_integral_and_nothing_below_it():
     got = _ceilings({0: 0.4, 1: 0.0, 2: NAN, 3: -1.0, 4: None})
     assert got == {0: 0.4}
+
+
+def test_an_analyte_the_analyst_confirmed_is_exported_as_manual():
+    """A signal marked Good by hand (Annotation Results, or lines saved in the
+    STOCSY window) makes the analyte's row Manual in every export; marked
+    Poor, or not marked, it stays Automatic, and a mark taken back is undone
+    on the next run."""
+    from gui.stages._quant_adapter import (
+        ANNOTATION_AUTOMATIC, ANNOTATION_MANUAL, annotation_column, mark_analyst_confirmed)
+    rows = [{'hmdb_id': 'HMDB1'}, {'hmdb_id': 'HMDB2'}, {'hmdb_id': 'HMDB3'}]
+    marks = {('HMDB1', 12): 'good', ('HMDB2', 7): 'bad'}
+    mark_analyst_confirmed(rows, marks)
+    assert [annotation_column(r) for r in rows] == [
+        ANNOTATION_MANUAL, ANNOTATION_AUTOMATIC, ANNOTATION_AUTOMATIC]
+    mark_analyst_confirmed(rows, {})
+    assert annotation_column(rows[0]) == ANNOTATION_AUTOMATIC
+
+
+def test_a_good_mark_past_the_limits_is_taken_off_and_said():
+    from gui.stages._quant_adapter import gate_manual_marks, manual_refused_reason
+    mets = [{'id': 'OK', 'name': 'Fine', 'matched_peaks': [
+                {'peak_rank': 1, 'type': 'd', 'ppm_diff': 0.01, 'delta_j_hz': 0.2,
+                 'db_ppm': 1.33, 'annotation_quality': 'good'}]},
+            {'id': 'NO', 'name': 'Far', 'matched_peaks': [
+                {'peak_rank': 2, 'type': 'd', 'ppm_diff': 0.01, 'delta_j_hz': 0.9,
+                 'db_ppm': 2.10, 'annotation_quality': 'good'}]}]
+    marks = {('OK', 1): 'good', ('NO', 2): 'good', ('NO', 9): 'bad'}
+    kept, refused = gate_manual_marks(mets, marks, {'dppm_gold': 0.05, 'dj_bad_hz': 0.5})
+    assert kept == {('OK', 1): 'good', ('NO', 9): 'bad'}
+    assert [r['name'] for r in refused] == ['Far']
+    assert mets[1]['matched_peaks'][0]['annotation_quality'] is None
+    assert 'at 2.100 ppm' in manual_refused_reason(refused[0])
+
+
+def test_the_report_puts_one_blue_dot_left_of_the_confidence_dots():
+    """Nothing written: one dot more, blue, then the engine's dots."""
+    import re
+    from gui.widgets.pdf_report import _quality_markup
+    from gui.utils.verified_dot import VERIFIED_BLUE
+    m = _quality_markup({'_annotation_manual': True}, 'CONF ●●○  ≥95%*', '#f9a825')
+    text = re.sub(r'<[^>]+>', '', m)
+    assert text == 'CONF ●●●○  ≥95%*'
+    assert m.index(VERIFIED_BLUE) < m.index('●●○')
+    assert 'verified' not in m
+    plain = _quality_markup({'_confidence': 2}, 'CONF ●●○  ≥95%*', '#f9a825')
+    assert re.sub(r'<[^>]+>', '', plain) == 'CONF ●●○  ≥95%*' and VERIFIED_BLUE not in plain

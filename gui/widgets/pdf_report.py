@@ -746,8 +746,19 @@ def _quality_info(r, theoretical, precision=None):
     dots = {3: '●●●', 2: '●●○', 1: '●○○'}[ci]
     col = {3: _GREEN, 2: _YELLOW, 1: _RED}[ci]
     p = (precision or {}).get(ci)
-    return (f'CONF {dots}  ≥{100 * p:.0f}%*' if p is not None
-            else f'CONF {dots}'), col
+    text = f'CONF {dots}  ≥{100 * p:.0f}%*' if p is not None else f'CONF {dots}'
+    return text, col
+
+
+def _quality_markup(r, label, colour) -> str:
+    """The quality line as Paragraph markup: ``label`` in ``colour``, bold,
+    with -- for an analyte the analyst verified (``gui.utils.verified_dot``)
+    -- one blue dot more, left of the confidence dots and nothing written."""
+    from gui.utils.verified_dot import VERIFIED_BLUE, is_verified
+    head, rest = ('CONF ', label[5:]) if label.startswith('CONF ') else ('', label)
+    blue = f'<font color="{VERIFIED_BLUE}"><b>●</b></font>' if is_verified(r) else ''
+    return (f'<font color="{colour}"><b>{head}</b></font>{blue}'
+            f'<font color="{colour}"><b>{rest}</b></font>')
 
 
 # ── Multiplicity, spelled out ────────────────────────────────────────────────
@@ -1118,7 +1129,7 @@ def _analyte_block(r, ppm, all_int, samples_info, group_colors,
 
     # Linha de qualidade final (span) — também Unicode
     rows.append([
-        Paragraph(f'<font color="{qhex}"><b>{qual_label}</b></font>',
+        Paragraph(_quality_markup(r, qual_label, qhex),
                   ParagraphStyle('ql', fontSize=8,
                                  fontName=_UNICODE_FONT_BOLD, leading=11)),
         Paragraph('', styles['cell'])

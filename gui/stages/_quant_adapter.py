@@ -432,6 +432,67 @@ def manual_good_ids(quality_marks):
     return {str(k[0]) for k, v in (quality_marks or {}).items() if v == 'good'}
 
 
+def gate_manual_marks(metabolites, quality_marks, params):
+    """``(marks, refused)``: the analyst's marks with every Good taken off a
+    signal that fails ``annotation_scoring.manual_gate`` -- its position or
+    its coupling past what the annotation allows -- and ``refused``, one
+    ``{'met_id', 'name', 'db_ppm', 'why'}`` per mark taken off. On
+    ``metabolites`` (the quantification's own copy) such a signal goes back
+    to undecided: the Good the mark wrote on it does not reach the election
+    either. Bad marks are kept as they are."""
+    from processing.annotation_scoring import manual_gate
+    marks = dict(quality_marks or {})
+    refused = []
+    for met in metabolites or ():
+        mid = met.get('id')
+        for mp in met.get('matched_peaks') or ():
+            rank = mp.get('peak_rank')
+            keys = [k for k in ((mid, rank), (str(mid), rank)) if marks.get(k) == 'good']
+            if not keys:
+                continue
+            why = manual_gate(mp, params)
+            if why is None:
+                continue
+            for k in keys:
+                marks.pop(k, None)
+            mp['annotation_quality'] = None
+            refused.append({'met_id': str(mid), 'name': met.get('name', mid),
+                            'db_ppm': mp.get('db_ppm'), 'why': why})
+    return marks, refused
+
+
+def manual_refused_reason(item) -> str:
+    db = item.get('db_ppm')
+    at = f' at {float(db):.3f} ppm' if db is not None else ''
+    return (f"The analyst's Good mark on its signal{at} was not applied: {item['why']}. "
+            f"A manual mark still answers to J and Δppm.")
+
+
+ANNOTATION_MANUAL, ANNOTATION_AUTOMATIC = 'Manual', 'Automatic'
+MANUAL_KEY = '_annotation_manual'
+
+
+def mark_analyst_confirmed(rows, quality_marks):
+    """Flag the rows of the analytes the analyst confirmed by hand -- a signal
+    marked Good in the Annotation Results, or lines saved in the STOCSY
+    window, which mark it Good -- so every export says which identities rest
+    on the analyst's judgement rather than the search's. Rows changed in
+    place."""
+    ids = manual_good_ids(quality_marks)
+    for r in rows or ():
+        if str(r.get('hmdb_id')) in ids:
+            r[MANUAL_KEY] = True
+        else:
+            r.pop(MANUAL_KEY, None)
+    return rows
+
+
+def annotation_column(row) -> str:
+    """'Manual' for an analyte the analyst confirmed by hand, else
+    'Automatic': the exports' Annotation column."""
+    return ANNOTATION_MANUAL if row.get(MANUAL_KEY) else ANNOTATION_AUTOMATIC
+
+
 # The per-sample fields the engine returns are {sample_index: value}, because
 # a sample it could not measure is absent rather than present with a zero.
 # Everything downstream — the statistics matrix, the CSV export, the manual
@@ -685,10 +746,15 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             'dj_gold_hz', SCORING_DEFAULTS.get('dj_gold_hz',
                                                DJ_GOLD_HZ_DEFAULT)))
 
+    # the analyst's Good marks, each still held to J and Δppm
+    gated_marks, manual_refused = gate_manual_marks(
+        metabolites, quality_marks, {**SCORING_DEFAULTS, **(annotation_params or {})})
+    if diagnostics is not None:
+        diagnostics['manual_refused'] = manual_refused
     eligible = eligible_metabolite_ids(
         metabolites,
         anchor_met_ids=anchor_metabolite_ids(anchor_lines),
-        manual_good_ids=manual_good_ids(quality_marks))
+        manual_good_ids=manual_good_ids(gated_marks))
 
     _lw = measure_linewidth_ppm(ppm, arr, peaks) or FALLBACK_LINEWIDTH_PPM
     std_areas = standard_areas_from_peak(ref_peak, ppm, arr,
@@ -714,7 +780,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             excluded_regions=excluded_regions)
     _pool: list = []
     _cands = build_candidates(metabolites, peaks_by_rank,
-                              quality_marks=quality_marks,
+                              quality_marks=gated_marks,
                               eligible_ids=eligible,
                               pool=_pool if resolve_shared else None)
     rows = _rows_indexed_by_sample(quantify(
@@ -795,4 +861,11 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
             noise_sigma=(float(noise_sigma) if noise_sigma not in (None, 0)
                          else project_noise(peaks)),
             local_baseline=local_baseline, align=align, manual_marks=quality_marks)
+    mark_analyst_confirmed(rows, gated_marks)
+    _refused_by_id = {}
+    for item in manual_refused:
+        _refused_by_id.setdefault(item['met_id'], []).append(manual_refused_reason(item))
+    for r in rows:
+        for text in _refused_by_id.get(str(r.get('hmdb_id')), ()):
+            r.setdefault('_status_reasons', []).append(text)
     return _for_display(rows, metabolites, peaks_by_rank)

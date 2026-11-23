@@ -112,19 +112,27 @@ class TestCosineTieBreak:
 
 
 class TestManualOverride:
-    def test_manual_good_outranks_every_computed_criterion(self):
+    def test_manual_good_does_not_outrank_the_coupling_or_the_position(self):
+        """The mark still answers to J and Δppm (the analyst, 2026-11-22)."""
         names, _ = _order([
             _c('auto_best', delta_j_hz=0.0, ppm_diff=0.0, cosine=0.99),
             _c('user_pick', delta_j_hz=0.45, ppm_diff=0.045, cosine=0.1,
                manual_quality='good')])
-        assert names == ['user_pick', 'auto_best']
+        assert names == ['auto_best', 'user_pick']
 
-    def test_manual_good_on_a_singlet_still_wins(self):
+    def test_manual_good_settles_a_tie_on_the_coupling_and_the_position(self):
+        names, _ = _order([
+            _c('auto', delta_j_hz=0.05, ppm_diff=0.002, cosine=0.99),
+            _c('user_pick', delta_j_hz=0.05, ppm_diff=0.002, cosine=0.1,
+               manual_quality='good')])
+        assert names == ['user_pick', 'auto']
+
+    def test_manual_good_on_a_singlet_does_not_beat_a_confirmed_multiplet(self):
         names, _ = _order([
             _c('mult', delta_j_hz=0.0, ppm_diff=0.0),
             _c('user_sing', type='s', delta_j_hz=None, ppm_diff=0.04,
                manual_quality='good')])
-        assert names == ['user_sing', 'mult']
+        assert names == ['mult', 'user_sing']
 
     def test_two_manual_goods_fall_back_to_the_normal_order(self):
         names, _ = _order([
@@ -290,3 +298,29 @@ class TestIsCompetitor:
                          _c('unverified', delta_j_hz=None, n_found=1,
                             n_expected=2, cosine=0.5)])
         assert amb is False
+
+
+class TestManualGate:
+    """A manual Good mark still answers to J and Δppm (the analyst,
+    2026-11-22): past the annotation's own limits it does not apply."""
+    P = {'dppm_gold': 0.05, 'dj_bad_hz': 0.5}
+
+    def test_a_multiplet_within_both_limits_passes(self):
+        from processing.annotation_scoring import manual_gate
+        assert manual_gate({'type': 't', 'ppm_diff': 0.01, 'delta_j_hz': 0.3}, self.P) is None
+
+    def test_a_coupling_past_the_limit_is_refused(self):
+        from processing.annotation_scoring import manual_gate
+        why = manual_gate({'type': 'd', 'ppm_diff': 0.01, 'delta_j_hz': 0.8}, self.P)
+        assert why and '0.80 Hz' in why
+
+    def test_an_unmeasured_coupling_is_refused(self):
+        from processing.annotation_scoring import manual_gate
+        assert 'never measured' in manual_gate(
+            {'type': 'd', 'ppm_diff': 0.01, 'delta_j_hz': None}, self.P)
+
+    def test_a_position_past_the_limit_is_refused_even_for_a_singlet(self):
+        from processing.annotation_scoring import manual_gate
+        assert manual_gate({'type': 's', 'ppm_diff': 0.02}, self.P) is None
+        assert 'mppm' in manual_gate({'type': 's', 'ppm_diff': 0.07}, self.P)
+        assert 'matched no peak' in manual_gate({'type': 's', 'ppm_diff': None}, self.P)
