@@ -253,14 +253,20 @@ class AnalyteBrowser:
     def default_reference(self, met_id):
         """Index (in ``signals``) of the analyte's clearest signal: a singlet
         when it has one, which no neighbouring line can disturb, by SNR; the one
-        with more protons on a tie. None when none can be read."""
+        with more protons on a tie, among the signals the quantification's
+        measurement gives areas for (a partial pattern it refuses cannot be a
+        reference). None when none can be read."""
         best = None
         for i, s in enumerate(self.signals(met_id)):
-            if s['usable']:
+            if s['usable'] and self._measurable(met_id, i):
                 key = (s['type'] == 's', s['snr'], s['protons'] or 0)
                 if best is None or key > best[0]:
                     best = (key, i)
         return best[1] if best else None
+
+    def _measurable(self, met_id, index) -> bool:
+        t = self.signal_target(met_id, index)
+        return t is not None and t.vector is not None
 
     def quantification(self, met_id) -> dict | None:
         """The quantification's row for the analyte (None: not quantified)."""
@@ -394,7 +400,9 @@ class AnalyteBrowser:
         distance, is_ref, current, assigned, usable, why, target``. A target
         that cannot be read keeps its row, with NaN where it has no number."""
         current = set(current)
-        read = [t for t in targets if t.vector is not None]
+        # a reference with no areas has nothing to compare against: every row NaN
+        read = ([t for t in targets if t.vector is not None]
+                if ref.vector is not None else [])
         stats = {}
         if read:
             V = np.vstack([t.vector for t in read])

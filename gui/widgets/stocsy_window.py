@@ -159,6 +159,7 @@ class StocsyWindow:
         self.ref = self.sought = None              # what is compared (Target)
         self.focus = None                          # the candidate looked at
         self.ref_row, self.sig_rows, self.cand_rows = None, [], []
+        self.ref_why = ''                          # why the reference has no areas
         self._sort = None
         self._sync = False
         self._view_ranks = []
@@ -673,8 +674,10 @@ class StocsyWindow:
         else:
             self.ref = (self.browser.peak_target(self.ref_rank, 1)
                         if self.ref_rank in self.an.peaks else None)
-            if self.ref is not None and self.ref.vector is None:
-                self.ref = None
+        # a reference with no per-sample areas compares nothing; the header says why
+        self.ref_why = ''
+        if self.ref is not None and self.ref.vector is None:
+            self.ref_why, self.ref = self.ref.why or 'no per-sample areas', None
         self.sought_sig = self._sought_signal()
         self.sought = (self.browser.lines_target(self.sought_sig, self.ticked)
                        if self.sought_sig is not None else None)
@@ -703,7 +706,9 @@ class StocsyWindow:
             name = f"{item['text']}  {item['values'][0]}"
         self.title_lbl.config(text=name or 'No analyte — any detected peak can be the reference')
         if self.ref is None:
-            self.ref_lbl.config(text='Reference: none (no signal varies across the samples)')
+            self.ref_lbl.config(text=(
+                f'Reference: none — {self.ref_why}' if self.ref_why
+                else 'Reference: none (no signal varies across the samples)'))
             self.sought_lbl.config(text='')
             return
         if self.ref.kind == 'quant':

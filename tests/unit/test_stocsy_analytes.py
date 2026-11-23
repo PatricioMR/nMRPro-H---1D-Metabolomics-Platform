@@ -207,6 +207,27 @@ class TestSignalsAgainstTheReference:
     def test_a_reference_that_cannot_be_read_gives_nothing(self):
         assert _browser().signals_vs('MA', _index(_browser(), 'MA', 7.90)) == []
 
+    def test_a_reference_with_no_areas_compares_to_nan_not_a_crash(self):
+        """A refused signal is a stub whose vector is None; np.asarray(None)
+        is a 0-d array that fixed_ratio cannot index (the analyte switch broke
+        on it and left the tables of the previous analyte)."""
+        b = _browser()
+        stub = b.peak_target(6, 3)
+        row = b.compare(stub, [b.peak_target(1, 3)])[0]
+        assert stub.vector is None and np.isnan(row['ratio']) and np.isnan(row['r'])
+
+    def test_the_default_reference_skips_a_signal_the_measurement_refuses(self):
+        an = _study()
+        areas = detection_areas(an)
+
+        def measure(peaks, evidence, local_baseline):
+            if [int(p['rank']) for p in peaks] == [1]:
+                return None, np.nan, '1 of 2 lines, 40% of the pattern'
+            return areas(peaks, evidence, local_baseline)
+        b = AnalyteBrowser(an, _mets(), None, measure=measure)
+        assert _browser().default_reference('MA') == _index(b, 'MA', 1.30)
+        assert b.default_reference('MA') not in (None, _index(b, 'MA', 1.30))
+
 
 class TestQuantTarget:
 
