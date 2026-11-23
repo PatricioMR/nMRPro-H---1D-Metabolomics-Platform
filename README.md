@@ -258,6 +258,23 @@ marked Good. These steps change no analyte and no amount
 The dots are internal evidence summaries, not MSI levels (Sumner 2007); the
 precision each was measured to have is printed in the PDF.
 
+**The analyst's mark.** A signal marked Good in the Annotation Results or in
+STOCSY still has to pass the annotation's own position and coupling thresholds;
+a mark that fails is not applied, and the run says why. A mark that passes settles
+a contest the evidence tier, ΔJ and Δδ leave tied; when it takes part in one, the
+analyte ranked second is kept for the joint fit, and leaves only if the fit cannot
+measure it, so no peak is counted twice (ADR-107). An analyte the analyst verified
+shows ◎ as the first of its Quality dots in the tables (◎●●○), a blue dot in the
+card and the PDF, and *Manual* in the Annotation column of every export.
+
+**Quantification quality.** The dots say whether an analyte is there; a second,
+per-group verdict says how far its number can be trusted. *Poor*: found in fewer
+samples than the group holds, its own signals disagree by more than 45%, or CV ≥
+40%; *Warn*: CV ≥ 20%, a fit holding more than 1.25× the trace under the signal,
+or an amplitude at its cap. Measured on nine compositions of the 100-analyte tube
+the choice did not see: median |error| 14% (Good), 23% (Warn), 55% (Poor)
+([`processing/quant_quality.py`](processing/quant_quality.py), ADR-105).
+
 ### 5. Design of simulated mixtures and reference values
 
 Each compound's pure spectrum is its **GISSMO spin system solved exactly at the
@@ -315,11 +332,16 @@ benches in what is listed under [Limits](#limits-of-the-validation).
 | PLS-DA / OPLS-DA | cross-validated Q², permutation test, VIP; OPLS split (Trygg & Wold 2002) | [`processing/multivariate.py`](processing/multivariate.py) |
 | Outliers | generalised ESD (Rosner 1983), Grubbs (1969) | [`processing/outlier_detection.py`](processing/outlier_detection.py) |
 | Correlation | Spearman; STOCSY (Cloarec 2005) | [`processing/correlation.py`](processing/correlation.py) |
-| Pathways | over-representation (Fisher's exact test, Benjamini–Hochberg FDR) | [`processing/pathway_enrichment.py`](processing/pathway_enrichment.py) |
+| Pathways | over-representation (Fisher's exact test, Benjamini–Hochberg FDR); metabolic, drug, disease and SMPDB's acylcarnitine series as separate categories | [`processing/pathway_enrichment.py`](processing/pathway_enrichment.py) |
 
 The PDF report states the parameters used, draws the figure that produced each
-number (the fitted shape or the real window and baseline), and prints the
-validation table for the project's field.
+number (the fitted shape or the real window and baseline, on the spectrum the run
+measured), and prints the validation table for the project's field. Its first page
+holds the **RP-Method resolution plot** per group, also in *Analysis ▸ RP-Method*:
+the spectrum above the axis with what nothing explains, every quantified analyte
+mirrored below by the curve that gave its number, and the regions left unexplained
+with the annotated candidates that could fill them
+([`processing/resolution_plot.py`](processing/resolution_plot.py), ADR-104).
 
 ---
 
@@ -536,6 +558,10 @@ PyInstaller (`nmrpro_h.spec`) followed by Inno Setup (`installer/nmrpro_h.iss`)
    window split there appears in STOCSY at once.
 5. **Statistics** — choose groups and test, view PCA/PLS-DA/OPLS-DA, export CSV
    and the PDF report.
+
+The application says at start-up when a newer release is published on GitHub.
+*Help ▸ About* gives the version, the licence and where to report a bug or send a
+suggestion.
 
 ---
 
