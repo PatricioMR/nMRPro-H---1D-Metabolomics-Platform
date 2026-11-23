@@ -38,10 +38,11 @@ from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
 from gui._update_check import _UpdateCheckMixin
-from app_paths import APP_VERSION, DECONVOLUTION_ENABLED, LICENSE_NOTICE
+from app_paths import APP_VERSION, DECONVOLUTION_ENABLED
 from gui.utils.quality_palette import (
     SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
 from gui.widgets.annotation_results_window import _TIER_NOTE
+from gui.widgets.about_dialog import AboutDialog
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
@@ -387,12 +388,15 @@ class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
         help_menu = _menu(mb_frame)
         help_menu.add_command(label='Check for updates…',
                               command=self.check_for_updates)
+        help_menu.add_command(label='Report a bug or suggestion…',
+                              command=self._show_about)
+        help_menu.add_separator()
         help_menu.add_command(label='About NMRPro-H…', command=self._show_about)
         _btn('Help', help_menu)
 
     def _show_about(self):
-        """The copyright, warranty and licence notice (GNU AGPL-3.0)."""
-        messagebox.showinfo('About NMRPro-H', LICENSE_NOTICE, parent=self.root)
+        """Version, contact channels and the GNU AGPL-3.0 notice."""
+        AboutDialog(self.root)
 
 
     # ---------- Stage Toolbar ----------

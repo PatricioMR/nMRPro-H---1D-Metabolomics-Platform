@@ -5,6 +5,8 @@ import tkinter as tk
 import webbrowser
 from tkinter import ttk
 
+from gui.utils.window_place import center_on
+
 _NOTES_MAX_CHARS = 4000
 
 
@@ -59,15 +61,8 @@ class UpdateDialog(tk.Toplevel):
 
         self.protocol('WM_DELETE_WINDOW', self.destroy)
         self.bind('<Escape>', lambda _e: self.destroy())
-        self.update_idletasks()
-        self._center_on(parent)
+        center_on(self, parent)
         download.focus_set()
-
-    def _center_on(self, parent):
-        w, h = self.winfo_reqwidth(), self.winfo_reqheight()
-        x = parent.winfo_rootx() + (parent.winfo_width() - w) // 2
-        y = parent.winfo_rooty() + (parent.winfo_height() - h) // 3
-        self.geometry(f'+{max(x, 0)}+{max(y, 0)}')
 
     def _download(self):
         webbrowser.open(self._release['url'])
