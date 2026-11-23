@@ -1,0 +1,57 @@
+# Shift of each assigned urine 1H peak from pH 6.5 to 7.4 (mppm), 600 MHz, DSS, Chelex-treated urine.
+# Tredwell GD, Bundy JG, De Iorio M, Ebbels TMD. Modelling the acid/base 1H NMR chemical shift limits of
+# metabolites in human urine. Metabolomics 2016;12:152. doi:10.1007/s11306-016-1101-y (supplementary data, CC-BY).
+metabolite,ppm_at_7_4,shift_6_5_to_7_4_mppm
+3-Hydroxyisobutyrate,1.3473,-0.158
+3-Hydroxyisovalerate,1.2597,-0.518
+Indoxyl,7.1924,0.736
+3-Methyl-2-Oxovalerate,1.0934,-0.026
+Acetate,1.9101,-1.482
+Alanine,1.4709,-0.889
+Allantoin,5.3835,-0.654
+Citrate,2.5313,-12.261
+Citrate,2.6477,-8.760
+Creatinine,3.0333,-2.154
+Creatinine,4.0447,-5.575
+Formate,8.4478,0.300
+Glucose,5.2280,0.254
+Hippurate,3.9607,-0.286
+Hippurate,7.5403,-0.259
+Hippurate,7.6268,-0.158
+Hippurate,7.8240,-0.156
+Hippurate,8.5114,-0.130
+Histidine,6.9975,-186.236
+Histidine,7.7872,-216.716
+Imidazole,7.2512,-145.589
+Imidazole,8.0937,-383.109
+Isoleucine,1.0007,-0.560
+Lactate,1.3200,-1.095
+Leucine,0.9569,-0.457
+Mannitol,3.6740,-0.026
+Mannitol,3.7967,0.129
+Mannitol,3.8638,-0.208
+Methyl Succinate,1.0622,-0.463
+Phenylalanine,7.3482,-2.849
+Phenylalanine,7.4126,-0.419
+Piperazine,3.1345,-75.831
+3-Methyl Histidine,6.9839,-66.359
+3-Methyl Histidine,7.6125,-190.228
+1-Methyl Histidine,3.6777,-81.471
+1-Methyl Histidine,7.0557,-80.880
+1-Methyl Histidine,7.8170,-382.562
+Tartrate,4.3226,-0.458
+Taurine,3.4116,-11.032
+Threonine,1.3192,-1.904
+Trigonelline,4.4295,-0.158
+Trigonelline,8.0731,0.076
+Trigonelline,8.8219,0.125
+Trigonelline,8.8336,-0.079
+Trigonelline,9.1149,-0.158
+Tris,3.7042,-24.609
+Tryptophan,7.7191,0.357
+Tyrosine,6.8516,-0.230
+Tyrosine,7.1563,-0.463
+Valine,0.9806,-0.662
+Valine,1.0328,-0.665
+Xylose,5.1899,0.226
+trans-Aconitate,6.5758,-10.896

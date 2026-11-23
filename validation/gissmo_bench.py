@@ -133,6 +133,47 @@ SIGNAL_SHIFT = 0.0
 # cache key.
 SAMPLE_SHIFT = 0.0
 
+# A study whose samples differ in pH, every proton moving by its own
+# sensitivity and every coupling a little (None: off). Each chemical
+# environment draws its sensitivity (mppm per pH unit) from the 53 assigned
+# urine peaks titrated by Tredwell et al. (Metabolomics 2016;12:152;
+# validation/data/tredwell2016_ph_sensitivity.csv, the shift from pH 6.5 to
+# 7.4 over 0.9 units): median 0.6, p75 12, p90 147 mppm per unit, 85% moving
+# down as pH rises. Each coupling draws a sensitivity of J_PH_SD Hz per unit:
+# J changes only moderately with pH (Wermter, Bock & Dreher, NMR Biomed 2026),
+# and the dJ measured on the bench and the studies, 0.24-0.28 Hz, is mostly
+# measurement. Sample s is at pH PH_MEAN -+ PH_GROUP (group A below, B above)
+# + N(0, PH_SD); the database lists every compound at PH_REF, so the whole
+# study also stands off the listing by sensitivity x (PH_MEAN - PH_REF).
+# --ph-mean; part of every cache key.
+PH_MEAN = None
+PH_GROUP = 0.1
+PH_SD = 0.1
+PH_REF = 7.4
+J_PH_SD = 0.5
+PH_DATA = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data',
+                       'tredwell2016_ph_sensitivity.csv')
+
+
+def ph_sensitivities() -> np.ndarray:
+    """ppm per pH unit of the titrated peaks (Tredwell 2016)."""
+    import csv
+    with open(PH_DATA, encoding='utf-8') as f:
+        rows = list(csv.DictReader(line for line in f if not line.startswith('#')))
+    return np.array([float(r['shift_6_5_to_7_4_mppm']) / 1000.0 / 0.9 for r in rows])
+
+
+def ph_spin_system(sys_, sens, dj, dph):
+    """``sys_`` at ``dph`` pH units from the database's: each environment
+    moved by its sensitivity, each coupling by its own."""
+    moved = dict(sys_)
+    env = np.round(np.asarray(sys_['ppm'], dtype=float), 5)
+    moved['ppm'] = np.asarray(sys_['ppm'], dtype=float) + np.array([sens[v] for v in env]) * dph
+    J = np.asarray(sys_['J'], dtype=float)
+    moved['J'] = np.where(J != 0.0, J + dj * dph, 0.0)
+    return moved
+
+
 # How much each compound's amount varies from sample to sample (sd of its
 # log), and a dilution every compound of a sample shares (sd of its log). The
 # bench drew 12% and no dilution; the studies vary far more -- within a group
@@ -229,13 +270,34 @@ def build(field, seed, composition, *, snr_gain=1.0, ref_shift=0.0,
     sample_rng = np.random.default_rng(seed + 13_000_027)
     z = np.array([(0.7 if info['label'] == 'A' else -0.7)
                   + float(sample_rng.normal(0.0, 0.7)) for info in mb.SAMPLES])
+    if PH_MEAN is not None:
+        ph_rng = np.random.default_rng(seed + 19_000_043)
+        pool = ph_sensitivities()
+        ph = np.array([PH_MEAN + (-PH_GROUP if info['label'] == 'A' else PH_GROUP)
+                       + float(ph_rng.normal(0.0, PH_SD)) for info in mb.SAMPLES])
     comps, truth = [], {}
     for name, conc, factor in composition:
         mid, _sigs = mb._db_signals(con, name)
         sys_ = (_spread_signals(systems[name], SIGNAL_SHIFT, signal_rng)
                 if SIGNAL_SHIFT else systems[name])
         own = float(shift_rng.normal(0.0, ref_shift)) if ref_shift else 0.0
-        if SAMPLE_SHIFT:
+        if PH_MEAN is not None:
+            # one spin system per sample, at that sample's pH
+            spins = np.round(np.asarray(sys_['ppm'], dtype=float), 5)
+            env = np.unique(spins)
+            sens = {v: float(ph_rng.choice(pool)) for v in env}
+            # one sensitivity per pair of environments: equivalent protons
+            # stay equivalent (a CH3 does not split against itself)
+            d_env = ph_rng.normal(0.0, J_PH_SD, (env.size, env.size))
+            d_env = np.triu(d_env, 1) + np.triu(d_env, 1).T
+            k = np.searchsorted(env, spins)
+            dj = d_env[np.ix_(k, k)]
+            per = []
+            for p_s in ph:
+                sp, si = stick_spectrum(ph_spin_system(sys_, sens, dj, p_s - PH_REF), field)
+                per.append((sp + own, si * mb.AREA_UNIT))
+            comps.append((per, None, mid))
+        elif SAMPLE_SHIFT:
             # one spin system per sample, each environment moved by its own
             # sensitivity times the sample's state
             env = np.round(np.asarray(sys_['ppm'], dtype=float), 5)
@@ -336,6 +398,8 @@ def _shift_tag(ref_shift, drift=None) -> str:
             + (f'_dr{1000 * drift:.0f}' if drift is not None else '')
             + (f'_ss{1000 * SIGNAL_SHIFT:.0f}' if SIGNAL_SHIFT else '')
             + (f'_sm{1000 * SAMPLE_SHIFT:.0f}' if SAMPLE_SHIFT else '')
+            + (f'_ph{10 * PH_MEAN:.0f}g{100 * PH_GROUP:.0f}s{100 * PH_SD:.0f}'
+               f'j{10 * J_PH_SD:.0f}' if PH_MEAN is not None else '')
             + (f'_cv{100 * AMOUNT_SD:.0f}' if AMOUNT_SD != 0.12 else '')
             + (f'_dl{100 * DILUTION_SD:.0f}' if DILUTION_SD else ''))
 
@@ -468,6 +532,9 @@ def main():
                     help='each chemical environment offset on its own, normal, in mppm')
     ap.add_argument('--sample-shift-mppm', type=float, default=0.0,
                     help='each environment moved per sample by its own sensitivity')
+    ap.add_argument('--ph-mean', type=float, default=None,
+                    help='samples at this pH (+-PH_GROUP between groups, sd PH_SD), each '
+                         'proton and coupling moved by its own sensitivity (PH_MEAN)')
     ap.add_argument('--align-first', choices=('valley', 'icoshift'), default=None)
     ap.add_argument('--annotate-db', default=None,
                     help='annotate with this database (path); the tube stays '
@@ -475,10 +542,11 @@ def main():
     ap.add_argument('--drift-mppm', type=float, default=None,
                     help='the study-wide shift every compound shares (default 8)')
     a = ap.parse_args()
-    global SIGNAL_SHIFT, SAMPLE_SHIFT, ALIGN_FIRST, ANNOTATE_DB
+    global SIGNAL_SHIFT, SAMPLE_SHIFT, ALIGN_FIRST, ANNOTATE_DB, PH_MEAN
     ANNOTATE_DB = a.annotate_db
     SIGNAL_SHIFT = a.signal_shift_mppm / 1000.0
     SAMPLE_SHIFT = a.sample_shift_mppm / 1000.0
+    PH_MEAN = a.ph_mean
     ALIGN_FIRST = a.align_first
     res, core = [], []
     for size in a.sizes:
