@@ -524,14 +524,19 @@ chmod +x NMRPro-H-linux-x86_64.AppImage
 
 `NMRPro-H-linux-x86_64.tar.gz` holds the same program as a plain folder (run
 `NMRPro-H/NMRPro-H`). Built on Ubuntu 22.04: runs on distributions of that age
-or newer. Edited databases live in `~/.config/NMRPro-H`.
+or newer. AppImages need `libfuse2`, which Ubuntu 24.04 does not install by
+default (`sudo apt install libfuse2t64`); without it, run
+`./NMRPro-H-linux-x86_64.AppImage --appimage-extract-and-run` or use the
+`.tar.gz`. Edited databases live in `~/.config/NMRPro-H`.
 
 ### macOS
 
 Download `NMRPro-H-macOS-arm64.dmg` (Apple Silicon) or
 `NMRPro-H-macOS-x86_64.dmg` (Intel), open it and drag NMRPro-H to
 Applications. The app is not notarized by Apple, so the first launch is
-blocked: right-click the app → **Open**, or, if macOS reports it as damaged,
+blocked: open it once, then **System Settings → Privacy & Security → Open
+Anyway** (on macOS 14 and older, right-click the app → **Open** also works).
+If macOS reports the app as damaged,
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/NMRPro-H.app
