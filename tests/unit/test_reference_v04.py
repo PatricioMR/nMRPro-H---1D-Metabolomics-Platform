@@ -4,11 +4,13 @@
 """v04: a reference value is corrected only where the spectra BMRB deposited
 agree with each other and the one v03 measured on is among them."""
 import json
+import os
 import sys
 
 import pytest
 
-sys.path.insert(0, 'hmdb_api_download')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), 'hmdb_api_download'))
 import build_reference_v04 as B  # noqa: E402
 
 

@@ -72,7 +72,13 @@ def _mock_tkinter():
     sys.modules.setdefault('tkinter.filedialog', fd_stub)
 
 
-_mock_tkinter()
+# Only where tkinter itself is missing: importing it needs no display, and a
+# stub left in sys.modules reaches every test collected after this one (the
+# smoke folder run alone handed it to test_quantification_menu).
+try:
+    import tkinter  # noqa: F401
+except ImportError:
+    _mock_tkinter()
 
 
 # ── Tests ──────────────────────────────────────────────────────────────────────

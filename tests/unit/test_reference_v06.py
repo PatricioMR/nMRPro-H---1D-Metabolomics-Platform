@@ -11,7 +11,8 @@ import pytest
 
 from data.casmdb_nef import Entry, Spectrum
 
-sys.path.insert(0, 'hmdb_api_download')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))), 'hmdb_api_download'))
 import build_reference_v06 as B  # noqa: E402
 
 DBDIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(

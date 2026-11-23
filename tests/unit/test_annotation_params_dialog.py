@@ -106,7 +106,9 @@ class TestProductIdentity:
         import io
         import os
         offenders = []
-        for path in glob.glob('gui/**/*.py', recursive=True) + ['main.py']:
+        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        for path in (glob.glob(os.path.join(root, 'gui', '**', '*.py'), recursive=True)
+                     + [os.path.join(root, 'main.py')]):
             text = io.open(path, encoding='utf-8', errors='ignore').read()
             if 'nMRPipe' in text or 'NMRPipe' in text:
                 offenders.append(os.path.basename(path))

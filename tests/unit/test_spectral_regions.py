@@ -134,11 +134,13 @@ def test_the_default_is_defined_in_exactly_one_place():
     import pathlib
     import re
     hits = []
-    for f in pathlib.Path('.').rglob('*.py'):
+    root = pathlib.Path(__file__).resolve().parents[2]
+    for path in root.rglob('*.py'):
+        f = path.relative_to(root)
         if '__pycache__' in str(f) or f.as_posix().startswith('tests/'):
             continue
         for i, line in enumerate(
-                f.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
+                path.read_text(encoding='utf-8', errors='replace').splitlines(), 1):
             m = re.match(r'\s*(WATER_REGION|DEFAULT_EXCLUDED_REGIONS)\s*=', line)
             if m:
                 hits.append(f'{f.as_posix()}:{m.group(1)}')
