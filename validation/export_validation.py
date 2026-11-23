@@ -99,13 +99,14 @@ def load_run(regime, field, n, seed, qhash, stress_label='atual'):
     return X, truth, rows
 
 
-def sample_truth(field, seed, n, regime):
+def sample_truth(field, seed, n, regime, composition=None):
     """``{hmdb_id: [true mM per sample]}`` -- the generator's draws replayed
     (gissmo_bench.build: per sample a drift, the noise, the standard, then
-    one log-normal factor per compound, then the foreign compounds)."""
+    one log-normal factor per compound, then the foreign compounds).
+    ``composition``: a tube not of the bench's own (``gissmo_bench.build``'s)."""
     import sqlite3
     gb.SIGNAL_SHIFT = REGIMES[regime] / 1000.0
-    comp = gb._composition(str(n), seed)
+    comp = composition or gb._composition(str(n), seed)
     con = sqlite3.connect(mb.DB_DEFAULT)
     ids = [(mb._db_signals(con, name)[0], conc, factor) for name, conc, factor in comp]
     rng = np.random.default_rng(seed)
