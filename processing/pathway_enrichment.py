@@ -11,7 +11,10 @@ Pipeline:
   2. select_hits          — metabolites with p < threshold form the hit set.
   3. compute_ora          — Over-Representation Analysis (Fisher exact, greater)
                             per pathway, Enrichment Ratio = observed / expected
-                            hits, Benjamini-Hochberg FDR.
+                            hits, Benjamini-Hochberg FDR (Benjamini Y, Hochberg
+                            Y. Controlling the false discovery rate: a practical
+                            and powerful approach to multiple testing. J R Stat
+                            Soc B 1995;57:289-300).
 
 Pure numeric logic — no GUI, no DB writes. Pathway background sizes are passed
 in by the caller (from data.pathway_membership.pathway_background_sizes).
@@ -156,10 +159,14 @@ def compute_ora(pathway_table, hit_names, *, background_sizes=None,
             'mets':             [m for m in mets if m in hit_names],
         })
 
-    # Benjamini-Hochberg FDR
+    # Benjamini-Hochberg FDR, step-up: q_i = min over j >= i of p_j·m/j, so q
+    # never falls as p rises and tied p-values share one q
     results.sort(key=lambda r: r['p'])
     m = len(results)
-    for rank, r in enumerate(results, 1):
-        r['fdr'] = float(min(r['p'] * m / rank, 1.0))
+    running = 1.0
+    for rank in range(m, 0, -1):
+        r = results[rank - 1]
+        running = min(running, r['p'] * m / rank)
+        r['fdr'] = float(running)
 
     return results

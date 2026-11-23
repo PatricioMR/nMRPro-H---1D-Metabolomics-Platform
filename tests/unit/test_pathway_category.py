@@ -37,6 +37,21 @@ def test_explicit_stored_disease_drug_trusted():
     assert pathway_category('Some Pathway', '', 'drug') == 'drug'
 
 
+def test_acylcarnitine_series_is_its_own_category():
+    for nm in ['Acylcarnitine Pentacosanoylcarnitine',
+               'Acylcarnitine (2S,3R)-3-Hydroxy-2-methylbutanoylcarnitine',
+               'Acylcarnitine 3-Hydroxydecanoylcarnitine']:
+        assert pathway_category(nm, '', 'metabolic') == 'acylcarnitine', nm
+    # carnitine pathways that are not the per-acylcarnitine series stay metabolic
+    for nm in ['Carnitine Synthesis', 'Fatty Acid Metabolism']:
+        assert pathway_category(nm, '', 'metabolic') == 'metabolic', nm
+    table = {'Carnitine Synthesis': {'description': '', 'category': 'metabolic'},
+             'Acylcarnitine Hexacosanoylcarnitine': {'description': '', 'category': 'metabolic'}}
+    assert set(filter_by_category(table, 'metabolic')) == {'Carnitine Synthesis'}
+    assert set(filter_by_category(table, 'acylcarnitine')) == {'Acylcarnitine Hexacosanoylcarnitine'}
+    assert set(filter_by_category(table, 'all')) == set(table)
+
+
 def test_filter_by_category_excludes_reclassified():
     table = {
         'Alanine Metabolism':  {'description': '', 'category': 'metabolic'},

@@ -32,6 +32,8 @@ TIMEOUT    = 8
 # Background size = all logged IDs in the local pathway DB (used by ORA).
 N_BACKGROUND = 380
 
+_ACYLCARNITINE_SERIES = 'acylcarnitine '
+
 # Whole-word / substring disease and drug markers.
 _DISEASE_KW = {'deficiency', 'syndrome', 'disease', 'disorder', 'defect',
                'type i', 'type ii', 'type iii', 'intolerance',
@@ -83,15 +85,22 @@ def _name_is_drug(nd: str, raw_name: str) -> bool:
 
 def pathway_category(name: str, description: str = '', stored_cat: str = '') -> str:
     """
-    Classify a pathway as metabolic / drug / disease.
+    Classify a pathway as metabolic / drug / disease / acylcarnitine.
 
     The local DB's stored 'metabolic' tag is unreliable — SMPDB files many
     inborn-error-of-metabolism (disease) and drug-metabolism pathways under
     'metabolic'. So name/description heuristics override a stored 'metabolic'
     (and empty) tag, while an explicit stored 'drug'/'disease' is trusted.
+
+    SMPDB's one-pathway-per-acylcarnitine series ("Acylcarnitine …") is its own
+    category: each holds two or three compounds of the local background, so a
+    single common hit (lactate) in it reads as enrichment, and MetaboAnalyst's
+    SMPDB metabolite-set library leaves the series out.
     """
     if stored_cat in ('drug', 'disease'):
         return stored_cat
+    if name.lower().startswith(_ACYLCARNITINE_SERIES):
+        return 'acylcarnitine'
     nd = (name + ' ' + description).lower()
     if _name_is_disease(nd):
         return 'disease'
@@ -283,7 +292,8 @@ def build_membership(quant_results, *, use_api=True,
 
 
 def filter_by_category(pathway_table, category):
-    """Filter a membership table by category ('metabolic'/'drug'/'disease'/'all')."""
+    """Filter a membership table by category ('metabolic'/'drug'/'disease'/
+    'acylcarnitine'/'all')."""
     if category == 'all':
         return dict(pathway_table)
     return {k: v for k, v in pathway_table.items()

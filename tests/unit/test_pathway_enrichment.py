@@ -85,3 +85,31 @@ def test_compute_ora_fdr_monotone_and_sorted():
     for r in res:
         assert 0.0 <= r['fdr'] <= 1.0
         assert r['fdr'] >= r['p'] - 1e-12            # BH-FDR >= raw p
+    qs = [r['fdr'] for r in res]
+    assert qs == sorted(qs)                          # q never falls as p rises
+
+
+def _single_hit_table(sizes):
+    """One pathway per size, each holding the one hit 'h' plus fillers."""
+    return ({f'P{i}': {'mets': ['h'] + [f'x{i}_{j}' for j in range(K - 1)], 'smpdb_id': ''}
+             for i, K in enumerate(sizes)},
+            {f'P{i}': K for i, K in enumerate(sizes)})
+
+
+def test_compute_ora_tied_p_share_one_q():
+    # Ten pathways of the same size hit by the same metabolite have the same p;
+    # Benjamini-Hochberg must give them the same q (it used to give p·m/rank).
+    table, bg = _single_hit_table([2] * 10 + [40])
+    res = compute_ora(table, {'h'}, background_sizes=bg, n_background=380)
+    tied = [r['fdr'] for r in res if r['K'] == 2]
+    assert len(tied) == 10 and max(tied) - min(tied) < 1e-12
+
+
+def test_compute_ora_fdr_is_benjamini_hochberg():
+    table, bg = _single_hit_table([2, 3, 5, 8, 13, 21])
+    res = compute_ora(table, {'h'}, background_sizes=bg, n_background=100)
+    p = np.array([r['p'] for r in res])
+    m = len(p)
+    # reference step-up q-values: q_i = min_{j >= i} p_j m / j
+    ref = np.minimum.accumulate((p * m / np.arange(1, m + 1))[::-1])[::-1]
+    assert np.allclose([r['fdr'] for r in res], np.minimum(ref, 1.0))

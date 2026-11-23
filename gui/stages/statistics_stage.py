@@ -500,7 +500,7 @@ class StatisticsStage:
         ttk.Label(of, text='Category:', font=('Arial', 8)
                   ).grid(row=0, column=0, sticky=tk.W)
         ttk.Combobox(of, textvariable=self._pw_cat_var,
-                     values=['metabolic', 'drug', 'disease', 'all'],
+                     values=['metabolic', 'drug', 'disease', 'acylcarnitine', 'all'],
                      width=11, state='readonly'
                      ).grid(row=0, column=1, sticky=tk.W, padx=4, pady=1)
         ttk.Label(of, text='Sig. p <:', font=('Arial', 8)
