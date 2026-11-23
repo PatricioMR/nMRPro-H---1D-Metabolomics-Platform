@@ -37,13 +37,14 @@ from gui.stages.cosy_quantification_stage import CosyQuantificationStage
 from gui.stages.statistics_stage import StatisticsStage
 from gui._plot_settings import _PlotSettingsMixin
 from gui._group_editor import _GroupEditorMixin
+from gui._update_check import _UpdateCheckMixin
 from app_paths import APP_VERSION, DECONVOLUTION_ENABLED, LICENSE_NOTICE
 from gui.utils.quality_palette import (
     SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
 from gui.widgets.annotation_results_window import _TIER_NOTE
 
 
-class App(_PlotSettingsMixin, _GroupEditorMixin):
+class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
     def _set_app_icon(self, win):
         """Apply the app icon (utils/nmrpro_h.ico — same as the .exe/installer)
         to *win*. Using iconbitmap(default=...) makes it the icon for the root
@@ -216,6 +217,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
             self._splash_ref = None
         self.root.deiconify()
         self.root.state('zoomed')
+        self._schedule_startup_update_check()
 
     # ---------- UI construction (runs during splash) ----------
     def _build_ui(self):
@@ -383,6 +385,8 @@ class App(_PlotSettingsMixin, _GroupEditorMixin):
 
         # ── Help ─────────────────────────────────────────────────────────────
         help_menu = _menu(mb_frame)
+        help_menu.add_command(label='Check for updates…',
+                              command=self.check_for_updates)
         help_menu.add_command(label='About NMRPro-H…', command=self._show_about)
         _btn('Help', help_menu)
 

@@ -16,6 +16,9 @@ import pytest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
+# An App built by a test must not ask GitHub for a newer release.
+os.environ.setdefault('NMRPRO_NO_UPDATE_CHECK', '1')
+
 
 # ── Windows the tests open stay off the analyst's screen ──────────────────────
 # The interface tests build real Tk windows (a window that is never mapped has
