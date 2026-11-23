@@ -1252,10 +1252,11 @@ def generate_pdf(output_path: str, quant_stage, app,
                  analytes_per_page: int = 5,
                  annotation_stage=None):
     ppm     = getattr(app, 'ppm', None)
-    # The traces quantification integrated -- the baseline model applied,
-    # alignment already in all_intensities -- not the traces as loaded.
+    # The traces quantification measured (quant_stage.measured_intensities:
+    # the run's baseline choice, a baseline under zero taken out), alignment
+    # already in all_intensities -- not the traces as loaded.
     try:
-        all_int = app.corrected_intensities()
+        all_int = quant_stage.measured_intensities()
     except Exception:
         all_int = getattr(app, 'all_intensities', None)
     si      = getattr(app, 'samples_info', None) or []

@@ -259,12 +259,12 @@ class _QuantVisMixin:
         # Draw the SAME (baseline-corrected) matrix the integration used, so the
         # shaded area matches the reported value. Falls back to the raw spectrum
         # when a quantification has not run yet.
-        # What quantification integrated: the project's baseline model
-        # applied, alignment already in ``all_intensities``. Drawing the
-        # traces as loaded put a window over one spectrum and a number from
-        # another.
+        # What quantification measured (``measured_intensities``: the run's
+        # baseline choice, a baseline under zero taken out), alignment
+        # already in ``all_intensities``. Drawing the traces as loaded put a
+        # window over one spectrum and a number from another.
         try:
-            all_int = self.app.corrected_intensities()
+            all_int = self.measured_intensities()
         except Exception:
             all_int = None
         if all_int is None:

@@ -302,24 +302,23 @@ def baseline_anchors(lo, hi, peak_ppms, linewidth_ppm, *, trace=None):
     return float(a), float(b), float(BASELINE_STRETCH_LINEWIDTHS * lw / 2.0)
 
 
-def cluster_baseline(ppm, X, peak_ppms, linewidth_ppm):
-    """``(n_points, n_samples)``: the local baseline under the whole
-    spectrum, for the measurements that fit shapes rather than integrate a
-    window (the cascade, the joint fit).
+def baseline_stretches(ppm, X, peak_ppms, linewidth_ppm):
+    """``(centres, levels)``: the free stretches the local baseline is read
+    on (ppm, ascending) and the trace's median on each, ``(n_centres,
+    n_samples)``. None without a linewidth, a peak or a stretch.
 
-    The same rule as ``baseline_anchors``, drawn once for everything: the
-    detected peaks are gathered into clusters -- peaks with no free stretch
-    between them -- and the baseline is read on the free stretch just past
-    each cluster's ends (median of the stretch, clipped at zero), joined by
-    straight lines. A cluster longer than two ANCHOR_MAX_REACH_LINEWIDTHS
-    is crowded all the way; it is read again at the lowest stretch of every
-    such length inside it, the floor it has. A shape fitted on the trace
-    less this line is fitted on its signal, not on the pedestal the
-    overlapping tails and a broad envelope build under a crowded region:
-    on a cell extract that pedestal stood at 20-80% of the lines' height
-    in the sugar region and was fitted as analyte.
+    The detected peaks are gathered into clusters -- peaks with no free
+    stretch between them -- and the baseline is read on the free stretch
+    just past each cluster's ends. A cluster longer than two
+    ANCHOR_MAX_REACH_LINEWIDTHS is crowded all the way; it is read again at
+    the lowest stretch of every such length inside it, the floor it has.
 
-    None without a linewidth or a peak.
+    A level is the median as it stands, below zero included. It used to be
+    clipped at zero, and a spectrum whose baseline runs under zero (a phase
+    error, a broad negative roll) was then measured on nothing: on the
+    18-compound bench tube with the baseline 15 noise sd under zero the
+    local baseline found 10 of 18 with the clip and 17 of 18 without; on a
+    flat baseline the two were identical (ADR-108).
     """
     lw = abs(float(linewidth_ppm or 0.0))
     peaks = sorted(float(p) for p in peak_ppms or ()
@@ -366,7 +365,82 @@ def cluster_baseline(ppm, X, peak_ppms, linewidth_ppm):
         if not m.any():
             m = np.zeros(ppm.shape, dtype=bool)
             m[int(np.argmin(np.abs(ppm - c)))] = True
-        levels[k] = np.maximum(np.median(X[m], axis=0), 0.0)
+        levels[k] = np.median(X[m], axis=0)
+    return np.asarray(centres), levels
+
+
+# How far under zero, in the study's noise sd (the noise detection measured),
+# the lowest free stretch may stand before the spectrum is measured over its
+# local baseline. A flat spectrum does not go under zero there: the tails of
+# the peaks only add. On the 18- and 100-compound bench tubes, flat, the
+# lowest stretch stood at +0.4 and -0.0 sd (the median over the samples);
+# every distorted 18-compound tube -- a constant 5 or 15 point-noise sd under
+# zero, or a roll of that amplitude -- had one at -15.8 sd or lower (ADR-108).
+BASELINE_UNDER_ZERO_SD = 3.0
+
+
+def baseline_under_zero(ppm, X, peak_ppms, linewidth_ppm, noise_sigma, *,
+                        limit_sd=BASELINE_UNDER_ZERO_SD):
+    """``{'level_sd', 'ppm'}``: the free stretch whose level -- the median
+    over the samples of ``baseline_stretches`` -- stands lowest, in noise
+    sd, when it stands more than ``limit_sd`` under zero. None when none
+    does, or without a noise to measure it by.
+
+    Shapes and windows measured on such a trace are measured from zero,
+    with the baseline under them: on the 18-compound bench tube with the
+    baseline 15 point-noise sd under zero the raw trace found 10 of 18
+    analytes, p90 error 87%; with the baseline taken out
+    (``without_baseline_under_zero``), 17 of 18, p90 32% (ADR-108)."""
+    sigma = float(noise_sigma or 0.0)
+    if not np.isfinite(sigma) or sigma <= 0:
+        return None
+    read = baseline_stretches(ppm, X, peak_ppms, linewidth_ppm)
+    if read is None:
+        return None
+    centres, levels = read
+    med = np.median(levels, axis=1) / sigma
+    k = int(np.argmin(med))
+    if med[k] >= -float(limit_sd):
+        return None
+    return {'level_sd': float(med[k]), 'ppm': float(centres[k])}
+
+
+def without_baseline_under_zero(ppm, X, peak_ppms, linewidth_ppm):
+    """``X`` less its spectrum-wide baseline (``cluster_baseline``): what a
+    study whose baseline runs under zero is measured on, as a flat spectrum.
+
+    Measured on the 18-compound bench tube (seed 0) with the baseline under
+    zero, against switching the local baseline of every window on: 5 and 15
+    point-noise sd under zero, a median error of 16% and 12% (p90 25% and
+    32%) against 20% and 22% (p90 33% and 40%); a roll of 5 and 15 sd, 13%
+    and 15% (p90 34% and 42%) against 19% and 19% (p90 39% and 47%). The
+    local line of every window also cost a clean isolated multiplet 10-20%
+    of its area (ADR-108). Unchanged when no baseline can be read."""
+    B = cluster_baseline(ppm, X, peak_ppms, linewidth_ppm)
+    return np.asarray(X, dtype=float) if B is None else np.asarray(X, dtype=float) - B
+
+
+def cluster_baseline(ppm, X, peak_ppms, linewidth_ppm):
+    """``(n_points, n_samples)``: the local baseline under the whole
+    spectrum, for the measurements that fit shapes rather than integrate a
+    window (the cascade, the joint fit): the levels of
+    ``baseline_stretches`` joined by straight lines.
+
+    A shape fitted on the trace less this line is fitted on its signal, not
+    on the pedestal the overlapping tails and a broad envelope build under a
+    crowded region: on a cell extract that pedestal stood at 20-80% of the
+    lines' height in the sugar region and was fitted as analyte.
+
+    None without a linewidth or a peak.
+    """
+    read = baseline_stretches(ppm, X, peak_ppms, linewidth_ppm)
+    if read is None:
+        return None
+    centres, levels = read
+    ppm = np.asarray(ppm, dtype=float)
+    X = np.asarray(X, dtype=float)
+    if X.ndim == 1:
+        X = X.reshape(-1, 1)
     B = np.empty_like(X)
     for s in range(X.shape[1]):
         B[:, s] = np.interp(ppm, centres, levels[:, s])
@@ -375,9 +449,8 @@ def cluster_baseline(ppm, X, peak_ppms, linewidth_ppm):
 
 def anchor_levels(ppm, y, anchors):
     """``((lo_ppm, level), (hi_ppm, level))``: the trace's median on each
-    anchor's stretch, clipped at zero as the window ends always were -- a
-    negative level would tilt the line up into the signal. None when a
-    stretch falls off the spectrum."""
+    anchor's stretch, below zero included (``baseline_stretches``). None
+    when a stretch falls off the spectrum."""
     if anchors is None:
         return None
     ppm = np.asarray(ppm, dtype=float)
@@ -391,7 +464,7 @@ def anchor_levels(ppm, y, anchors):
                 return None
             m = np.zeros(ppm.shape, dtype=bool)
             m[int(np.argmin(np.abs(ppm - c)))] = True
-        out.append((c, max(float(np.median(y[m])), 0.0)))
+        out.append((c, float(np.median(y[m]))))
     return tuple(out)
 
 

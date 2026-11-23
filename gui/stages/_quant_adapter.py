@@ -29,7 +29,8 @@ from processing.quant_engine import canonical_order, quantify, study_position_ba
 from processing.quant_shared import annotate_fingerprint_counts
 from processing.quant_integration import (
     pattern_evidence,
-    baseline_anchors, integrate_sample, lorentzian_captured_fraction)
+    baseline_anchors, baseline_under_zero, integrate_sample,
+    lorentzian_captured_fraction, without_baseline_under_zero)
 from processing.quant_concentration import standard_per_proton
 from processing.quant_predicted_window import (
     project_drift, project_noise)
@@ -461,6 +462,14 @@ def gate_manual_marks(metabolites, quality_marks, params):
     return marks, refused
 
 
+def baseline_under_zero_text(under) -> str:
+    """What a row says when the study's baseline ran under zero
+    (``quant_integration.baseline_under_zero``)."""
+    return (f"The baseline runs under zero between the peaks ({-under['level_sd']:.0f} noise "
+            f"sd under it at {under['ppm']:.2f} ppm): the baseline read between the "
+            f"signals was taken out of every sample before anything was measured.")
+
+
 def manual_refused_reason(item) -> str:
     db = item.get('db_ppm')
     at = f' at {float(db):.3f} ppm' if db is not None else ''
@@ -757,6 +766,17 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
         manual_good_ids=manual_good_ids(gated_marks))
 
     _lw = measure_linewidth_ppm(ppm, arr, peaks) or FALLBACK_LINEWIDTH_PPM
+    # A baseline that runs under zero between the peaks is taken out before
+    # anything is measured: from zero, the shapes and windows measure the
+    # baseline as much as the analyte (ADR-108).
+    _peak_ppms = [p.get('ppm') for p in peaks or ()]
+    under = baseline_under_zero(
+        ppm, arr[:, [i for i in included if 0 <= i < n_s] or list(range(n_s))],
+        _peak_ppms, _lw, noise_sigma)
+    if under is not None:
+        arr = without_baseline_under_zero(ppm, arr, _peak_ppms, _lw)
+    if diagnostics is not None:
+        diagnostics['baseline_under_zero'] = under
     std_areas = standard_areas_from_peak(ref_peak, ppm, arr,
                                          local_baseline=local_baseline,
                                          linewidth_ppm=_lw,
@@ -868,4 +888,7 @@ def quantify_project(*, metabolites, peaks, ppm, intensities, samples_info,
     for r in rows:
         for text in _refused_by_id.get(str(r.get('hmdb_id')), ()):
             r.setdefault('_status_reasons', []).append(text)
+        if under is not None:
+            r['_baseline_under_zero'] = dict(under)
+            r.setdefault('_status_reasons', []).append(baseline_under_zero_text(under))
     return _for_display(rows, metabolites, peaks_by_rank)

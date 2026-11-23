@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.86%20Beta-blue">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.88%20Beta-blue">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
   <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
@@ -66,7 +66,7 @@ the result.
 - **The validation is built in**: simulated spectra of known composition,
   exported run by run so every figure can be audited (see [Validation](#validation)).
 
-> **Status: Beta (v0.86).** The pipeline below is the one validated end to end.
+> **Status: Beta (v0.88).** The pipeline below is the one validated end to end.
 > MCR-based deconvolution stages are kept in the code, tested, and switched off
 > (`DECONVOLUTION_ENABLED` in [`app_paths.py`](app_paths.py)) until they have
 > their own validation.
@@ -203,6 +203,15 @@ unconfirmed, singlet); ΔJ and Δδ bands; annotation quality; contradictions an
 support from the analyte's other signals at the amount the peak implies; line
 intensities; STOCSY corroboration (r ≥ 0.80); drift coherence; cosine; score.
 
+**Baseline under zero.** Before anything is measured, the baseline is read on
+the free stretches between the peak clusters. When the lowest stands more than
+three noise sd under zero (a phase error, a negative roll), that baseline is taken
+out of every sample and the study is measured as a flat spectrum; the run says so
+(ADR-108). On the 18-analyte tube with the baseline 15 sd under zero this took the
+analytes found from 10 to 17 of 18 and the p90 error from 87% to 31%; none of the
+144 simulated tubes of the bench, all on a flat baseline, sets it off.
+Code: [`processing/quant_integration.py`](processing/quant_integration.py).
+
 **Controls** (always on). An analyte whose own other signals contradict its
 measured amount is withdrawn and the election re-run without it (up to three
 rounds); a lone singlet needs SNR ≥ 5 and another listed signal seen at its
@@ -321,7 +330,9 @@ the v0.84 engine: the same analytes and amounts as v0.83, with the dots of the
 co-variation steps (ADR-097, ADR-101). The composition series are from v0.83 (joint
 fit amplitude cap, ADR-094; peak counts unchanged since v0.75), so their dots are
 from before those steps. The mechanism and quantification step tables are from
-v0.8. Every run is exported with its project file,
+v0.8. The v0.88 engine gives the standard tubes of 18, 75 and 100 analytes (seeds
+0-2, 500 and 600 MHz) back row by row as v0.84, but for three amounts of the
+cascade, with the same dots. Every run is exported with its project file,
 per-sample truth and per-analyte results.
 
 ### Quality table printed in the PDF

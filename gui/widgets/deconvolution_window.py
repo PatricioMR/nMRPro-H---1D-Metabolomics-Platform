@@ -58,15 +58,13 @@ _KIND_ORDER = (KIND_SHARED, KIND_JOINT, KIND_CASCADE, KIND_CANDIDATE,
 
 
 def measured_matrix(qs):
-    """``(ppm, X, included)``: the spectrum the run measured on -- the
-    corrected one only when the run integrated on the baseline model -- and
-    the samples it included."""
+    """``(ppm, X, included)``: the spectrum the run measured on
+    (``measured_intensities``: the baseline model only when the run
+    integrated on it, a baseline under zero taken out) and the samples it
+    included."""
     app = qs.app
     ppm = np.asarray(app.ppm, dtype=float)
-    settings = getattr(qs, '_last_run_settings', None) or {}
-    use_model = bool(settings.get('bl_model_quant_var', qs.bl_model_quant_var.get()))
-    X = app.corrected_intensities() if use_model else app.all_intensities
-    X = np.asarray(X, dtype=float)
+    X = np.asarray(qs.measured_intensities(), dtype=float)
     if X.ndim == 1:
         X = X.reshape(-1, 1)
     inc = included_sample_indices(app.samples_info or [], X.shape[1])

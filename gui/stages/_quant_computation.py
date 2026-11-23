@@ -105,6 +105,7 @@ def _competitor_counts(metabolites) -> dict:
 
 
 def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
+                     baseline_model=None,
                      ref_peak, ref_conc, ref_nh, ext_is, n_samples,
                      excluded_regions, local_baseline, shapes=None,
                      shared=None, diagnostics=None):
@@ -128,6 +129,11 @@ def _write_debug_log(rows, groups, *, norm_mode, proton_corr, blk_sub, align,
         _dbg(f, f'proton_corr  : {proton_corr}')
         _dbg(f, f'blk_sub      : {blk_sub}')
         _dbg(f, f'local_basel. : {local_baseline}')
+        _dbg(f, f'basel. model : {baseline_model}')
+        _under = (diagnostics or {}).get('baseline_under_zero')
+        if _under:
+            _dbg(f, f"basel. < 0   : {_under['level_sd']:.1f} sd at {_under['ppm']:.3f} ppm"
+                    ' -> measured over the local baseline')
         _dbg(f, f'window_align : {align}')
         _dbg(f, f'shape_fit m* : {shapes}')
         _dbg(f, f'shared deconv: {shared}')
@@ -636,7 +642,7 @@ class _QuantCompMixin:
                          align=align, ref_peak=ref_peak, ref_conc=ref_conc,
                          ref_nh=ref_nh, ext_is=ext_is, n_samples=n_s,
                          excluded_regions=_excluded_used,
-                         local_baseline=local_baseline,
+                         local_baseline=local_baseline, baseline_model=_on_model,
                          shapes=_shapes, shared=_shared,
                          diagnostics=_diag)
 
@@ -682,6 +688,15 @@ class _QuantCompMixin:
             if _n_nq:
                 _msg += f'  ·  {_n_nq} not quantified'
             self._status_ok(_msg)
+            # a baseline under zero changed how the areas were measured: said
+            _under = ((getattr(self, '_quant_diagnostics', None) or {})
+                      .get('baseline_under_zero'))
+            if _under:
+                from ._quant_adapter import baseline_under_zero_text
+                messagebox.showwarning(
+                    'Baseline under zero', baseline_under_zero_text(_under)
+                    + '\n\nCheck the phase and the baseline model of this region in '
+                      'Visualization.', parent=self.app.root)
             # a Good mark the gate took off is said, not dropped in silence
             _refused = ((getattr(self, '_quant_diagnostics', None) or {})
                         .get('manual_refused') or [])
@@ -857,11 +872,7 @@ class _QuantCompMixin:
         for the engine's window and for the analyst's, so only the window
         differs between them."""
         from processing.quant_integration import integrate_sample
-        use_model = bool((getattr(self, '_last_run_settings', None) or {}).get(
-            'bl_model_quant_var', self.bl_model_quant_var.get()))
-        mat = (self.app.corrected_intensities() if use_model
-               else self.app.all_intensities)
-        col = np.asarray(mat, dtype=float)[:, sample_idx]
+        col = np.asarray(self.measured_intensities(), dtype=float)[:, sample_idx]
         return integrate_sample(np.asarray(self.app.ppm, dtype=float), col, lo, hi,
                                 local_baseline=bool(row.get('_local_baseline')))
 
@@ -988,6 +999,35 @@ class _QuantCompMixin:
 
     # ── The analyst's choice of signal for one analyte ───────────────────────
 
+    def measured_intensities(self):
+        """The matrix the last run measured on: the project's baseline
+        model applied when the run integrated on it, and the baseline taken
+        out when it ran under zero (``_baseline_under_zero`` on the rows,
+        ADR-108) -- what every view of a result draws and every re-measure
+        reads, so a figure and its number come from one spectrum. Recomputed
+        from the data, not kept: the project file holds the decision."""
+        from processing.quant_integration import without_baseline_under_zero
+        from processing.spectral_regions import FALLBACK_LINEWIDTH_PPM, measure_linewidth_ppm
+        mat = (self.app.corrected_intensities()
+               if self._run_option('bl_model_quant_var')
+               else self.app.all_intensities)
+        if mat is None:
+            return None
+        if not any(r.get('_baseline_under_zero')
+                   for r in getattr(self, '_quant_results', None) or ()):
+            return mat
+        peaks = list(getattr(self.peak_stage, 'peaks', None) or [])
+        key = (id(mat), len(peaks), id(getattr(self, '_quant_results', None)))
+        cached = getattr(self, '_measured_cache', None)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        ppm = np.asarray(self.app.ppm, dtype=float)
+        arr = np.asarray(mat, dtype=float)
+        lw = measure_linewidth_ppm(ppm, arr, peaks) or FALLBACK_LINEWIDTH_PPM
+        out = without_baseline_under_zero(ppm, arr, [p.get('ppm') for p in peaks], lw)
+        self._measured_cache = (key, out)
+        return out
+
     def _run_option(self, name):
         """An option as the last run had it (a reopened project keeps it),
         else as the panel reads now."""
@@ -1012,9 +1052,7 @@ class _QuantCompMixin:
         by_rank = {p.get('rank'): p for p in peaks if p.get('rank') is not None}
         lines = [by_rank[r] for r in choice.get('line_ranks') or ()
                  if r in by_rank]
-        mat = (self.app.corrected_intensities()
-               if self._run_option('bl_model_quant_var')
-               else self.app.all_intensities)
+        mat = self.measured_intensities()
         if mat is None or self.app.ppm is None:
             return 'No spectral data loaded.'
         arr = np.asarray(mat, dtype=float)

@@ -17,8 +17,8 @@ from processing.quant_deconvolution import fraction_in_window, neighbour_leak
 from processing.quant_integration import (
     ANCHOR_MAX_REACH_LINEWIDTHS, BASELINE_STRETCH_LINEWIDTHS,
     WINDOW_REACH_LINEWIDTHS, anchor_levels, baseline_anchors, baseline_under,
-    cluster_baseline, integrate_sample, integrate_signal,
-    lorentzian_captured_fraction)
+    baseline_under_zero, cluster_baseline, integrate_sample, integrate_signal,
+    lorentzian_captured_fraction, without_baseline_under_zero)
 
 FWHM = 2.6 / 600.0
 PPM = np.linspace(3.30, 3.80, 20001)
@@ -114,11 +114,58 @@ def test_a_crowded_region_without_a_trace_falls_back_to_the_ends():
     assert b == pytest.approx(3.546 + half)
 
 
-def test_levels_are_clipped_at_zero_and_refused_off_the_spectrum():
+def test_levels_under_zero_are_read_as_they_are_and_refused_off_the_spectrum():
+    """A baseline under zero is a baseline: clipped, the window was measured
+    from zero and took the baseline for the analyte's deficit (ADR-108)."""
     y = -np.ones_like(PPM)
     (_, v0), (_, v1) = anchor_levels(PPM, y, (3.5, 3.6, FWHM))
-    assert v0 == 0.0 and v1 == 0.0
+    assert v0 == pytest.approx(-1.0) and v1 == pytest.approx(-1.0)
     assert anchor_levels(PPM, y, (3.0, 3.6, FWHM)) is None
+
+
+def test_a_signal_on_a_baseline_under_zero_keeps_its_area():
+    c = 3.545
+    flat = _measured(_lor(c, 1.0), c)[0]
+    under = _measured(_lor(c, 1.0) - 50.0, c)[0]
+    assert under == pytest.approx(flat, rel=0.01)
+
+
+def test_the_spectrum_wide_baseline_follows_a_baseline_under_zero():
+    c, n = 3.545, 3.545 + 2.0 * FWHM
+    background = -30.0 - 200.0 * (PPM - c)
+    B = cluster_baseline(PPM, _lor(c, 1.0) + _lor(n, 5.0) + background, [c, n], FWHM)
+    inside = (PPM >= c - 0.01) & (PPM <= n + 0.01)
+    assert np.all(B[inside, 0] < 0)
+    assert np.allclose(B[inside, 0], background[inside], atol=0.02 * 5.0 / (np.pi * FWHM / 2))
+
+
+def test_a_baseline_under_zero_is_found_and_a_flat_one_is_not():
+    rng = np.random.default_rng(0)
+    peaks = [3.40, 3.55, 3.70]
+    clean = sum(_lor(c, 1.0) for c in peaks)
+    sigma = 0.01 * float(clean.max())
+    noise = rng.normal(0.0, sigma, (PPM.size, 4))
+    flat = clean[:, None] + noise
+    assert baseline_under_zero(PPM, flat, peaks, FWHM, sigma) is None
+    under = baseline_under_zero(PPM, flat - 10.0 * sigma, peaks, FWHM, sigma)
+    # the Lorentzians' tails still stand on the stretches: a little above -10
+    assert under is not None and -10.0 < under['level_sd'] < -6.0
+    assert PPM[0] <= under['ppm'] <= PPM[-1]
+    assert baseline_under_zero(PPM, flat - 10.0 * sigma, peaks, FWHM, None) is None
+
+
+def test_a_baseline_under_zero_taken_out_gives_the_flat_spectrum_back():
+    peaks = [3.40, 3.55, 3.70]
+    clean = sum(_lor(c, 1.0) for c in peaks)
+    roll = -20.0 + 15.0 * np.sin(2 * np.pi * PPM / 0.3)
+    back = without_baseline_under_zero(PPM, (clean + roll)[:, None], peaks, FWHM)[:, 0]
+    on = np.zeros(PPM.shape, dtype=bool)
+    for c in peaks:
+        on |= np.abs(PPM - c) <= 2 * FWHM
+    # at the lines, what is left is the signal, within a few percent of its height
+    assert np.max(np.abs(back[on] - clean[on])) < 0.05 * float(clean.max())
+    no_peak = np.ones((PPM.size, 1))
+    assert np.array_equal(without_baseline_under_zero(PPM, no_peak, [], FWHM), no_peak)
 
 
 def test_the_plot_draws_the_line_the_area_was_measured_against():
