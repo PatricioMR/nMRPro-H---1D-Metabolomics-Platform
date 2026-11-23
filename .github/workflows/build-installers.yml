@@ -1,0 +1,85 @@
+# Build the NMRPro-H installers for Windows, Linux and macOS from one spec
+# (nmrpro_h.spec). PyInstaller does not cross-compile, so each package is built
+# on its own system.
+#
+# Runs by hand (Actions → Build installers → Run workflow) or on a pushed tag
+# v*. The packages are always kept as workflow artifacts. On a tag they are
+# also attached to the GitHub Release of that tag *if it already exists*: the
+# workflow never creates or publishes a release, because a published release
+# is what makes every installed copy announce an update (data/update_check.py).
+name: Build installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows x64
+          - os: ubuntu-22.04          # oldest glibc we target: the AppImage runs on newer
+            label: Linux x86_64
+          - os: macos-14
+            label: macOS Apple Silicon
+          - os: macos-15-intel
+            label: macOS Intel
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          choco install innosetup -y --no-progress
+          call build_windows.bat
+
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: bash installer/build_linux.sh
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: bash installer/build_macos.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NMRPro-H-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            Output/*.exe
+            Output/*.AppImage
+            Output/*.tar.gz
+            Output/*.dmg
+          if-no-files-found: error
+
+      - name: Attach to the existing release
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          shopt -s nullglob
+          files=(Output/*.exe Output/*.AppImage Output/*.tar.gz Output/*.dmg)
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            echo "No release for $tag yet: packages are in this run's artifacts."
+          fi

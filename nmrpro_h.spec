@@ -1,14 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec for NMRPro-H (one-folder Windows build).
+PyInstaller spec for NMRPro-H (one-folder build, Windows / Linux / macOS).
 
 Build:   pyinstaller --noconfirm nmrpro_h.spec
-Output:  dist/NMRPro-H/NMRPro-H.exe  (+ _internal/, databases/, data/, utils/)
+Output:  Windows  dist/NMRPro-H/NMRPro-H.exe   -> build_windows.bat (Inno Setup)
+         Linux    dist/NMRPro-H/NMRPro-H       -> installer/build_linux.sh (AppImage)
+         macOS    dist/NMRPro-H.app            -> installer/build_macos.sh (.dmg)
+
+PyInstaller does not cross-compile: each system's package is built on that
+system (.github/workflows/build-installers.yml runs all three).
 
 Notes
 -----
 * One-folder (not one-file): fast startup; the bundled databases/ act as the
-  SEED that app_paths.databases_dir() copies to %APPDATA%/NMRPro-H on first run.
+  SEED that app_paths.databases_dir() copies to the per-user data folder
+  (app_paths.user_data_dir()) on first run.
 * Heavy scientific deps (scipy, scikit-learn, matplotlib, reportlab) need their
   data files and some submodules collected explicitly.
 """
@@ -23,7 +29,18 @@ block_cipher = None
 # the unfiltered build source or .bak/backup_* copies.
 import sys
 sys.path.insert(0, os.path.abspath('.'))   # the spec runs from the repo root
-from app_paths import REFERENCE_DATABASES, SUPPORT_DATABASES
+from app_paths import (REFERENCE_DATABASES, SUPPORT_DATABASES, APP_NAME,
+                       COPYRIGHT, __version__)
+
+# Icon in each system's own format. macOS wants .icns: PyInstaller converts
+# the 1024 px PNG with Pillow. Linux executables carry no icon (the AppImage's
+# .desktop entry points at the PNG).
+if sys.platform == 'win32':
+    _icon = 'utils/nmrpro_h.ico'
+elif sys.platform == 'darwin':
+    _icon = 'utils/Logo_NMRPro-H.png'
+else:
+    _icon = None
 _db_seed = [
     (os.path.join('databases', _f), 'databases')
     for _f in [f for _l, f in REFERENCE_DATABASES] + list(SUPPORT_DATABASES)
@@ -81,7 +98,7 @@ exe = EXE(
     strip=False,
     upx=False,
     console=False,          # release build — no debug console window
-    icon='utils/nmrpro_h.ico',
+    icon=_icon,
 )
 coll = COLLECT(
     exe,
@@ -93,3 +110,20 @@ coll = COLLECT(
     upx_exclude=[],
     name='NMRPro-H',
 )
+
+# macOS: wrap the folder in an application bundle (dist/NMRPro-H.app).
+if sys.platform == 'darwin':
+    app = BUNDLE(
+        coll,
+        name=f'{APP_NAME}.app',
+        icon=_icon,
+        bundle_identifier='io.github.patriciomr.nmrpro-h',
+        version=__version__,
+        info_plist={
+            'CFBundleName': APP_NAME,
+            'CFBundleDisplayName': APP_NAME,
+            'CFBundleShortVersionString': __version__,
+            'NSHumanReadableCopyright': COPYRIGHT,
+            'NSHighResolutionCapable': True,
+        },
+    )

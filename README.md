@@ -109,7 +109,7 @@ citations are kept in the docstring of the module that uses them.
 Python (≥ 3.11) desktop application with a Tkinter interface and embedded
 matplotlib plots; numerical work in numpy/scipy; reference data in SQLite; PDF
 reports with reportlab; distributed as a Windows installer (PyInstaller + Inno
-Setup).
+Setup), a Linux AppImage and a macOS disk image.
 
 | Layer | Folder | Holds |
 |---|---|---|
@@ -512,6 +512,33 @@ Download `NMRPro-H-Setup.exe` from the
 and run it. Databases the analyst edits live in `%APPDATA%\NMRPro-H`, so the
 install folder stays read-only.
 
+### Linux
+
+Download `NMRPro-H-linux-x86_64.AppImage` from the same release, make it
+executable and run it — nothing is installed:
+
+```bash
+chmod +x NMRPro-H-linux-x86_64.AppImage
+./NMRPro-H-linux-x86_64.AppImage
+```
+
+`NMRPro-H-linux-x86_64.tar.gz` holds the same program as a plain folder (run
+`NMRPro-H/NMRPro-H`). Built on Ubuntu 22.04: runs on distributions of that age
+or newer. Edited databases live in `~/.config/NMRPro-H`.
+
+### macOS
+
+Download `NMRPro-H-macOS-arm64.dmg` (Apple Silicon) or
+`NMRPro-H-macOS-x86_64.dmg` (Intel), open it and drag NMRPro-H to
+Applications. The app is not notarized by Apple, so the first launch is
+blocked: right-click the app → **Open**, or, if macOS reports it as damaged,
+
+```bash
+xattr -dr com.apple.quarantine /Applications/NMRPro-H.app
+```
+
+Edited databases live in `~/.config/NMRPro-H`.
+
 ### From source
 
 ```bash
@@ -525,15 +552,22 @@ Python 3.11 or newer (developed and tested on 3.14). `tkinter` and `sqlite3`
 ship with CPython. Dependencies: numpy, scipy, scikit-learn, matplotlib, pandas,
 networkx, reportlab, pillow, requests.
 
-### Build the installer
+### Build the installers
 
-```bat
-build_windows.bat
-```
+One PyInstaller spec (`nmrpro_h.spec`) serves the three systems, but PyInstaller
+does not cross-compile: each package is built on its own system.
 
-PyInstaller (`nmrpro_h.spec`) followed by Inno Setup (`installer/nmrpro_h.iss`)
-→ `Output/NMRPro-H-Setup.exe`. The version has a single source,
-`__version__` in [`app_paths.py`](app_paths.py).
+| System | Command | Output |
+|---|---|---|
+| Windows | `build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-Setup.exe` |
+| Linux | `bash installer/build_linux.sh` (needs `python3-tk`) | `Output/NMRPro-H-linux-<arch>.AppImage`, `.tar.gz` |
+| macOS | `bash installer/build_macos.sh` | `Output/NMRPro-H-macOS-<arch>.dmg` |
+
+[`.github/workflows/build-installers.yml`](.github/workflows/build-installers.yml)
+builds all of them on GitHub's machines (Actions → *Build installers* → *Run
+workflow*, or a pushed `v*` tag) and attaches them to that tag's release when
+the release exists. The version has a single source, `__version__` in
+[`app_paths.py`](app_paths.py).
 
 ---
 
@@ -584,7 +618,7 @@ databases/         BMRB-derived SQLite libraries (read-only at runtime)
 validation/        simulated benches, ablation, exports (not needed to run the app)
 hmdb_api_download/ reference-library build and verification scripts (not needed
                    to run the app)
-installer/         Inno Setup script
+installer/         Inno Setup script, Linux/macOS build scripts
 tests/             unit · integration · smoke (pytest)
 ```
 
