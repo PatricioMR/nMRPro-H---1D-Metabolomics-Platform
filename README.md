@@ -12,7 +12,7 @@
 <p align="center">
   <img alt="Version" src="https://img.shields.io/badge/version-0.88%20Beta-blue">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11%2B-blue">
-  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows-lightgrey">
+  <img alt="Platform" src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey">
   <img alt="Tests" src="https://img.shields.io/badge/tests-pytest-green">
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-AGPL--3.0--or--later-blue"></a>
   <a href="https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform/releases/latest"><img alt="Download" src="https://img.shields.io/badge/download-installer-brightgreen"></a>
@@ -37,7 +37,9 @@ NMRPro-H is a desktop application for the analysis of one-dimensional
 <sup>1</sup>H NMR spectra of biofluids and of tissue or cell extracts. It takes a
 set of spectra from the spectrometer and returns the identified metabolites,
 their concentration in every sample, the between-group statistics, and a PDF
-report that states how far each number can be trusted.
+report that states how far each number can be trusted. It runs on Windows,
+Linux and macOS (Apple Silicon and Intel), each from a ready-to-run package
+that needs no Python installation ([Installation](#installation)).
 
 Its design rests on one rule: **the software must read a spectrum the way an
 analyst does, and must say what it did.** Every decision (which peak belongs to
@@ -505,11 +507,25 @@ calibration, concentration bands), `ablation` (mechanisms), `quant_steps`
 
 ## Installation
 
-### Windows installer (recommended)
+Every release ships one package per system; download it from the
+[latest release](https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform/releases/latest).
+No Python installation is needed. `NMRPro-H_Installation_Guide.pdf`, attached
+to the same release, walks through each system step by step.
 
-Download `NMRPro-H-Setup.exe` from the
-[latest release](https://github.com/PatricioMR/nMRPro-H---1D-Metabolomics-Platform/releases/latest)
-and run it. Databases the analyst edits live in `%APPDATA%\NMRPro-H`, so the
+| System | Package | Requirements |
+|---|---|---|
+| Windows | `NMRPro-H-Setup.exe` (installer) | Windows 10 or 11, 64-bit |
+| Linux | `NMRPro-H-linux-x86_64.AppImage` (or `.tar.gz`) | x86_64, glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer) |
+| macOS, Apple Silicon | `NMRPro-H-macOS-arm64.dmg` | Macs with M1 or later |
+| macOS, Intel | `NMRPro-H-macOS-x86_64.dmg` | Macs with an Intel processor |
+
+The packages are not signed with a commercial certificate, so Windows and
+macOS warn on the first launch; the sections below say how to proceed.
+
+### Windows
+
+Download `NMRPro-H-Setup.exe` and run it; if Windows shows *"Windows protected
+your PC"*, click **More info → Run anyway**. Databases the analyst edits live in `%APPDATA%\NMRPro-H`, so the
 install folder stays read-only.
 
 ### Linux
