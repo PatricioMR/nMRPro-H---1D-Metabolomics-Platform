@@ -106,7 +106,19 @@ def _pause_if_interactive():
             pass
 
 
+def _trace_native_crashes():
+    """A crash in native code (Tk, X11, BLAS) kills the process with no
+    Python traceback and an empty log; faulthandler writes every thread's
+    Python stack to stderr first, so the log says where it died."""
+    import faulthandler
+    try:
+        faulthandler.enable(file=sys.stderr, all_threads=True)
+    except Exception:       # stderr without a file descriptor (_NullWriter)
+        pass
+
+
 _make_console_safe()
+_trace_native_crashes()
 
 print("=" * 50)
 print("NMRPro-H - Starting  %s" % _dt.datetime.now().isoformat(timespec='seconds'))

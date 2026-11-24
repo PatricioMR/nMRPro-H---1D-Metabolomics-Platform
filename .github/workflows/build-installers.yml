@@ -72,6 +72,17 @@ jobs:
           sudo apt-get install -y --no-install-recommends xvfb
           xvfb-run -a bash installer/smoke_test.sh dist/NMRPro-H/NMRPro-H
 
+      # Where a native crash happened: the C stack of the packaged program,
+      # and whether the same code crashes when run from source.
+      - name: Crash diagnosis (Linux)
+        if: failure() && runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends gdb
+          timeout 150 xvfb-run -a gdb -batch -ex run -ex 'thread apply all bt 25' \
+            --args dist/NMRPro-H/NMRPro-H 2>&1 | tail -150 || true
+          echo "===== from source"
+          NMRPRO_NO_UPDATE_CHECK=1 timeout 60 xvfb-run -a python -X faulthandler main.py 2>&1 | tail -60 || true
+
       - name: Smoke test (macOS)
         if: runner.os == 'macOS'
         run: bash installer/smoke_test.sh dist/NMRPro-H.app/Contents/MacOS/NMRPro-H
