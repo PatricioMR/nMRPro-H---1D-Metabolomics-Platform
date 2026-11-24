@@ -44,6 +44,7 @@ from gui.utils.quality_palette import (
 from gui.widgets.annotation_results_window import _TIER_NOTE
 from gui.widgets.about_dialog import AboutDialog
 from gui.utils.window_system import make_color_transparent, maximize
+from gui.utils.window_place import fit_fixed_windows
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
@@ -72,6 +73,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
         self.root = tk.Tk()
         self.root.title(APP_VERSION)
         self._set_app_icon(self.root)
+        fit_fixed_windows(self.root)
         self.screen_width  = self.root.winfo_screenwidth()
         self.screen_height = self.root.winfo_screenheight()
         self.root.withdraw()
