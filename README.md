@@ -712,9 +712,6 @@ round-trips have integration tests, including a deterministic re-run.
 - Dashti H, Westler WM, Tonelli M, Wedell JR, Markley JL, Eghbalnia HR. Spin system modeling of NMR spectra for applications in metabolomics and small molecule screening. *Anal Chem* 2017;89:12201–12208.
 - Muncey HJ, Jones R, De Iorio M, Ebbels TMD. MetAssimulo: simulation of realistic NMR metabolic profiles. *BMC Bioinformatics* 2010;11:496.
 
-The name NMRPro-H was chosen so as not to collide with NMRPipe
-(Delaglio F et al. *J Biomol NMR* 1995;6:277–293), an unrelated package.
-
 ---
 
 ## Roadmap
