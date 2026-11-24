@@ -83,11 +83,75 @@ def _to_stored(intensities) -> np.ndarray:
     return s
 
 
+# A set's iteration order follows the string hash, which Python seeds anew in
+# every process: the same project saved in two sessions, or read back and saved
+# again, gave different bytes (and a different snapshot hash) in about one
+# process in ten. Sets are therefore written in sorted order. The C pickler
+# never asks reducer_override about built-in types, so each set is swapped,
+# before pickling, for a subclass whose reduction is sorted; reading the file
+# back still gives a plain set.
+class _SortedSet(set):
+    def __reduce__(self):
+        return set, (sorted(self),)
+
+
+class _SortedFrozenSet(frozenset):
+    def __reduce__(self):
+        return frozenset, (sorted(self),)
+
+
+_WALKED = frozenset((dict, list, tuple, set, frozenset))
+
+
+def _with_sorted_sets(obj, memo):
+    """*obj* with every set inside dicts, lists and tuples made a sorted-set.
+    Only containers that hold a set are copied, and an object shared in
+    several places stays shared."""
+    kind = type(obj)
+    if kind not in _WALKED:
+        return obj
+    key = id(obj)
+    if key in memo:
+        return memo[key]
+    new = obj
+    if kind is set or kind is frozenset:
+        try:
+            sorted(obj)
+            new = (_SortedSet if kind is set else _SortedFrozenSet)(obj)
+        except TypeError:               # elements without an order
+            pass
+    elif kind is dict:
+        for k, v in obj.items():
+            if type(v) in _WALKED:
+                nv = _with_sorted_sets(v, memo)
+                if nv is not v:
+                    if new is obj:
+                        new = dict(obj)
+                    new[k] = nv
+    else:
+        copy = None
+        for i, v in enumerate(obj):
+            if type(v) in _WALKED:
+                nv = _with_sorted_sets(v, memo)
+                if nv is not v:
+                    if copy is None:
+                        copy = list(obj)
+                    copy[i] = nv
+        if copy is not None:
+            new = copy if kind is list else tuple(copy)
+    memo[key] = new
+    return new
+
+
+def _dumps(obj) -> bytes:
+    return pickle.dumps(_with_sorted_sets(obj, {}), protocol=5)
+
+
 def snapshot(state: dict) -> Snapshot:
     spec = state.get(SPECTRUM_KEY)
     rest = {k: v for k, v in state.items()
             if k != SPECTRUM_KEY or spec is None}
-    state_bytes = pickle.dumps(rest, protocol=5)
+    state_bytes = _dumps(rest)
     h = hashlib.blake2b(state_bytes, digest_size=16)
     if spec is None:
         return Snapshot(state_bytes, None, None, h.hexdigest())

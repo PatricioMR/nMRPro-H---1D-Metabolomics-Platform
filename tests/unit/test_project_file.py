@@ -58,6 +58,33 @@ def test_a_file_read_back_and_written_again_is_the_same(tmp_path):
     assert open(a, 'rb').read() == open(b, 'rb').read()
 
 
+def test_the_same_project_gives_the_same_bytes_in_any_session(tmp_path):
+    # A set's order follows the per-process string hash: with these seeds the
+    # excluded samples {'S1', 'S3'} came back in the other order and the file
+    # read back and saved again differed (caught by the CI run of v0.89).
+    import hashlib
+    import subprocess
+    import sys
+    root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    script = (
+        'import sys, hashlib, importlib.util\n'
+        f'sys.path.insert(0, {root!r})\n'
+        f'spec = importlib.util.spec_from_file_location("t", {__file__!r})\n'
+        't = importlib.util.module_from_spec(spec); spec.loader.exec_module(t)\n'
+        'a, b = sys.argv[1] + "/a.nmrproj", sys.argv[1] + "/b.nmrproj"\n'
+        't.pf.save(a, t._state()); t.pf.save(b, t.pf.read(a))\n'
+        'print(hashlib.sha256(open(a, "rb").read()).hexdigest(),'
+        ' hashlib.sha256(open(b, "rb").read()).hexdigest())\n')
+    digests = set()
+    for seed in ('1', '4', '5', '12'):
+        out = subprocess.run(
+            [sys.executable, '-c', script, str(tmp_path)], check=True,
+            capture_output=True, text=True,
+            env={**os.environ, 'PYTHONHASHSEED': seed}).stdout.split()
+        digests.update(out)
+    assert len(digests) == 1
+
+
 def test_the_file_is_much_smaller_than_the_old_pickle(tmp_path):
     st = _state(n_pts=32768, n_s=8)
     old = len(pickle.dumps(st, protocol=5))
