@@ -43,6 +43,7 @@ from gui.utils.quality_palette import (
     SIGNAL_AVERAGE, SIGNAL_GOOD, build_tier_choice, read_tier_choice)
 from gui.widgets.annotation_results_window import _TIER_NOTE
 from gui.widgets.about_dialog import AboutDialog
+from gui.utils.window_system import make_color_transparent, maximize
 
 
 class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
@@ -163,7 +164,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
         splash.overrideredirect(True)
         # Not topmost: the analyst switching to another window while the app
         # loads must be able to put the logo behind it.
-        splash.attributes('-transparentcolor', 'black')  # black = transparente
+        make_color_transparent(splash, 'black')
 
         try:
             from PIL import Image, ImageTk
@@ -217,7 +218,7 @@ class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
                 pass
             self._splash_ref = None
         self.root.deiconify()
-        self.root.state('zoomed')
+        maximize(self.root)
         self._schedule_startup_update_check()
 
     # ---------- UI construction (runs during splash) ----------

@@ -59,6 +59,23 @@ jobs:
         if: runner.os == 'macOS'
         run: bash installer/build_macos.sh
 
+      # Open the packaged program before anything is uploaded: a build that
+      # compiles can still close before its first window (v0.88 on macOS).
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: bash installer/smoke_test.sh dist/NMRPro-H/NMRPro-H.exe
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y --no-install-recommends xvfb
+          xvfb-run -a bash installer/smoke_test.sh dist/NMRPro-H/NMRPro-H
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: bash installer/smoke_test.sh dist/NMRPro-H.app/Contents/MacOS/NMRPro-H
+
       - uses: actions/upload-artifact@v4
         with:
           name: NMRPro-H-${{ runner.os }}-${{ runner.arch }}
