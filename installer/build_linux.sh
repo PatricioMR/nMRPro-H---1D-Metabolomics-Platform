@@ -3,8 +3,11 @@
 #  Build the NMRPro-H Linux package: PyInstaller one-folder app wrapped in an
 #  AppImage (one file, runs without installing) plus a .tar.gz of the folder.
 #
-#  Prereqs (Debian/Ubuntu):  sudo apt install python3-tk python3-venv
-#  Run from the project root, inside a venv with requirements.txt installed:
+#  Build with a Python that carries its own Tcl/Tk 9 (python-build-standalone),
+#  not one linked to the system Tk: Ubuntu 22.04's Tcl/Tk 8.6.12 crashes the
+#  app (SIGSEGV in ttk::ThemeChanged) and the package would ship that Tk.
+#      uv venv --seed -p 3.14 .venv && . .venv/bin/activate
+#      pip install -r requirements.txt
 #      bash installer/build_linux.sh
 #
 #  The AppImage runs on distributions whose glibc is at least the build

@@ -37,9 +37,23 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
+        if: runner.os != 'Linux'
         with:
           python-version: '3.14'
           cache: pip
+
+      # Linux: the hosted Python links Ubuntu 22.04's Tcl/Tk 8.6.12, whose ttk
+      # theme refresh (ttk::ThemeChanged) crashed the app with SIGSEGV on
+      # every start. python-build-standalone carries its own Tcl/Tk 9.0 and
+      # targets an older glibc. The venv's bin/ goes first on PATH, so every
+      # later `python`/`pyinstaller` is that interpreter.
+      - uses: astral-sh/setup-uv@v6
+        if: runner.os == 'Linux'
+      - name: Standalone Python (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          uv venv --seed -p 3.14 .venv
+          echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: python -m pip install -r requirements.txt

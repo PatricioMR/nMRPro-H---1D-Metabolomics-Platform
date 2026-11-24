@@ -581,7 +581,7 @@ does not cross-compile: each package is built on its own system.
 | System | Command | Output |
 |---|---|---|
 | Windows | `installer/build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-Setup.exe` |
-| Linux | `bash installer/build_linux.sh` (needs `python3-tk`) | `Output/NMRPro-H-linux-<arch>.AppImage`, `.tar.gz` |
+| Linux | `bash installer/build_linux.sh` (with a standalone Python 3.14 carrying Tcl/Tk 9; see the script) | `Output/NMRPro-H-linux-<arch>.AppImage`, `.tar.gz` |
 | macOS | `bash installer/build_macos.sh` | `Output/NMRPro-H-macOS-<arch>.dmg` |
 
 [`.github/workflows/build-installers.yml`](.github/workflows/build-installers.yml)
