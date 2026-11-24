@@ -2,8 +2,8 @@
 """
 PyInstaller spec for NMRPro-H (one-folder build, Windows / Linux / macOS).
 
-Build:   pyinstaller --noconfirm nmrpro_h.spec
-Output:  Windows  dist/NMRPro-H/NMRPro-H.exe   -> build_windows.bat (Inno Setup)
+Build:   pyinstaller --noconfirm installer/nmrpro_h.spec   (from the repo root)
+Output:  Windows  dist/NMRPro-H/NMRPro-H.exe   -> installer/build_windows.bat (Inno Setup)
          Linux    dist/NMRPro-H/NMRPro-H       -> installer/build_linux.sh (AppImage)
          macOS    dist/NMRPro-H.app            -> installer/build_macos.sh (.dmg)
 
@@ -28,7 +28,10 @@ block_cipher = None
 # and the pathway table the statistics stage reads -- never old versions,
 # the unfiltered build source or .bak/backup_* copies.
 import sys
-sys.path.insert(0, os.path.abspath('.'))   # the spec runs from the repo root
+# Every path from the repository root: PyInstaller reads a relative path in a
+# spec from the spec's own folder (installer/), not from where it was started.
+ROOT = os.path.dirname(os.path.abspath(SPECPATH))
+sys.path.insert(0, ROOT)
 from app_paths import (REFERENCE_DATABASES, SUPPORT_DATABASES, APP_NAME,
                        COPYRIGHT, __version__)
 
@@ -36,19 +39,19 @@ from app_paths import (REFERENCE_DATABASES, SUPPORT_DATABASES, APP_NAME,
 # the 1024 px PNG with Pillow. Linux executables carry no icon (the AppImage's
 # .desktop entry points at the PNG).
 if sys.platform == 'win32':
-    _icon = 'utils/nmrpro_h.ico'
+    _icon = os.path.join(ROOT, 'utils', 'nmrpro_h.ico')
 elif sys.platform == 'darwin':
-    _icon = 'utils/Logo_NMRPro-H.png'
+    _icon = os.path.join(ROOT, 'utils', 'Logo_NMRPro-H.png')
 else:
     _icon = None
 _db_seed = [
-    (os.path.join('databases', _f), 'databases')
+    (os.path.join(ROOT, 'databases', _f), 'databases')
     for _f in [f for _l, f in REFERENCE_DATABASES] + list(SUPPORT_DATABASES)
 ]
 datas = _db_seed + [
-    ('data',      'data'),         # lipidomics / internal CSV libraries
-    ('utils',     'utils'),        # Logo_NMRPro-H.png, nmrpro_h.ico
-    ('LICENSE',   '.'),            # GNU AGPL-3.0, beside the program
+    (os.path.join(ROOT, 'data'),    'data'),    # lipidomics / internal CSV libraries
+    (os.path.join(ROOT, 'utils'),   'utils'),   # Logo_NMRPro-H.png, nmrpro_h.ico
+    (os.path.join(ROOT, 'LICENSE'), '.'),       # GNU AGPL-3.0, beside the program
 ]
 binaries = []
 hiddenimports = [
@@ -65,8 +68,8 @@ for _pkg in ('scipy', 'sklearn', 'matplotlib', 'reportlab', 'networkx',
     hiddenimports += _h
 
 a = Analysis(
-    ['main.py'],
-    pathex=[os.path.abspath('.')],
+    [os.path.join(ROOT, 'main.py')],
+    pathex=[ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,

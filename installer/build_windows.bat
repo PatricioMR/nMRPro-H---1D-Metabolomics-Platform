@@ -3,11 +3,14 @@ REM ============================================================================
 REM  Build NMRPro-H Windows executable (one-folder) + Inno Setup installer.
 REM
 REM  Prereqs:
-REM    * Run from the project root, inside the venv that has the app deps.
+REM    * Run inside the venv that has the app deps (from any folder:
+REM      it moves to the project root itself).
+REM        installer\build_windows.bat
 REM    * Inno Setup installed (for the installer step) — provides ISCC.exe.
 REM      https://jrsoftware.org/isdl.php
 REM ============================================================================
 setlocal
+cd /d "%~dp0.."
 
 echo.
 echo === [1/3] Installing/upgrading build tools ===
@@ -15,7 +18,7 @@ python -m pip install --upgrade pyinstaller pillow || goto :err
 
 echo.
 echo === [2/3] Building one-folder app with PyInstaller ===
-pyinstaller --noconfirm nmrpro_h.spec || goto :err
+pyinstaller --noconfirm installer\nmrpro_h.spec || goto :err
 echo Built: dist\NMRPro-H\NMRPro-H.exe
 
 echo.

@@ -6,7 +6,7 @@
 ; install folder (Program Files) can stay read-only.
 
 #define AppName    "NMRPro-H"
-; Version is passed by build_windows.bat (iscc /DAppVersion=...), extracted from
+; Version is passed by installer\build_windows.bat (iscc /DAppVersion=...), extracted from
 ; app_paths.__version__ — the single source of truth. Fallback kept so a manual
 ; `iscc installer\nmrpro_h.iss` still compiles; keep it matching app_paths.
 #ifndef AppVersion

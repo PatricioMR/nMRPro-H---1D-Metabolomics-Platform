@@ -575,12 +575,12 @@ networkx, reportlab, pillow, requests.
 
 ### Build the installers
 
-One PyInstaller spec (`nmrpro_h.spec`) serves the three systems, but PyInstaller
+One PyInstaller spec (`installer/nmrpro_h.spec`) serves the three systems, but PyInstaller
 does not cross-compile: each package is built on its own system.
 
 | System | Command | Output |
 |---|---|---|
-| Windows | `build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-Setup.exe` |
+| Windows | `installer/build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-Setup.exe` |
 | Linux | `bash installer/build_linux.sh` (needs `python3-tk`) | `Output/NMRPro-H-linux-<arch>.AppImage`, `.tar.gz` |
 | macOS | `bash installer/build_macos.sh` | `Output/NMRPro-H-macOS-<arch>.dmg` |
 

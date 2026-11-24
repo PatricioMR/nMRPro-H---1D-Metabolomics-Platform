@@ -3,3 +3,6 @@
 
 # Shell scripts run on Linux/macOS (and WSL): never check them out with CRLF.
 *.sh text eol=lf
+
+# Windows batch files: cmd misreads labels and goto in a file with LF endings.
+*.bat text eol=crlf

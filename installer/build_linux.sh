@@ -17,7 +17,7 @@ echo "=== [1/3] Installing/upgrading build tools ==="
 python3 -m pip install --upgrade pyinstaller pillow
 
 echo "=== [2/3] Building one-folder app with PyInstaller ==="
-pyinstaller --noconfirm nmrpro_h.spec
+pyinstaller --noconfirm installer/nmrpro_h.spec
 
 ARCH="$(uname -m)"
 OUT="Output"

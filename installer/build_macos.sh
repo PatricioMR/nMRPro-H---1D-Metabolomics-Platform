@@ -16,7 +16,7 @@ cd "$(dirname "$0")/.."
 
 echo "=== [1/2] Building application bundle with PyInstaller ==="
 python3 -m pip install --upgrade pyinstaller pillow
-pyinstaller --noconfirm nmrpro_h.spec
+pyinstaller --noconfirm installer/nmrpro_h.spec
 
 ARCH="$(uname -m)"
 OUT="Output"

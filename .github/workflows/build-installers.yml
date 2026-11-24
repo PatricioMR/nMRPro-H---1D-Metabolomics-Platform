@@ -1,5 +1,5 @@
 # Build the NMRPro-H installers for Windows, Linux and macOS from one spec
-# (nmrpro_h.spec). PyInstaller does not cross-compile, so each package is built
+# (installer/nmrpro_h.spec). PyInstaller does not cross-compile, so each package is built
 # on its own system.
 #
 # Runs by hand (Actions → Build installers → Run workflow) or on a pushed tag
@@ -49,7 +49,7 @@ jobs:
         shell: cmd
         run: |
           choco install innosetup -y --no-progress
-          call build_windows.bat
+          call installer\build_windows.bat
 
       - name: Build (Linux)
         if: runner.os == 'Linux'
