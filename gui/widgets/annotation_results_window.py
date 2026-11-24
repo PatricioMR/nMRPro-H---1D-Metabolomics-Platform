@@ -173,6 +173,7 @@ from processing.annotation_scoring import (
     PATTERN_GOLD_HZ,
     PATTERN_MULT,
 )
+from plotting.colormaps import get_cmap
 
 
 # Shown under the grade checkboxes in both Annotation Parameters dialogs.
@@ -4437,7 +4438,6 @@ class AnnotationResultsWindow:
           groups : dict  label → [sample col indices]   (BLK excluded)
           gcols  : dict  label → matplotlib colour
         """
-        import matplotlib.cm as _cm
         si = getattr(self.app, 'samples_info', []) if self.app else []
         gc = getattr(self.app, 'group_colors', {}) if self.app else {}
         groups: dict = {}
@@ -4445,7 +4445,7 @@ class AnnotationResultsWindow:
             lbl = _s.get('label', 'All')
             if str(_s.get('type', lbl)).upper() != 'BLK':
                 groups.setdefault(lbl, []).append(_i)
-        _cmap = _cm.get_cmap('tab10', max(len(groups), 1))
+        _cmap = get_cmap('tab10', max(len(groups), 1))
         gcols = {g: gc.get(g) or _cmap(i)
                  for i, g in enumerate(groups)}
         return groups, gcols

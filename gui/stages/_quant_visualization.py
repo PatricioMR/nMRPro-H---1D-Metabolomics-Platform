@@ -24,6 +24,7 @@ from ._quant_helpers import (
     _lorentz_amplitude, _lorentz_shape,
     _linear_baseline,
 )
+from plotting.colormaps import get_cmap
 
 INK = '#1a1a19'
 _LEVEL_COLOUR = {quant_quality.GOOD: '#1a7a1a', quant_quality.WARN: '#856404',
@@ -281,7 +282,7 @@ class _QuantVisMixin:
             groups = {'All': list(range(n_s))}
 
         _app_colors = getattr(self.app, 'group_colors', {})
-        cmap = plt.cm.get_cmap('tab10', max(len(groups), 1))
+        cmap = get_cmap('tab10', max(len(groups), 1))
         g_colors = {g: (_app_colors.get(g) or cmap(i))
                     for i, g in enumerate(groups)}
         shown_g = self._analytes_group(r, groups)

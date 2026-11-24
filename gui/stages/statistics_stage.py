@@ -12,6 +12,7 @@ from tkinter import ttk, filedialog, messagebox
 import numpy as np
 
 from gui.stages._quant_adapter import statistics_values
+from plotting.colormaps import get_cmap
 
 # ---------- helpers ----------------------------------------------------------
 
@@ -2146,7 +2147,7 @@ class StatisticsStage:
         order = list(groups.keys())
 
         _app_colors = getattr(self.app, 'group_colors', {})
-        cmap = plt.cm.get_cmap('tab10', max(len(order), 1))
+        cmap = get_cmap('tab10', max(len(order), 1))
         gcol = {g: (_app_colors.get(g) or cmap(i)) for i, g in enumerate(order)}
 
         self._zoom_level = 1.0
@@ -2309,8 +2310,10 @@ class StatisticsStage:
                 table, skipped = pwm.build_membership(
                     quant_results, use_api=use_api)
             except Exception as e:
-                self.frame.after(0, lambda: self._pathway_status(
-                    f'Membership lookup failed:\n{e}'))
+                # The message is built here: Python unbinds `e` when the
+                # except block ends, before the callback runs.
+                msg = f'Membership lookup failed:\n{e}'
+                self.frame.after(0, lambda: self._pathway_status(msg))
                 return
             self._pw_membership_cache = {
                 'key': cache_key, 'use_api': use_api,
@@ -2435,14 +2438,13 @@ class StatisticsStage:
     def _pathway_color(self, rows):
         """Return (values, LogNorm, cmap, label) for colouring by p or FDR."""
         import matplotlib.colors as mcolors
-        import matplotlib.cm as cm
         key   = 'fdr' if self._pw_use_fdr_var.get() else 'p'
         label = 'BH-FDR' if key == 'fdr' else 'p-value'
         vals  = [max(r[key], 1e-10) for r in rows]
         vmin  = min(vals)
         norm  = mcolors.LogNorm(vmin=max(vmin, 1e-10), vmax=1.0)
         _cm = getattr(self, '_pw_cmap_var', None)
-        cmap  = cm.get_cmap(_cm.get() if _cm else 'YlOrRd_r')
+        cmap  = get_cmap(_cm.get() if _cm else 'YlOrRd_r')
         return vals, norm, cmap, label
 
     def _pathway_colorbar(self, mappable, label):
@@ -2728,9 +2730,8 @@ class StatisticsStage:
 
     def _group_colors(self, unique_groups):
         """Return color dict for groups using app colors or a tab10 fallback."""
-        import matplotlib.cm as cm
         app_gc = getattr(self.app, 'group_colors', {})
-        cmap   = cm.get_cmap('tab10', max(len(unique_groups), 1))
+        cmap   = get_cmap('tab10', max(len(unique_groups), 1))
         return {g: app_gc.get(g, cmap(i)) for i, g in enumerate(unique_groups)}
 
     def _confidence_ellipse(self, ax, x, y, color, n_std=2.0, **kw):
@@ -3119,7 +3120,6 @@ class StatisticsStage:
         coefficient follows the Coefficient selector: Pearson (parametric) or
         Spearman (non-parametric). See processing.correlation for the maths."""
         from processing.correlation import correlation_coeff, linear_fit_ci
-        import matplotlib.cm as cm
 
         method = getattr(self, '_corr_method_var', None)
         method = method.get() if method else 'pearson'
@@ -3147,7 +3147,7 @@ class StatisticsStage:
 
         st = self._box_style
         y_int, uniq = _group_to_int(group_labels)
-        gcmap = cm.get_cmap('tab10', max(len(uniq), 1))
+        gcmap = get_cmap('tab10', max(len(uniq), 1))
         def _auto_hex(i):
             r, g, b, _ = gcmap(i)
             return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
@@ -4108,8 +4108,7 @@ class StatisticsStage:
 
         si = getattr(self.app, 'samples_info', []) or []
         _all_groups = sorted(set(s.get('label', s.get('group', 'Unknown')) for s in si))
-        import matplotlib.cm as _cm2
-        _gcmap = _cm2.get_cmap('tab10', max(len(_all_groups), 1))
+        _gcmap = get_cmap('tab10', max(len(_all_groups), 1))
         def _grp_auto_hex(i):
             r, g, b, _ = _gcmap(i)
             return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'
@@ -4476,7 +4475,6 @@ class StatisticsStage:
     # ── Box / Violin plot (grid of per-metabolite panels) ──────────────────────
 
     def _plot_box_violin_grid(self):
-        import matplotlib.cm as cm
         from matplotlib.colors import to_rgba as _to_rgba
 
         cfg       = self._box_config
@@ -4549,7 +4547,7 @@ class StatisticsStage:
             return
 
         # Group colors (user overrides win, else tab10)
-        gcmap = cm.get_cmap('tab10', max(n_groups, 1))
+        gcmap = get_cmap('tab10', max(n_groups, 1))
         def _auto_grp_hex(i):
             r, g, b, _ = gcmap(i)
             return f'#{int(r*255):02x}{int(g*255):02x}{int(b*255):02x}'

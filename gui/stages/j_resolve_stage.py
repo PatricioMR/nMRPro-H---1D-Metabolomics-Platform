@@ -32,6 +32,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 from .base_stage import BaseStage
 from ._quant_helpers import fold_range, bootstrap_ci_median
+from plotting.colormaps import get_cmap
 
 # Default log directory — next to the project root
 _LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(
@@ -2378,7 +2379,7 @@ class JResolveStage(BaseStage):
                 if (not str(_k).startswith('_') and _v > 0
                         and str(_k) not in _contrib_ids):
                     _contrib_ids.append(str(_k))
-        _cmap = _plt.get_cmap('tab10')
+        _cmap = get_cmap('tab10')
         _contrib_col, _ci = {}, 0
         for _cid in _contrib_ids:
             if _cid == str(mid):
@@ -3684,7 +3685,7 @@ class NNLSDeconvolutionDialog:
         obs_w   = int_arr[mask]
         mhz     = float(getattr(stage.app, 'spectrometer_mhz', None) or 600.0)
 
-        cmap    = plt.get_cmap('tab10')
+        cmap    = get_cmap('tab10')
         met_col = {str(m['id']): cmap(i % 10) for i, m in enumerate(self._cands)}
 
         for ax in (self._ax_obs, self._ax_fit, self._ax_res):

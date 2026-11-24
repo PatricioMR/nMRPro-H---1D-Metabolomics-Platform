@@ -11,6 +11,7 @@ from tkinter import ttk, colorchooser
 import numpy as np
 from .base_stage import BaseStage
 from app_paths import APP_VERSION
+from plotting.colormaps import get_cmap
 
 SAMPLE_TYPES = ['Sample', 'IS', 'BLK']
 
@@ -783,7 +784,7 @@ class VisualizationStage(BaseStage):
             hi_p = center + window * 3
             view = (ppm_arr >= lo_p) & (ppm_arr <= hi_p)
             x = ppm_arr[view]
-            cmap = plt.cm.get_cmap('tab10', n_s)
+            cmap = get_cmap('tab10', n_s)
             for s in range(min(n_s, 5)):
                 col = all_int[view, s] if all_int.ndim == 2 else all_int[view]
                 acol = aligned[view, s]
@@ -852,7 +853,7 @@ class VisualizationStage(BaseStage):
                               shift_ppm=list(np.max(np.abs(shift_ppm_mat), axis=0)))
                 ax.clear()
                 ax.set_facecolor('#f8f8f8')
-                cmap = plt.cm.get_cmap('tab10', n_s)
+                cmap = get_cmap('tab10', n_s)
                 for s in range(min(n_s, 5)):
                     col = all_int[:, s] if all_int.ndim == 2 else all_int
                     acol = aligned[:, s]
@@ -938,7 +939,7 @@ class VisualizationStage(BaseStage):
                               shift_ppm=list(np.max(np.abs(mppm), axis=0)))
                 ax.clear()
                 ax.set_facecolor('#f8f8f8')
-                cmap = plt.cm.get_cmap('tab10', n_s)
+                cmap = get_cmap('tab10', n_s)
                 for s in range(min(n_s, 5)):
                     ax.plot(ppm_arr, all_int[:, s], color=cmap(s), lw=0.6,
                             alpha=0.22, ls='--')
@@ -1190,7 +1191,7 @@ class VisualizationStage(BaseStage):
 
             if prev_name == _OPT_ALL and all_int.ndim == 2:
                 # ── Mostrar todas as amostras empilhadas ──────────────────────
-                cmap_all = plt.cm.get_cmap('tab10', min(n_s, 10))
+                cmap_all = get_cmap('tab10', min(n_s, 10))
                 for s in range(n_s):
                     col = all_int[:, s].astype(float)
                     try:
