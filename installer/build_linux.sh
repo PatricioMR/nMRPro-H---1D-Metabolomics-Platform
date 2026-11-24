@@ -24,7 +24,8 @@ pyinstaller --noconfirm installer/nmrpro_h.spec
 
 ARCH="$(uname -m)"
 OUT="Output"
-NAME="NMRPro-H-linux-${ARCH}"
+VERSION="$(python3 -c "import app_paths; print(app_paths.__version__)")"
+NAME="NMRPro-H-v${VERSION}-linux-${ARCH}"
 mkdir -p "$OUT"
 tar -C dist -czf "$OUT/${NAME}.tar.gz" NMRPro-H
 echo "Portable folder: $OUT/${NAME}.tar.gz"

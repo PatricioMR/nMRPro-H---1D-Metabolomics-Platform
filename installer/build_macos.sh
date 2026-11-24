@@ -21,7 +21,8 @@ pyinstaller --noconfirm installer/nmrpro_h.spec
 ARCH="$(uname -m)"
 OUT="Output"
 STAGE="build/dmg"
-DMG="$OUT/NMRPro-H-macOS-${ARCH}.dmg"
+VERSION="$(python3 -c "import app_paths; print(app_paths.__version__)")"
+DMG="$OUT/NMRPro-H-v${VERSION}-macOS-${ARCH}.dmg"
 
 echo "=== [2/2] Building disk image ==="
 mkdir -p "$OUT"

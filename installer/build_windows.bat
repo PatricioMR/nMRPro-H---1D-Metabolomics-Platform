@@ -36,7 +36,7 @@ if not defined ISCC if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC=%P
 
 if defined ISCC (
     "%ISCC%" /DAppVersion=%APPVER% installer\nmrpro_h.iss || goto :err
-    echo Installer: Output\NMRPro-H-Setup.exe
+    echo Installer: Output\NMRPro-H-v%APPVER%-Setup.exe
 ) else (
     echo [skip] ISCC not found - install Inno Setup, then run:
     echo        iscc installer\nmrpro_h.iss

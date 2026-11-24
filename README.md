@@ -512,43 +512,45 @@ Every release ships one package per system; download it from the
 No Python installation is needed. `NMRPro-H_Installation_Guide.pdf`, attached
 to the same release, walks through each system step by step.
 
+Each file name carries the version it installs (`<version>`, e.g. `0.88`).
+
 | System | Package | Requirements |
 |---|---|---|
-| Windows | `NMRPro-H-Setup.exe` (installer) | Windows 10 or 11, 64-bit |
-| Linux | `NMRPro-H-linux-x86_64.AppImage` (or `.tar.gz`) | x86_64, glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer) |
-| macOS, Apple Silicon | `NMRPro-H-macOS-arm64.dmg` | Macs with M1 or later |
-| macOS, Intel | `NMRPro-H-macOS-x86_64.dmg` | Macs with an Intel processor |
+| Windows | `NMRPro-H-v<version>-Setup.exe` (installer) | Windows 10 or 11, 64-bit |
+| Linux | `NMRPro-H-v<version>-linux-x86_64.AppImage` (or `.tar.gz`) | x86_64, glibc 2.35+ (Ubuntu 22.04, Debian 12, Fedora 36 or newer) |
+| macOS, Apple Silicon | `NMRPro-H-v<version>-macOS-arm64.dmg` | Macs with M1 or later |
+| macOS, Intel | `NMRPro-H-v<version>-macOS-x86_64.dmg` | Macs with an Intel processor |
 
 The packages are not signed with a commercial certificate, so Windows and
 macOS warn on the first launch; the sections below say how to proceed.
 
 ### Windows
 
-Download `NMRPro-H-Setup.exe` and run it; if Windows shows *"Windows protected
+Download `NMRPro-H-v<version>-Setup.exe` and run it; if Windows shows *"Windows protected
 your PC"*, click **More info → Run anyway**. Databases the analyst edits live in `%APPDATA%\NMRPro-H`, so the
 install folder stays read-only.
 
 ### Linux
 
-Download `NMRPro-H-linux-x86_64.AppImage` from the same release, make it
+Download `NMRPro-H-v<version>-linux-x86_64.AppImage` from the same release, make it
 executable and run it — nothing is installed:
 
 ```bash
-chmod +x NMRPro-H-linux-x86_64.AppImage
-./NMRPro-H-linux-x86_64.AppImage
+chmod +x NMRPro-H-v*-linux-x86_64.AppImage
+./NMRPro-H-v*-linux-x86_64.AppImage
 ```
 
-`NMRPro-H-linux-x86_64.tar.gz` holds the same program as a plain folder (run
+`NMRPro-H-v<version>-linux-x86_64.tar.gz` holds the same program as a plain folder (run
 `NMRPro-H/NMRPro-H`). Built on Ubuntu 22.04: runs on distributions of that age
 or newer. AppImages need `libfuse2`, which Ubuntu 24.04 does not install by
 default (`sudo apt install libfuse2t64`); without it, run
-`./NMRPro-H-linux-x86_64.AppImage --appimage-extract-and-run` or use the
+`./NMRPro-H-v*-linux-x86_64.AppImage --appimage-extract-and-run` or use the
 `.tar.gz`. Edited databases live in `~/.config/NMRPro-H`.
 
 ### macOS
 
-Download `NMRPro-H-macOS-arm64.dmg` (Apple Silicon) or
-`NMRPro-H-macOS-x86_64.dmg` (Intel), open it and drag NMRPro-H to
+Download `NMRPro-H-v<version>-macOS-arm64.dmg` (Apple Silicon) or
+`NMRPro-H-v<version>-macOS-x86_64.dmg` (Intel), open it and drag NMRPro-H to
 Applications. The app is not notarized by Apple, so the first launch is
 blocked: open it once, then **System Settings → Privacy & Security → Open
 Anyway** (on macOS 14 and older, right-click the app → **Open** also works).
@@ -570,7 +572,9 @@ python main.py
 ```
 
 Python 3.11 or newer (developed and tested on 3.14). `tkinter` and `sqlite3`
-ship with CPython. Dependencies: numpy, scipy, scikit-learn, matplotlib, pandas,
+ship with CPython. On Linux, use a Python whose Tcl/Tk is not Ubuntu 22.04's
+8.6.12, which crashes the program at start (`uv venv -p 3.14` gives one with
+Tcl/Tk 9). Dependencies: numpy, scipy, scikit-learn, matplotlib, pandas,
 networkx, reportlab, pillow, requests.
 
 ### Build the installers
@@ -580,9 +584,9 @@ does not cross-compile: each package is built on its own system.
 
 | System | Command | Output |
 |---|---|---|
-| Windows | `installer/build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-Setup.exe` |
-| Linux | `bash installer/build_linux.sh` (with a standalone Python 3.14 carrying Tcl/Tk 9; see the script) | `Output/NMRPro-H-linux-<arch>.AppImage`, `.tar.gz` |
-| macOS | `bash installer/build_macos.sh` | `Output/NMRPro-H-macOS-<arch>.dmg` |
+| Windows | `installer/build_windows.bat` (PyInstaller + Inno Setup, `installer/nmrpro_h.iss`) | `Output/NMRPro-H-v<version>-Setup.exe` |
+| Linux | `bash installer/build_linux.sh` (with a standalone Python 3.14 carrying Tcl/Tk 9; see the script) | `Output/NMRPro-H-v<version>-linux-<arch>.AppImage`, `.tar.gz` |
+| macOS | `bash installer/build_macos.sh` | `Output/NMRPro-H-v<version>-macOS-<arch>.dmg` |
 
 [`.github/workflows/build-installers.yml`](.github/workflows/build-installers.yml)
 builds all of them on GitHub's machines (Actions → *Build installers* → *Run
