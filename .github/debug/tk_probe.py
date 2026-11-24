@@ -22,6 +22,11 @@ elif case == 'label_photo':
 elif case == 'iconphoto':
     keep.append(photo())
     root.iconphoto(True, keep[-1])
+elif case == 'emoji':
+    m = tk.Menu(root, tearoff=0)
+    m.add_command(label='📂 Import CSV/TXT')
+    tk.Button(root, text='📁 Import Bruker').pack()
+    tk.Label(root, text='✅ ok 🔍').pack()
 elif case == 'tk_photo':
     keep.append(tk.PhotoImage(file='utils/Logo_NMRPro-H.png'))
     root.iconphoto(True, keep[-1])
