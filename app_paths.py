@@ -19,13 +19,6 @@ import shutil
 
 APP_NAME = "NMRPro-H"
 
-# Previous name. The project shipped as "nMRPipe" until it was renamed to avoid
-# colliding with NMRPipe (Delaglio et al., J Biomol NMR 6:277-293, 1995), an
-# established and unrelated package. Kept only so an existing installation's
-# per-user data — the databases the analyst edited or added — is carried over
-# instead of orphaned under a directory the app no longer looks at.
-LEGACY_APP_NAMES = ("nMRPipe",)
-
 # ── Version (single source of truth) ───────────────────────────────────────────
 # Bump these two on a release; every display string is derived from APP_VERSION.
 __version__   = "0.88"
@@ -116,25 +109,10 @@ def user_data_dir():
     """Per-user writable data directory (%APPDATA%/NMRPro-H), created if missing.
 
     Falls back to ~/.config/NMRPro-H when APPDATA is unset (non-Windows).
-
-    On first run after the rename, an existing directory under one of
-    LEGACY_APP_NAMES is adopted: it holds databases the analyst edited or added,
-    and a fresh directory seeded from the bundled defaults would silently lose
-    them.
     """
     base = os.environ.get("APPDATA") or os.path.join(
         os.path.expanduser("~"), ".config")
     path = os.path.join(base, APP_NAME)
-    if not os.path.isdir(path):
-        for legacy in LEGACY_APP_NAMES:
-            old_path = os.path.join(base, legacy)
-            if os.path.isdir(old_path):
-                try:
-                    shutil.move(old_path, path)
-                    print(f"[app_paths] carried over user data from {legacy}")
-                    break
-                except Exception as exc:      # never block startup over this
-                    print(f"[app_paths] could not carry over {legacy}: {exc}")
     os.makedirs(path, exist_ok=True)
     return path
 

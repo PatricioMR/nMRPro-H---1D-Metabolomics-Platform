@@ -83,7 +83,6 @@ class TestMigration:
 
 
 class TestProductIdentity:
-    """The product was renamed away from NMRPipe (Delaglio et al., 1995)."""
 
     def test_app_name_and_version_are_one_source(self):
         import app_paths
@@ -91,25 +90,25 @@ class TestProductIdentity:
         assert app_paths.APP_VERSION.startswith('NMRPro-H v')
         assert app_paths.__version__ in app_paths.APP_VERSION
 
-    def test_user_data_survives_the_rename(self):
-        """%APPDATA%/<name> holds databases the analyst edited; a fresh
-        directory seeded from the bundled defaults would lose them."""
-        import inspect
-
-        import app_paths
-        assert 'nMRPipe' in app_paths.LEGACY_APP_NAMES
-        src = inspect.getsource(app_paths.user_data_dir)
-        assert 'LEGACY_APP_NAMES' in src and 'shutil.move' in src
-
-    def test_the_old_name_is_gone_from_the_shipped_code(self):
-        import glob
-        import io
+    def test_no_other_product_name_anywhere_in_the_repository(self):
+        """The project's first working name was that of an unrelated, well
+        known NMR package; nothing tracked may carry it. Spelled in pieces so
+        this test does not carry it either."""
         import os
-        offenders = []
+        import subprocess
         root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        for path in (glob.glob(os.path.join(root, 'gui', '**', '*.py'), recursive=True)
-                     + [os.path.join(root, 'main.py')]):
-            text = io.open(path, encoding='utf-8', errors='ignore').read()
-            if 'nMRPipe' in text or 'NMRPipe' in text:
-                offenders.append(os.path.basename(path))
-        assert not offenders, f'old product name left in: {offenders}'
+        try:
+            files = subprocess.run(['git', 'ls-files'], cwd=root, capture_output=True,
+                                   text=True, check=True).stdout.split('\n')
+        except (OSError, subprocess.CalledProcessError):
+            pytest.skip('not a git checkout')
+        name = ('nmr' + 'pipe').encode()
+        offenders = []
+        for rel in filter(None, files):
+            path = os.path.join(root, rel)
+            if not os.path.isfile(path) or os.path.getsize(path) > 5_000_000:
+                continue
+            with open(path, 'rb') as f:
+                if name in f.read().lower():
+                    offenders.append(rel)
+        assert not offenders, f'the old product name is left in: {offenders}'

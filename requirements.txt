@@ -1,4 +1,4 @@
-# nMRPipe runtime dependencies (Python 3.11+; tkinter ships with CPython).
+# NMRPro-H runtime dependencies (Python 3.11+; tkinter ships with CPython).
 # Lower bounds, not exact pins, so pip picks wheels compatible with the user's
 # Python version. Installed automatically by install.bat.
 numpy>=1.24
