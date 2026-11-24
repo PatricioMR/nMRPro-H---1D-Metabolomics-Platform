@@ -21,19 +21,16 @@ jobs:
         run: |
           python -c "import tkinter as t; r=t.Tcl(); print('Tcl', r.eval('info patchlevel')); print('Tk', t.TkVersion)"
 
-      - name: Isolated Tk cases
-        run: |
-          pip list 2>/dev/null | grep -i -E "^pillow|^matplotlib"
-          for c in emoji; do
-            echo "===== $c"
-            timeout 60 xvfb-run -a python -X faulthandler .github/debug/tk_probe.py $c 2>&1 \
-              | grep -v "^  Binary file\|^Extension modules" | tail -12
-            echo "exit ${PIPESTATUS[0]}"
-          done
-
-      - name: Bisect the UI
+      - name: Crash rate by variant
         run: |
           set +e
-          run() { timeout 30 xvfb-run -a python -X faulthandler -u .github/debug/bisect_app.py "$@" > out.txt 2>&1; echo "steps=$* -> exit $? (124 survived, 139 crash) last: $(grep -E '^(stage|built)' out.txt | tail -1)"; }
-          for s in 1 2 3; do run $s; done
-          for k in 0 1 2 3 4 5 6 7 8 9; do run 4 $k; done
+          for v in normal no_pil_tk no_maximize; do
+            crashes=0
+            for r in 1 2 3 4 5 6; do
+              timeout 30 xvfb-run -a python -X faulthandler .github/debug/variant_app.py $v > out.txt 2>&1
+              rc=$?
+              [ $rc -eq 139 ] && crashes=$((crashes+1))
+              [ $rc -ne 124 ] && [ $rc -ne 139 ] && { echo "$v run $r: exit $rc"; tail -5 out.txt; }
+            done
+            echo "RESULT $v: $crashes crashes in 6 runs"
+          done
