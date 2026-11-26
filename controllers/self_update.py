@@ -16,6 +16,7 @@ the new version. What it does per system:
 run from source, a Linux folder unpacked from the .tar.gz, or a location the
 user cannot write to is updated by hand from the release page instead.
 """
+import ntpath
 import os
 import platform
 import subprocess
@@ -44,7 +45,7 @@ def current_target(frozen=None, system=None, env=None, executable=None):
     if not frozen:
         return None
     if system == 'Windows':
-        return Target('windows', os.path.dirname(executable))
+        return Target('windows', ntpath.dirname(executable))
     if system == 'Linux':
         image = env.get('APPIMAGE')
         if image and os.access(os.path.dirname(image) or '.', os.W_OK):
@@ -64,7 +65,7 @@ _APPIMAGE = _WAIT + r'''
 new="$(dirname "$3")/$4"
 chmod +x "$2" && mv -f "$2" "$new" || exit 1
 [ "$3" = "$new" ] || rm -f "$3"
-[ "$5" = relaunch ] && nohup "$new" >/dev/null 2>&1 &
+if [ "$5" = relaunch ]; then nohup "$new" >/dev/null 2>&1 & fi
 '''
 
 _MACOS = _WAIT + r'''
@@ -80,7 +81,7 @@ fi
 hdiutil detach "$mnt" -quiet
 xattr -dr com.apple.quarantine "$3" 2>/dev/null
 rm -f "$2"
-[ "$4" = relaunch ] && open "$3"
+if [ "$4" = relaunch ]; then open "$3"; fi
 '''
 
 
