@@ -101,6 +101,29 @@ def multiplet_window(mp_ref, peak, dp, field_mhz, default_margin=0.01):
     return lo - margin, hi + margin, centre, db_j, mult
 
 
+FADED = '#c8c8c8'
+
+
+def trace_style(row, colour, selected_idx=None, selected_group=None):
+    """How one sample's trace is drawn, given what is selected in the table.
+
+    Nothing selected: every sample in its group colour, light, as an overlay.
+    A sample selected: that one on top, thick and opaque; the rest faded so
+    the selected sample's signal can be read. A group's mean row selected:
+    that group's samples emphasised, the others faded.
+    Returns (colour, line width, alpha, z-order).
+    """
+    if selected_idx is None and selected_group is None:
+        return colour, 0.8, 0.45, 2
+    if selected_idx is not None:
+        hit = row['idx'] == selected_idx
+    else:
+        hit = row['group'] == selected_group
+    if hit:
+        return colour, (2.0 if selected_idx is not None else 1.2), 1.0, 5
+    return FADED, 0.7, 0.5, 1
+
+
 # ── Widget ────────────────────────────────────────────────────────────────────
 
 class MultipletSampleView:
@@ -115,6 +138,9 @@ class MultipletSampleView:
         self.samples_info = samples_info or []
         self.app = app
         self._rows = []
+        # What the table has selected: one sample, or one group's mean row.
+        self._sel_idx = None
+        self._sel_group = None
 
         self.field_mhz = self._field_mhz()
         self.peak = self._resolve_peak()
@@ -302,6 +328,22 @@ class MultipletSampleView:
         self._tree.tag_configure('unverified', background='#fff6e0')
         self._tree.tag_configure('summary', background='#e6e9f5',
                                  font=('Arial', 9, 'bold'))
+        # Moving through the table (click or arrow keys) shows that sample's
+        # signal in the plot above.
+        self._tree.bind('<<TreeviewSelect>>', self._on_select)
+
+    def _on_select(self, _event=None):
+        sel = self._tree.selection()
+        idx = group = None
+        if sel:
+            iid = sel[0]
+            if iid.startswith('group:'):
+                group = iid[len('group:'):]
+            elif iid.startswith('sample:'):
+                idx = int(iid[len('sample:'):])
+        if (idx, group) != (self._sel_idx, self._sel_group):
+            self._sel_idx, self._sel_group = idx, group
+            self._draw_overlay()
 
     def _populate(self):
         # The deviation is read against the samples a sample belongs with: a
@@ -347,7 +389,7 @@ class MultipletSampleView:
             d_ppm = percent_deviation(r['ppm_centre'], ppm_mean.get(r['group']))
             d_j = percent_deviation(r['j_obs'], j_mean.get(r['group']))
             self._tree.insert(
-                '', 'end',
+                '', 'end', iid=f"sample:{r['idx']}",
                 values=(r['name'], r['group'], ann_txt,
                         pptxt, f'{d_ppm:+.3f}' if d_ppm is not None else '—',
                         jtxt, f'{d_j:+.2f}' if d_j is not None else '—',
@@ -414,7 +456,7 @@ class MultipletSampleView:
             jobs = [r['j_obs'] for r in grows if r['j_obs'] is not None]
             areas = [r['area'] for r in grows if r['area'] is not None]
             self._tree.insert(
-                '', 'end',
+                '', 'end', iid=f'group:{grp}',
                 values=(f'Mean · n = {len(grows)}', grp, '',
                         _mean(centres, '.4f'), _cv(centres),
                         _mean(jobs, '.2f'), _cv(jobs),
@@ -435,20 +477,31 @@ class MultipletSampleView:
                        and self._align_var.get() and self._shifts)
         present_cols = []
         # One legend entry per group, not per sample: with 32 traces a
-        # per-sample legend covers the plot it is meant to explain.
+        # per-sample legend covers the plot it is meant to explain. With a
+        # sample selected, the legend names that sample instead.
         labelled = set()
+        selected = None
         for r in self._rows:
             if r['type'] == 'BLK' or r['excluded']:
                 continue
             y = r['col'][mask]
             grp = r['group']
-            lbl = None if grp in labelled else str(grp)
-            labelled.add(grp)
+            colour, lw, alpha, z = trace_style(
+                r, self._group_color(grp, r['idx']),
+                self._sel_idx, self._sel_group)
+            if self._sel_idx is not None:
+                lbl = f"{r['name']} [{grp}]" if r['idx'] == self._sel_idx else None
+            else:
+                lbl = None if (grp in labelled or colour == FADED) else str(grp)
+                if lbl:
+                    labelled.add(grp)
             # Shifting the axis, not the data: the sample is drawn where its own
             # lines say it sits. Samples with no shift (absent here) stay put.
             xs = x - self._shifts.get(r['idx'], 0.0) if aligned else x
-            ax.plot(xs, y, color=self._group_color(grp, r['idx']),
-                    lw=0.8, alpha=0.45, label=lbl)
+            ax.plot(xs, y, color=colour, lw=lw, alpha=alpha, zorder=z,
+                    label=lbl)
+            if r['idx'] == self._sel_idx:
+                selected = (r, xs)
             if r['present']:
                 # Averaging needs one grid, so the aligned curve is resampled
                 # onto the reference axis. np.interp wants ascending x.
@@ -460,8 +513,25 @@ class MultipletSampleView:
 
         if present_cols:
             mean_y = np.mean(np.vstack(present_cols), axis=0)
-            ax.plot(x, mean_y, color='#1a1a6e', lw=2.2,
+            # Behind a selected sample, thinner, so it does not hide it.
+            focus = self._sel_idx is not None
+            ax.plot(x, mean_y, color='#1a1a6e', lw=(1.2 if focus else 2.2),
+                    ls=('--' if focus else '-'), zorder=(3 if focus else 4),
                     label='Mean (aligned)' if aligned else 'Mean (present)')
+
+        if selected is not None:
+            r, _xs = selected
+            # Where the search measured this sample's centre, in the frame the
+            # trace is drawn in (aligned traces were moved by their shift).
+            if r['ppm_centre'] is not None:
+                c = float(r['ppm_centre'])
+                if aligned:
+                    c -= self._shifts.get(r['idx'], 0.0)
+                ax.axvline(c, color=self._group_color(r['group'], r['idx']),
+                           ls='--', lw=1.2, alpha=0.9, zorder=6)
+            ax.set_title(self._selected_caption(r), fontsize=9)
+        elif self._sel_group is not None:
+            ax.set_title(f'Group {self._sel_group}', fontsize=9)
 
         # DB predicted lines (sticks) + reference centre
         ymax = ax.get_ylim()[1]
@@ -476,12 +546,27 @@ class MultipletSampleView:
         ax.set_xlim(self.hi, self.lo)            # inverted ppm axis
         ax.set_xlabel('δ (ppm)')
         ax.set_ylabel('Intensity (a.u.)')
-        if labelled or present_cols:
+        if labelled or present_cols or selected is not None:
             ax.legend(fontsize=8, loc='upper right', frameon=True,
                       framealpha=0.85,
                       ncol=(2 if len(labelled) > 4 else 1))
         self._fig.tight_layout()
         self._canvas.draw_idle()
+
+    def _selected_caption(self, r):
+        """Title over the plot for the selected sample: what the search read."""
+        bits = [f"{r['name']} [{r['group']}]"]
+        if r['present']:
+            bits.append('detected')
+        elif r['partial']:
+            bits.append(f"{r['n_found']}/{r['n_lines']} lines")
+        else:
+            bits.append('not detected')
+        if r['ppm_centre'] is not None:
+            bits.append(f"δ {float(r['ppm_centre']):.4f} ppm")
+        if r['j_obs'] is not None:
+            bits.append(f"J {float(r['j_obs']):.2f} Hz")
+        return '  ·  '.join(bits)
 
     def _center(self):
         self.win.update_idletasks()

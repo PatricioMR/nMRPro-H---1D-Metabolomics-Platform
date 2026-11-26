@@ -199,3 +199,22 @@ def test_the_detected_column_says_only_what_was_assigned():
     src = inspect.getsource(V._populate)
     assert 'folded' not in src
     assert '?' not in src
+
+
+def test_nothing_selected_draws_every_sample_in_its_group_colour():
+    from gui.widgets.multiplet_sample_view import trace_style
+    assert trace_style({'idx': 0, 'group': 'A'}, 'red') == ('red', 0.8, 0.45, 2)
+
+
+def test_the_selected_sample_is_drawn_on_top_and_the_rest_fade():
+    from gui.widgets.multiplet_sample_view import trace_style, FADED
+    colour, lw, alpha, z = trace_style({'idx': 3, 'group': 'A'}, 'red', 3)
+    assert (colour, alpha) == ('red', 1.0) and lw > 0.8 and z > 2
+    other = trace_style({'idx': 1, 'group': 'A'}, 'red', 3)
+    assert other[0] == FADED and other[3] < z
+
+
+def test_a_group_row_emphasises_that_group_only():
+    from gui.widgets.multiplet_sample_view import trace_style, FADED
+    assert trace_style({'idx': 0, 'group': 'B'}, 'blue', None, 'B')[0] == 'blue'
+    assert trace_style({'idx': 1, 'group': 'A'}, 'red', None, 'B')[0] == FADED
