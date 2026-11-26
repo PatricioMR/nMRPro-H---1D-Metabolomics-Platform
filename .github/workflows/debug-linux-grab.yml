@@ -1,0 +1,22 @@
+# Temporary: database picker on Linux (blank window on double-click).
+name: Debug Linux grab
+on:
+  workflow_dispatch:
+jobs:
+  probe:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: sudo apt-get install -y --no-install-recommends xvfb openbox
+      - name: Probe
+        env:
+          NMRPRO_NO_UPDATE_CHECK: '1'
+        run: |
+          set +e
+          uv venv --seed -p 3.14 .venv
+          .venv/bin/python -m pip install -q -r requirements.txt
+          echo "===== no window manager"
+          timeout 60 xvfb-run -a .venv/bin/python .github/debug/grab_probe.py
+          echo "===== with openbox"
+          timeout 60 xvfb-run -a sh -c 'openbox & sleep 2; .venv/bin/python .github/debug/grab_probe.py'
