@@ -5,11 +5,15 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        hooks: [all, nofit]
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: sudo apt-get install -y --no-install-recommends xvfb openbox xdotool x11-apps imagemagick
-      - name: Probe with a real double-click
+      - run: sudo apt-get install -y --no-install-recommends xvfb openbox xdotool imagemagick
+      - name: App picker with a real double-click (${{ matrix.hooks }})
         env:
           NMRPRO_NO_UPDATE_CHECK: '1'
           DISPLAY: ':99'
@@ -20,13 +24,13 @@ jobs:
           Xvfb :99 -screen 0 1280x800x24 & sleep 2
           openbox & sleep 2
           rm -f /tmp/lb_xy
-          timeout 60 .venv/bin/python .github/debug/grab_probe.py > out.txt 2>&1 &
-          for i in $(seq 30); do [ -f /tmp/lb_xy ] && break; sleep 1; done
-          sleep 1; import -window root before.png
-          read X Y < /tmp/lb_xy; xdotool mousemove $X $Y click --repeat 2 --delay 120 1
-          sleep 3; import -window root after.png
-          wait; cat out.txt
+          timeout 90 .venv/bin/python -X faulthandler .github/debug/app_picker_probe.py ${{ matrix.hooks }} > out.txt 2>&1 &
+          for i in $(seq 60); do [ -f /tmp/lb_xy ] && break; sleep 1; done
+          sleep 1; import -window root before-${{ matrix.hooks }}.png
+          if [ -f /tmp/lb_xy ]; then read X Y < /tmp/lb_xy; xdotool mousemove $X $Y click --repeat 2 --delay 120 1; fi
+          sleep 4; import -window root after-${{ matrix.hooks }}.png
+          wait; grep -v -E "^\s+Binary file|^Extension modules" out.txt | tail -40
       - uses: actions/upload-artifact@v4
         with:
-          name: screens
+          name: screens-${{ matrix.hooks }}
           path: '*.png'
