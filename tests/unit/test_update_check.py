@@ -79,7 +79,7 @@ def test_fetch_latest_release_reads_the_reply(monkeypatch):
     release = uc.fetch_latest_release()
     assert release == {'tag': 'v0.87-beta', 'name': 'NMRPro-H v0.87 Beta',
                        'url': 'https://github.com/x/releases/tag/v0.87-beta',
-                       'notes': 'Fixes.'}
+                       'notes': 'Fixes.', 'mandatory': False, 'assets': []}
     assert seen['url'] == uc.LATEST_RELEASE_API
     assert seen['agent']                      # GitHub refuses requests without one
 
@@ -111,3 +111,64 @@ def test_skipped_tag_round_trip(monkeypatch, tmp_path):
     assert uc.load_skipped_tag() == 'v0.87-beta'
     prefs.write_text('not json', encoding='utf-8')
     assert uc.load_skipped_tag() is None
+
+
+# ── mandatory releases and the installers of a release ───────────────────────
+
+def test_a_release_marked_mandatory_says_so_and_hides_the_mark(monkeypatch):
+    _serve(monkeypatch, {'tag_name': 'v0.90', 'body':
+                         'Critical fix.\n<!-- Mandatory -->\n'})
+    release = uc.fetch_latest_release()
+    assert release['mandatory'] is True
+    assert release['notes'] == 'Critical fix.'
+
+
+def test_a_release_without_the_mark_is_not_mandatory(monkeypatch):
+    _serve(monkeypatch, {'tag_name': 'v0.90', 'body': 'mandatory reading'})
+    assert uc.fetch_latest_release()['mandatory'] is False
+
+
+def test_a_mandatory_release_cannot_be_skipped():
+    release = dict(_RELEASE, mandatory=True)
+    assert uc.newer_release('0.86', release, skipped_tag='v0.87-beta') is release
+
+
+def test_assets_carry_the_sha256_github_published(monkeypatch):
+    _serve(monkeypatch, {'tag_name': 'v0.90', 'assets': [
+        {'name': 'NMRPro-H-v0.90-Setup.exe', 'size': 10,
+         'browser_download_url': 'https://x/Setup.exe',
+         'digest': 'sha256:ABCDEF'},
+        {'name': 'NMRPro-H-v0.90-macOS-arm64.dmg', 'size': 5,
+         'browser_download_url': 'https://x/a.dmg'}]})
+    assets = uc.fetch_latest_release()['assets']
+    assert assets[0] == {'name': 'NMRPro-H-v0.90-Setup.exe',
+                         'url': 'https://x/Setup.exe', 'size': 10,
+                         'sha256': 'abcdef'}
+    assert assets[1]['sha256'] is None
+
+
+_ASSETS = [{'name': n, 'url': 'https://x/' + n, 'size': 1, 'sha256': 'ab'}
+           for n in ('NMRPro-H-v0.90-Setup.exe',
+                     'NMRPro-H-v0.90-linux-x86_64.AppImage',
+                     'NMRPro-H-v0.90-linux-x86_64.tar.gz',
+                     'NMRPro-H-v0.90-macOS-arm64.dmg',
+                     'NMRPro-H-v0.90-macOS-x86_64.dmg',
+                     'NMRPro-H_Installation_Guide_v0.89.pdf')]
+
+
+@pytest.mark.parametrize('system, machine, appimage, expected', [
+    ('Windows', 'AMD64', False, 'NMRPro-H-v0.90-Setup.exe'),
+    ('Linux', 'x86_64', True, 'NMRPro-H-v0.90-linux-x86_64.AppImage'),
+    ('Linux', 'x86_64', False, None),        # unpacked from the .tar.gz
+    ('Darwin', 'arm64', False, 'NMRPro-H-v0.90-macOS-arm64.dmg'),
+    ('Darwin', 'x86_64', False, 'NMRPro-H-v0.90-macOS-x86_64.dmg'),
+    ('FreeBSD', 'amd64', False, None),
+])
+def test_the_installer_for_this_system(system, machine, appimage, expected):
+    found = uc.installer_for(_ASSETS, system, machine, appimage)
+    assert (found['name'] if found else None) == expected
+
+
+def test_a_file_without_a_checksum_is_never_offered():
+    assets = [dict(_ASSETS[0], sha256=None)]
+    assert uc.installer_for(assets, 'Windows', 'AMD64') is None

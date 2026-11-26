@@ -1897,16 +1897,26 @@ class App(_PlotSettingsMixin, _GroupEditorMixin, _UpdateCheckMixin):
         """Clean shutdown — prompt on unsaved changes, then tear down so the
         process actually exits (autosave 'after' jobs and TkAgg figure managers
         otherwise keep the interpreter alive after the window closes)."""
+        if self._confirm_close():
+            self._shutdown()
+
+    def _confirm_close(self):
+        """Offer to save unsaved changes. False when the analyst cancels or
+        the save failed: the program must then stay open."""
         mgr = getattr(self, '_project_mgr', None)
         if mgr is not None and mgr.has_unsaved_changes():
             resp = messagebox.askyesnocancel(
                 'Unsaved Changes',
                 'Save changes to the current project before closing?')
             if resp is None:          # Cancel → abort close
-                return
+                return False
             if resp:                  # Yes → save; abort close if save failed
                 if not mgr.save_or_saveas():
-                    return
+                    return False
+        return True
+
+    def _shutdown(self):
+        mgr = getattr(self, '_project_mgr', None)
         # Stop autosave, finish a write in progress, remove the autosave
         try:
             if mgr is not None:

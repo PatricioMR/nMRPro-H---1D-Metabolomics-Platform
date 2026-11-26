@@ -32,3 +32,22 @@ jobs:
 
       - name: pytest
         run: python -m pytest tests -q -p no:cacheprovider --timeout=300 -r fEs
+
+  # The self-update helpers for Linux (AppImage) and macOS (.app from the .dmg)
+  # are shell scripts: run their tests where they run.
+  self-update-helpers:
+    name: self-update helpers (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-15-intel]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+          cache: pip
+      - run: python -m pip install -r requirements.txt pytest
+      - run: python -m pytest tests/unit/test_self_update.py -v -p no:cacheprovider -r s

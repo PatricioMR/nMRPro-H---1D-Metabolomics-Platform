@@ -66,7 +66,9 @@ class _UpdateCheckMixin:
         release = update_check.newer_release(__version__, value, skipped)
         if release is not None:
             UpdateDialog(self.root, release, __version__,
-                         on_skip=self._skip_release)
+                         on_skip=self._skip_release,
+                         confirm_close=getattr(self, '_confirm_close', None),
+                         shutdown=getattr(self, '_shutdown', None))
         elif manual:
             messagebox.showinfo(
                 'Check for updates',

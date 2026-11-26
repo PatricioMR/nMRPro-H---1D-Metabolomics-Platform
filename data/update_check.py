@@ -15,6 +15,15 @@ minor compared as a decimal fraction, so 0.8 < 0.86 < 0.9 and 1.0 > 0.99.
 
 The version the analyst chose to skip is kept in the per-user data directory so
 the notice does not come back until a newer one is out.
+
+A release whose notes carry ``<!-- mandatory -->`` (an HTML comment, so the
+release page does not show it) is a mandatory update: it fixes something
+critical, cannot be skipped, and is announced at every start.
+
+Each release lists its installers with the SHA-256 GitHub computed for them;
+``installer_for`` picks the one for the running system, so the program can
+download and install it itself (``data.update_download``,
+``controllers.self_update``).
 """
 import json
 import os
@@ -30,6 +39,7 @@ LATEST_RELEASE_API = f'https://api.github.com/repos/{_REPO}/releases/latest'
 RELEASES_PAGE = f'{SOURCE_URL.rstrip("/")}/releases/latest'
 
 _PREFS_FILE = 'update_check.json'
+MANDATORY_MARK = re.compile(r'<!--\s*mandatory\s*-->', re.IGNORECASE)
 _VERSION_RE = re.compile(r'(\d+)(?:\.(\d+))?(?:\.(\d+))?')
 
 # Set to any non-empty value to skip the check at startup (tests, offline labs).
@@ -88,19 +98,67 @@ def fetch_latest_release(timeout=6.0):
     tag = payload.get('tag_name') if isinstance(payload, dict) else None
     if not tag:
         raise UpdateCheckError('GitHub reply has no release tag')
+    body = payload.get('body') or ''
     return {
         'tag': tag,
         'name': payload.get('name') or tag,
         'url': payload.get('html_url') or RELEASES_PAGE,
-        'notes': payload.get('body') or '',
+        'notes': MANDATORY_MARK.sub('', body).strip(),
+        'mandatory': bool(MANDATORY_MARK.search(body)),
+        'assets': _assets(payload.get('assets')),
     }
 
 
+def _assets(raw):
+    """The release's files: name, download URL, size and SHA-256 (``None``
+    when GitHub gave no digest, which forbids installing that file)."""
+    out = []
+    for a in raw or []:
+        if not isinstance(a, dict) or not a.get('name'):
+            continue
+        digest = str(a.get('digest') or '')
+        out.append({
+            'name': a['name'],
+            'url': a.get('browser_download_url'),
+            'size': a.get('size'),
+            'sha256': (digest.split(':', 1)[1].lower()
+                       if digest.lower().startswith('sha256:') else None),
+        })
+    return out
+
+
+def installer_for(assets, system, machine, appimage=False):
+    """The release file the running program can install itself, or None.
+
+    *system* is ``platform.system()``, *machine* ``platform.machine()``.
+    Windows takes the Setup; Linux only the AppImage, and only when the
+    program runs from one (a folder unpacked from the .tar.gz is replaced by
+    hand); macOS the disk image of its own chip.
+    """
+    if system == 'Windows':
+        suffix = '-Setup.exe'
+    elif system == 'Linux':
+        if not appimage:
+            return None
+        suffix = '-linux-x86_64.AppImage'
+    elif system == 'Darwin':
+        arch = 'arm64' if machine.lower() in ('arm64', 'aarch64') else 'x86_64'
+        suffix = f'-macOS-{arch}.dmg'
+    else:
+        return None
+    for a in assets or []:
+        if a['name'].startswith('NMRPro-H-') and a['name'].endswith(suffix):
+            return a if a.get('url') and a.get('sha256') else None
+    return None
+
+
 def newer_release(current_version, release, skipped_tag=None):
-    """*release* when it is newer than *current_version* and not skipped."""
+    """*release* when it is newer than *current_version* and not skipped.
+    A mandatory release cannot be skipped."""
     if release is None or not is_newer(release['tag'], current_version):
         return None
-    if skipped_tag and release['tag'] == skipped_tag:
+    if (skipped_tag and release['tag'] == skipped_tag
+            and not release.get('mandatory')):
         return None
     return release
 
