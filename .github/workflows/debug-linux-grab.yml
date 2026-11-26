@@ -5,6 +5,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-22.04
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -21,15 +22,15 @@ jobs:
           set +e
           uv venv --seed -p 3.14 .venv
           .venv/bin/python -m pip install -q -r requirements.txt
-          Xvfb :99 -screen 0 1280x800x24 & sleep 2
-          openbox & sleep 2
+          Xvfb :99 -screen 0 1280x800x24 > /dev/null 2>&1 & XPID=$!; sleep 2
+          openbox > /dev/null 2>&1 & OPID=$!; sleep 2
           rm -f /tmp/lb_xy
-          timeout 90 .venv/bin/python -X faulthandler .github/debug/app_picker_probe.py ${{ matrix.hooks }} > out.txt 2>&1 &
+          timeout 90 .venv/bin/python -X faulthandler .github/debug/app_picker_probe.py ${{ matrix.hooks }} > out.txt 2>&1 & PYPID=$!
           for i in $(seq 60); do [ -f /tmp/lb_xy ] && break; sleep 1; done
           sleep 1; import -window root before-${{ matrix.hooks }}.png
           if [ -f /tmp/lb_xy ]; then read X Y < /tmp/lb_xy; xdotool mousemove $X $Y click --repeat 2 --delay 120 1; fi
           sleep 4; import -window root after-${{ matrix.hooks }}.png
-          wait; grep -v -E "^\s+Binary file|^Extension modules" out.txt | tail -40
+          wait $PYPID; kill $OPID $XPID; grep -v -E "^\s+Binary file|^Extension modules" out.txt | tail -40
       - uses: actions/upload-artifact@v4
         with:
           name: screens-${{ matrix.hooks }}
